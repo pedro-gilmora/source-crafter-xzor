@@ -1,0 +1,37 @@
+@page "/"
+@import Counter from "./Counter.tszor"
+@import { type RenderFragment } from "@zor/runtime"
+
+@code {
+  title = "zor demo";
+  steps: string[] = ["parse .tszor", "generate .ts", "type check", "bundle .js"];
+  view: "steps" | "summary" | "counter" = "steps";
+  summary: RenderFragment = <p>@this.steps.length steps, compiled ahead of time.</p>;
+
+  panel(view: App["view"]): RenderFragment {
+    switch (view) {
+      case "steps":
+        return <ol>
+          @for (const step of this.steps) {
+            <li>@step</li>
+          }
+        </ol>;
+      case "counter":
+        return <Counter label="Panel" step="10" />;
+      default:
+        return this.summary;
+    }
+  }
+}
+
+<main>
+  <h1>@title</h1>
+  <Counter label="Clicks" />
+  <Counter label="Fives" step="5" />
+  <nav>
+    <button @onclick="() => view = 'steps'">steps</button>
+    <button @onclick="() => view = 'summary'">summary</button>
+    <button @onclick="() => view = 'counter'">counter</button>
+  </nav>
+  @panel(view)
+</main>

@@ -1,0 +1,225 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "source.tszor",
+  "name": "TSZor",
+  "patterns": [{ "include": "#markup" }],
+  "repository": {
+    "markup": {
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#code-block" },
+        { "include": "#page" },
+        { "include": "#import" },
+        { "include": "#escape" },
+        { "include": "#switch" },
+        { "include": "#control" },
+        { "include": "#explicit" },
+        { "include": "#implicit-call" },
+        { "include": "#implicit" },
+        { "include": "#end-tag" },
+        { "include": "#start-tag" },
+        { "include": "#entity" }
+      ]
+    },
+    "comment": {
+      "name": "comment.block.html",
+      "begin": "<!--",
+      "end": "-->",
+      "captures": { "0": { "name": "punctuation.definition.comment.html" } }
+    },
+    "entity": {
+      "name": "constant.character.entity.html",
+      "match": "&(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);"
+    },
+    "escape": {
+      "name": "constant.character.escape.tszor",
+      "match": "@@"
+    },
+    "code-block": {
+      "begin": "(?<![[:alnum:]])(@)(code)\\s*(?=\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.directive.tszor" }
+      },
+      "end": "(?<=\\})",
+      "contentName": "meta.embedded.block.typescript",
+      "patterns": [{ "include": "source.ts#class-or-interface-body" }]
+    },
+    "page": {
+      "match": "(?<![[:alnum:]])(@)(page)\\s+(\"[^\"]*\")",
+      "captures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.directive.tszor" },
+        "3": { "name": "string.quoted.double.tszor" }
+      }
+    },
+    "import": {
+      "begin": "(?<![[:alnum:]])(@)(?=import\\b)",
+      "beginCaptures": { "1": { "name": "keyword.control.transition.tszor" } },
+      "end": "$",
+      "contentName": "meta.embedded.line.typescript",
+      "patterns": [{ "include": "source.ts" }]
+    },
+    "explicit": {
+      "begin": "(?<![[:alnum:]])(@)(\\()",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "punctuation.section.embedded.begin.tszor" }
+      },
+      "end": "\\)",
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.tszor" } },
+      "contentName": "meta.embedded.expression.typescript",
+      "patterns": [{ "include": "source.ts#expression" }]
+    },
+    "implicit-call": {
+      "begin": "(?<![[:alnum:]])(@)([_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.[_$[:alpha:]][_$[:alnum:]]*)*)(\\()",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "variable.other.readwrite.tszor" },
+        "3": { "name": "punctuation.section.embedded.begin.tszor" }
+      },
+      "end": "\\)",
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.tszor" } },
+      "contentName": "meta.embedded.expression.typescript",
+      "patterns": [{ "include": "source.ts#expression" }]
+    },
+    "implicit": {
+      "match": "(?<![[:alnum:]])(@)([_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.[_$[:alpha:]][_$[:alnum:]]*)*)",
+      "captures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "variable.other.readwrite.tszor" }
+      }
+    },
+    "condition": {
+      "begin": "\\(",
+      "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.tszor" } },
+      "end": "\\)",
+      "endCaptures": { "0": { "name": "punctuation.section.parens.end.tszor" } },
+      "contentName": "meta.embedded.expression.typescript",
+      "patterns": [{ "include": "source.ts" }]
+    },
+    "block": {
+      "begin": "\\{",
+      "beginCaptures": { "0": { "name": "punctuation.section.block.begin.tszor" } },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.block.end.tszor" } },
+      "patterns": [{ "include": "#markup" }]
+    },
+    "control": {
+      "comment": "@if/@for, plus `else` chains; ends after a block that is not followed by `else` on the same line.",
+      "begin": "(?:(?<![[:alnum:]])(@)(if|for)\\b|^\\s*(else)\\b(?=\\s*(?:if\\s*\\(|\\{)))",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.tszor" },
+        "3": { "name": "keyword.control.tszor" }
+      },
+      "end": "(?<=\\})(?!\\s*else\\b)",
+      "patterns": [
+        { "match": "\\b(else|if)\\b", "name": "keyword.control.tszor" },
+        { "include": "#condition" },
+        { "include": "#block" }
+      ]
+    },
+    "switch": {
+      "begin": "(?<![[:alnum:]])(@)(switch)\\b",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.tszor" }
+      },
+      "end": "(?<=\\})",
+      "patterns": [
+        { "include": "#condition" },
+        {
+          "begin": "\\{",
+          "beginCaptures": { "0": { "name": "punctuation.section.block.begin.tszor" } },
+          "end": "\\}",
+          "endCaptures": { "0": { "name": "punctuation.section.block.end.tszor" } },
+          "patterns": [
+            {
+              "begin": "(?:^|(?<=:))\\s*(case)\\b",
+              "beginCaptures": { "1": { "name": "keyword.control.tszor" } },
+              "end": ":",
+              "endCaptures": { "0": { "name": "punctuation.separator.case.tszor" } },
+              "contentName": "meta.embedded.expression.typescript",
+              "patterns": [{ "include": "source.ts#expression" }]
+            },
+            {
+              "match": "(?:^|(?<=:))\\s*(default)\\s*(:)",
+              "captures": {
+                "1": { "name": "keyword.control.tszor" },
+                "2": { "name": "punctuation.separator.case.tszor" }
+              }
+            },
+            {
+              "match": "\\b(break)\\s*(;)",
+              "captures": {
+                "1": { "name": "keyword.control.tszor" },
+                "2": { "name": "punctuation.terminator.statement.tszor" }
+              }
+            },
+            { "include": "#markup" }
+          ]
+        }
+      ]
+    },
+    "end-tag": {
+      "match": "(</)(?:([A-Z][\\w.]*)|([a-zA-Z][\\w:-]*))\\s*(>)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "support.class.component.tszor" },
+        "3": { "name": "entity.name.tag.html" },
+        "4": { "name": "punctuation.definition.tag.end.html" }
+      }
+    },
+    "start-tag": {
+      "name": "meta.tag.tszor",
+      "begin": "(<)(?:([A-Z][\\w.]*)|([a-zA-Z][\\w:-]*))",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "support.class.component.tszor" },
+        "3": { "name": "entity.name.tag.html" }
+      },
+      "end": "/?>",
+      "endCaptures": { "0": { "name": "punctuation.definition.tag.end.html" } },
+      "patterns": [
+        { "include": "#event-attribute" },
+        { "include": "#quoted-attribute" },
+        { "include": "#explicit" },
+        { "include": "#implicit-call" },
+        { "include": "#implicit" },
+        { "match": "[^\\s=/>\"']+", "name": "entity.other.attribute-name.html" },
+        { "match": "=", "name": "punctuation.separator.key-value.html" }
+      ]
+    },
+    "event-attribute": {
+      "begin": "(@on[\\w-]+)\\s*(=)\\s*([\"'])",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.html entity.other.attribute-name.event.tszor" },
+        "2": { "name": "punctuation.separator.key-value.html" },
+        "3": { "name": "punctuation.definition.string.begin.html" }
+      },
+      "end": "\\3",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.html" } },
+      "contentName": "meta.embedded.expression.typescript",
+      "patterns": [{ "include": "source.ts#expression" }]
+    },
+    "quoted-attribute": {
+      "begin": "([^\\s=/>\"'@][^\\s=/>\"']*)\\s*(=)\\s*([\"'])",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.html" },
+        "2": { "name": "punctuation.separator.key-value.html" },
+        "3": { "name": "string.quoted.html punctuation.definition.string.begin.html" }
+      },
+      "end": "\\3",
+      "endCaptures": { "0": { "name": "string.quoted.html punctuation.definition.string.end.html" } },
+      "contentName": "string.quoted.html",
+      "patterns": [
+        { "include": "#escape" },
+        { "include": "#explicit" },
+        { "include": "#implicit-call" },
+        { "include": "#implicit" },
+        { "include": "#entity" }
+      ]
+    }
+  }
+}

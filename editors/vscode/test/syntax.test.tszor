@@ -1,0 +1,96 @@
+<!-- SYNTAX TEST "source.tszor" "tszor grammar"
+@page "/"
+<!-- <- keyword.control.transition.tszor
+<!-- <~---- keyword.control.directive.tszor
+<!--  ^^^ string.quoted.double.tszor
+@import Counter from "./Counter.tszor"
+<!-- <- keyword.control.transition.tszor
+<!-- <~------ keyword.control.import.ts
+<!--                 ^^^^^^^^^^^^^^^^^ string.quoted.double.ts
+@code {
+<!-- <- keyword.control.transition.tszor
+<!-- <~---- keyword.control.directive.tszor
+<!--  ^ meta.embedded.block.typescript punctuation.definition.block.ts
+  count: number = 0;
+<!-- <~~----- meta.embedded.block.typescript variable.object.property.ts
+<!--     ^^^^^^ support.type.primitive.ts
+  inc() { this.count++; }
+<!-- <~~--- meta.embedded.block.typescript entity.name.function.ts
+<!--      ^^^^ variable.language.this.ts
+}
+<!-- <- meta.embedded.block.typescript punctuation.definition.block.ts
+<div class="a @kind" @onclick="() => go(1)">Hi @user.name, @(x + 1) a@b.com @@</div>
+<!-- <- punctuation.definition.tag.begin.html
+<!-- <~--- entity.name.tag.html
+<!-- ^^^^^ entity.other.attribute-name.html
+<!--        ^ string.quoted.html
+<!--          ^ string.quoted.html keyword.control.transition.tszor
+<!--           ^^^^ variable.other.readwrite.tszor
+<!--                 ^^^^^^^^ entity.other.attribute-name.html
+<!--                              ^^ meta.embedded.expression.typescript storage.type.function.arrow.ts
+<!--                                 ^^ entity.name.function.ts
+<!--                                           ^ keyword.control.transition.tszor
+<!--                                            ^^^^^^^^^ variable.other.readwrite.tszor
+<!--                                                       ^ keyword.control.transition.tszor
+<!--                                                         ^ meta.embedded.expression.typescript variable.other.readwrite.ts
+<!--                                                           ^ keyword.operator.arithmetic.ts
+<!--                                                                 ^ - keyword.control.transition.tszor
+<!--                                                                        ^^ constant.character.escape.tszor
+<!--                                                                          ^^ punctuation.definition.tag.begin.html
+<!--                                                                            ^^^ entity.name.tag.html
+<p>  <!-- note --></p>
+<!-- ^^^^^^^^^^^^^ comment.block.html
+@if (count > 1) {
+<!-- <- keyword.control.transition.tszor
+<!-- <~-- keyword.control.tszor
+<!-- ^^^^^ meta.embedded.expression.typescript variable.other.readwrite.ts
+<!--       ^ keyword.operator.relational.ts
+<!--            ^ punctuation.section.block.begin.tszor
+  <b>big</b>
+<!-- <~~~- entity.name.tag.html
+<!-- ^^^ - entity.name.tag.html
+} else if (count < 0) {
+<!-- <- punctuation.section.block.end.tszor
+<!-- <~~---- keyword.control.tszor
+<!--   ^^ keyword.control.tszor
+<!--       ^^^^^ variable.other.readwrite.ts
+<!--             ^ keyword.operator.relational.ts
+}
+@if (a >= 10 && b <= 2) {}
+<!--   ^^ keyword.operator.relational.ts
+<!--              ^^ keyword.operator.relational.ts
+<p>@(a < b) @(c > d)</p>
+<!--   ^ keyword.operator.relational.ts
+<!--            ^ keyword.operator.relational.ts
+<button disabled="@(n < 1)" @onclick="() => n > 0 && go()">x</button>
+<!--                  ^ keyword.operator.relational.ts
+<!--                                          ^ keyword.operator.relational.ts
+else {
+<!-- <---- keyword.control.tszor
+  <Counter step="@(2)" />
+<!-- <~~~------- support.class.component.tszor
+<!--       ^^^^ entity.other.attribute-name.html
+<!--             ^ keyword.control.transition.tszor
+<!--               ^ constant.numeric.decimal.ts
+}
+@for (const item of items) {
+<!-- <~--- keyword.control.tszor
+<!--  ^^^^^ storage.type.ts
+  <li>@item</li>
+<!--  ^ keyword.control.transition.tszor
+<!--   ^^^^ variable.other.readwrite.tszor
+}
+@switch (kind) {
+<!-- <~------ keyword.control.tszor
+  case "a":
+<!-- <~~---- keyword.control.tszor
+<!--   ^^^ string.quoted.double.ts
+    in case of
+<!--   ^^^^ - keyword.control.tszor
+    break;
+<!-- <~~~~----- keyword.control.tszor
+  default:
+<!-- <~~------- keyword.control.tszor
+}
+<p>after</p>
+<!-- <~- entity.name.tag.html

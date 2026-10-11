@@ -1,0 +1,52 @@
+{
+  "name": "tszor",
+  "displayName": "TSZor",
+  "description": "Language support for .tszor components (zor: Blazor-style components for TypeScript)",
+  "version": "0.2.0",
+  "publisher": "rs-zor",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onLanguage:tszor"],
+  "contributes": {
+    "configuration": {
+      "title": "TSZor",
+      "properties": {
+        "tszor.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the zor executable. Defaults to target/{release,debug}/zor in the workspace, then zor on PATH."
+        }
+      }
+    },
+    "languages": [
+      {
+        "id": "tszor",
+        "aliases": ["TSZor", "tszor"],
+        "extensions": [".tszor"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "tszor",
+        "scopeName": "source.tszor",
+        "path": "./syntaxes/tszor.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.typescript": "typescript",
+          "meta.embedded.expression.typescript": "typescript",
+          "meta.embedded.line.typescript": "typescript"
+        },
+        "unbalancedBracketScopes": [
+          "keyword.operator.relational",
+          "storage.type.function.arrow",
+          "keyword.operator.bitwise.shift",
+          "meta.brace.angle",
+          "punctuation.definition.tag",
+          "keyword.operator.assignment.compound.bitwise.ts"
+        ]
+      }
+    ]
+  }
+}
