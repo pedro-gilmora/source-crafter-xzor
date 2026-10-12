@@ -59,6 +59,8 @@ enum Until<'n> {
     Brace,
     /// Body of a `@switch` case: ends before `case`, `default` or the switch's `}`.
     Case,
+    /// A `@:` line: ends before the newline.
+    Line,
     EndTag(&'n str),
 }
 
@@ -189,7 +191,7 @@ impl<'a> Parser<'a> {
             }
             let Some(c) = self.peek() else {
                 return match until {
-                    Until::Eof => {
+                    Until::Eof | Until::Line => {
                         flush_text(&mut nodes, &mut text);
                         Ok(nodes)
                     }
@@ -198,6 +200,10 @@ impl<'a> Parser<'a> {
                 };
             };
             match c {
+                b'\n' | b'\r' if matches!(until, Until::Line) => {
+                    flush_text(&mut nodes, &mut text);
+                    return Ok(nodes);
+                }
                 b'}' if matches!(until, Until::Brace) => {
                     self.mark(TokenKind::Transition, self.pos, self.pos + 1);
                     self.pos += 1;
@@ -240,7 +246,7 @@ impl<'a> Parser<'a> {
                     let el = self.element()?;
                     nodes.push(Node::Element(el));
                 }
-                b'@' if !self.prev_is_alnum() => match self.transition()? {
+                b'@' if !self.prev_is_alnum() || self.peek_at(1) == Some(b'*') => match self.transition()? {
                     Transition::Node(n) => {
                         flush_text(&mut nodes, &mut text);
                         nodes.push(n);
@@ -265,6 +271,19 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 return Ok(Transition::Text("@"));
             }
+            Some(b'*') => {
+                let Some(len) = self.src[self.pos..].find("*@") else {
+                    return Err(ParseError { message: "unterminated @* comment".into(), offset: at });
+                };
+                self.pos += len + 2;
+                self.mark(TokenKind::Comment, at, self.pos);
+                return Ok(Transition::Nothing);
+            }
+            Some(b'{') => {
+                self.mark(TokenKind::Transition, at, at + 1);
+                let parts = self.code_block(true)?;
+                return Ok(Transition::Node(Node::Code(parts)));
+            }
             Some(b'(') => {
                 let (s, e) = self.balanced(b'(', b')')?;
                 self.mark(TokenKind::Transition, at, at + 1);
@@ -277,7 +296,10 @@ impl<'a> Parser<'a> {
 
         let word_start = self.pos;
         let word = self.ident();
-        let is_keyword = matches!(word, "code" | "page" | "import" | "if" | "for" | "switch" | "typeparam" | "slot");
+        let is_keyword = matches!(
+            word,
+            "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "inherits" | "implements" | "attribute"
+        );
         self.mark(TokenKind::Transition, at, at + 1);
         if is_keyword {
             self.mark(TokenKind::Keyword, word_start, self.pos);
@@ -289,7 +311,7 @@ impl<'a> Parser<'a> {
                     return self.err("expected '{' after @code");
                 }
                 let open = self.pos;
-                let parts = self.code_block()?;
+                let parts = self.code_block(false)?;
                 self.doc.code.push(Src::new(&self.src[open + 1..self.pos - 1], open + 1));
                 self.doc.code_parts.push(parts);
                 Ok(Transition::Nothing)
@@ -316,16 +338,26 @@ impl<'a> Parser<'a> {
                 self.doc.imports.push(stmt);
                 Ok(Transition::Nothing)
             }
-            "typeparam" => {
+            "typeparam" | "inherits" | "implements" | "attribute" => {
                 let s = self.pos;
                 self.skip_line();
                 self.mark(TokenKind::Code, s, self.pos);
-                let param = self.span(s, self.pos);
-                if param.is_empty() {
-                    return self.err("expected a type parameter after @typeparam");
+                let value = self.span(s, self.pos);
+                if value.is_empty() {
+                    return self.err(format!("expected a value after @{word}"));
                 }
-                self.doc.type_params.push(param);
+                match word {
+                    "typeparam" => self.doc.type_params.push(value),
+                    "inherits" => self.doc.inherits = Some(value),
+                    "implements" => self.doc.implements.push(value),
+                    _ => self.doc.attributes.push(value),
+                }
                 Ok(Transition::Nothing)
+            }
+            "while" => {
+                let cond = self.condition()?;
+                let body = self.block()?;
+                Ok(Transition::Node(Node::While { cond, body }))
             }
             "if" => self.if_block().map(Transition::Node),
             "for" => {
@@ -363,10 +395,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Scans a `@code { ... }` body (pos at `{`), splitting out markup used as a value:
-    /// `@<Tag ...>` anywhere, or `<Tag ...>` where an expression can start. Markup that
+    /// Scans a `@code { ... }` or `@{ ... }` body (pos at `{`), splitting out markup used as a
+    /// value: `@<Tag ...>` anywhere, or `<Tag ...>` where an expression can start. With `render`
+    /// (`@{ }`), markup at statement start and `@:` lines are rendered in place. Markup that
     /// fails to parse is left as TypeScript (generics, type assertions).
-    fn code_block(&mut self) -> PResult<Vec<CodePart>> {
+    fn code_block(&mut self, render: bool) -> PResult<Vec<CodePart>> {
         let open = self.pos;
         self.pos += 1;
         let mut parts = Vec::new();
@@ -374,6 +407,7 @@ impl<'a> Parser<'a> {
         let mut depth = 1usize;
         // Whether the previous significant token lets an expression start here.
         let mut expr_start = false;
+        let mut stmt_start = true;
         let flush = |p: &mut Self, parts: &mut Vec<CodePart>, seg: usize, end: usize| {
             if end > seg {
                 p.mark(TokenKind::Code, seg, end);
@@ -384,6 +418,9 @@ impl<'a> Parser<'a> {
             let Some(c) = self.peek() else {
                 return Err(ParseError { message: "unclosed '{'".into(), offset: open });
             };
+            if !matches!(c, b'<' | b'@') && !c.is_ascii_whitespace() && !(c == b'/' && matches!(self.peek_at(1), Some(b'/' | b'*'))) {
+                stmt_start = matches!(c, b';' | b'{' | b'}');
+            }
             match c {
                 b'"' | b'\'' => {
                     self.string_lit()?;
@@ -404,6 +441,38 @@ impl<'a> Parser<'a> {
                     }
                     self.pos += 1;
                     expr_start = false;
+                }
+                b'@' if render && stmt_start && self.peek_at(1) == Some(b':') => {
+                    flush(self, &mut parts, seg, self.pos);
+                    self.mark(TokenKind::Transition, self.pos, self.pos + 2);
+                    self.pos += 2;
+                    while matches!(self.peek(), Some(b' ' | b'\t')) {
+                        self.pos += 1;
+                    }
+                    let saved = std::mem::replace(&mut self.in_component, false);
+                    let line = self.nodes(Until::Line);
+                    self.in_component = saved;
+                    parts.push(CodePart::Render(trim_edges(line?)));
+                    seg = self.pos;
+                }
+                b'<' if render && stmt_start && matches!(self.peek_at(1), Some(c) if c.is_ascii_alphabetic()) => {
+                    let (save, tokens) = (self.pos, self.tokens.len());
+                    match self.element() {
+                        Ok(el) => {
+                            let end = self.pos;
+                            self.pos = save;
+                            flush(self, &mut parts, seg, save);
+                            self.pos = end;
+                            parts.push(CodePart::Render(vec![Node::Element(el)]));
+                            seg = self.pos;
+                        }
+                        Err(_) => {
+                            self.pos = save + 1;
+                            self.tokens.truncate(tokens);
+                            stmt_start = false;
+                            expr_start = true;
+                        }
+                    }
                 }
                 b'@' if self.peek_at(1) == Some(b'<') => {
                     flush(self, &mut parts, seg, self.pos);
@@ -584,7 +653,7 @@ impl<'a> Parser<'a> {
         let saved = std::mem::replace(&mut self.in_component, false);
         let nodes = self.nodes(Until::Brace);
         self.in_component = saved;
-        nodes
+        nodes.map(trim_edges)
     }
 
     /// After `@slot`: `:name` defines a named slot; inside a component tag, ` name` fills one.
@@ -1184,6 +1253,7 @@ after"#;
                     "ts".to_string()
                 }
                 CodePart::Markup(e) => e.name.to_string(),
+                CodePart::Render(_) => "render".to_string(),
             })
             .collect();
         assert_eq!(kinds, ["ts", "B", "ts", "C", "ts", "D", "ts"]);

@@ -6,8 +6,12 @@
   "repository": {
     "markup": {
       "patterns": [
+        { "include": "#razor-comment" },
         { "include": "#comment" },
         { "include": "#code-block" },
+        { "include": "#statements" },
+        { "include": "#class-directives" },
+        { "include": "#line-text" },
         { "include": "#page" },
         { "include": "#typeparam" },
         { "include": "#import" },
@@ -24,6 +28,33 @@
         { "include": "#start-tag" },
         { "include": "#entity" }
       ]
+    },
+    "razor-comment": {
+      "name": "comment.block.tszor",
+      "begin": "@\\*",
+      "end": "\\*@"
+    },
+    "statements": {
+      "comment": "@{ ... }: TypeScript statements inside the template.",
+      "begin": "(@)(?=\\{)",
+      "beginCaptures": { "1": { "name": "keyword.control.transition.tszor" } },
+      "end": "(?<=\\})",
+      "contentName": "meta.embedded.block.typescript",
+      "patterns": [{ "include": "source.ts#decl-block" }]
+    },
+    "class-directives": {
+      "begin": "(?<![[:alnum:]])(@)(inherits|implements|attribute)\\b",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.directive.tszor" }
+      },
+      "end": "$",
+      "contentName": "meta.embedded.line.typescript",
+      "patterns": [{ "include": "source.ts#expression" }]
+    },
+    "line-text": {
+      "match": "(@:)",
+      "captures": { "1": { "name": "keyword.control.transition.tszor" } }
     },
     "comment": {
       "name": "comment.block.html",
@@ -120,7 +151,7 @@
     },
     "control": {
       "comment": "@if/@for, plus `else` chains; ends after a block that is not followed by `else` on the same line.",
-      "begin": "(?:(?<![[:alnum:]])(@)(if|for)\\b|^\\s*(else)\\b(?=\\s*(?:if\\s*\\(|\\{)))",
+      "begin": "(?:(?<![[:alnum:]])(@)(if|for|while)\\b|^\\s*(else)\\b(?=\\s*(?:if\\s*\\(|\\{)))",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.tszor" },
@@ -240,6 +271,7 @@
       "patterns": [
         { "include": "#event-attribute" },
         { "include": "#quoted-attribute" },
+        { "match": "(?<=\\s)@[\\w-]+(?::[\\w-]+)?(?=[\\s/>])", "name": "entity.other.attribute-name.html" },
         { "include": "#explicit" },
         { "include": "#implicit-call" },
         { "include": "#implicit" },

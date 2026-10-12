@@ -61,7 +61,16 @@ fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
                     collect_slot_names(body, out);
                 }
             }
-            Node::For { body, .. } => collect_slot_names(body, out),
+            Node::For { body, .. } | Node::While { body, .. } => collect_slot_names(body, out),
+            Node::Code(parts) => {
+                for part in parts {
+                    match part {
+                        crate::ast::CodePart::Render(nodes) => collect_slot_names(nodes, out),
+                        crate::ast::CodePart::Markup(el) => collect_slot_names(&el.children, out),
+                        crate::ast::CodePart::Ts(_) => {}
+                    }
+                }
+            }
             Node::Switch { cases, .. } => cases.iter().for_each(|c| collect_slot_names(&c.body, out)),
             Node::SlotFill(f) => collect_slot_names(&f.body, out),
             Node::Text(_) | Node::Expr(_) => {}
@@ -244,6 +253,11 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("page", "page \"$1\"", "Route for this component"),
     ("import", "import $1 from \"$2\"", "Import a module or component"),
     ("typeparam", "typeparam $1", "Generic type parameter of this component"),
+    ("while", "while ($1) {\n\t$0\n}", "Repeated markup while a condition holds"),
+    ("inherits", "inherits $1", "Base class instead of ComponentBase"),
+    ("implements", "implements $1", "Interfaces this component implements"),
+    ("attribute", "attribute $1", "Decorator on the component class"),
+    ("slot", "slot", "Where slot content renders"),
 ];
 
 const BIND_ATTRS: &[(&str, &str)] = &[
@@ -482,7 +496,7 @@ mod tests {
 
         let doc = "\n@i";
         let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]).into_iter().map(|i| i.label).collect();
-        assert_eq!(labels, ["if", "import"]);
+        assert_eq!(labels, ["if", "import", "inherits", "implements"]);
     }
 
     #[test]

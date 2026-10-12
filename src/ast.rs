@@ -59,6 +59,12 @@ pub struct Document {
     pub page: Option<String>,
     /// `@typeparam` declarations, e.g. `T extends object`.
     pub type_params: Vec<Src>,
+    /// `@inherits Base<T>`: the base class instead of `ComponentBase`.
+    pub inherits: Option<Src>,
+    /// `@implements A, B`.
+    pub implements: Vec<Src>,
+    /// `@attribute dec(args)`: class decorators.
+    pub attributes: Vec<Src>,
     /// What follows `@import`, without a trailing `;`.
     pub imports: Vec<Src>,
     /// Raw bodies of `@code { ... }` blocks; they become class members.
@@ -72,6 +78,8 @@ pub struct Document {
 pub enum CodePart {
     Ts(Src),
     Markup(Element),
+    /// Markup at statement start or a `@:` line inside `@{ }`, rendered in place.
+    Render(Vec<Node>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +95,12 @@ pub enum Node {
         head: Src,
         body: Vec<Node>,
     },
+    While {
+        cond: Src,
+        body: Vec<Node>,
+    },
+    /// `@{ statements }` inside the template.
+    Code(Vec<CodePart>),
     Switch {
         subject: Src,
         cases: Vec<Case>,

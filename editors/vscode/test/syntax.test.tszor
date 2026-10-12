@@ -122,3 +122,22 @@ else {
 <!--       ^ entity.name.tag.html
   @slot more text
 <!--    ^^^^ - entity.name.function.slot.tszor
+@* a comment <b> *@
+<!-- <------------------- comment.block.tszor
+@{ const n = 1; }
+<!-- <- keyword.control.transition.tszor
+<!-- <~~~----- storage.type.ts
+@while (n < 3) { <u/> }
+<!-- <~----- keyword.control.tszor
+<!--    ^ variable.other.readwrite.ts
+<!--              ^ entity.name.tag.html
+@inherits Base<T>
+<!-- <~-------- keyword.control.directive.tszor
+@implements Named
+<!-- <~---------- keyword.control.directive.tszor
+@attribute sealed
+<!-- <~--------- keyword.control.directive.tszor
+<p>@: Count</p>
+<!-- <~~~-- keyword.control.transition.tszor
+<a @onclick:preventDefault>x</a>
+<!-- <~~~----------------------- entity.other.attribute-name.html

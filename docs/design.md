@@ -21,10 +21,17 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@( expr )` | Explicit expression |
 | `@if (c) { } else if (c) { } else { }` | Control flow |
 | `@for (const x of xs) { }` | Loop (any JS `for` head) |
+| `@while (cond) { }` | `while` loop, in its own region |
+| `@* comment *@` | A comment, removed at compile time |
+| `@{ const x = f(); <p>@x</p> @: text @x }` | Statements inside `buildRenderTree`. Variables declared there are usable later in the same scope. Markup at statement start and `@:` lines render in place, and markup used as a value becomes a `RenderFragment`. |
+| `<text>…</text>` | Renders its content only, with no wrapper element |
+| `@inherits Base<T>`, `@implements A, B`, `@attribute dec(args)` | `@dec(args)` then `export default class C extends Base<T> implements A, B`. The base must derive from `ComponentBase`. |
 | `@switch (v) { case a: case b: ... break; default: ... }` | Each case is block-scoped and always ends in `break` (no fall-through into a body). Stacked labels share one body. `break;` is optional. |
 | `@@`, `a@b.com` | Literal `@` |
 | `attr="text @expr"`, `attr="@expr"` | Interpolated and typed attribute values (`false`/`null` removes the attribute) |
 | `@onclick="handler"`, `@onclick="() => ..."` | DOM event; typed through `HTMLElementEventMap`; triggers a re-render |
+| `@onclick:preventDefault`, `@onclick:stopPropagation="cond"` | Event modifiers. They work without a handler, and take an optional boolean expression. |
+| `@attributes="dict"` | Attribute splatting on elements, where later attributes override it. On components, props are spread: `{ ...dict, title: "t" }`. |
 | `<Child prop="x" n="5" />` | Component (capitalized tag); props are type-checked as `Partial<Child>`. As in Blazor, a prop declared with a non-string type (`n: number`, `on: () => void`, or inferred from a non-string initializer) takes its value as a TypeScript expression. String props take text. |
 | `@typeparam T extends X` | Generic component class `C<T extends X>`. Callers pass the argument as an attribute: `<List T="string" …>` compiles to `List<string>`. |
 | `onChange?: EventCallback<T>` | A prop the parent sets with `onChange="handler"`. Calling it re-renders the parent. |
@@ -111,5 +118,4 @@ The rules:
 ## Roadmap
 
 1. Rename and find references, through the same mappings.
-2. Template syntax: `@* *@`, `@{ }`, `@while`, `<text>`/`@:`, `@attributes`, event modifiers, `@inherits`/`@implements`/`@attribute`.
-3. Watch mode and incremental compilation.
+2. Watch mode and incremental compilation.

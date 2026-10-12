@@ -12,6 +12,7 @@
   view: "steps" | "summary" | "counter" = "steps";
   nameInput?: HTMLInputElement;
   clicks?: Counter;
+  linkAttrs: Record<string, unknown> = { title: "Show the summary", "data-kind": "link" };
   summary: RenderFragment = <p>@this.steps.length steps, compiled ahead of time.</p>;
 
   protected override onAfterRender(firstRender: boolean): void {
@@ -55,10 +56,17 @@
     }
   </Card>
   <nav>
+    @* Razor-style comments never reach the output *@
+    <a href="#" @attributes="linkAttrs" @onclick:preventDefault @onclick="() => view = 'summary'">summary link</a>
     <button @onclick="reverse">reverse steps</button>
     <button @onclick="() => view = 'steps'">steps</button>
     <button @onclick="() => view = 'summary'">summary</button>
     <button @onclick="() => view = 'counter'">counter</button>
   </nav>
+  @{
+    const first = steps[0] ?? "nothing";
+    <p>First step: <text>@first</text></p>
+    @: (@steps.length in total)
+  }
   @panel(view)
 </main>

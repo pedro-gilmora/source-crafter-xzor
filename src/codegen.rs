@@ -108,7 +108,18 @@ pub fn generate_with(
         }
         m.lit_then(">")
     };
-    g.emit(M::lit(&format!("export default class {class_name}")).add(generics).lit_then(" extends ComponentBase {"));
+    for decorator in &doc.attributes {
+        g.emit(M::lit("@").add(M::src(decorator, decorator.at)));
+    }
+    let base = match &doc.inherits {
+        Some(b) => M::src(b, b.at),
+        None => M::lit("ComponentBase"),
+    };
+    let mut header = M::lit(&format!("export default class {class_name}")).add(generics).lit_then(" extends ").add(base);
+    for (i, interface) in doc.implements.iter().enumerate() {
+        header = header.lit_then(if i == 0 { " implements " } else { ", " }).add(M::src(interface, interface.at));
+    }
+    g.emit(header.lit_then(" {"));
     g.depth = 1;
     if let Some(route) = &doc.page {
         g.line(&format!("static readonly route = {};", js_string(route)));
@@ -169,6 +180,7 @@ impl Gen<'_> {
             out = match part {
                 CodePart::Ts(s) => out.add(M::src(s, s.at)),
                 CodePart::Markup(el) => out.add(self.fragment(el)?),
+                CodePart::Render(_) => return Err("markup statements and `@:` lines belong in `@{ }`, not `@code`".into()),
             };
         }
         Ok(out)
@@ -182,6 +194,12 @@ impl Gen<'_> {
     /// `ComponentBase.fragment((__b) => { ... })` for `nodes`, emitted on one line.
     /// `locals` are extra names in scope (slot parameters) that must not get `this.`.
     fn fragment_of(&self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
+        let body = self.inline_nodes(nodes, rewrite, locals)?;
+        Ok(M::lit("ComponentBase.fragment((__b) => { ").add(body).lit_then(" })"))
+    }
+
+    /// Builder calls for `nodes` on one line.
+    fn inline_nodes(&self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
         let mut sub = Gen {
             out: String::new(),
             mappings: Vec::new(),
@@ -192,8 +210,7 @@ impl Gen<'_> {
             inline: true,
         };
         sub.nodes(nodes)?;
-        let body = M { text: sub.out.trim_end().to_string(), maps: sub.mappings };
-        Ok(M::lit("ComponentBase.fragment((__b) => { ").add(body).lit_then(" })"))
+        Ok(M { text: sub.out.trim_end().to_string(), maps: sub.mappings })
     }
 
     /// `(params) => fragment` passed to a child for one of its slots.
@@ -293,14 +310,16 @@ impl Gen<'_> {
 
     fn block(&mut self, nodes: &[Node]) -> Result<(), String> {
         self.depth += 1;
+        let scope = self.locals.len();
         let r = self.nodes(nodes);
+        self.locals.truncate(scope);
         self.depth -= 1;
         r
     }
 
     fn node(&mut self, node: &Node) -> Result<(), String> {
         // A region keeps a block's variable output from shifting its static siblings in the diff.
-        let region = matches!(node, Node::If { .. } | Node::For { .. } | Node::Switch { .. });
+        let region = matches!(node, Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. });
         if region {
             self.line("__b.openRegion();");
         }
@@ -310,6 +329,33 @@ impl Gen<'_> {
                 let line = M::lit("__b.addContent(").add(self.expr(e)).lit_then(");");
                 self.emit(line);
             }
+            Node::Code(parts) => {
+                for part in parts {
+                    if let CodePart::Ts(s) = part {
+                        self.locals.extend(declared_names(s));
+                    }
+                }
+                let mut block = M::default();
+                for part in parts {
+                    block = match part {
+                        CodePart::Ts(s) => block.add(self.expr(s)),
+                        CodePart::Markup(el) => block.add(self.fragment_of(std::slice::from_ref(&Node::Element(el.clone())), true, &[])?),
+                        CodePart::Render(nodes) => block.add(self.inline_nodes(nodes, true, &[])?),
+                    };
+                }
+                if self.inline {
+                    self.emit(block);
+                } else {
+                    self.emit_block(block);
+                }
+            }
+            Node::While { cond, body } => {
+                let line = M::lit("while (").add(self.expr(cond)).lit_then(") {");
+                self.emit(line);
+                self.block(body)?;
+                self.line("}");
+            }
+            Node::Element(el) if &*el.name.text == "text" => self.nodes(&el.children)?,
             Node::Slot(slot) => {
                 let name = match &slot.name {
                     Some(n) => M::src(n, n.at),
@@ -463,6 +509,26 @@ impl Gen<'_> {
     }
 
     fn attribute(&mut self, a: &Attr) -> Result<(), String> {
+        if &*a.name.text == "@attributes" {
+            let line = M::lit("__b.addAttributes(").add(self.directive_expr(a)?).lit_then(");");
+            self.emit(line);
+            return Ok(());
+        }
+        if let Some((event, modifier)) = a.name.strip_prefix("@on").and_then(|r| r.split_once(':')) {
+            if !matches!(modifier, "preventDefault" | "stopPropagation") {
+                return Err(format!("unknown event modifier {}", a.name));
+            }
+            let enabled = match &a.value {
+                AttrValue::Empty => M::lit("true"),
+                AttrValue::Expr(e) => self.expr(e),
+                _ => return Err(format!("{} takes a boolean expression", a.name)),
+            };
+            let line = M::lit(&format!("__b.addEventModifier({}, {}, ", js_string(event), js_string(modifier)))
+                .add(enabled)
+                .lit_then(");");
+            self.emit(line);
+            return Ok(());
+        }
         if let Some(event) = a.name.strip_prefix("@on") {
             let AttrValue::Expr(e) = &a.value else {
                 return Err(format!("{} requires a handler expression", a.name));
@@ -514,6 +580,10 @@ impl Gen<'_> {
                 }
                 "@ref" => {
                     extra.push(M::lit("ref: (__c) => { ").add(self.directive_expr(a)?).lit_then(" = __c; }"));
+                    continue;
+                }
+                "@attributes" => {
+                    props.push(M::lit("...").add(self.directive_expr(a)?));
                     continue;
                 }
                 _ => {}
@@ -789,6 +859,16 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
                 }
             }
             Node::SlotFill(fill) => collect_slots(&fill.body, members, loops, out)?,
+            Node::While { body, .. } => collect_slots(body, members, loops, out)?,
+            Node::Code(parts) => {
+                for part in parts {
+                    match part {
+                        CodePart::Render(nodes) => collect_slots(nodes, members, loops, out)?,
+                        CodePart::Markup(el) => collect_slots(&el.children, members, loops, out)?,
+                        CodePart::Ts(_) => {}
+                    }
+                }
+            }
             Node::Slot(slot) => {
                 let key = slot.name.as_ref().map_or("default", |n| &**n).to_string();
                 if out.iter().any(|(k, _)| *k == key) {
@@ -876,6 +956,31 @@ fn slot_arg_type(arg: &SlotArg, i: usize, members: &HashSet<String>, loops: &[(S
         Some(ty) => Ok((name_of(e), ty)),
         None => Err(format!("can't infer the type of slot argument `{e}`; write `({e}) as Type`")),
     }
+}
+
+/// Names declared with `const`/`let`/`var` in a `@{ }` block, which shadow members.
+fn declared_names(code: &str) -> Vec<String> {
+    let b = code.as_bytes();
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if is_ident_start(b[i]) && (i == 0 || !is_ident_char(b[i - 1])) {
+            let s = i;
+            while i < b.len() && is_ident_char(b[i]) {
+                i += 1;
+            }
+            if matches!(&code[s..i], "const" | "let" | "var") {
+                let rest = code[i..].trim_start();
+                let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$').collect();
+                if !name.is_empty() {
+                    names.push(name);
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
+    names
 }
 
 /// Names declared by a parameter list like `item: T = x, i`.
@@ -1279,6 +1384,22 @@ mod tests {
         assert!(g.code.contains("__b.openElement(\"input\");\n    __b.setRef(\"input\", (__e) => { this.input = __e; });"), "{}", g.code);
         assert!(g.code.contains("__b.addComponent(Counter, { label: \"a\" }, undefined, { ref: (__c) => { this.child = __c; } });"), "{}", g.code);
         assert!(g.code.contains("__b.setRef(\"my-el\", (__e) => { this.input = __e; });"), "{}", g.code);
+    }
+
+    #[test]
+    fn razor_template_syntax() {
+        let src = "@inherits Base<number>\n@implements Named, Sized\n@attribute sealed\n@attribute tag(\"x\")\n@code { n = 1; items = [1]; extra = {}; stop = true; }\n@* gone *@\n<p>a@* also gone *@b</p>\n@{\n  const total = items.length + n;\n  const badge = <b>@total</b>;\n  <i>@total</i>\n  @: Count: @total!\n}\n@while (n < 3) { <u/> }\n<text>hi @total</text>\n<p @attributes=\"extra\" class=\"x\" @onsubmit:preventDefault @onclick:stopPropagation=\"stop\"></p>\n<Card @attributes=\"extra\" title=\"t\" />";
+        let g = gen_with(src, &[("Card", "@code { title = \"\"; }")]);
+        let has = |s: &str| assert!(g.code.contains(s), "missing {s:?} in\n{}", g.code);
+        has("@sealed\n@tag(\"x\")\nexport default class C extends Base<number> implements Named, Sized {");
+        assert!(!g.code.contains("gone"), "{}", g.code);
+        has("__b.addText(\"ab\");");
+        has("    const total = this.items.length + this.n;\n    const badge = ComponentBase.fragment((__b) => { __b.openElement(\"b\"); __b.addContent(total); __b.closeElement(); });\n    __b.openElement(\"i\"); __b.addContent(total); __b.closeElement();\n    __b.addText(\"Count: \"); __b.addContent(total); __b.addText(\"!\");");
+        has("    __b.openRegion();\n    while (this.n < 3) {\n      __b.openElement(\"u\");\n      __b.closeElement();\n    }\n    __b.closeRegion();");
+        has("__b.addText(\"hi \");\n    __b.addContent(total);");
+        assert!(!g.code.contains("openElement(\"text\")"), "{}", g.code);
+        has("__b.addAttributes(this.extra);\n    __b.addAttribute(\"class\", \"x\");\n    __b.addEventModifier(\"submit\", \"preventDefault\", true);\n    __b.addEventModifier(\"click\", \"stopPropagation\", this.stop);");
+        has("__b.addComponent(Card, { ...this.extra, title: \"t\" });");
     }
 
     #[test]

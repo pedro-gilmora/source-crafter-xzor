@@ -56,6 +56,14 @@ const spec: [string, A[]][] = [
   ["  @slot row(step: string, i) { <b>@step</b> }", [["slot", "keyword.control.tszor"], ["row", "entity.name.function.slot.tszor"], ["step", "variable.parameter.ts"], ["string", "support.type.primitive.ts"], ["b", "entity.name.tag.html"]]],
   ["  @slot { <i/> }", [["slot", "keyword.control.tszor"], ["i", "entity.name.tag.html"]]],
   ["  @slot more text", [["more", "- entity.name.function.slot.tszor"]]],
+  ["@* a comment <b> *@", [["@* a comment <b> *@", "comment.block.tszor"]]],
+  ["@{ const n = 1; }", [["@", "keyword.control.transition.tszor"], ["const", "storage.type.ts"]]],
+  ["@while (n < 3) { <u/> }", [["while", "keyword.control.tszor"], ["n", "variable.other.readwrite.ts"], ["u", "entity.name.tag.html"]]],
+  ["@inherits Base<T>", [["inherits", "keyword.control.directive.tszor"]]],
+  ["@implements Named", [["implements", "keyword.control.directive.tszor"]]],
+  ["@attribute sealed", [["attribute", "keyword.control.directive.tszor"]]],
+  ["<p>@: Count</p>", [["@:", "keyword.control.transition.tszor"]]],
+  ["<a @onclick:preventDefault>x</a>", [["@onclick:preventDefault", "entity.other.attribute-name.html"]]],
 ];
 
 const out = ['<!-- SYNTAX TEST "source.tszor" "tszor grammar"'];

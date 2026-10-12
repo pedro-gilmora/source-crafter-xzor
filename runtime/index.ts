@@ -2,6 +2,8 @@
 // renderer that re-renders one component at a time and patches only what changed.
 
 type Handler = (e: Event) => unknown;
+type Modifier = "preventDefault" | "stopPropagation";
+type Modifiers = Partial<Record<Modifier, boolean>>;
 
 export type VText = { kind: "text"; text: string; dom?: Text };
 
@@ -10,6 +12,7 @@ export type VElement = {
   tag: string;
   attrs: Record<string, string>;
   events: Record<string, Handler>;
+  modifiers: Record<string, Modifiers>;
   children: VNode[];
   key?: unknown;
   ref?: (el: Element) => void;
@@ -37,7 +40,10 @@ type Ctor<C extends ComponentBase> = new () => C;
 type Mounted = { tree: VNode[]; anchor: Comment };
 
 const mountedComponents = new WeakMap<ComponentBase, Mounted>();
-const elementHandlers = new WeakMap<Element, { owner: ComponentBase; events: Record<string, Handler>; listening: Set<string> }>();
+const elementHandlers = new WeakMap<
+  Element,
+  { owner: ComponentBase; events: Record<string, Handler>; modifiers: Record<string, Modifiers>; listening: Set<string> }
+>();
 
 const FRAGMENT: unique symbol = Symbol("zor.fragment");
 
@@ -134,7 +140,7 @@ export class RenderTreeBuilder {
   }
 
   openElement(tag: string): void {
-    const el: VElement = { kind: "element", tag, attrs: {}, events: {}, children: [] };
+    const el: VElement = { kind: "element", tag, attrs: {}, events: {}, modifiers: {}, children: [] };
     this.#append(el);
     this.#open.push(el);
   }
@@ -154,8 +160,20 @@ export class RenderTreeBuilder {
   }
 
   addAttribute(name: string, value: unknown): void {
-    if (value === false || value == null) return;
-    this.#current().attrs[name] = value === true ? "" : String(value);
+    const el = this.#current();
+    if (value === false || value == null) delete el.attrs[name];
+    else el.attrs[name] = value === true ? "" : String(value);
+  }
+
+  /** `@attributes`: each entry is added in order, so later attributes override it. */
+  addAttributes(attrs: Record<string, unknown> | null | undefined): void {
+    for (const [name, value] of Object.entries(attrs ?? {})) this.addAttribute(name, value);
+  }
+
+  /** `@onclick:preventDefault` and `@onclick:stopPropagation`, with or without a handler. */
+  addEventModifier(event: string, modifier: Modifier, enabled: boolean): void {
+    const el = this.#current();
+    (el.modifiers[event] ??= {})[modifier] = enabled;
   }
 
   /** `@key`: list diffs match this element by key instead of position. */
@@ -308,12 +326,18 @@ function propsChanged(o: VComponent, n: VComponent): boolean {
   return false;
 }
 
+const eventNames = (v: VElement) => new Set([...Object.keys(v.events), ...Object.keys(v.modifiers)]);
+
 function listen(el: Element, event: string): void {
   elementHandlers.get(el)!.listening.add(event);
   el.addEventListener(event, (e) => {
     const record = elementHandlers.get(el);
-    const handler = record?.events[event];
-    if (!record || !handler) return;
+    if (!record) return;
+    const mods = record.modifiers[event];
+    if (mods?.preventDefault) e.preventDefault();
+    if (mods?.stopPropagation) e.stopPropagation();
+    const handler = record.events[event];
+    if (!handler) return;
     const result = handler(e);
     update(record.owner);
     if (result instanceof Promise) void result.then(() => update(record.owner));
@@ -328,8 +352,8 @@ function create(v: VNode, owner: ComponentBase): Node[] {
     case "element": {
       const el = document.createElement(v.tag);
       for (const [name, value] of Object.entries(v.attrs)) setAttr(el, name, value);
-      elementHandlers.set(el, { owner, events: v.events, listening: new Set() });
-      for (const event of Object.keys(v.events)) listen(el, event);
+      elementHandlers.set(el, { owner, events: v.events, modifiers: v.modifiers, listening: new Set() });
+      for (const event of eventNames(v)) listen(el, event);
       for (const child of v.children) el.append(...create(child, owner));
       v.dom = el;
       v.ref?.(el);
@@ -404,7 +428,8 @@ function patch(o: VNode, n: VNode, owner: ComponentBase): void {
       }
       const record = elementHandlers.get(el)!;
       record.events = n.events;
-      for (const event of Object.keys(n.events)) if (!record.listening.has(event)) listen(el, event);
+      record.modifiers = n.modifiers;
+      for (const event of eventNames(n)) if (!record.listening.has(event)) listen(el, event);
       patchList(el, old.children, n.children, null, owner);
       n.ref?.(el);
       return;
