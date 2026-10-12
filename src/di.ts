@@ -253,7 +253,12 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     return s.id === promiseId ? checker.getTypeArguments(t)[0] : undefined;
   };
 
-  const isGeneric = (t: Type) => t.isTypeReference() && checker.getTypeArguments(t).length > 0;
+  // Default-lib generics (Map<K, V>, string[]) are global and stay allowed.
+  const isGeneric = (t: Type) => {
+    if (!t.isTypeReference() || checker.getTypeArguments(t).length === 0) return false;
+    const decl = t.getSymbol()?.declarations?.[0];
+    return !!decl && !program.getSourceFileMetadataByPath(decl.path)?.isDefaultLibrary;
+  };
 
   const typeRefs = new Map<number, TypeRef>();
   // Handle paths are canonical (lowercased on Windows); the program's file names keep their case.

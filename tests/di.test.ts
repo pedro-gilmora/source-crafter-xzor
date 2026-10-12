@@ -232,3 +232,28 @@ export class P {}
     { file: "main.ts", at: main.indexOf("Repo<User>>"), message: "generic service types are not supported: Repo<User>" },
   ]);
 });
+
+test("lib generic types are allowed for keyed factories", () => {
+  const main = `import { ServiceProvider, Singleton } from "@zor/runtime";
+export class Repo<T> { item?: T }
+export class User {}
+export class Factories {
+  static counts(): Map<string, number> { return new Map(); }
+  static names(): string[] { return []; }
+  static env(): Record<string, string> { return {}; }
+  static repo(): Repo<User> { return new Repo<User>(); }
+}
+@ServiceProvider()
+@Singleton("counts", Factories.counts)
+@Singleton("names", Factories.names)
+@Singleton("env", Factories.env)
+@Singleton("repo", Factories.repo)
+export class P {}
+`;
+  const out = analyzeTemp({ "main.ts": main });
+  expect(out.errors).toEqual([{ file: "main.ts", at: main.indexOf("Factories.repo)"), message: "generic service types are not supported: Repo<User>" }]);
+  const [counts, names, env] = out.providers[0].registrations;
+  expect(counts.service).toMatchObject({ text: "Map<string, number>", module: null, export: null });
+  expect(names.service).toMatchObject({ module: null, export: null });
+  expect(env.service).toMatchObject({ module: null, export: null });
+});
