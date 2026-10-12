@@ -76,9 +76,9 @@ getAuthServiceAsync(): Promise<AuthService> {
   const v0 = this.tryGetDatabase();
   return (this.#authService$Promise = v0 !== undefined
     ? Promise.resolve((this.#authService = new AuthService(this.clock, v0)))
-    : this.#createAuthService());
+    : this.#authService$create());
 }
-async #createAuthService(): Promise<AuthService> {
+async #authService$create(): Promise<AuthService> {
   const p0 = this.getDatabaseAsync();
   return (this.#authService = new AuthService(this.clock, await p0));
 }
@@ -209,6 +209,7 @@ export default class Counter extends ComponentBase {
 | ZDI06 | Interface-only registration without an implementation or factory. |
 | ZDI07 | `@Mount` on more than one class in a bundle entry, or on a class not implementing `IApplication`. |
 | ZDI08 | A user constructor in a `@code` block that also uses `@inject`. |
+| ZDI10 | Captive dependency: a singleton depends on a scoped service, directly or through transients. |
 
 ## My calls (review these)
 
@@ -217,7 +218,8 @@ export default class Counter extends ComponentBase {
 - **`@inject` resolution:** same rules as constructor parameters. A key equal to the field name wins (`@inject string requestId`), then the type.
 - **Component dispatch:** `createComponent` receives the component class itself (the value `addComponent` already gets) and compares by identity.
 - **Singleton lifetime:** as in SourceCrafter, singletons are `static` fields of the generated provider, shared by every instance. Disposing any root releases them for all; collisions are the app developer's design concern.
-- Getter naming as described above. Getters are public, so the provider is usable from plain TypeScript (`DataServices$[SharedInstance].database`).
+- Getter naming as described above. Getters are public, so the provider is usable from plain TypeScript (`DataServices$[SharedInstance].database`). Private members derive from the getter: `#x`, `#x$Promise` and `#x$create`.
+- Factories must be non-`private` static methods, and service types must not be generic. The analyzer reports both.
 - Component construction is centralized in `Application$.createComponent`. Components never import the application.
 - Language server, v1: `@inject` errors appear in `.tszor` files. Provider graph errors in `.ts` files appear in `zor build` output and on save, but not as live editor squiggles.
 
