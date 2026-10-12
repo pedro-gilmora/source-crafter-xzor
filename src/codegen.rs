@@ -338,6 +338,17 @@ impl Gen<'_> {
                     match &*a.name.text {
                         "@bind" => self.bind_element(el, a, directive("@bind:event"), directive("@bind:after"))?,
                         "@bind:event" | "@bind:after" => {}
+                        "@key" => {
+                            let line = M::lit("__b.setKey(").add(self.directive_expr(a)?).lit_then(");");
+                            self.emit(line);
+                        }
+                        "@ref" => {
+                            let target = self.directive_expr(a)?;
+                            let line = M::lit(&format!("__b.setRef({}, (__e) => {{ ", js_string(&el.name)))
+                                .add(target)
+                                .lit_then(" = __e; });");
+                            self.emit(line);
+                        }
                         _ => self.attribute(a)?,
                     }
                 }
@@ -443,6 +454,14 @@ impl Gen<'_> {
         Ok(())
     }
 
+    /// The expression value of a directive attribute like `@key="x"`.
+    fn directive_expr(&self, a: &Attr) -> Result<M, String> {
+        match &a.value {
+            AttrValue::Expr(e) => Ok(self.expr(e)),
+            _ => Err(format!("{} requires an expression", a.name)),
+        }
+    }
+
     fn attribute(&mut self, a: &Attr) -> Result<(), String> {
         if let Some(event) = a.name.strip_prefix("@on") {
             let AttrValue::Expr(e) = &a.value else {
@@ -483,9 +502,21 @@ impl Gen<'_> {
         }
 
         let mut props: Vec<M> = Vec::new();
+        let mut extra: Vec<M> = Vec::new();
         for a in &el.attrs {
             if type_names.contains(&&*a.name.text) {
                 continue;
+            }
+            match &*a.name.text {
+                "@key" => {
+                    extra.push(M::lit("key: ").add(self.directive_expr(a)?));
+                    continue;
+                }
+                "@ref" => {
+                    extra.push(M::lit("ref: (__c) => { ").add(self.directive_expr(a)?).lit_then(" = __c; }"));
+                    continue;
+                }
+                _ => {}
             }
             if let Some(bound) = a.name.strip_prefix("@bind-") {
                 if bound.contains(':') {
@@ -556,6 +587,15 @@ impl Gen<'_> {
             line = line.lit_then(", {");
             for (i, (_, fill)) in fills.into_iter().enumerate() {
                 line = line.lit_then(if i == 0 { " " } else { ", " }).add(fill);
+            }
+            line = line.lit_then(" }");
+        } else if !extra.is_empty() {
+            line = line.lit_then(", undefined");
+        }
+        if !extra.is_empty() {
+            line = line.lit_then(", {");
+            for (i, x) in extra.into_iter().enumerate() {
+                line = line.lit_then(if i == 0 { " " } else { ", " }).add(x);
             }
             line = line.lit_then(" }");
         }
@@ -1228,6 +1268,17 @@ mod tests {
         assert!(g.code.contains(r#"__b.addComponent(Card, { title: "x" }, { default: () => ComponentBase.fragment((__b) => { __b.openElement("p"); __b.addContent(this.n); __b.closeElement(); }) });"#), "{}", g.code);
         assert!(g.code.contains(r#"__b.addComponent(List<string>, { items: this.xs }, { header: () => ComponentBase.fragment((__b) => { __b.openElement("b"); __b.addText("h"); __b.closeElement(); }), item: (s, i: number = 0) => ComponentBase.fragment((__b) => { __b.addContent(s); __b.addText(" "); __b.addContent(this.n); __b.addText(" "); __b.addContent(i); }) });"#), "{}", g.code);
         assert!(g.code.contains("__b.addComponent(Other, {});"), "{}", g.code);
+    }
+
+    #[test]
+    fn key_and_ref() {
+        let src = "@code { rows = [{ id: 1 }]; input?: HTMLInputElement; child?: Counter; }\n@for (const row of rows) {\n  <li @key=\"row.id\">x</li>\n  <Counter @key=\"row.id\" />\n}\n<input @ref=\"input\" />\n<Counter @ref=\"child\" label=\"a\" />\n<my-el @ref=\"input\" />";
+        let g = gen_with(src, &[("Counter", "@code { label = \"\"; }")]);
+        assert!(g.code.contains("__b.openElement(\"li\");\n      __b.setKey(row.id);"), "{}", g.code);
+        assert!(g.code.contains("__b.addComponent(Counter, {}, undefined, { key: row.id });"), "{}", g.code);
+        assert!(g.code.contains("__b.openElement(\"input\");\n    __b.setRef(\"input\", (__e) => { this.input = __e; });"), "{}", g.code);
+        assert!(g.code.contains("__b.addComponent(Counter, { label: \"a\" }, undefined, { ref: (__c) => { this.child = __c; } });"), "{}", g.code);
+        assert!(g.code.contains("__b.setRef(\"my-el\", (__e) => { this.input = __e; });"), "{}", g.code);
     }
 
     #[test]

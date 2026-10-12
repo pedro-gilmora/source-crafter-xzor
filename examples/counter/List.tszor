@@ -6,6 +6,6 @@
 
 <ul>
   @for (let index = 0; index < items.length; index++) {
-    <li>@slot:item(items[index] as T, index) { @(String(items[index])) }</li>
+    <li @key="items[index]">@slot:item(items[index] as T, index) { @(String(items[index])) }</li>
   }
 </ul>

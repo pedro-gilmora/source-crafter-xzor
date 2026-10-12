@@ -11,17 +11,23 @@ export type VElement = {
   attrs: Record<string, string>;
   events: Record<string, Handler>;
   children: VNode[];
+  key?: unknown;
+  ref?: (el: Element) => void;
   dom?: Element;
 };
 
 /** Output of one `@if`/`@for`/`@switch`; its contents are diffed in isolation. */
 export type VRegion = { kind: "region"; children: VNode[]; anchor?: Comment };
 
+/** A child component; the diff decides whether it keeps its previous instance. */
 export type VComponent = {
   kind: "component";
-  instance: ComponentBase;
-  /** False when the parent passed the same props, so the child can skip re-rendering. */
-  changed: boolean;
+  type: Ctor<ComponentBase>;
+  props: Record<string, unknown>;
+  slots?: object;
+  key?: unknown;
+  ref?: (c: ComponentBase) => void;
+  instance?: ComponentBase;
   mounted?: Mounted;
 };
 
@@ -30,7 +36,6 @@ export type VNode = VText | VElement | VRegion | VComponent;
 type Ctor<C extends ComponentBase> = new () => C;
 type Mounted = { tree: VNode[]; anchor: Comment };
 
-const childInstances = new WeakMap<ComponentBase, ComponentBase[]>();
 const mountedComponents = new WeakMap<ComponentBase, Mounted>();
 const elementHandlers = new WeakMap<Element, { owner: ComponentBase; events: Record<string, Handler>; listening: Set<string> }>();
 
@@ -44,6 +49,13 @@ export type Renderer = RenderFragment;
 
 /** A component event; invoking it re-renders the component that passed it in. */
 export type EventCallback<T = void> = (arg: T) => unknown;
+
+/** The DOM element type for a tag name, as `document.createElement` would return it. */
+export type ElementOf<T extends string> = T extends keyof HTMLElementTagNameMap
+  ? HTMLElementTagNameMap[T]
+  : T extends keyof SVGElementTagNameMap
+    ? SVGElementTagNameMap[T]
+    : HTMLElement;
 
 function isFragment(value: unknown): value is Fragment {
   return typeof value === "function" && FRAGMENT in value;
@@ -68,16 +80,42 @@ export abstract class ComponentBase {
 
   protected abstract buildRenderTree(builder: RenderTreeBuilder): void;
 
+  // Lifecycle, in Blazor's order. `...Async` results re-render the component when they settle.
+  protected onInitialized(): void {}
+  protected onInitializedAsync(): Promise<void> | void {}
+  protected onParametersSet(): void {}
+  protected onParametersSetAsync(): Promise<void> | void {}
+  protected onAfterRender(_firstRender: boolean): void {}
+  protected onAfterRenderAsync(_firstRender: boolean): Promise<void> | void {}
+  protected shouldRender(): boolean {
+    return true;
+  }
+  /** Called when the component leaves the tree. */
+  protected dispose(): void {}
+
   /** Re-renders this component. Event handlers it owns do this automatically. */
   stateHasChanged(): void {
     update(this);
   }
 }
 
+type Hooks = {
+  buildRenderTree(b: RenderTreeBuilder): void;
+  onInitialized(): void;
+  onInitializedAsync(): Promise<void> | void;
+  onParametersSet(): void;
+  onParametersSetAsync(): Promise<void> | void;
+  onAfterRender(first: boolean): void;
+  onAfterRenderAsync(first: boolean): Promise<void> | void;
+  shouldRender(): boolean;
+  dispose(): void;
+};
+
+const hooks = (c: ComponentBase) => c as unknown as Hooks;
+
 export class RenderTreeBuilder {
   readonly #root: VNode[] = [];
   readonly #open: (VElement | VRegion)[] = [];
-  #childIndex = 0;
 
   constructor(private readonly owner: ComponentBase) {}
 
@@ -120,6 +158,16 @@ export class RenderTreeBuilder {
     this.#current().attrs[name] = value === true ? "" : String(value);
   }
 
+  /** `@key`: list diffs match this element by key instead of position. */
+  setKey(key: unknown): void {
+    this.#current().key = key;
+  }
+
+  /** `@ref`: receives the DOM element (typed from its tag) after each render. */
+  setRef<T extends string>(_tag: T, ref: (el: ElementOf<T>) => void): void {
+    this.#current().ref = ref as (el: Element) => void;
+  }
+
   addEventHandler<K extends keyof HTMLElementEventMap>(
     event: K,
     handler: (e: HTMLElementEventMap[K]) => unknown,
@@ -145,29 +193,20 @@ export class RenderTreeBuilder {
     this.#append({ kind: "text", text: String(value) });
   }
 
-  addComponent<C extends ComponentBase>(type: Ctor<C>, props: Partial<C>, slots?: C["slots"]): void {
-    const children = childInstances.get(this.owner) ?? [];
-    childInstances.set(this.owner, children);
-    const index = this.#childIndex++;
-    let instance = children[index];
-    let changed = false;
-    if (!(instance instanceof type)) {
-      instance = new type();
-      children[index] = instance;
-      changed = true;
-    }
-    const current = instance as unknown as Record<string, unknown>;
-    for (const [key, value] of Object.entries(props)) {
-      // Like Blazor, objects may have been mutated, so they always count as changed.
-      if (!Object.is(current[key], value) || (typeof value === "object" && value !== null)) changed = true;
-    }
-    Object.assign(instance, props);
-    if (slots) {
-      // Slot lambdas are recreated on every parent render, so the child always refreshes.
-      instance.slots = slots;
-      changed = true;
-    }
-    this.#append({ kind: "component", instance, changed });
+  addComponent<C extends ComponentBase>(
+    type: Ctor<C>,
+    props: Partial<C>,
+    slots?: C["slots"],
+    extra?: { key?: unknown; ref?: (c: C) => void },
+  ): void {
+    this.#append({
+      kind: "component",
+      type,
+      props: props as Record<string, unknown>,
+      slots,
+      key: extra?.key,
+      ref: extra?.ref as ((c: ComponentBase) => void) | undefined,
+    });
   }
 
   /** Wraps a handler passed to a child as an EventCallback (re-renders this owner). */
@@ -197,25 +236,76 @@ function removeAttr(el: Element, name: string): void {
 
 function render(component: ComponentBase): VNode[] {
   const builder = new RenderTreeBuilder(component);
-  (component as unknown as { buildRenderTree(b: RenderTreeBuilder): void }).buildRenderTree(builder);
+  hooks(component).buildRenderTree(builder);
   return builder.nodes;
 }
 
+// After-render callbacks wait until the outermost render pass has touched the DOM.
+let depth = 0;
+const afterRender: (() => void)[] = [];
+
+function batch(fn: () => void): void {
+  depth++;
+  try {
+    fn();
+  } finally {
+    if (--depth === 0) for (const done of afterRender.splice(0)) done();
+  }
+}
+
+function settle(component: ComponentBase, result: Promise<void> | void): void {
+  if (result instanceof Promise) void result.then(() => update(component));
+}
+
+function parametersSet(component: ComponentBase): void {
+  hooks(component).onParametersSet();
+  settle(component, hooks(component).onParametersSetAsync());
+}
+
+function queueAfterRender(component: ComponentBase, first: boolean): void {
+  afterRender.push(() => {
+    hooks(component).onAfterRender(first);
+    void hooks(component).onAfterRenderAsync(first);
+  });
+}
+
 function update(component: ComponentBase): void {
-  const m = mountedComponents.get(component);
-  const parent = m?.anchor.parentNode;
-  if (!m || !parent) return;
-  const next = render(component);
-  patchList(parent, m.tree, next, m.anchor, component);
-  m.tree = next;
+  batch(() => {
+    const m = mountedComponents.get(component);
+    const parent = m?.anchor.parentNode;
+    if (!m || !parent || !hooks(component).shouldRender()) return;
+    const next = render(component);
+    patchList(parent, m.tree, next, m.anchor, component);
+    m.tree = next;
+    queueAfterRender(component, false);
+  });
 }
 
 function mountComponent(component: ComponentBase): { nodes: Node[]; mounted: Mounted } {
+  hooks(component).onInitialized();
+  settle(component, hooks(component).onInitializedAsync());
+  parametersSet(component);
   const tree = render(component);
   const mounted: Mounted = { tree, anchor: document.createComment("") };
   mountedComponents.set(component, mounted);
   const nodes = tree.flatMap((v) => create(v, component));
+  queueAfterRender(component, true);
   return { nodes: [...nodes, mounted.anchor], mounted };
+}
+
+function applyProps(instance: ComponentBase, v: VComponent): void {
+  Object.assign(instance, v.props);
+  if (v.slots) instance.slots = v.slots;
+}
+
+function propsChanged(o: VComponent, n: VComponent): boolean {
+  // Slot lambdas are recreated on every parent render, so a child with slots always refreshes.
+  if (n.slots) return true;
+  for (const [key, value] of Object.entries(n.props)) {
+    // Like Blazor, objects may have been mutated, so they always count as changed.
+    if (!Object.is(o.props[key], value) || (typeof value === "object" && value !== null)) return true;
+  }
+  return false;
 }
 
 function listen(el: Element, event: string): void {
@@ -242,13 +332,17 @@ function create(v: VNode, owner: ComponentBase): Node[] {
       for (const event of Object.keys(v.events)) listen(el, event);
       for (const child of v.children) el.append(...create(child, owner));
       v.dom = el;
+      v.ref?.(el);
       return [el];
     }
     case "region":
       v.anchor = document.createComment("");
       return [...v.children.flatMap((c) => create(c, owner)), v.anchor];
     case "component": {
-      const { nodes, mounted } = mountComponent(v.instance);
+      const instance = (v.instance = new v.type());
+      applyProps(instance, v);
+      v.ref?.(instance);
+      const { nodes, mounted } = mountComponent(instance);
       v.mounted = mounted;
       return nodes;
     }
@@ -269,9 +363,28 @@ function nodesOf(v: VNode): Node[] {
 
 function same(o: VNode, n: VNode): boolean {
   if (o.kind !== n.kind) return false;
-  if (o.kind === "element") return o.tag === (n as VElement).tag;
-  if (o.kind === "component") return o.instance === (n as VComponent).instance;
+  if (o.kind === "element") return o.tag === (n as VElement).tag && o.key === (n as VElement).key;
+  if (o.kind === "component") return o.type === (n as VComponent).type && o.key === (n as VComponent).key;
   return true;
+}
+
+function dispose(v: VNode): void {
+  switch (v.kind) {
+    case "element":
+    case "region":
+      v.children.forEach(dispose);
+      return;
+    case "component":
+      v.mounted?.tree.forEach(dispose);
+      mountedComponents.delete(v.instance!);
+      hooks(v.instance!).dispose();
+      return;
+  }
+}
+
+function remove(parent: Node, v: VNode): void {
+  for (const node of nodesOf(v)) parent.removeChild(node);
+  dispose(v);
 }
 
 function patch(o: VNode, n: VNode, owner: ComponentBase): void {
@@ -293,6 +406,7 @@ function patch(o: VNode, n: VNode, owner: ComponentBase): void {
       record.events = n.events;
       for (const event of Object.keys(n.events)) if (!record.listening.has(event)) listen(el, event);
       patchList(el, old.children, n.children, null, owner);
+      n.ref?.(el);
       return;
     }
     case "region": {
@@ -300,15 +414,30 @@ function patch(o: VNode, n: VNode, owner: ComponentBase): void {
       patchList(anchor.parentNode!, (o as VRegion).children, n.children, anchor, owner);
       return;
     }
-    case "component":
-      n.mounted = (o as VComponent).mounted;
-      if (n.changed) update(n.instance);
+    case "component": {
+      const old = o as VComponent;
+      const instance = (n.instance = old.instance!);
+      n.mounted = old.mounted;
+      const changed = propsChanged(old, n);
+      applyProps(instance, n);
+      n.ref?.(instance);
+      if (changed) {
+        parametersSet(instance);
+        update(instance);
+      }
       return;
+    }
   }
 }
 
-/** Positional diff; regions keep variable-length blocks from misaligning their siblings. */
+const keyOf = (v: VNode | undefined) => (v && (v.kind === "element" || v.kind === "component") ? v.key : undefined);
+
 function patchList(parent: Node, old: VNode[], next: VNode[], end: Node | null, owner: ComponentBase): void {
+  if (old.some((v) => keyOf(v) != null) || next.some((v) => keyOf(v) != null)) {
+    patchKeyed(parent, old, next, end, owner);
+    return;
+  }
+  // Positional diff; regions keep variable-length blocks from misaligning their siblings.
   for (let i = 0; i < next.length; i++) {
     const n = next[i]!;
     const o = old[i];
@@ -318,13 +447,47 @@ function patchList(parent: Node, old: VNode[], next: VNode[], end: Node | null, 
     }
     const ref = o ? nodesOf(o)[0]! : end;
     for (const node of create(n, owner)) parent.insertBefore(node, ref);
-    if (o) for (const node of nodesOf(o)) parent.removeChild(node);
+    if (o) remove(parent, o);
   }
-  for (const o of old.slice(next.length)) for (const node of nodesOf(o)) parent.removeChild(node);
+  for (const o of old.slice(next.length)) remove(parent, o);
+}
+
+/** `@key` diff: keyed nodes are matched by key and moved; unkeyed ones by position. */
+function patchKeyed(parent: Node, old: VNode[], next: VNode[], end: Node | null, owner: ComponentBase): void {
+  const byKey = new Map<unknown, VNode>();
+  for (const o of old) if (keyOf(o) != null) byKey.set(keyOf(o), o);
+  const used = new Set<VNode>();
+  const matches = next.map((n, i) => {
+    const key = keyOf(n);
+    const o = key != null ? byKey.get(key) : keyOf(old[i]) == null ? old[i] : undefined;
+    if (o && !used.has(o) && same(o, n)) {
+      used.add(o);
+      return o;
+    }
+    return undefined;
+  });
+  for (const o of old) if (!used.has(o)) remove(parent, o);
+  let ref = end;
+  for (let i = next.length - 1; i >= 0; i--) {
+    const n = next[i]!;
+    const o = matches[i];
+    let nodes: Node[];
+    if (o) {
+      patch(o, n, owner);
+      nodes = nodesOf(n);
+    } else {
+      nodes = create(n, owner);
+    }
+    for (let j = nodes.length - 1; j >= 0; j--) {
+      const node = nodes[j]!;
+      if (node.parentNode !== parent || node.nextSibling !== ref) parent.insertBefore(node, ref);
+      ref = node;
+    }
+  }
 }
 
 export function mount<C extends ComponentBase>(type: Ctor<C>, host: Element): C {
   const root = new type();
-  host.replaceChildren(...mountComponent(root).nodes);
+  batch(() => host.replaceChildren(...mountComponent(root).nodes));
   return root;
 }

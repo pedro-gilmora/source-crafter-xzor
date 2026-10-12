@@ -30,6 +30,9 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `onChange?: EventCallback<T>` | A prop the parent sets with `onChange="handler"`. Calling it re-renders the parent. |
 | `@bind="x"`, `@bind:event="oninput"`, `@bind:after="save"` | Two-way binding on inputs. Checkboxes and radios bind `checked`, and numbers stay numbers. |
 | `@bind-value="x"` | Two-way binding on a component: passes `value` and a `valueChanged` callback. |
+| `@key="expr"` | On an element or component in a list: the diff matches it by key, moving DOM nodes and component state when items reorder. |
+| `@ref="field"` | On an element, assigns the DOM element, typed from the tag (`<input>` gives `HTMLInputElement`). On a component, assigns the instance. Updated after each render. |
+| `protected override onInitialized()` and similar | Lifecycle methods, in Blazor's order: `onInitialized`/`onInitializedAsync` once, `onParametersSet`/`onParametersSetAsync` on mount and whenever props change, then render, then `onAfterRender(first)`/`onAfterRenderAsync(first)`. `shouldRender()` can veto re-renders, and `dispose()` runs when the component leaves the tree. A settled `...Async` promise re-renders the component. |
 
 In template expressions, free identifiers that name `@code` members are rewritten to `this.x`. Loop variables shadow members.
 
@@ -102,11 +105,11 @@ The rules:
 - The new render tree is diffed against the previous one by position, and only changed text, attributes, handlers and nodes are touched. DOM nodes keep their identity, so focus and input state survive.
 - Each `@if`, `@for` and `@switch` produces a region, marked by a comment anchor. Its variable output is diffed in isolation, so it never shifts static siblings.
 - A child component re-renders only if a prop changed (`Object.is`). Object props always count as changed, as in Blazor.
+- Component identity comes from the diff, as in Blazor: a child keeps its instance and state while it stays at the same position with the same type and `@key`. Otherwise it is disposed and a new instance is created.
+- Lists with `@key` use a keyed diff: matched nodes are patched and moved, and unmatched ones are removed or created.
 
 ## Roadmap
 
 1. Rename and find references, through the same mappings.
-2. `@key` for loop items (today items are matched by index), and `@ref`.
-3. Lifecycle hooks (`onInitialized`, `onParametersSet`, async).
-4. Template syntax: `@* *@`, `@{ }`, `@while`, `<text>`/`@:`, `@attributes`, event modifiers, `@inherits`/`@implements`/`@attribute`.
-5. Watch mode and incremental compilation.
+2. Template syntax: `@* *@`, `@{ }`, `@while`, `<text>`/`@:`, `@attributes`, event modifiers, `@inherits`/`@implements`/`@attribute`.
+3. Watch mode and incremental compilation.

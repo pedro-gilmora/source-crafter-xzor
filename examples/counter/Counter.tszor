@@ -6,6 +6,10 @@
   count: number = 0;
   onChange?: EventCallback<number>;
 
+  protected override onInitialized(): void {
+    this.count = 0;
+  }
+
   increment() {
     this.count += this.step;
     this.onChange?.(this.count);

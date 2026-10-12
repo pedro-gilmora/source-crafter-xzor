@@ -250,6 +250,13 @@ const BIND_ATTRS: &[(&str, &str)] = &[
     ("@bind", "Two-way binding (value or checked)"),
     ("@bind:event", "Event that updates the binding, e.g. oninput"),
     ("@bind:after", "Handler to run after the bound value changes"),
+    ("@key", "Match this item by key when the list changes"),
+    ("@ref", "Assign the DOM element to a field"),
+];
+
+const COMPONENT_DIRECTIVES: &[(&str, &str)] = &[
+    ("@key", "Match this component by key when the list changes"),
+    ("@ref", "Assign the component instance to a field"),
 ];
 
 fn matches_prefix(label: &str, prefix: &str) -> bool {
@@ -327,6 +334,17 @@ pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Com
             .collect(),
         Context::Attr { tag, prefix, .. } => {
             if let Some(c) = components.iter().find(|c| c.name == tag) {
+                let directives = COMPONENT_DIRECTIVES
+                    .iter()
+                    .filter(|(label, _)| prefix.starts_with('@') && matches_prefix(label, &prefix))
+                    .map(|(label, detail)| Completion {
+                        label: label.to_string(),
+                        kind: KIND_KEYWORD,
+                        detail: detail.to_string(),
+                        insert: format!("{label}=\"$1\""),
+                        snippet: true,
+                        extra_edit: None,
+                    });
                 return c
                     .props
                     .iter()
@@ -339,6 +357,7 @@ pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Com
                         snippet: true,
                         extra_edit: None,
                     })
+                    .chain(directives)
                     .collect();
             }
             DOM_EVENTS
@@ -405,6 +424,16 @@ mod tests {
 
         let doc = "<Card>@slot footer { x }</Card>";
         assert_eq!(symbol_at(doc, 14).map(|s| s.0), Some(Symbol::Slot { component: "Card".into(), name: "footer".into() }));
+    }
+
+    #[test]
+    fn key_and_ref_directives_complete() {
+        let labels = |doc: &str, comps: &[Component]| -> Vec<String> {
+            completions(doc, doc.len(), Path::new("/app/A.tszor"), comps).into_iter().map(|c| c.label).collect()
+        };
+        assert_eq!(labels("<li @k", &[]), ["@key"]);
+        assert_eq!(labels("<input @r", &[]), ["@ref"]);
+        assert_eq!(labels("<Counter @", &[counter()]), ["@key", "@ref"]);
     }
 
     #[test]

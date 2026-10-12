@@ -10,7 +10,17 @@
   total = 0;
   steps: string[] = ["parse .tszor", "generate .ts", "type check", "bundle .js"];
   view: "steps" | "summary" | "counter" = "steps";
+  nameInput?: HTMLInputElement;
+  clicks?: Counter;
   summary: RenderFragment = <p>@this.steps.length steps, compiled ahead of time.</p>;
+
+  protected override onAfterRender(firstRender: boolean): void {
+    if (firstRender) this.nameInput?.focus();
+  }
+
+  reverse() {
+    this.steps = [...this.steps].reverse();
+  }
 
   panel(view: App["view"]): RenderFragment {
     switch (view) {
@@ -30,11 +40,11 @@
 
 <main>
   <h1>@title</h1>
-  <Counter label="Clicks" onChange="(n) => total = n" />
+  <Counter label="Clicks" onChange="(n) => total = n" @ref="clicks" />
   <Counter label="Fives" step="5" />
   <Card title="Binding">
-    <input @bind="name" @bind:event="oninput" />
-    <p>Hello, @name! First counter total: @total</p>
+    <input @ref="nameInput" @bind="name" @bind:event="oninput" />
+    <p>Hello, @name! First counter total: @total (via @@ref: @(clicks?.count ?? 0))</p>
   </Card>
   <Card>
     @slot header { <em>Steps as a templated list</em> }
@@ -45,6 +55,7 @@
     }
   </Card>
   <nav>
+    <button @onclick="reverse">reverse steps</button>
     <button @onclick="() => view = 'steps'">steps</button>
     <button @onclick="() => view = 'summary'">summary</button>
     <button @onclick="() => view = 'counter'">counter</button>
