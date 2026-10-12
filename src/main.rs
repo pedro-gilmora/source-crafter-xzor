@@ -43,8 +43,12 @@ fn run(args: &[String]) -> Result<(), String> {
                 for unit in &units {
                     println!("{}", unit.out.display());
                 }
+                // `compile` has no entry option, so a @Mount outside main.ts is not an error here.
                 if let Err(e) = build::di(&path, "main.ts", &units) {
-                    eprintln!("{e}");
+                    let kept: Vec<&str> = e.lines().filter(|l| !l.contains("error ZDI07: @Mount must be declared in the entry module")).collect();
+                    if !kept.is_empty() {
+                        eprintln!("{}", kept.join("\n"));
+                    }
                 }
             }
         }
