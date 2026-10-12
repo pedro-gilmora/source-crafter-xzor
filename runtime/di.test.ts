@@ -1,0 +1,264 @@
+import { expect, test } from "bun:test";
+import {
+  ComponentBase,
+  type IApplication,
+  type RenderFragment,
+  type RenderTreeBuilder,
+  Import,
+  Mount,
+  Scoped,
+  ServiceProvider,
+  SharedInstance,
+  Singleton,
+  Transient,
+  mount,
+} from "./index";
+
+// Written the way zor emits components that take injected services.
+
+class Hello extends ComponentBase {
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("p");
+    b.addText("hello");
+    b.closeElement();
+  }
+}
+
+class Needs extends ComponentBase {
+  static readonly inject = ["dep"] as const;
+  constructor(readonly dep: string) {
+    super();
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("b");
+    b.addContent(this.dep);
+    b.closeElement();
+  }
+}
+
+class Holder extends ComponentBase {
+  declare slots: { default?: () => RenderFragment };
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("div");
+    b.addContent(this.slots.default?.() ?? null);
+    b.closeElement();
+  }
+}
+
+class Middle extends ComponentBase {
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addComponent(Needs, {});
+  }
+}
+
+class Tree extends ComponentBase {
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addComponent(Middle, {});
+    b.addComponent(Holder, {}, {
+      default: () => ComponentBase.fragment((__b) => {
+        __b.addComponent(Needs, {});
+      }),
+    });
+  }
+}
+
+const host = () => document.createElement("div");
+// Components keep an empty anchor comment after their nodes; compare markup without them.
+const html = (el: Element) => el.innerHTML.replaceAll("<!---->", "");
+
+test("mount accepts an element id", () => {
+  const el = document.createElement("div");
+  el.id = "app-by-id";
+  document.body.append(el);
+  mount(Hello, "app-by-id");
+  expect(html(el)).toBe("<p>hello</p>");
+  el.remove();
+});
+
+test("mount accepts a selector", () => {
+  const root = document.createElement("div");
+  root.id = "root";
+  root.innerHTML = '<div class="slot"></div>';
+  document.body.append(root);
+  mount(Hello, "#root .slot");
+  expect(html(root.querySelector(".slot")!)).toBe("<p>hello</p>");
+  root.remove();
+});
+
+test("mount throws when the target is missing", () => {
+  expect(() => mount(Hello, "nope")).toThrow('zor: mount target "nope" not found');
+});
+
+test("app builds injected components, nested and in slots", () => {
+  const app: IApplication = {
+    createComponent: (type) => (type === Needs ? new Needs("svc") : undefined),
+  };
+  const el = host();
+  mount(Tree, el, app);
+  expect(Array.from(el.querySelectorAll("b"), (b) => b.textContent)).toEqual(["svc", "svc"]);
+  expect(el.querySelector("div b")).not.toBeNull();
+});
+
+test("onStarted runs after the first render", () => {
+  const seen: string[] = [];
+  const el = host();
+  const app: IApplication = { onStarted: () => void seen.push(html(el)) };
+  mount(Hello, el, app);
+  expect(seen).toEqual(["<p>hello</p>"]);
+});
+
+test("injected component without an app throws", () => {
+  expect(() => mount(Needs, host())).toThrow("zor: Needs needs injected services (dep) but has no application");
+});
+
+test("decorators are no-ops", () => {
+  class Impl {}
+  @ServiceProvider()
+  @Mount(Hello, "app")
+  @Import(Impl)
+  @Singleton(Impl)
+  @Scoped("scoped", () => 1)
+  @Transient("transient", async () => 2)
+  class Providers {
+    value = 7;
+  }
+  expect(new Providers().value).toBe(7);
+  expect(typeof SharedInstance).toBe("symbol");
+});
+
+class Late extends ComponentBase {
+  show = true;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("i");
+    b.addText("before");
+    b.closeElement();
+    b.openRegion();
+    if (this.show) b.addComponent(Needs, {});
+    b.closeRegion();
+    b.openElement("u");
+    b.addText("after");
+    b.closeElement();
+  }
+}
+
+test("async component fills its place when it arrives", async () => {
+  const arrival = Promise.resolve(new Needs("late"));
+  const el = host();
+  mount(Late, el, { createComponent: (type) => (type === Needs ? arrival : undefined) });
+  expect(html(el)).toBe("<i>before</i><u>after</u>");
+  await arrival;
+  expect(html(el)).toBe("<i>before</i><b>late</b><u>after</u>");
+});
+
+test("async component removed before arrival is disposed", async () => {
+  const log: string[] = [];
+  class Tracked extends Needs {
+    protected override dispose(): void {
+      log.push("hook");
+    }
+    [Symbol.dispose](): void {
+      log.push("dispose");
+    }
+  }
+  let resolve!: (c: ComponentBase) => void;
+  const arrival = new Promise<ComponentBase>((r) => (resolve = r));
+  const el = host();
+  const page = mount(Late, el, { createComponent: (type) => (type === Needs ? arrival : undefined) });
+  page.show = false;
+  page.stateHasChanged();
+  resolve(new Tracked("gone"));
+  await arrival;
+  expect(log).toEqual(["hook", "dispose"]);
+  expect(html(el)).toBe("<i>before</i><u>after</u>");
+});
+
+test("async component keeps the latest props and lifecycle when it arrives", async () => {
+  const log: string[] = [];
+  class Label extends ComponentBase {
+    text = "";
+    protected override onAfterRender(first: boolean): void {
+      log.push(`after ${this.text} ${first}`);
+    }
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addContent(this.text);
+    }
+  }
+  class Outer extends ComponentBase {
+    text = "one";
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addComponent(Label, { text: this.text });
+    }
+  }
+  let resolve!: (c: ComponentBase) => void;
+  const arrival = new Promise<ComponentBase>((r) => (resolve = r));
+  const el = host();
+  const outer = mount(Outer, el, { createComponent: (type) => (type === Label ? arrival : undefined) });
+  outer.text = "two";
+  outer.stateHasChanged();
+  resolve(new Label());
+  await arrival;
+  expect(el.textContent).toBe("two");
+  expect(log).toEqual(["after two true"]);
+  outer.text = "three";
+  outer.stateHasChanged();
+  expect(el.textContent).toBe("three");
+});
+
+test("rejected async component leaves its place empty and surfaces the error", async () => {
+  const failure = new Error("boom");
+  const arrival = Promise.reject<ComponentBase>(failure);
+  const el = host();
+  // The runtime rethrows from a microtask; capture it instead of failing the test runner.
+  const original = globalThis.queueMicrotask;
+  const thrown: unknown[] = [];
+  globalThis.queueMicrotask = (fn) =>
+    original(() => {
+      try {
+        fn();
+      } catch (err) {
+        thrown.push(err);
+      }
+    });
+  try {
+    mount(Late, el, { createComponent: (type) => (type === Needs ? arrival : undefined) });
+    await arrival.catch(() => {});
+    await Promise.resolve();
+  } finally {
+    globalThis.queueMicrotask = original;
+  }
+  expect(thrown).toEqual([failure]);
+  expect(html(el)).toBe("<i>before</i><u>after</u>");
+});
+
+test("components implementing Disposable are disposed on removal", () => {
+  const log: string[] = [];
+  class Both extends ComponentBase {
+    protected override dispose(): void {
+      log.push("hook");
+    }
+    [Symbol.dispose](): void {
+      log.push("dispose");
+    }
+    [Symbol.asyncDispose](): Promise<void> {
+      log.push("asyncDispose");
+      return Promise.resolve();
+    }
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addText("x");
+    }
+  }
+  class Switch extends ComponentBase {
+    show = true;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openRegion();
+      if (this.show) b.addComponent(Both, {});
+      b.closeRegion();
+    }
+  }
+  const page = mount(Switch, host());
+  page.show = false;
+  page.stateHasChanged();
+  expect(log).toEqual(["hook", "dispose", "asyncDispose"]);
+  page.stateHasChanged();
+  expect(log).toHaveLength(3);
+});
