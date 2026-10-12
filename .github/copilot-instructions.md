@@ -24,8 +24,9 @@ Before any task, check whether a skill applies and follow it:
 
 - Memory and performance first: generated code and the runtime allocate no more than hand-written code would. Prefer fields on existing objects over `WeakMap`s, wrappers or extra closures.
 - Zero Rust dependencies so far. The local GNU toolchain has no `dlltool`, so crates that depend on `windows-sys` (clap, etc.) fail to build. Avoid them.
-- Pipeline: `parser.rs` (AST with `Src` spans, plus token spans) → `codegen.rs` (TypeScript class with `buildRenderTree`, plus source `Mapping`s) → `build.rs` (writes `<project>/.zor/*.tszor.ts`, runs the tsc check, then `src/bundle.ts` via Bun).
+- Pipeline: `parser.rs` (AST with `Src` spans, plus token spans) → `codegen.rs` (TypeScript class with `buildRenderTree`, plus source `Mapping`s) → `build.rs` (writes `<project>/.zor/*.tszor.ts`, runs DI analysis (`src/di.ts` → `src/di/` → `.zor/<entry>` and `.zor/**/*.provider.ts`), runs the tsc check, then `src/bundle.ts` via Bun).
 - `zor lsp` (`src/lsp/`): component features live in `features.rs`, and TypeScript regions are proxied to TypeScript 7's `tsc --lsp --stdio` through the mappings. JSON is hand-written in `json.rs`.
-- Project tsconfigs need `"rootDirs": [".", ".zor"]` and `".zor/**/*.ts"` in `include`.
+- Project tsconfigs need `"rootDirs": [".", ".zor"]` and `".zor/**/*.ts"` in `include`; DI projects also need `"ESNext.Disposable"` in `lib`.
+- A `.tszor` must not import from `./main`: `rootDirs` resolves it to the generated `.zor/main.ts`.
 - The runtime is `runtime/index.ts`. Keep the generated code and the `RenderTreeBuilder` API in sync.
 - Generated `.zor/` folders are gitignored. Never edit them by hand.
