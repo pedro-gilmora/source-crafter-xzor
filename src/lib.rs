@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod build;
 pub mod codegen;
+pub mod di;
 pub mod highlight;
 pub mod json;
 pub mod lsp;
