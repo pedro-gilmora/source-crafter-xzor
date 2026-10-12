@@ -181,7 +181,7 @@ export default class Counter extends ComponentBase {
 ## Runtime changes (`@zor/runtime`)
 
 - The decorators listed above, as typed no-op functions. Also `SharedInstance` (a `unique symbol`), and `IApplication` with optional hooks (`onStarted?(): void | Promise<void>`).
-- `mount(type, target, app?)`. `target` is an element id, or a CSS selector if it contains `#`, `.` or `[`. When the runtime creates a child component, it calls `app.createComponent(type) ?? new type()`. The result may be a `Promise`, as described in the async section. The application travels down the tree with each mounted component. A component with `@inject` mounted without an application throws an error naming the missing services.
+- `mount(type, target, app?)`. `target` is an element id, or a CSS selector if it contains `#`, `.` or `[`. When the runtime creates a component whose class has a non-empty `static inject`, it calls `app.createComponent(type)`; other components are built with `new type()`. The result may be a `Promise`, as described in the async section. The application travels down the tree with each mounted component. A component with `@inject` mounted without an application throws an error naming the missing services.
 - When a component leaves the tree, the runtime calls its `dispose()` hook, then `[Symbol.dispose]()` or `[Symbol.asyncDispose]()` when the component implements `Disposable` or `AsyncDisposable`.
 - The application is stored on each component's existing mount record, and a pending component promise is stored on its existing `VComponent`. No new maps or wrapper objects.
 
@@ -219,7 +219,7 @@ export default class Counter extends ComponentBase {
 - **Component dispatch:** `createComponent` receives the component class itself (the value `addComponent` already gets) and compares by identity.
 - **Singleton lifetime:** as in SourceCrafter, singletons are `static` fields of the generated provider, shared by every instance. Disposing any root releases them for all; collisions are the app developer's design concern.
 - Getter naming as described above. Getters are public, so the provider is usable from plain TypeScript (`DataServices$[SharedInstance].database`). Private members derive from the getter: `#x`, `#x$Promise` and `#x$create`.
-- Factories must be non-`private` static methods, and service types must not be generic. The analyzer reports both.
+- Factories must be public static methods, and service types must not be generic. The analyzer reports both.
 - Component construction is centralized in `Application$.createComponent`. Components never import the application.
 - Language server, v1: `@inject` errors appear in `.tszor` files. Provider graph errors in `.ts` files appear in `zor build` output and on save, but not as live editor squiggles.
 
