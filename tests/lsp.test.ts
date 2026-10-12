@@ -260,3 +260,30 @@ test("TypeScript features keep working while the template has a syntax error", a
   expect(hover.range.start).toEqual(pos(text, "+@step", 2));
   notify("textDocument/didChange", { textDocument: { uri, version: 21 }, contentChanges: [{ text: counterText }] });
 }, 20000);
+
+test("@inject of an unprovided type reports ZDI04 on save, and clears when fixed", async () => {
+  const diCounter = join(repo, "tests", "fixtures", "lsp-di", "Counter.tszor");
+  const good = await Bun.file(diCounter).text();
+  const bad = good.replace("@inject Database db", "@inject Missing m");
+  const uri = uriOf(diCounter);
+  const save = () => notify("textDocument/didSave", { textDocument: { uri } });
+  const zdi = () => diagnostics.get(uri)?.find((d) => String(d.message).includes("ZDI04"));
+  try {
+    await Bun.write(diCounter, bad);
+    notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: bad } });
+    save();
+    const error = await waitFor(zdi, 30000);
+    const start = pos(bad, "@inject Missing", 8);
+    expect(error.range).toEqual({ start, end: { line: start.line, character: start.character + "Missing".length } });
+    expect(error.severity).toBe(1);
+    expect(error.source).toBe("zor");
+    expect(error.code).toBe("ZDI04");
+
+    await Bun.write(diCounter, good);
+    notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: good }] });
+    save();
+    await waitFor(() => (diagnostics.get(uri) && !zdi() ? true : undefined), 30000);
+  } finally {
+    await Bun.write(diCounter, good);
+  }
+}, 60000);

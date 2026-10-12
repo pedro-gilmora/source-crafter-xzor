@@ -3,7 +3,7 @@
 
 use super::features::{self, Context, Symbol};
 use super::{offset_at, path_to_uri, position_at, read_message, same_path, uri_to_path, write_message};
-use crate::build::{compile_all, find_sources, output_path, project_root};
+use crate::build::{DiFailure, compile_all, declares_provider, di_checked, find_sources, in_project, inject_diags, output_path, project_root};
 use crate::codegen::Generated;
 use crate::json::Json;
 use std::collections::HashMap;
@@ -46,6 +46,10 @@ struct Doc {
     version: i64,
     ts_open: bool,
     error: Option<crate::Diagnostic>,
+    /// Last TypeScript diagnostics, mapped to this document.
+    ts: Vec<Json>,
+    /// DI diagnostics from the last save.
+    di: Vec<Json>,
 }
 
 struct Ts {
@@ -179,6 +183,10 @@ fn shift(from: &str, to: &str, off: usize) -> Option<usize> {
 
 fn pos_json(text: &str, off: usize) -> Json {
     let (line, character) = position_at(text, off);
+    Json::obj([("line", line.into()), ("character", character.into())])
+}
+
+fn lsp_pos((line, character): (usize, usize)) -> Json {
     Json::obj([("line", line.into()), ("character", character.into())])
 }
 
@@ -349,7 +357,7 @@ impl Server {
                 let Some(path) = uri_to_path(&uri) else { return Ok(true) };
                 let text = params["textDocument"]["text"].as_str().unwrap_or_default().to_string();
                 let gen_uri = path_to_uri(&output_path(&path));
-                self.docs.insert(uri.clone(), Doc { text, path, gen_uri, compiled: None, version: 0, ts_open: false, error: None });
+                self.docs.insert(uri.clone(), Doc { text, path, gen_uri, compiled: None, version: 0, ts_open: false, error: None, ts: Vec::new(), di: Vec::new() });
                 self.refresh(&uri)?;
             }
             "textDocument/didChange" => {
@@ -359,11 +367,7 @@ impl Server {
                     self.refresh(&uri)?;
                 }
             }
-            "textDocument/didSave" => {
-                if let Some(doc) = self.docs.get(&uri) {
-                    let _ = compile_all(&doc.path);
-                }
-            }
+            "textDocument/didSave" => self.saved(&uri)?,
             "textDocument/didClose" => {
                 if let Some(doc) = self.docs.remove(&uri) {
                     if doc.ts_open {
@@ -423,7 +427,60 @@ impl Server {
         Ok(())
     }
 
-    fn publish(&self, uri: &str, ts_diagnostics: Vec<Json>) -> io::Result<()> {
+    /// On save of a `.tszor` or a provider `.ts`: recompiles the project, runs the DI analysis and
+    /// publishes its `@inject` diagnostics. Provider graph errors in `.ts` files show in `zor build` only.
+    fn saved(&mut self, uri: &str) -> io::Result<()> {
+        let Some(path) = uri_to_path(uri) else { return Ok(()) };
+        let ext = path.extension().and_then(|e| e.to_str());
+        let relevant = match ext {
+            Some("tszor") => true,
+            Some("ts") => std::fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t)),
+            _ => false,
+        };
+        if !relevant || !in_project(&path) {
+            return Ok(());
+        }
+        let root = project_root(&path);
+        let marks = match compile_all(&root) {
+            // The entry check is irrelevant here: only component diagnostics are published.
+            Ok(units) => match di_checked(&root, "main.ts", &units) {
+                Err(DiFailure::Diags(d)) => inject_diags(&root, &d, &units),
+                _ => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        };
+        let uris: Vec<String> = self.docs.keys().cloned().collect();
+        for uri in uris {
+            let doc = self.docs.get_mut(&uri).expect("key from docs");
+            let di: Vec<Json> = marks
+                .iter()
+                .filter(|m| same_path(&m.source, &doc.path))
+                .map(|m| {
+                    Json::obj([
+                        ("range", Json::obj([("start", lsp_pos(m.start)), ("end", lsp_pos(m.end))])),
+                        ("severity", 1usize.into()),
+                        ("source", "zor".into()),
+                        ("code", m.code.into()),
+                        ("message", format!("{}: {}", m.code, m.message).into()),
+                    ])
+                })
+                .collect();
+            if doc.di != di {
+                doc.di = di;
+                self.emit(&uri)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn publish(&mut self, uri: &str, ts_diagnostics: Vec<Json>) -> io::Result<()> {
+        if let Some(doc) = self.docs.get_mut(uri) {
+            doc.ts = ts_diagnostics;
+        }
+        self.emit(uri)
+    }
+
+    fn emit(&self, uri: &str) -> io::Result<()> {
         let Some(doc) = self.docs.get(uri) else { return Ok(()) };
         let mut all = Vec::new();
         if let Some(e) = &doc.error {
@@ -435,7 +492,8 @@ impl Server {
                 ("message", e.message.clone().into()),
             ]));
         }
-        all.extend(ts_diagnostics);
+        all.extend(doc.di.iter().cloned());
+        all.extend(doc.ts.iter().cloned());
         self.notify("textDocument/publishDiagnostics", Json::obj([("uri", uri.into()), ("diagnostics", Json::Arr(all))]))
     }
 

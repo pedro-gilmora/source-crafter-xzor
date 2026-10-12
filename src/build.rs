@@ -204,6 +204,26 @@ const DI_SCRIPT: &str = include_str!("di.ts");
 /// Compile-time DI: analyzes the project's providers, writes the generated providers into `.zor/`, and returns
 /// `.zor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
 pub fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
+    di_checked(root, entry, compiled).map_err(|f| match f {
+        DiFailure::Diags(d) => format_diags(root, &d, compiled, &std::env::current_dir().unwrap_or_default()),
+        DiFailure::Other(e) => e,
+    })
+}
+
+/// Why `di_checked` failed: analyzable diagnostics, or an infrastructure error.
+pub enum DiFailure {
+    Diags(Vec<crate::di::graph::Diag>),
+    Other(String),
+}
+
+impl From<String> for DiFailure {
+    fn from(e: String) -> Self {
+        DiFailure::Other(e)
+    }
+}
+
+/// `di` with its diagnostics left structured.
+pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, DiFailure> {
     let zor = root.join(".zor");
     let files = provider_files(root);
     if files.is_empty() {
@@ -221,8 +241,7 @@ pub fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<Path
     }
     let output = cmd.output().map_err(|e| format!("DI analysis: failed to run bun: {e}"))?;
     let facts = analyzer_facts(output.status.success(), &output.status.to_string(), &output.stdout, &output.stderr)?;
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let resolved = crate::di::graph::resolve(&facts).map_err(|d| format_diags(root, &d, compiled, &cwd))?;
+    let resolved = crate::di::graph::resolve(&facts).map_err(DiFailure::Diags)?;
 
     let entry = entry.replace('\\', "/");
     let entry = entry.strip_prefix("./").unwrap_or(&entry);
@@ -230,7 +249,7 @@ pub fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<Path
     if let Some((file, m)) = mount.filter(|(file, _)| *file != entry) {
         let message = format!("@Mount must be declared in the entry module {entry}");
         let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None };
-        return Err(format_diags(root, &[d], compiled, &cwd));
+        return Err(DiFailure::Diags(vec![d]));
     }
     let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
     let mut written = Vec::with_capacity(resolved.len());
@@ -274,16 +293,43 @@ fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether a `.ts` source declares `@ServiceProvider` or `@Mount`.
+pub fn declares_provider(text: &str) -> bool {
+    text.lines().map(str::trim_start).any(|l| l.starts_with("@ServiceProvider(") || l.starts_with("@Mount("))
+}
+
 /// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Mount`.
 fn provider_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if root.is_dir() {
         let _ = walk(root, &|n| n.ends_with(".ts") && !n.ends_with(".d.ts"), &mut files);
     }
-    let declares = |t: &str| t.lines().map(str::trim_start).any(|l| l.starts_with("@ServiceProvider(") || l.starts_with("@Mount("));
-    files.retain(|p| fs::read_to_string(p).is_ok_and(|t| declares(&t)));
+    files.retain(|p| fs::read_to_string(p).is_ok_and(|t| declares_provider(&t)));
     files.iter_mut().for_each(|p| *p = p.strip_prefix(root).map_or_else(|_| p.clone(), Path::to_path_buf));
     files
+}
+
+/// A DI diagnostic on a component's `@inject` type: LSP positions (0-based line, UTF-16 column).
+pub struct InjectDiag {
+    pub source: PathBuf,
+    pub start: (usize, usize),
+    pub end: (usize, usize),
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// The component diagnostics among `diags` (ZDI04/ZDI05), located at the `@inject` type.
+pub fn inject_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled]) -> Vec<InjectDiag> {
+    let mut out = Vec::new();
+    for d in diags {
+        let Some(name) = &d.inject else { continue };
+        let path = normalize(&root.join(&d.file));
+        let Some(unit) = compiled.iter().find(|u| same_path(&normalize(&u.source), &path)) else { continue };
+        let Some(i) = unit.generated.injects.iter().find(|i| i.name.text == *name).filter(|i| i.ty.at != crate::ast::Src::UNMAPPED) else { continue };
+        let (start, end) = (position_at(&unit.text, i.ty.at), position_at(&unit.text, i.ty.at + i.ty.text.len()));
+        out.push(InjectDiag { source: unit.source.clone(), start, end, code: d.code, message: d.message.clone() });
+    }
+    out
 }
 
 /// `file(line,col): error ZDInn: message` lines; positions are 1-based in the `.ts` or `.tszor` source.
@@ -293,7 +339,7 @@ fn format_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compi
         let path = normalize(&root.join(&d.file));
         let unit = compiled.iter().find(|u| same_path(&normalize(&u.source), &path));
         let (line, col) = match (&d.inject, unit) {
-            (Some(name), Some(u)) => position_at(&u.text, u.generated.injects.iter().find(|i| i.text == *name).map_or(0, |i| i.at)),
+            (Some(name), Some(u)) => position_at(&u.text, u.generated.injects.iter().find(|i| i.name.text == *name).map_or(0, |i| i.name.at)),
             (Some(_), None) => (0, 0),
             (None, _) => {
                 let text = fs::read_to_string(&path).unwrap_or_default();
