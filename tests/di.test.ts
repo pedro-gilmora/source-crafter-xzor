@@ -194,3 +194,41 @@ export class P {}
   ]);
   expect(out.providers[0].mount.target).toBe("a");
 });
+
+test("private factories are errors", () => {
+  const main = `import { ServiceProvider, Singleton } from "@zor/runtime";
+export class Factories {
+  private static hidden(): string { return ""; }
+  static #secret(): string { return ""; }
+  static open(): string { return ""; }
+}
+@ServiceProvider()
+@Singleton("a", Factories.hidden)
+@Singleton("c", Factories.#secret)
+@Singleton("b", Factories.open)
+export class P {}
+`;
+  const out = analyzeTemp({ "main.ts": main });
+  expect(out.errors).toEqual([
+    { file: "main.ts", at: main.indexOf("Factories.hidden)"), message: "Factories.hidden must not be private" },
+    { file: "main.ts", at: main.indexOf("Factories.#secret)"), message: "Factories.#secret must not be private" },
+  ]);
+});
+
+test("generic service types are errors", () => {
+  const main = `import { ServiceProvider, Singleton } from "@zor/runtime";
+export class Repo<T> { item?: T }
+export class User {}
+export class UserRepo extends Repo<User> {}
+@ServiceProvider()
+@Singleton(Repo)
+@Singleton<Repo<User>>(UserRepo)
+@Singleton(UserRepo)
+export class P {}
+`;
+  const out = analyzeTemp({ "main.ts": main });
+  expect(out.errors).toEqual([
+    { file: "main.ts", at: main.indexOf("Repo)"), message: "generic service types are not supported: Repo<T>" },
+    { file: "main.ts", at: main.indexOf("Repo<User>>"), message: "generic service types are not supported: Repo<User>" },
+  ]);
+});

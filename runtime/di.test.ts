@@ -111,6 +111,13 @@ test("injected component without an app throws", () => {
   expect(() => mount(Needs, host())).toThrow("zor: Needs needs injected services (dep) but has no application");
 });
 
+test("components without inject are built without asking the app", () => {
+  const asked: Function[] = [];
+  const el = host();
+  mount(Tree, el, { createComponent: (type) => (asked.push(type), type === Needs ? new Needs("svc") : undefined) });
+  expect(asked).toEqual([Needs, Needs]);
+});
+
 test("decorators are no-ops", () => {
   class Impl {}
   @ServiceProvider()
@@ -175,6 +182,7 @@ test("async component removed before arrival is disposed", async () => {
 test("async component keeps the latest props and lifecycle when it arrives", async () => {
   const log: string[] = [];
   class Label extends ComponentBase {
+    static readonly inject = ["dep"] as const;
     text = "";
     protected override onAfterRender(first: boolean): void {
       log.push(`after ${this.text} ${first}`);
@@ -446,6 +454,7 @@ test("a throwing dispose hook while discarding the partial tree does not lose th
     }
   }
   class Parent extends ComponentBase {
+    static readonly inject = ["dep"] as const;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addComponent(Fragile, {});
       b.addComponent(Faulty, {});
@@ -480,6 +489,7 @@ test("an arriving component whose child throws can be removed and disposes the c
     }
   }
   class Parent extends ComponentBase {
+    static readonly inject = ["dep"] as const;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addComponent(Sound, {});
       b.addComponent(Faulty, {});

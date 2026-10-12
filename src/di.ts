@@ -138,6 +138,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     impl?: Lookup<Sym | undefined>;
     owner?: Lookup<Sym | undefined>;
     member?: string;
+    memberSym?: Lookup<Sym | undefined>;
     factory?: Lookup<Type | undefined>;
     loc: Loc;
   };
@@ -187,7 +188,16 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           }
           const factory = { node: second as Node };
           typeLookups.push(factory);
-          plan.regs.push({ deco, key: first.text, typeArg, owner: sym(second.expression), member: second.name.text, factory, loc: { sf, node: second } });
+          plan.regs.push({
+            deco,
+            key: first.text,
+            typeArg,
+            owner: sym(second.expression),
+            member: second.name.text,
+            memberSym: sym(second.name),
+            factory,
+            loc: { sf, node: second },
+          });
         } else if (first) {
           plan.regs.push({ deco, key: null, typeArg, impl: sym(first), loc: { sf, node: first } });
         } else error(loc, `@${deco.kind} expects an implementation class or a key and a factory`);
@@ -242,6 +252,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     promiseId ??= checker.resolveName("Promise", SymbolFlags.Type, undefined, false)?.id ?? -1;
     return s.id === promiseId ? checker.getTypeArguments(t)[0] : undefined;
   };
+
+  const isGeneric = (t: Type) => t.isTypeReference() && checker.getTypeArguments(t).length > 0;
 
   const typeRefs = new Map<number, TypeRef>();
   // Handle paths are canonical (lowercased on Windows); the program's file names keep their case.
@@ -376,6 +388,11 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         };
       } else {
         const owner = r.owner!.value;
+        const member = r.memberSym!.value?.valueDeclaration?.resolve();
+        if (r.member!.startsWith("#") || (member && member.modifierFlags & ModifierFlags.Private)) {
+          error(r.loc, `${owner?.name ?? r.owner!.node.getText(r.loc.sf)}.${r.member} must not be private`);
+          continue;
+        }
         const sig = r.factory!.value && checker.getSignaturesOfType(r.factory!.value, SignatureKind.Call)[0];
         const ret = sig && checker.getReturnTypeOfSignature(sig);
         if (!isClass(owner) || !ret) {
@@ -404,7 +421,12 @@ function analyze(root: string, program: Program, checker: Checker, files: string
   for (const pending of pendings) {
     const declared = pending.typeArg && checker.getTypeFromTypeNode(pending.typeArg as never);
     const loc = declared ? { sf: pending.sf, node: pending.typeArg! } : pending.serviceLoc;
-    pending.reg.service = typeRef((declared || pending.type)!, loc);
+    const service = (declared || pending.type)!;
+    if (isGeneric(service)) error(loc, `generic service types are not supported: ${checker.typeToString(service)}`);
+    else if (pending.reg.impl && pending.type && isGeneric(pending.type)) {
+      error(pending.serviceLoc, `generic service types are not supported: ${checker.typeToString(pending.type)}`);
+    }
+    pending.reg.service = typeRef(service, loc);
   }
   for (const c of componentPlans) {
     const self = c.self.value;

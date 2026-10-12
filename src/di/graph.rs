@@ -274,6 +274,20 @@ impl<'a> Cx<'a> {
             services[i].args = classify(&services, &sets, &services[i].args);
         }
 
+        for (i, s) in services.iter().enumerate() {
+            if s.reg.lifetime != Lifetime::Singleton {
+                continue;
+            }
+            if let Some(j) = captive(&services, i) {
+                let at = if s.source == Source::Own { s.reg.at } else { p.at };
+                let m = format!("captive dependency: singleton {} depends on scoped {}", needer(&s.reg), services[j].reg.service.text);
+                self.error(&p.file, at, "ZDI10", m);
+            }
+        }
+        if self.diags.len() > start {
+            return None;
+        }
+
         Some((Resolved { provider: p.clone(), services, components: Vec::new() }, origins))
     }
 }
@@ -419,6 +433,26 @@ fn visit(i: usize, services: &mut [Service], color: &mut [Color], path: &mut Vec
     Ok(())
 }
 
+/// The first scoped service that singleton `i` reaches directly or through transients.
+fn captive(services: &[Service], i: usize) -> Option<usize> {
+    let mut seen = vec![false; services.len()];
+    let mut stack = vec![i];
+    while let Some(k) = stack.pop() {
+        for a in &services[k].args {
+            let (Arg::Service(j) | Arg::Awaited(j) | Arg::Covered(j) | Arg::Promise(j)) = *a else { continue };
+            if std::mem::replace(&mut seen[j], true) {
+                continue;
+            }
+            match services[j].reg.lifetime {
+                Lifetime::Scoped => return Some(j),
+                Lifetime::Transient => stack.push(j),
+                Lifetime::Singleton => {}
+            }
+        }
+    }
+    None
+}
+
 fn needer(r: &Registration) -> &str {
     match (&r.impl_, &r.key) {
         (Some(t), _) => &t.text,
@@ -428,7 +462,8 @@ fn needer(r: &Registration) -> &str {
 }
 
 /// Members of the generated provider class that a getter must not shadow.
-const RESERVED: [&str; 6] = ["root", "createScope", "dispose", "disposeAsync", "createComponent", "constructor"];
+const RESERVED: [&str; 9] =
+    ["root", "createScope", "dispose", "disposeAsync", "createComponent", "constructor", "shared", "disposed", "disposeScoped"];
 
 /// The key, else the type text camelCased without a leading `I` + uppercase letter; collisions get `1`, `2`, ...
 fn assign_getters(services: &mut [Service]) {
@@ -731,7 +766,7 @@ mod tests {
                 &[],
                 vec![
                     single("IDatabase", "Database", vec![param("log", "ILogger")]),
-                    reg(Lifetime::Scoped, "ILogger", "ConsoleLogger", vec![param("x", "X")]),
+                    reg(Lifetime::Transient, "ILogger", "ConsoleLogger", vec![param("x", "X")]),
                     single("X", "X", vec![]),
                 ],
             ),
@@ -859,9 +894,87 @@ mod tests {
         let f = facts(vec![provider(
             "P",
             &[],
-            vec![keyed("root", single("Root", "Root", vec![])), keyed("dispose", single("D", "D", vec![]))],
+            vec![
+                keyed("root", single("Root", "Root", vec![])),
+                keyed("dispose", single("D", "D", vec![])),
+                keyed("shared", single("S", "S", vec![])),
+                keyed("disposed", single("E", "E", vec![])),
+                keyed("disposeScoped", single("F", "F", vec![])),
+            ],
         )]);
-        assert_eq!(getters(&ok(&f)[0]), ["root1", "dispose1"]);
+        assert_eq!(getters(&ok(&f)[0]), ["root1", "dispose1", "shared1", "disposed1", "disposeScoped1"]);
+    }
+
+    fn scoped(service: &str, params: Vec<Param>) -> Registration {
+        reg(Lifetime::Scoped, service, service, params)
+    }
+
+    fn transient(service: &str, params: Vec<Param>) -> Registration {
+        reg(Lifetime::Transient, service, service, params)
+    }
+
+    #[test]
+    fn zdi10_captive_dependency_direct() {
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![scoped("UnitOfWork", vec![]), Registration { at: 9, ..single("IDatabase", "Database", vec![param("uow", "UnitOfWork")]) }],
+        )]);
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI10"]);
+        assert_eq!((d[0].file.as_str(), d[0].at), ("P.ts", 9));
+        assert_eq!(d[0].message, "captive dependency: singleton Database depends on scoped UnitOfWork");
+    }
+
+    #[test]
+    fn zdi10_captive_dependency_through_a_transient() {
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![
+                single("Report", "Report", vec![promise("clock", "Clock")]),
+                transient("Clock", vec![param("uow", "UnitOfWork")]),
+                scoped("UnitOfWork", vec![]),
+            ],
+        )]);
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI10"]);
+        assert_eq!(d[0].message, "captive dependency: singleton Report depends on scoped UnitOfWork");
+    }
+
+    #[test]
+    fn zdi10_stops_at_singletons() {
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![
+                single("Report", "Report", vec![param("db", "IDatabase")]),
+                single("IDatabase", "Database", vec![param("uow", "UnitOfWork")]),
+                scoped("UnitOfWork", vec![]),
+            ],
+        )]);
+        // Only Database is captive; Report reaches the scoped service only through a singleton.
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI10"]);
+        assert_eq!(d[0].message, "captive dependency: singleton Database depends on scoped UnitOfWork");
+
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![single("Report", "Report", vec![param("db", "IDatabase")]), single("IDatabase", "Database", vec![]), scoped("UnitOfWork", vec![param("db", "IDatabase")])],
+        )]);
+        ok(&f);
+    }
+
+    #[test]
+    fn zdi10_through_imported_services() {
+        let f = facts(vec![
+            provider("App", &["Data"], vec![single("Auth", "Auth", vec![param("clock", "Clock")])]),
+            provider("Data", &[], vec![transient("Clock", vec![param("session", "Session")]), scoped("Session", vec![])]),
+        ]);
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI10"]);
+        assert_eq!((d[0].file.as_str(), d[0].message.as_str()), ("App.ts", "captive dependency: singleton Auth depends on scoped Session"));
     }
 
     fn covered_services(some_int: Registration) -> Vec<Registration> {
@@ -927,7 +1040,7 @@ mod tests {
             provider(
                 "App",
                 &["Data"],
-                vec![single("Auth", "Auth", vec![param("session", "Session"), param("config", "Config")])],
+                vec![reg(Lifetime::Scoped, "Auth", "Auth", vec![param("session", "Session"), param("config", "Config")])],
             ),
             provider(
                 "Data",

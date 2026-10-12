@@ -356,11 +356,11 @@ function mountComponent(
 }
 
 function construct(type: Ctor<ComponentBase>, app: IApplication | undefined): ComponentBase | Promise<ComponentBase> {
+  const inject = (type as { inject?: readonly string[] }).inject;
+  if (!inject?.length) return new type();
   const made = app?.createComponent?.(type);
   if (made) return made;
-  const inject = (type as { inject?: readonly string[] }).inject;
-  if (inject?.length) throw new Error(`zor: ${type.name} needs injected services (${inject.join(", ")}) but has no application`);
-  return new type();
+  throw new Error(`zor: ${type.name} needs injected services (${inject.join(", ")}) but has no application`);
 }
 
 function arrive(mounted: Mounted, instance: ComponentBase): void {

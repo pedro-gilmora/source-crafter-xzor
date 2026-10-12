@@ -34,6 +34,8 @@ pub fn emit_file(source_file: &str, all: &[Resolved], mount_entry: bool) -> Stri
     mine.sort_by_key(|r| mount_entry && r.provider.mount.is_some());
 
     let mut e = Emitter { all, source_file, imports: Imports { from, refs: BTreeMap::new(), locals: BTreeSet::new() } };
+    // Globals the generated code names.
+    e.imports.locals.extend(["Promise", "Disposable", "AsyncDisposable", "Symbol", "Function"].map(String::from));
     for r in &mine {
         e.imports.locals.insert(generated(&r.provider.class));
     }
@@ -64,6 +66,11 @@ fn pascal(getter: &str) -> String {
     c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
+fn camel(name: &str) -> String {
+    let mut c = name.chars();
+    c.next().map_or_else(String::new, |f| f.to_lowercase().chain(c).collect())
+}
+
 /// A path from the `from` directory (project-relative segments) to the project-relative `to`.
 fn relative(from: &[String], to: &str) -> String {
     let parts: Vec<&str> = to.split('/').collect();
@@ -88,6 +95,29 @@ fn needs_hoist(args: &[Arg]) -> bool {
 
 fn cached(s: &Service) -> bool {
     s.reg.lifetime != Lifetime::Transient
+}
+
+/// The `tracked` services with dependents before their dependencies: reverse post-order of a DFS over args.
+fn dependents_first(services: &[Service], tracked: &[usize]) -> Vec<usize> {
+    fn visit(services: &[Service], i: usize, seen: &mut [bool], post: &mut Vec<usize>) {
+        seen[i] = true;
+        for a in &services[i].args {
+            if let Arg::Service(j) | Arg::Awaited(j) | Arg::Covered(j) | Arg::Promise(j) = *a {
+                if !seen[j] {
+                    visit(services, j, seen, post);
+                }
+            }
+        }
+        post.push(i);
+    }
+    let mut seen = vec![false; services.len()];
+    let mut post = Vec::with_capacity(services.len());
+    for &i in tracked {
+        if !seen[i] {
+            visit(services, i, &mut seen, &mut post);
+        }
+    }
+    post.into_iter().rev().filter(|i| tracked.contains(i)).collect()
 }
 
 struct Imports {
@@ -301,12 +331,18 @@ impl<'a> Emitter<'a> {
     fn class(&mut self, out: &mut String, r: &'a Resolved, mount: bool) {
         let cls = generated(&r.provider.class);
         let base = self.value(&r.provider.class);
-        let tracked: Vec<&Service> = if mount {
+        let tracked: Vec<usize> = if mount {
             Vec::new()
         } else {
-            r.services.iter().filter(|s| cached(s) && s.reg.dispose.is_some() && !self.is_delegated(s)).collect()
+            let t: Vec<usize> = (0..r.services.len())
+                .filter(|&i| {
+                    let s = &r.services[i];
+                    cached(s) && s.reg.dispose.is_some() && !self.is_delegated(s)
+                })
+                .collect();
+            dependents_first(&r.services, &t)
         };
-        let is_async_dispose = |s: &&Service| s.is_async || s.reg.dispose == Some(Dispose::AsyncSymbol);
+        let is_async_dispose = |&i: &usize| r.services[i].is_async || r.services[i].reg.dispose == Some(Dispose::AsyncSymbol);
         let async_dispose = tracked.iter().any(is_async_dispose);
 
         if mount {
@@ -333,7 +369,7 @@ impl<'a> Emitter<'a> {
             if !is_inline(s) {
                 self.service(&mut members, r, &cls, s);
                 if s.is_async {
-                    creates.insert(format!("#create{}", pascal(&s.getter)));
+                    creates.insert(format!("#{}$create", s.getter));
                 }
             }
         }
@@ -349,7 +385,7 @@ impl<'a> Emitter<'a> {
         }
         if !tracked.is_empty() {
             out.push('\n');
-            self.dispose(out, &cls, &tracked, async_dispose);
+            self.dispose(out, r, &cls, &tracked, async_dispose);
         }
         out.push_str("}\n");
 
@@ -397,7 +433,7 @@ impl<'a> Emitter<'a> {
 
         let deps = awaited(&s.args);
         let fast = !s.reg.is_async && deps.iter().all(|&j| cached(&r.services[j]));
-        let create = format!("#create{p}");
+        let create = format!("#{g}$create");
         let (pre, exprs) = Self::slow(r, &s.args);
         let args = self.args(r, cls, &s.args, &exprs);
         let call = self.build(s, &args);
@@ -454,7 +490,7 @@ impl<'a> Emitter<'a> {
                 w!(out, "    if (type === {name}) return new {name}({a});");
                 continue;
             }
-            let base = format!("#create{}", pascal(&name));
+            let base = format!("#{}$create", camel(&c.class.text));
             let mut create = base.clone();
             let mut n = 0;
             while !creates.insert(create.clone()) {
@@ -482,10 +518,11 @@ impl<'a> Emitter<'a> {
         out.push_str(&methods);
     }
 
-    /// Singletons first, then `#disposeScoped()`; both in reverse registration order.
-    fn dispose(&mut self, out: &mut String, cls: &str, tracked: &[&Service], is_async: bool) {
-        let singletons: Vec<&Service> = tracked.iter().rev().filter(|s| s.reg.lifetime == Lifetime::Singleton).copied().collect();
-        let scoped: Vec<&Service> = tracked.iter().rev().filter(|s| s.reg.lifetime == Lifetime::Scoped).copied().collect();
+    /// Singletons first, then `#disposeScoped()`; each list releases dependents before their dependencies.
+    fn dispose(&mut self, out: &mut String, r: &Resolved, cls: &str, tracked: &[usize], is_async: bool) {
+        let of = |lifetime| -> Vec<&Service> { tracked.iter().map(|&i| &r.services[i]).filter(|s| s.reg.lifetime == lifetime).collect() };
+        let singletons = of(Lifetime::Singleton);
+        let scoped = of(Lifetime::Scoped);
         let scoped_async = scoped.iter().any(|s| s.is_async || s.reg.dispose == Some(Dispose::AsyncSymbol));
 
         w!(out, "  #disposed = false;");
@@ -499,8 +536,8 @@ impl<'a> Emitter<'a> {
         w!(out, "    if (this.#disposed) return;");
         w!(out, "    this.#disposed = true;");
         w!(out, "    if (!this.#root) {{");
-        for s in singletons {
-            release(out, "      ", &Self::field(cls, s), s);
+        for (n, s) in singletons.into_iter().enumerate() {
+            release(out, "      ", &Self::field(cls, s), s, n);
         }
         w!(out, "      if ({cls}.#shared === this) {cls}.#shared = undefined;");
         w!(out, "    }}");
@@ -517,32 +554,32 @@ impl<'a> Emitter<'a> {
             w!(out, "  }}");
             w!(out, "  #disposeScoped(): void {{");
         }
-        for s in scoped {
-            release(out, "    ", &Self::field(cls, s), s);
+        for (n, s) in scoped.into_iter().enumerate() {
+            release(out, "    ", &Self::field(cls, s), s, n);
         }
         w!(out, "  }}");
     }
 }
 
 /// Clears the field, then releases its value; an async service awaits a pending promise and skips a rejection.
-fn release(out: &mut String, ind: &str, field: &str, s: &Service) {
-    let g = &s.getter;
+fn release(out: &mut String, ind: &str, field: &str, s: &Service, n: usize) {
+    let (d, p) = (format!("d{n}"), format!("p{n}"));
     let call = match s.reg.dispose {
-        Some(Dispose::Method) => format!("{g}?.dispose();"),
-        Some(Dispose::Symbol) => format!("{g}?.[Symbol.dispose]();"),
-        Some(Dispose::AsyncSymbol) => format!("await {g}?.[Symbol.asyncDispose]();"),
+        Some(Dispose::Method) => format!("{d}?.dispose();"),
+        Some(Dispose::Symbol) => format!("{d}?.[Symbol.dispose]();"),
+        Some(Dispose::AsyncSymbol) => format!("await {d}?.[Symbol.asyncDispose]();"),
         None => return,
     };
     if !s.is_async {
-        w!(out, "{ind}const {g} = {field}; {field} = undefined; {call}");
+        w!(out, "{ind}const {d} = {field}; {field} = undefined; {call}");
         return;
     }
-    w!(out, "{ind}let {g} = {field};");
-    w!(out, "{ind}const {g}$Promise = {field}$Promise;");
+    w!(out, "{ind}let {d} = {field};");
+    w!(out, "{ind}const {p} = {field}$Promise;");
     w!(out, "{ind}{field} = {field}$Promise = undefined;");
-    w!(out, "{ind}if ({g} === undefined && {g}$Promise) {{");
-    w!(out, "{ind}  try {{ {g} = await {g}$Promise; }} catch {{}}");
-    w!(out, "{ind}  if ({field} === {g}) {field} = undefined;");
+    w!(out, "{ind}if ({d} === undefined && {p}) {{");
+    w!(out, "{ind}  try {{ {d} = await {p}; }} catch {{}}");
+    w!(out, "{ind}  if ({field} === {d}) {field} = undefined;");
     w!(out, "{ind}}}");
     w!(out, "{ind}{call}");
 }
@@ -675,10 +712,10 @@ mod tests {
         has(&text, "  get unitOfWork(): UnitOfWork { return (this.#unitOfWork ??= new UnitOfWork(this.database)); }");
         has(&text, "  [Symbol.dispose](): void { this.dispose(); }");
         has(&text, "    if (!this.#root) {");
-        has(&text, "      const database = DataServices$.#database; DataServices$.#database = undefined; database?.dispose();");
+        has(&text, "      const d0 = DataServices$.#database; DataServices$.#database = undefined; d0?.dispose();");
         has(&text, "      if (DataServices$.#shared === this) DataServices$.#shared = undefined;");
         has(&text, "    this.#disposeScoped();");
-        has(&text, "    const unitOfWork = this.#unitOfWork; this.#unitOfWork = undefined; unitOfWork?.dispose();");
+        has(&text, "    const d0 = this.#unitOfWork; this.#unitOfWork = undefined; d0?.dispose();");
         lacks(&text, "logger?.dispose");
         has(&text, "import { SharedInstance } from \"@zor/runtime\";");
     }
@@ -740,9 +777,9 @@ mod tests {
         has(&text, "  static #database$Promise?: Promise<IDatabase>;");
         has(&text, "  getDatabaseAsync(): Promise<IDatabase> {");
         has(&text, "    if (DataServices$.#database$Promise) return DataServices$.#database$Promise;");
-        has(&text, "    return (DataServices$.#database$Promise = this.#createDatabase());");
+        has(&text, "    return (DataServices$.#database$Promise = this.#database$create());");
         has(&text, "  tryGetDatabase(): IDatabase | undefined { return DataServices$.#database; }");
-        has(&text, "  async #createDatabase(): Promise<IDatabase> { return (DataServices$.#database = await DataServices._openDb()); }");
+        has(&text, "  async #database$create(): Promise<IDatabase> { return (DataServices$.#database = await DataServices._openDb()); }");
         lacks(&text, "get database()");
 
         has(&text, "  #authService?: AuthService;");
@@ -751,8 +788,8 @@ mod tests {
         has(&text, "    const v0 = this.tryGetDatabase();");
         has(&text, "    return (this.#authService$Promise = v0 !== undefined");
         has(&text, "      ? Promise.resolve((this.#authService = new AuthService(this.clock, v0)))");
-        has(&text, "      : this.#createAuthService());");
-        has(&text, "  async #createAuthService(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); return (this.#authService = new AuthService(this.clock, await p0)); }");
+        has(&text, "      : this.#authService$create());");
+        has(&text, "  async #authService$create(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); return (this.#authService = new AuthService(this.clock, await p0)); }");
     }
 
     #[test]
@@ -773,7 +810,7 @@ mod tests {
         has(&text, "v0 !== undefined && v1 !== undefined");
         has(
             &text,
-            "  async #createAuthService(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); const p1 = this.getConfigAsync(); return (DataServices$.#authService = new AuthService(await p0, await p1)); }",
+            "  async #authService$create(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); const p1 = this.getConfigAsync(); return (DataServices$.#authService = new AuthService(await p0, await p1)); }",
         );
     }
 
@@ -799,15 +836,15 @@ mod tests {
         has(&text, "      ? Promise.resolve((DataServices$.#authService = new AuthService(v0, DataServices$.#someInt!)))");
         has(
             &text,
-            "  async #createAuthService(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); return (DataServices$.#authService = new AuthService(await p0, DataServices$.#someInt!)); }",
+            "  async #authService$create(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); return (DataServices$.#authService = new AuthService(await p0, DataServices$.#someInt!)); }",
         );
 
         let text = reuse(async_factory(Transient, d("SomeInt"), d("DataServices"), "_someInt"), auth());
         has(&text, "  getSomeIntAsync(): Promise<SomeInt> { return DataServices._someInt(); }");
-        has(&text, "    return (DataServices$.#authService$Promise = this.#createAuthService());");
+        has(&text, "    return (DataServices$.#authService$Promise = this.#authService$create());");
         has(
             &text,
-            "  async #createAuthService(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); const p1 = this.getSomeIntAsync(); return (DataServices$.#authService = new AuthService(await p0, await p1)); }",
+            "  async #authService$create(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); const p1 = this.getSomeIntAsync(); return (DataServices$.#authService = new AuthService(await p0, await p1)); }",
         );
         lacks(&text, "#someInt");
     }
@@ -820,7 +857,7 @@ mod tests {
         );
         has(
             &text,
-            "  async #createAuthService(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); const v0 = await p0; return (DataServices$.#authService = new AuthService(DataServices$.#someInt!, v0)); }",
+            "  async #authService$create(): Promise<AuthService> { const p0 = this.getDatabaseAsync(); const v0 = await p0; return (DataServices$.#authService = new AuthService(DataServices$.#someInt!, v0)); }",
         );
     }
 
@@ -833,9 +870,43 @@ mod tests {
         let text = emit_file("main.ts", &all, true);
         has(
             &text,
-            "    if (type === Counter) { const v0 = this.tryGetDatabase(); return v0 !== undefined ? new Counter(v0) : this.#createCounter(); }",
+            "    if (type === Counter) { const v0 = this.tryGetDatabase(); return v0 !== undefined ? new Counter(v0) : this.#counter$create(); }",
         );
-        has(&text, "  async #createCounter(): Promise<Counter> { return new Counter(await this.getDatabaseAsync()); }");
+        has(&text, "  async #counter$create(): Promise<Counter> { return new Counter(await this.getDatabaseAsync()); }");
+    }
+
+    #[test]
+    fn async_component_hoists_awaits_before_covered_reads() {
+        let all = ok(
+            vec![application(
+                vec![],
+                vec![
+                    reg(Singleton, d("IDatabase"), d("Database"), vec![param("someInt", d("SomeInt"))]),
+                    async_factory(Singleton, d("SomeInt"), m("Factories"), "_someInt"),
+                ],
+            )],
+            vec![component("Counter", vec![param("someInt", d("SomeInt")), param("db", d("IDatabase"))])],
+        );
+        let text = emit_file("main.ts", &all, true);
+        has(
+            &text,
+            "    if (type === Counter) { const v0 = this.tryGetDatabase(); return v0 !== undefined ? new Counter(Application$.#someInt!, v0) : this.#counter$create(); }",
+        );
+        has(
+            &text,
+            "  async #counter$create(): Promise<Counter> { const p0 = this.getDatabaseAsync(); const v0 = await p0; return new Counter(Application$.#someInt!, v0); }",
+        );
+    }
+
+    #[test]
+    fn component_create_name_avoids_service_create_names() {
+        let all = ok(
+            vec![application(vec![], vec![async_factory(Singleton, m("Counter"), m("Factories"), "_counter")])],
+            vec![component("Counter", vec![param("c", m("Counter"))])],
+        );
+        let text = emit_file("main.ts", &all, true);
+        has(&text, "  async #counter$create(): Promise<Counter> {");
+        has(&text, "  async #counter$create1(): Promise<Counter1> {");
     }
 
     #[test]
@@ -872,7 +943,7 @@ mod tests {
         );
         let text = emit_file("main.ts", &all, true);
         has(&text, "  #session?: Session;");
-        has(&text, "  async #createSession(): Promise<Session> { const p0 = this.getConfigAsync(); return (this.#session = new Session(await p0)); }");
+        has(&text, "  async #session$create(): Promise<Session> { const p0 = this.getConfigAsync(); return (this.#session = new Session(await p0)); }");
     }
 
     #[test]
@@ -928,16 +999,58 @@ mod tests {
         has(&text, "export class DataServices$ extends DataServices implements AsyncDisposable {");
         has(&text, "  [Symbol.asyncDispose](): Promise<void> { return this.disposeAsync(); }");
         has(&text, "  async disposeAsync(): Promise<void> {");
-        has(&text, "      let database = DataServices$.#database;");
-        has(&text, "      const database$Promise = DataServices$.#database$Promise;");
+        has(&text, "      let d0 = DataServices$.#database;");
+        has(&text, "      const p0 = DataServices$.#database$Promise;");
         has(&text, "      DataServices$.#database = DataServices$.#database$Promise = undefined;");
-        has(&text, "      if (database === undefined && database$Promise) {");
-        has(&text, "        try { database = await database$Promise; } catch {}");
-        has(&text, "      database?.dispose();");
+        has(&text, "      if (d0 === undefined && p0) {");
+        has(&text, "        try { d0 = await p0; } catch {}");
+        has(&text, "        if (DataServices$.#database === d0) DataServices$.#database = undefined;");
+        has(&text, "      d0?.dispose();");
         has(&text, "    await this.#disposeScoped();");
         has(&text, "  async #disposeScoped(): Promise<void> {");
-        has(&text, "    await unitOfWork?.[Symbol.asyncDispose]();");
+        has(&text, "    await d0?.[Symbol.asyncDispose]();");
         lacks(&text, "dispose(): void");
+    }
+
+    #[test]
+    fn disposal_releases_dependents_first() {
+        let text = emit_file(
+            "services/data.ts",
+            &ok(
+                vec![data(vec![
+                    disposable(class(Singleton, d("Report"), vec![param("db", d("IDatabase"))]), Dispose::Method),
+                    disposable(reg(Singleton, d("IDatabase"), d("Database"), vec![]), Dispose::Method),
+                    disposable(class(Singleton, d("Cache"), vec![]), Dispose::Method),
+                ])],
+                vec![],
+            ),
+            false,
+        );
+        has(
+            &text,
+            "      const d0 = DataServices$.#cache; DataServices$.#cache = undefined; d0?.dispose();\n      const d1 = DataServices$.#report; DataServices$.#report = undefined; d1?.dispose();\n      const d2 = DataServices$.#database; DataServices$.#database = undefined; d2?.dispose();\n",
+        );
+    }
+
+    #[test]
+    fn type_only_module_uses_import_type() {
+        let text = emit_file(
+            "services/data.ts",
+            &ok(vec![data(vec![reg(Singleton, t("services/types", "IDatabase"), d("Database"), vec![])])], vec![]),
+            false,
+        );
+        has(&text, "import type { IDatabase } from \"../../services/types\";\n");
+    }
+
+    #[test]
+    fn user_types_named_like_globals_are_aliased() {
+        let text = emit_file(
+            "services/data.ts",
+            &ok(vec![data(vec![class(Singleton, d("Promise"), vec![]), class(Singleton, d("Symbol"), vec![])])], vec![]),
+            false,
+        );
+        has(&text, "import { DataServices, Promise as Promise1, Symbol as Symbol1 } from \"../../services/data\";");
+        has(&text, "  get promise(): Promise1 { return (DataServices$.#promise ??= new Promise1()); }");
     }
 
     #[test]
