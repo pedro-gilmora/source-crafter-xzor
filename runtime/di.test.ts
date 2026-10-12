@@ -410,6 +410,62 @@ test("a component that throws while mounting on arrival surfaces the error and l
   expect(html(el)).toBe("<i>before</i><u>after</u>");
 });
 
+test("an arriving component whose onAfterRender throws stays mounted and is removed and disposed later", async () => {
+  const boom = new Error("after failed");
+  const log: string[] = [];
+  class Noisy extends trackedNeeds(log) {
+    protected override onAfterRender(): void {
+      throw boom;
+    }
+  }
+  const late = deferred();
+  const el = host();
+  const page = mount(Late, el, { createComponent: (type) => (type === Needs ? late.promise : undefined) });
+  const thrown = await thrownFrom(async () => {
+    late.resolve(new Noisy("live"));
+    await late.promise;
+  });
+  expect(thrown).toEqual([boom]);
+  expect(html(el)).toBe("<i>before</i><b>live</b><u>after</u>");
+  page.show = false;
+  page.stateHasChanged();
+  expect(html(el)).toBe("<i>before</i><u>after</u>");
+  expect(log).toEqual(["hook", "dispose", "asyncDispose"]);
+});
+
+test("a throwing dispose hook while discarding the partial tree does not lose the original error", async () => {
+  const boom = new Error("child failed");
+  class Fragile extends Hello {
+    protected override dispose(): void {
+      throw new Error("dispose failed");
+    }
+  }
+  class Faulty extends Hello {
+    protected override onInitialized(): void {
+      throw boom;
+    }
+  }
+  class Parent extends ComponentBase {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addComponent(Fragile, {});
+      b.addComponent(Faulty, {});
+    }
+  }
+  class Host extends ComponentBase {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addComponent(Parent, {});
+    }
+  }
+  const late = deferred();
+  mount(Host, host(), { createComponent: (type) => (type === Parent ? late.promise : undefined) });
+  const thrown = await thrownFrom(async () => {
+    late.resolve(new Parent());
+    await late.promise;
+  });
+  expect(thrown).toHaveLength(2);
+  expect(thrown[0]).toBe(boom);
+});
+
 test("an arriving component whose child throws can be removed and disposes the children built before the throw", async () => {
   const boom = new Error("child failed");
   const log: string[] = [];

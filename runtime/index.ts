@@ -380,12 +380,20 @@ function arrive(mounted: Mounted, instance: ComponentBase): void {
       v.instance = instance;
     });
   } catch (err) {
-    if (!v.instance) mountedComponents.delete(instance);
-    // Nodes of the failed render were never inserted; keep only the empty placeholder.
-    const partial = mounted.tree;
-    mounted.tree = [];
-    partial.forEach(dispose);
     rethrow(err);
+    if (!v.instance) {
+      mountedComponents.delete(instance);
+      // Nodes of the failed render were never inserted; keep only the empty placeholder.
+      const partial = mounted.tree;
+      mounted.tree = [];
+      for (const node of partial) {
+        try {
+          dispose(node);
+        } catch (disposeErr) {
+          rethrow(disposeErr);
+        }
+      }
+    }
   }
 }
 
