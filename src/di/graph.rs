@@ -1,6 +1,6 @@
 //! Resolves the dependency graph from the analyzer facts.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::model::{Component, Facts, Lifetime, Param, Provider, Registration};
 
@@ -27,7 +27,10 @@ pub enum Arg {
     Service(usize),
     Awaited(usize),
     Promise(usize),
-    Inline(String),
+    /// A parameterless transient (see `is_inline`), emitted as `new Impl()`; the index is into `Resolved.services`.
+    Inline(usize),
+    /// A cached async dependency already resolved inside another `Awaited` arg's subtree; read from its value field.
+    Covered(usize),
     Undefined,
 }
 
@@ -200,7 +203,7 @@ impl<'a> Cx<'a> {
                     .collect();
                 for s in &mut services[first..] {
                     for a in &mut s.args {
-                        if let Arg::Service(i) | Arg::Awaited(i) | Arg::Promise(i) = a {
+                        if let Arg::Service(i) | Arg::Awaited(i) | Arg::Promise(i) | Arg::Inline(i) | Arg::Covered(i) = a {
                             *i = remap[*i];
                         }
                     }
@@ -208,9 +211,9 @@ impl<'a> Cx<'a> {
             }
         }
 
-        let mut dups: HashMap<(&str, Option<&str>), ()> = HashMap::with_capacity(services.len());
+        let mut dups: HashSet<(&str, Option<&str>)> = HashSet::with_capacity(services.len());
         for s in &services {
-            if dups.insert((s.reg.service.id.as_str(), s.reg.key.as_deref()), ()).is_some() {
+            if !dups.insert((s.reg.service.id.as_str(), s.reg.key.as_deref())) {
                 let at = if s.source == Source::Own { s.reg.at } else { p.at };
                 let key = s.reg.key.as_ref().map_or(String::new(), |k| format!(" \"{k}\""));
                 self.error(&p.file, at, "ZDI01", format!("{}{key} is registered twice in provider {}", s.reg.service.text, p.class.text));
@@ -266,12 +269,9 @@ impl<'a> Cx<'a> {
             }
         }
 
+        let sets = Sets::new(&services);
         for i in 0..own {
-            for k in 0..services[i].args.len() {
-                if let Some(a) = classify(&services, &services[i].args[k]) {
-                    services[i].args[k] = a;
-                }
-            }
+            services[i].args = classify(&services, &sets, &services[i].args);
         }
 
         Some((Resolved { provider: p.clone(), services, components: Vec::new() }, origins))
@@ -281,19 +281,15 @@ impl<'a> Cx<'a> {
 /// Resolves the injects of every `@inject` component against the mount provider.
 fn components(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) -> Vec<(Component, Vec<Arg>, bool)> {
     let table = Table::new(&r.services);
+    let sets = Sets::new(&r.services);
     let app = &r.provider.class.text;
     let mut out = Vec::with_capacity(facts.components.len());
     for c in &facts.components {
-        let file = c.class.module.clone().unwrap_or_else(|| c.class.text.clone());
-        let mut is_async = false;
         let mut args = Vec::with_capacity(c.injects.len());
         for prm in &c.injects {
             let (code, message) = match table.find(prm) {
                 Found::One(i) => {
-                    let a = if prm.promise { Arg::Promise(i) } else { Arg::Service(i) };
-                    let a = classify(&r.services, &a).unwrap_or(a);
-                    is_async |= matches!(a, Arg::Awaited(_));
-                    args.push(a);
+                    args.push(if prm.promise { Arg::Promise(i) } else { Arg::Service(i) });
                     continue;
                 }
                 Found::None if prm.optional => {
@@ -303,25 +299,84 @@ fn components(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) -> Vec<(Compon
                 Found::None => ("ZDI04", format!("{} (injected as {} in {}) is not provided by {app}", prm.ty.text, prm.name, c.class.text)),
                 Found::Many(m) => ("ZDI05", format!("{} (injected as {} in {}) is ambiguous: {}", prm.ty.text, prm.name, c.class.text, table.names(&m))),
             };
-            diags.push(Diag { file: file.clone(), at: 0, code, message, inject: Some(prm.name.clone()) });
+            let file = c.class.module.as_deref().unwrap_or(&c.class.text).to_string();
+            diags.push(Diag { file, at: 0, code, message, inject: Some(prm.name.clone()) });
             args.push(Arg::Undefined);
         }
+        let args = classify(&r.services, &sets, &args);
+        let is_async = args.iter().any(|a| matches!(a, Arg::Awaited(_)));
         out.push((c.clone(), args, is_async));
     }
     out
 }
 
-/// The final form of a resolved `T` argument: awaited when its service is async, inlined for a parameterless transient.
-fn classify(services: &[Service], a: &Arg) -> Option<Arg> {
-    let &Arg::Service(j) = a else { return None };
-    let s = &services[j];
-    if s.is_async {
-        return Some(Arg::Awaited(j));
-    }
+/// A transient with an implementation, no factory and no parameters: emitted as `new Impl()`, with no member.
+pub fn is_inline(s: &Service) -> bool {
     let r = &s.reg;
-    match &r.impl_ {
-        Some(t) if r.lifetime == Lifetime::Transient && r.factory.is_none() && r.params.is_empty() => Some(Arg::Inline(t.text.clone())),
-        _ => None,
+    r.lifetime == Lifetime::Transient && r.impl_.is_some() && r.factory.is_none() && r.params.is_empty()
+}
+
+/// The final form of resolved args: `T` params become `Awaited` (async service; `Covered` when a cached one is
+/// already resolved inside a sibling's subtree), `Inline` (parameterless transient) or stay `Service`.
+fn classify(services: &[Service], sets: &Sets, args: &[Arg]) -> Vec<Arg> {
+    args.iter()
+        .map(|a| {
+            let &Arg::Service(j) = a else { return a.clone() };
+            let s = &services[j];
+            if s.is_async {
+                let covered = s.reg.lifetime != Lifetime::Transient
+                    && args.iter().any(|b| matches!(b, &Arg::Service(k) if k != j && services[k].is_async && sets.has(k, j)));
+                if covered { Arg::Covered(j) } else { Arg::Awaited(j) }
+            } else if is_inline(s) {
+                Arg::Inline(j)
+            } else {
+                a.clone()
+            }
+        })
+        .collect()
+}
+
+/// Per service, a bitset of the cached async services in its awaited subtree (itself included).
+struct Sets {
+    words: usize,
+    bits: Vec<u64>,
+}
+
+impl Sets {
+    /// Edges are `Service`/`Awaited` args to async services, so imported (classified) and own (raw) args both work.
+    fn new(services: &[Service]) -> Self {
+        let words = services.len().div_ceil(64);
+        let mut sets = Sets { words, bits: vec![0; services.len() * words] };
+        let mut done = vec![false; services.len()];
+        for i in 0..services.len() {
+            sets.fill(i, services, &mut done);
+        }
+        sets
+    }
+
+    fn fill(&mut self, i: usize, services: &[Service], done: &mut [bool]) {
+        if done[i] {
+            return;
+        }
+        done[i] = true;
+        for a in &services[i].args {
+            if let &(Arg::Service(j) | Arg::Awaited(j)) = a {
+                if services[j].is_async {
+                    self.fill(j, services, done);
+                    for w in 0..self.words {
+                        self.bits[i * self.words + w] |= self.bits[j * self.words + w];
+                    }
+                }
+            }
+        }
+        if services[i].is_async && services[i].reg.lifetime != Lifetime::Transient {
+            self.bits[i * self.words + i / 64] |= 1 << (i % 64);
+        }
+    }
+
+    /// Whether `j` is a cached async service in `k`'s subtree.
+    fn has(&self, k: usize, j: usize) -> bool {
+        self.bits[k * self.words + j / 64] >> (j % 64) & 1 == 1
     }
 }
 
@@ -372,9 +427,13 @@ fn needer(r: &Registration) -> &str {
     }
 }
 
+/// Members of the generated provider class that a getter must not shadow.
+const RESERVED: [&str; 6] = ["root", "createScope", "dispose", "disposeAsync", "createComponent", "constructor"];
+
 /// The key, else the type text camelCased without a leading `I` + uppercase letter; collisions get `1`, `2`, ...
 fn assign_getters(services: &mut [Service]) {
-    let mut used: HashMap<String, u32> = HashMap::with_capacity(services.len());
+    let mut used: HashMap<String, u32> = HashMap::with_capacity(services.len() + RESERVED.len());
+    used.extend(RESERVED.iter().map(|n| (n.to_string(), 0)));
     for s in services.iter_mut() {
         let base = match &s.reg.key {
             Some(k) => k.clone(),
@@ -790,7 +849,98 @@ mod tests {
                 single("AuthService", "AuthService", vec![param("clock", "Clock")]),
             ],
         )]);
-        assert_eq!(ok(&f)[0].services[1].args, [Arg::Inline("SystemClock".into())]);
+        let s = &ok(&f)[0].services;
+        assert_eq!(s[1].args, [Arg::Inline(0)]);
+        assert!(is_inline(&s[0]) && !is_inline(&s[1]));
+    }
+
+    #[test]
+    fn reserved_member_names_are_not_used_as_getters() {
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![keyed("root", single("Root", "Root", vec![])), keyed("dispose", single("D", "D", vec![]))],
+        )]);
+        assert_eq!(getters(&ok(&f)[0]), ["root1", "dispose1"]);
+    }
+
+    fn covered_services(some_int: Registration) -> Vec<Registration> {
+        vec![
+            single("AuthService", "AuthService", vec![param("db", "IDatabase"), param("someInt", "SomeInt")]),
+            single("IDatabase", "Database", vec![param("someInt", "SomeInt")]),
+            some_int,
+        ]
+    }
+
+    #[test]
+    fn cached_dependency_inside_an_awaited_subtree_is_covered() {
+        let f = facts(vec![provider("P", &[], covered_services(async_factory("SomeInt")))]);
+        let s = &ok(&f)[0].services;
+        assert_eq!(s[0].args, [Arg::Awaited(1), Arg::Covered(2)]);
+        assert_eq!(s[1].args, [Arg::Awaited(2)]);
+    }
+
+    #[test]
+    fn transient_dependency_is_always_awaited() {
+        let some_int = Registration { lifetime: Lifetime::Transient, ..async_factory("SomeInt") };
+        let f = facts(vec![provider("P", &[], covered_services(some_int))]);
+        assert_eq!(ok(&f)[0].services[0].args, [Arg::Awaited(1), Arg::Awaited(2)]);
+    }
+
+    #[test]
+    fn component_dependency_inside_an_awaited_subtree_is_covered() {
+        let f = Facts {
+            components: vec![component("Counter", vec![param("db", "IDatabase"), param("someInt", "SomeInt")])],
+            ..facts(vec![mounted(provider(
+                "Application",
+                &[],
+                vec![single("IDatabase", "Database", vec![param("someInt", "SomeInt")]), async_factory("SomeInt")],
+            ))])
+        };
+        let c = &ok(&f)[0].components[0];
+        assert_eq!((&c.1, c.2), (&vec![Arg::Awaited(0), Arg::Covered(1)], true));
+    }
+
+    #[test]
+    fn zdi03_provider_import_cycle() {
+        let f = facts(vec![provider("A", &["B"], vec![]), provider("B", &["A"], vec![])]);
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI03"]);
+        assert_eq!((d[0].file.as_str(), d[0].at), ("A.ts", 3));
+        assert_eq!(d[0].message, "A -> B -> A");
+    }
+
+    #[test]
+    fn async_propagates_from_an_imported_service() {
+        let f = facts(vec![
+            provider("App", &["Data"], vec![single("AuthService", "AuthService", vec![param("db", "IDatabase")])]),
+            provider("Data", &[], vec![async_factory("IDatabase")]),
+        ]);
+        let s = &ok(&f)[0].services;
+        assert_eq!(s.iter().map(|s| s.is_async).collect::<Vec<_>>(), [true, true]);
+        assert_eq!(s[0].args, [Arg::Awaited(1)]);
+    }
+
+    #[test]
+    fn imported_scoped_service_feeds_an_async_dependency() {
+        let f = facts(vec![
+            provider(
+                "App",
+                &["Data"],
+                vec![single("Auth", "Auth", vec![param("session", "Session"), param("config", "Config")])],
+            ),
+            provider(
+                "Data",
+                &[],
+                vec![reg(Lifetime::Scoped, "Session", "Session", vec![param("config", "Config")]), async_factory("Config")],
+            ),
+        ]);
+        let s = &ok(&f)[0].services;
+        assert_eq!(getters(&ok(&f)[0]), ["auth", "session", "config"]);
+        assert_eq!(s.iter().map(|s| s.is_async).collect::<Vec<_>>(), [true, true, true]);
+        assert_eq!(s[1].source, Source::Imported(0, 0));
+        assert_eq!(s[1].args, [Arg::Awaited(2)]);
+        assert_eq!(s[0].args, [Arg::Awaited(1), Arg::Covered(2)]);
     }
 
     #[test]
