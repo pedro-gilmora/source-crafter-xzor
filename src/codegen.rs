@@ -215,7 +215,15 @@ pub fn generate_with(
     source_name: &str,
     components: &HashMap<String, ComponentInfo>,
 ) -> Result<Generated, String> {
-    let members: HashSet<String> = doc.code.iter().flat_map(|c| collect_members(c)).collect();
+    let members: HashSet<String> = doc
+        .code
+        .iter()
+        .flat_map(|c| collect_members(c))
+        .chain(doc.injects.iter().map(|i| i.name.text.clone()))
+        .collect();
+    if !doc.injects.is_empty() && doc.code.iter().any(|c| member_decls(c).iter().any(|d| d.is_method && d.name == "constructor")) {
+        return Err("ZDI08: a component with @inject cannot declare a constructor".into());
+    }
     let mut g = Gen {
         out: String::new(),
         mappings: Vec::new(),
@@ -271,6 +279,16 @@ pub fn generate_with(
             })
             .collect();
         g.line(&format!("declare slots: {{ {} }};", fields.join("; ")));
+    }
+    if !doc.injects.is_empty() {
+        let names: Vec<String> = doc.injects.iter().map(|i| js_string(&i.name)).collect();
+        g.line(&format!("static readonly inject = [{}];", names.join(", ")));
+        for i in &doc.injects {
+            g.emit(M::lit("readonly ").add(M::src(&i.name, i.name.at)).lit_then(": ").add(M::src(&i.ty, i.ty.at)).lit_then(";"));
+        }
+        let params: Vec<String> = doc.injects.iter().map(|i| format!("{}: {}", i.name, i.ty)).collect();
+        let assigns: String = doc.injects.iter().map(|i| format!(" this.{0} = {0};", i.name)).collect();
+        g.line(&format!("constructor({}) {{ super();{assigns} }}", params.join(", ")));
     }
     for parts in &doc.code_parts {
         let block = g.code_block(parts)?;
@@ -1484,6 +1502,27 @@ mod tests {
         assert!(g.code.contains(r#"__b.addContent(this.slots.header?.() ?? ComponentBase.fragment((__b) => { __b.openElement("h3"); __b.addContent(this.title); __b.closeElement(); }));"#), "{}", g.code);
         assert!(g.code.contains(r#"__b.addContent(this.slots.item?.(x, this.n, "s", this.title.length, ComponentBase.fragment((__b) => { __b.openElement("b"); __b.closeElement(); })) ?? null);"#), "{}", g.code);
         assert!(g.code.contains("__b.addContent(this.slots.default?.() ?? null);"), "{}", g.code);
+    }
+
+    #[test]
+    fn inject_emits_constructor_and_fields() {
+        let src = "@inject IDatabase db\n@inject AuthService auth\n<p>@db.name</p>";
+        let g = gen_with(src, &[]);
+        assert!(g.code.contains("  static readonly inject = [\"db\", \"auth\"];\n"), "{}", g.code);
+        assert!(g.code.contains("  readonly db: IDatabase;\n"), "{}", g.code);
+        assert!(g.code.contains("  readonly auth: AuthService;\n"), "{}", g.code);
+        assert!(g.code.contains("  constructor(db: IDatabase, auth: AuthService) { super(); this.db = db; this.auth = auth; }\n"), "{}", g.code);
+        assert!(g.code.contains("__b.addContent(this.db.name);"), "{}", g.code);
+        assert_eq!(g.to_src(g.code.find("IDatabase").unwrap()), Some(8));
+        let plain = gen_with("<p/>", &[]);
+        assert!(!plain.code.contains("constructor") && !plain.code.contains("inject"), "{}", plain.code);
+    }
+
+    #[test]
+    fn inject_with_user_constructor_fails() {
+        let (doc, _) = crate::parser::parse("@inject A a\n@code { constructor() { super(); } }").unwrap();
+        let err = generate(&doc, "C", "C.tszor").unwrap_err();
+        assert!(err.contains("ZDI08"), "{err}");
     }
 
     #[test]
