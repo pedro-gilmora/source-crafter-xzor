@@ -347,10 +347,7 @@ function mountComponent(
   parametersSet(component);
   const tree = render(component);
   const mounted = into ?? { tree, anchor: document.createComment(""), app, latest: undefined };
-  if (into) {
-    into.tree = tree;
-    into.app = app;
-  }
+  if (into) into.tree = tree;
   mountedComponents.set(component, mounted);
   const nodes = tree.flatMap((v) => create(v, component, app));
   queueAfterRender(component, true);
@@ -384,6 +381,10 @@ function arrive(mounted: Mounted, instance: ComponentBase): void {
     });
   } catch (err) {
     if (!v.instance) mountedComponents.delete(instance);
+    // Nodes of the failed render were never inserted; keep only the empty placeholder.
+    const partial = mounted.tree;
+    mounted.tree = [];
+    partial.forEach(dispose);
     rethrow(err);
   }
 }
@@ -489,7 +490,7 @@ function dispose(v: VNode): void {
       return;
     case "component":
       if (!v.instance) {
-        v.mounted!.latest = undefined;
+        if (v.mounted) v.mounted.latest = undefined;
         return;
       }
       v.mounted?.tree.forEach(dispose);

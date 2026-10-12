@@ -410,6 +410,48 @@ test("a component that throws while mounting on arrival surfaces the error and l
   expect(html(el)).toBe("<i>before</i><u>after</u>");
 });
 
+test("an arriving component whose child throws can be removed and disposes the children built before the throw", async () => {
+  const boom = new Error("child failed");
+  const log: string[] = [];
+  class Sound extends Hello {
+    protected override dispose(): void {
+      log.push("sound");
+    }
+  }
+  class Faulty extends Hello {
+    protected override onInitialized(): void {
+      throw boom;
+    }
+  }
+  class Parent extends ComponentBase {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addComponent(Sound, {});
+      b.addComponent(Faulty, {});
+    }
+  }
+  class Host extends ComponentBase {
+    show = true;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openRegion();
+      if (this.show) b.addComponent(Parent, {});
+      b.closeRegion();
+    }
+  }
+  const late = deferred();
+  const el = host();
+  const page = mount(Host, el, { createComponent: (type) => (type === Parent ? late.promise : undefined) });
+  const thrown = await thrownFrom(async () => {
+    late.resolve(new Parent());
+    await late.promise;
+  });
+  expect(thrown).toEqual([boom]);
+  expect(log).toEqual(["sound"]);
+  expect(html(el)).toBe("");
+  page.show = false;
+  expect(() => page.stateHasChanged()).not.toThrow();
+  expect(html(el)).toBe("");
+});
+
 test("a rejected onStarted surfaces the error", async () => {
   const failure = new Error("start failed");
   const thrown = await thrownFrom(() => mount(Hello, host(), { onStarted: () => Promise.reject(failure) }));
