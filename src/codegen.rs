@@ -19,6 +19,144 @@ pub struct Generated {
     pub mappings: Vec<Mapping>,
 }
 
+impl Generated {
+    /// Source offset for an offset in the generated code, if it was copied from the source.
+    pub fn to_src(&self, out: usize) -> Option<usize> {
+        self.mappings.iter().find(|m| m.out <= out && out <= m.out + m.len).map(|m| m.src + out - m.out)
+    }
+
+    /// Generated offset for a source offset, if that source text was copied.
+    pub fn to_out(&self, src: usize) -> Option<usize> {
+        self.mappings.iter().find(|m| m.src <= src && src <= m.src + m.len).map(|m| m.out + src - m.src)
+    }
+
+    /// Like [`Self::to_src`], falling back to the end of the closest preceding mapping
+    /// (for errors reported on generated scaffolding).
+    pub fn to_src_nearest(&self, out: usize) -> usize {
+        self.to_src(out).unwrap_or_else(|| {
+            self.mappings.iter().filter(|m| m.out <= out).max_by_key(|m| m.out).map_or(0, |m| m.src + m.len)
+        })
+    }
+
+    /// A source map (v3) from the generated code back to `source` (named `source_name`).
+    pub fn source_map(&self, source: &str, source_name: &str) -> String {
+        let gen_lines = LineIndex::new(&self.code);
+        let src_lines = LineIndex::new(source);
+        let mut lines: Vec<Vec<(usize, Option<(usize, usize)>)>> = vec![Vec::new(); gen_lines.starts.len()];
+        let mut sorted = self.mappings.clone();
+        sorted.sort_by_key(|m| m.out);
+        for m in &sorted {
+            // A mapping may span lines; each generated line gets its own segment.
+            let mut offset = 0;
+            for piece in self.code[m.out..m.out + m.len].split_inclusive('\n') {
+                let (gl, gc) = gen_lines.position(&self.code, m.out + offset);
+                let (sl, sc) = src_lines.position(source, m.src + offset);
+                lines[gl].push((gc, Some((sl, sc))));
+                let end = m.out + offset + piece.trim_end_matches('\n').len();
+                let (el, ec) = gen_lines.position(&self.code, end);
+                lines[el].push((ec, None));
+                offset += piece.len();
+            }
+        }
+        let mut mappings = String::new();
+        let (mut prev_src_line, mut prev_src_col) = (0i64, 0i64);
+        for (i, segments) in lines.iter_mut().enumerate() {
+            if i > 0 {
+                mappings.push(';');
+            }
+            segments.sort_by_key(|s| (s.0, s.1.is_some()));
+            let mut prev_col = 0i64;
+            for (j, (col, src)) in segments.iter().enumerate() {
+                if j > 0 {
+                    mappings.push(',');
+                }
+                vlq(&mut mappings, *col as i64 - prev_col);
+                prev_col = *col as i64;
+                if let Some((sl, sc)) = src {
+                    vlq(&mut mappings, 0);
+                    vlq(&mut mappings, *sl as i64 - prev_src_line);
+                    vlq(&mut mappings, *sc as i64 - prev_src_col);
+                    (prev_src_line, prev_src_col) = (*sl as i64, *sc as i64);
+                }
+            }
+        }
+        crate::json::Json::obj([
+            ("version", 3usize.into()),
+            ("sources", vec![crate::json::Json::from(source_name)].into()),
+            ("sourcesContent", vec![crate::json::Json::from(source)].into()),
+            ("names", crate::json::Json::Arr(vec![])),
+            ("mappings", mappings.into()),
+        ])
+        .to_string()
+    }
+}
+
+/// Byte offsets of line starts, for (line, UTF-16 column) lookups.
+struct LineIndex {
+    starts: Vec<usize>,
+}
+
+impl LineIndex {
+    fn new(text: &str) -> Self {
+        let mut starts = vec![0];
+        starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
+        LineIndex { starts }
+    }
+
+    fn position(&self, text: &str, offset: usize) -> (usize, usize) {
+        let line = self.starts.partition_point(|&s| s <= offset) - 1;
+        (line, text[self.starts[line]..offset].encode_utf16().count())
+    }
+}
+
+const BASE64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn vlq(out: &mut String, value: i64) {
+    let mut v = if value < 0 { ((-value) << 1) | 1 } else { value << 1 };
+    loop {
+        let mut digit = (v & 31) as usize;
+        v >>= 5;
+        if v > 0 {
+            digit |= 32;
+        }
+        out.push(BASE64[digit] as char);
+        if v == 0 {
+            break;
+        }
+    }
+}
+
+/// Decodes source map `mappings` into (generated line, column, source (line, column)).
+#[cfg(test)]
+fn decode_mappings(mappings: &str) -> Vec<(usize, usize, Option<(usize, usize)>)> {
+    let mut out = Vec::new();
+    let (mut src_line, mut src_col) = (0i64, 0i64);
+    for (line, text) in mappings.split(';').enumerate() {
+        let mut col = 0i64;
+        for seg in text.split(',').filter(|s| !s.is_empty()) {
+            let mut values = Vec::new();
+            let (mut value, mut shift) = (0i64, 0);
+            for b in seg.bytes() {
+                let digit = BASE64.iter().position(|&c| c == b).unwrap() as i64;
+                value |= (digit & 31) << shift;
+                shift += 5;
+                if digit & 32 == 0 {
+                    values.push(if value & 1 == 1 { -(value >> 1) } else { value >> 1 });
+                    (value, shift) = (0, 0);
+                }
+            }
+            col += values[0];
+            let src = (values.len() >= 4).then(|| {
+                src_line += values[2];
+                src_col += values[3];
+                (src_line as usize, src_col as usize)
+            });
+            out.push((line, col as usize, src));
+        }
+    }
+    out
+}
+
 /// Generated text with mappings relative to its own start.
 #[derive(Default)]
 struct M {
@@ -1417,6 +1555,25 @@ mod tests {
         let (doc, _) = crate::parser::parse("@typeparam T extends object\n@typeparam U\n<p/>").unwrap();
         let g = generate(&doc, "Grid", "Grid.tszor").unwrap();
         assert!(g.code.contains("export default class Grid<T extends object, U> extends ComponentBase {"), "{}", g.code);
+    }
+
+    #[test]
+    fn source_map_points_back_to_the_tszor() {
+        let src = "@code {\n  n = 1;\n}\n<p>@n</p>";
+        let (doc, _) = crate::parser::parse(src).unwrap();
+        let g = generate(&doc, "C", "C.tszor").unwrap();
+        let map = crate::json::Json::parse(&g.source_map(src, "C.tszor")).unwrap();
+        assert_eq!(map["version"].as_usize(), Some(3));
+        assert_eq!(map["sources"][0].as_str(), Some("C.tszor"));
+        assert_eq!(map["sourcesContent"][0].as_str(), Some(src));
+        let segments = decode_mappings(map["mappings"].as_str().unwrap());
+        let lookup = |needle: &str, delta: usize| {
+            let (line, col) = crate::lsp::position_at(&g.code, g.code.find(needle).unwrap() + delta);
+            segments.iter().rev().find(|s| s.0 == line && s.1 <= col).and_then(|s| s.2).map(|(l, c)| (l, c + (col - segments.iter().rev().find(|s| s.0 == line && s.1 <= col).unwrap().1)))
+        };
+        assert_eq!(lookup("n = 1;", 0), Some((1, 2)));
+        assert_eq!(lookup("this.n);", 5), Some((3, 4)));
+        assert_eq!(lookup("__b.openElement", 0), None);
     }
 
     #[test]

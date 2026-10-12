@@ -1,10 +1,113 @@
-// Bundles a zor app with Bun. `./X.tszor` imports resolve to the generated `<project>/.zor/<rel>/X.tszor.ts`.
+// Bundles a zor app with Bun. `./X.tszor` imports resolve to the generated `<project>/.zor/<rel>/X.tszor.ts`,
+// and the bundle's source map is composed with each generated file's map so it points at the `.tszor` sources.
 // Usage: bun bundle.ts <entry> <outdir>
-import { existsSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, posix, relative, resolve } from "node:path";
 
-const [entry, outdir] = process.argv.slice(2);
-if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir>");
+type Segment = number[];
+type SourceMap = { version: number; sources: string[]; sourcesContent?: (string | null)[]; names: string[]; mappings: string };
+
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** Absolute segments per generated line: [col] or [col, source, line, col]. */
+export function decodeMappings(mappings: string): Segment[][] {
+  const state = [0, 0, 0, 0];
+  return mappings.split(";").map((line) => {
+    state[0] = 0;
+    return line
+      .split(",")
+      .filter(Boolean)
+      .map((seg) => {
+        const values: number[] = [];
+        let value = 0;
+        let shift = 0;
+        for (const ch of seg) {
+          const digit = BASE64.indexOf(ch);
+          value |= (digit & 31) << shift;
+          shift += 5;
+          if ((digit & 32) === 0) {
+            values.push(value & 1 ? -(value >> 1) : value >> 1);
+            value = shift = 0;
+          }
+        }
+        return values.slice(0, 4).map((v, i) => (state[i]! += v));
+      });
+  });
+}
+
+function vlq(value: number): string {
+  let v = value < 0 ? (-value << 1) | 1 : value << 1;
+  let out = "";
+  do {
+    let digit = v & 31;
+    v >>>= 5;
+    if (v > 0) digit |= 32;
+    out += BASE64[digit];
+  } while (v > 0);
+  return out;
+}
+
+export function encodeMappings(lines: Segment[][]): string {
+  const state = [0, 0, 0, 0];
+  return lines
+    .map((line) => {
+      state[0] = 0;
+      return line
+        .map((seg) =>
+          seg
+            .slice(0, 4)
+            .map((v, i) => {
+              const delta = v - state[i]!;
+              state[i] = v;
+              return vlq(delta);
+            })
+            .join(""),
+        )
+        .join(",");
+    })
+    .join(";");
+}
+
+/** Lookup in a decoded map: the segment covering (line, col), shifted by the distance into it. */
+function lookup(lines: Segment[][], line: number, col: number): Segment | undefined {
+  const seg = [...(lines[line] ?? [])].reverse().find((s) => s[0]! <= col);
+  if (!seg || seg.length < 4) return undefined;
+  return [seg[0]!, seg[1]!, seg[2]!, seg[3]! + (col - seg[0]!)];
+}
+
+/**
+ * Replaces segments that point into generated files with the positions their own maps give.
+ * `inner(source)` returns a generated file's map and the directory its `sources` are relative to
+ * (relative to the outer map's directory).
+ */
+export function composeMaps(outer: SourceMap, inner: (source: string) => { map: SourceMap; dir: string } | undefined): SourceMap {
+  const sources: string[] = [];
+  const contents: (string | null)[] = [];
+  const indexOf = (source: string, content: string | null) => {
+    let i = sources.indexOf(source);
+    if (i < 0) {
+      i = sources.push(source) - 1;
+      contents.push(content);
+    }
+    return i;
+  };
+  const inners = outer.sources.map((s) => {
+    const found = inner(s);
+    return found && { ...found, lines: decodeMappings(found.map.mappings) };
+  });
+  const lines = decodeMappings(outer.mappings).map((line) =>
+    line.flatMap((seg): Segment[] => {
+      if (seg.length < 4) return [seg];
+      const via = inners[seg[1]!];
+      if (!via) return [[seg[0]!, indexOf(outer.sources[seg[1]!]!, outer.sourcesContent?.[seg[1]!] ?? null), seg[2]!, seg[3]!]];
+      const hit = lookup(via.lines, seg[2]!, seg[3]!);
+      if (!hit) return [[seg[0]!]];
+      const name = posix.normalize(`${via.dir}/${via.map.sources[hit[1]!]}`);
+      return [[seg[0]!, indexOf(name, via.map.sourcesContent?.[hit[1]!] ?? null), hit[2]!, hit[3]!]];
+    }),
+  );
+  return { version: 3, sources, sourcesContent: contents, names: [], mappings: encodeMappings(lines) };
+}
 
 function projectRoot(dir: string): string {
   for (let d = dir; ; d = dirname(d)) {
@@ -19,23 +122,43 @@ function generatedPath(source: string): string {
   return join(root, ".zor", `${relative(root, source)}.ts`);
 }
 
-const result = await Bun.build({
-  entrypoints: [entry],
-  outdir,
-  target: "browser",
-  sourcemap: "linked",
-  plugins: [
-    {
-      name: "zor",
-      setup(build) {
-        build.onResolve({ filter: /\.tszor$/ }, (args) => ({
-          path: generatedPath(resolve(dirname(args.importer), args.path)),
-        }));
+async function main(entry: string, outdir: string): Promise<void> {
+  const result = await Bun.build({
+    entrypoints: [entry],
+    outdir,
+    target: "browser",
+    sourcemap: "linked",
+    plugins: [
+      {
+        name: "zor",
+        setup(build) {
+          build.onResolve({ filter: /\.tszor$/ }, (args) => ({
+            path: generatedPath(resolve(dirname(args.importer), args.path)),
+          }));
+        },
       },
-    },
-  ],
-});
+    ],
+  });
+  for (const log of result.logs) console.error(log);
+  if (!result.success) process.exit(1);
+  for (const output of result.outputs) {
+    if (output.path.endsWith(".map")) {
+      const mapDir = dirname(output.path);
+      const outer: SourceMap = JSON.parse(readFileSync(output.path, "utf8"));
+      const composed = composeMaps(outer, (source) => {
+        const file = resolve(mapDir, source);
+        if (!file.endsWith(".tszor.ts") || !existsSync(`${file}.map`)) return undefined;
+        const dir = relative(mapDir, dirname(file)).replaceAll("\\", "/") || ".";
+        return { map: JSON.parse(readFileSync(`${file}.map`, "utf8")), dir };
+      });
+      writeFileSync(output.path, JSON.stringify(composed));
+    }
+    console.log(`  ${output.path}`);
+  }
+}
 
-for (const log of result.logs) console.error(log);
-if (!result.success) process.exit(1);
-for (const output of result.outputs) console.log(`  ${output.path}`);
+if (import.meta.main) {
+  const [entry, outdir] = process.argv.slice(2);
+  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir>");
+  await main(entry, outdir);
+}

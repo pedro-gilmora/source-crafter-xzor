@@ -115,7 +115,16 @@ The rules:
 - Component identity comes from the diff, as in Blazor: a child keeps its instance and state while it stays at the same position with the same type and `@key`. Otherwise it is disposed and a new instance is created.
 - Lists with `@key` use a keyed diff: matched nodes are patched and moved, and unmatched ones are removed or created.
 
+## Build
+
+- Only `.tszor` files inside a tsconfig project are compiled. Each one produces `.zor/<rel>.tszor.ts` plus a v3 `.tszor.ts.map`, and files are only written when their content changes.
+- `tsc` errors are rewritten to point at `.tszor` positions.
+- The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.tszor` sources.
+- `zor build --watch` polls the project and rebuilds on change.
+
 ## Roadmap
 
 1. Rename and find references, through the same mappings.
-2. Watch mode and incremental compilation.
+2. Keep TypeScript features working while the template has syntax errors.
+3. Color markup inside `@code` as markup.
+4. Infer `@typeparam` type arguments from props.

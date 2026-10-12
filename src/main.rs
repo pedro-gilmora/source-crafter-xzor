@@ -6,13 +6,14 @@ const USAGE: &str = "\
 zor - Blazor-like component compiler for TypeScript
 
 USAGE:
-  zor compile [PATH...]      Generate X.tszor.ts next to every .tszor file (default: .)
+  zor compile [PATH...]      Generate .zor/X.tszor.ts (and .map) for each .tszor in a TypeScript project (default: .)
   zor build [DIR] [OPTIONS]  Compile, type-check and bundle DIR to JavaScript (default: .)
       --entry <FILE>         Entry module relative to DIR (default: main.ts)
       --checker <CMD>        Type checker command; {dir} is replaced with DIR
                              (default: bun x tsc --noEmit -p {dir})
       --no-check             Skip type checking
       --no-bundle            Skip bundling
+      --watch                Rebuild when .tszor files change
   zor highlight <FILE>       Print a .tszor file with syntax colors
   zor lsp                    Run the language server on stdio
 ";
@@ -37,8 +38,8 @@ fn run(args: &[String]) -> Result<(), String> {
         "compile" => {
             let paths = if rest.is_empty() { vec![".".to_string()] } else { rest.to_vec() };
             for p in paths {
-                for out in build::compile_all(&PathBuf::from(p))? {
-                    println!("{}", out.display());
+                for unit in build::compile_all(&PathBuf::from(p))? {
+                    println!("{}", unit.out.display());
                 }
             }
         }
@@ -46,7 +47,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut dir = PathBuf::from(".");
             let mut entry = "main.ts".to_string();
             let mut checker = None;
-            let (mut check, mut bundle) = (true, true);
+            let (mut check, mut bundle, mut watch) = (true, true, false);
             let mut it = rest.iter();
             while let Some(arg) = it.next() {
                 match arg.as_str() {
@@ -54,18 +55,45 @@ fn run(args: &[String]) -> Result<(), String> {
                     "--checker" => checker = Some(it.next().ok_or("--checker needs a value")?.clone()),
                     "--no-check" => check = false,
                     "--no-bundle" => bundle = false,
+                    "--watch" => watch = true,
                     a if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
                     a => dir = PathBuf::from(a),
                 }
             }
-            let files = build::compile_all(&dir)?;
-            println!("zor: compiled {} component(s)", files.len());
-            if check {
-                build::check(&dir, checker.as_deref())?;
-                println!("zor: type check passed");
+            let build_once = || -> Result<(), String> {
+                let units = build::compile_all(&dir)?;
+                println!("zor: compiled {} component(s)", units.len());
+                if check {
+                    build::check(&dir, checker.as_deref(), &units)?;
+                    println!("zor: type check passed");
+                }
+                if bundle {
+                    build::bundle(&dir, &entry)?;
+                }
+                Ok(())
+            };
+            if !watch {
+                return build_once();
             }
-            if bundle {
-                build::bundle(&dir, &entry)?;
+            let mut seen = build::snapshot(&dir);
+            if let Err(e) = build_once() {
+                eprintln!("{e}");
+            }
+            println!("zor: watching {} for changes (Ctrl+C to stop)", dir.display());
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                let now = build::snapshot(&dir);
+                let changed = build::changed(&seen, &now);
+                if changed.is_empty() && now.len() == seen.len() {
+                    continue;
+                }
+                seen = now;
+                for path in &changed {
+                    println!("zor: changed {}", path.display());
+                }
+                if let Err(e) = build_once() {
+                    eprintln!("{e}");
+                }
             }
         }
         "highlight" => {
