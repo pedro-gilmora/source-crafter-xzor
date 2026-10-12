@@ -1,0 +1,5 @@
+@import { type Settings } from "./services/settings"
+@inject Settings settings
+
+<p class="greeting">@settings.greeting</p>
+

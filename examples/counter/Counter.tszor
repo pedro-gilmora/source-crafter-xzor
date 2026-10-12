@@ -1,4 +1,6 @@
 @import { type EventCallback } from "@zor/runtime"
+@import { type IDatabase } from "./services/data"
+@inject IDatabase db
 
 @code {
   label: string = "Count";
@@ -18,6 +20,7 @@
 
 <div class="counter">
   <h2>@label: @count</h2>
+  <small class="db">@db.name</small>
   <button @onclick="increment">+@step</button>
   <button @onclick="() => count = 0" disabled="@(count === 0)">reset</button>
   @if (count >= 10) {
