@@ -25,7 +25,14 @@ export class Database implements IDatabase {
 }
 
 export class UnitOfWork {
+  changes = 0;
   constructor(readonly db: IDatabase) {}
+  track(): void {
+    this.changes++;
+  }
+  dispose(): void {
+    console.log(`unit of work closed after ${this.changes} changes`);
+  }
 }
 
 @ServiceProvider()

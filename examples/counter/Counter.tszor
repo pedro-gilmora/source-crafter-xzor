@@ -1,6 +1,9 @@
 @import { type EventCallback } from "@zor/runtime"
-@import { type IDatabase } from "./services/data"
+@import { type IDatabase, type UnitOfWork } from "./services/data"
+@import { type AuthService } from "./services/auth"
 @inject IDatabase db
+@inject AuthService auth
+@inject UnitOfWork work
 
 @code {
   label: string = "Count";
@@ -14,6 +17,7 @@
 
   increment() {
     this.count += this.step;
+    this.work.track();
     this.onChange?.(this.count);
   }
 }
@@ -21,6 +25,8 @@
 <div class="counter">
   <h2>@label: @count</h2>
   <small class="db">@db.name</small>
+  <small class="request">@auth.requestId</small>
+  <small class="changes">@work.changes changes</small>
   <button @onclick="increment">+@step</button>
   <button @onclick="() => count = 0" disabled="@(count === 0)">reset</button>
   @if (count >= 10) {

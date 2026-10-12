@@ -1,11 +1,8 @@
-import { type IApplication, Import, Mount, Singleton } from "@zor/runtime";
+import { type IApplication, Import, Mount, Singleton, Transient } from "@zor/runtime";
 import App from "./App.tszor";
-import { DataServices, type IDatabase } from "./services/data";
+import { AuthService, Clock } from "./services/auth";
+import { DataServices } from "./services/data";
 import { type Settings } from "./services/settings";
-
-export class AuthService {
-  constructor(readonly db: IDatabase) {}
-}
 
 // A class cannot reference itself in its own decorators, so the factories live elsewhere.
 export class Factories {
@@ -20,6 +17,7 @@ export class Factories {
 @Mount(App, "app")
 @Import(DataServices)
 @Singleton(AuthService)
+@Transient(Clock)
 @Singleton("requestId", Factories.newRequestId)
 @Singleton("settings", Factories.loadSettings)
 export class Application implements IApplication {}
