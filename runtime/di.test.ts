@@ -262,3 +262,179 @@ test("components implementing Disposable are disposed on removal", () => {
   page.stateHasChanged();
   expect(log).toHaveLength(3);
 });
+
+// The runtime rethrows unhandled promise errors from a microtask; capture them instead of failing the runner.
+async function thrownFrom(run: () => unknown): Promise<unknown[]> {
+  const original = globalThis.queueMicrotask;
+  const thrown: unknown[] = [];
+  globalThis.queueMicrotask = (fn) =>
+    original(() => {
+      try {
+        fn();
+      } catch (err) {
+        thrown.push(err);
+      }
+    });
+  try {
+    await run();
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    globalThis.queueMicrotask = original;
+  }
+  return thrown;
+}
+
+function deferred() {
+  let resolve!: (c: ComponentBase) => void;
+  const promise = new Promise<ComponentBase>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+const trackedNeeds = (log: string[]) =>
+  class extends Needs {
+    protected override dispose(): void {
+      log.push("hook");
+    }
+    [Symbol.dispose](): void {
+      log.push("dispose");
+    }
+    [Symbol.asyncDispose](): Promise<void> {
+      log.push("asyncDispose");
+      return Promise.resolve();
+    }
+  };
+
+class Shell extends ComponentBase {
+  show = true;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openRegion();
+    if (this.show) b.addComponent(Wrapper, {});
+    b.closeRegion();
+  }
+}
+
+class Wrapper extends ComponentBase {
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("section");
+    b.addComponent(Needs, {});
+    b.closeElement();
+  }
+}
+
+test("pending component inside a removed ancestor is disposed once and nothing is inserted", async () => {
+  const log: string[] = [];
+  const late = deferred();
+  const el = host();
+  const page = mount(Shell, el, { createComponent: (type) => (type === Needs ? late.promise : undefined) });
+  page.show = false;
+  page.stateHasChanged();
+  late.resolve(new (trackedNeeds(log))("gone"));
+  await late.promise;
+  expect(log).toEqual(["hook", "dispose", "asyncDispose"]);
+  expect(html(el)).toBe("");
+});
+
+test("[Symbol.asyncDispose] runs once for a component removed before arrival", async () => {
+  const log: string[] = [];
+  const late = deferred();
+  const el = host();
+  const page = mount(Late, el, { createComponent: (type) => (type === Needs ? late.promise : undefined) });
+  page.show = false;
+  page.stateHasChanged();
+  late.resolve(new (trackedNeeds(log))("gone"));
+  await late.promise;
+  expect(log.filter((entry) => entry === "asyncDispose")).toHaveLength(1);
+});
+
+test("pending component moved by a keyed diff arrives in its new position", async () => {
+  class Keyed extends ComponentBase {
+    flip = false;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      const item = () => {
+        b.openElement("i");
+        b.setKey(2);
+        b.addText("x");
+        b.closeElement();
+      };
+      if (this.flip) {
+        item();
+        b.addComponent(Needs, {}, undefined, { key: 1 });
+      } else {
+        b.addComponent(Needs, {}, undefined, { key: 1 });
+        item();
+      }
+    }
+  }
+  const late = deferred();
+  const el = host();
+  const page = mount(Keyed, el, { createComponent: (type) => (type === Needs ? late.promise : undefined) });
+  page.flip = true;
+  page.stateHasChanged();
+  late.resolve(new Needs("late"));
+  await late.promise;
+  expect(html(el)).toBe("<i>x</i><b>late</b>");
+});
+
+test("a component arriving after its anchor was detached is disposed", async () => {
+  const log: string[] = [];
+  const late = deferred();
+  const el = host();
+  mount(Late, el, { createComponent: (type) => (type === Needs ? late.promise : undefined) });
+  mount(Hello, el);
+  const thrown = await thrownFrom(async () => {
+    late.resolve(new (trackedNeeds(log))("orphan"));
+    await late.promise;
+  });
+  expect(thrown).toEqual([]);
+  expect(log).toEqual(["hook", "dispose", "asyncDispose"]);
+  expect(html(el)).toBe("<p>hello</p>");
+});
+
+test("a component that throws while mounting on arrival surfaces the error and leaves its place empty", async () => {
+  const boom = new Error("init failed");
+  class Broken extends Needs {
+    protected override onInitialized(): void {
+      throw boom;
+    }
+  }
+  const late = deferred();
+  const el = host();
+  const page = mount(Late, el, { createComponent: (type) => (type === Needs ? late.promise : undefined) });
+  const thrown = await thrownFrom(async () => {
+    late.resolve(new Broken("x"));
+    await late.promise;
+  });
+  expect(thrown).toEqual([boom]);
+  expect(html(el)).toBe("<i>before</i><u>after</u>");
+  page.stateHasChanged();
+  expect(html(el)).toBe("<i>before</i><u>after</u>");
+});
+
+test("a rejected onStarted surfaces the error", async () => {
+  const failure = new Error("start failed");
+  const thrown = await thrownFrom(() => mount(Hello, host(), { onStarted: () => Promise.reject(failure) }));
+  expect(thrown).toEqual([failure]);
+});
+
+test("a rejected [Symbol.asyncDispose] surfaces the error", async () => {
+  const failure = new Error("dispose failed");
+  class Failing extends Hello {
+    [Symbol.asyncDispose](): Promise<void> {
+      return Promise.reject(failure);
+    }
+  }
+  class Switch extends ComponentBase {
+    show = true;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openRegion();
+      if (this.show) b.addComponent(Failing, {});
+      b.closeRegion();
+    }
+  }
+  const page = mount(Switch, host());
+  const thrown = await thrownFrom(() => {
+    page.show = false;
+    page.stateHasChanged();
+  });
+  expect(thrown).toEqual([failure]);
+});
