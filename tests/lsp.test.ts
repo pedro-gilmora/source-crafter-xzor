@@ -1,5 +1,6 @@
 // End-to-end: drives `zor lsp` over stdio against examples/counter, like an editor would.
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { cpSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dir, "..");
@@ -261,29 +262,58 @@ test("TypeScript features keep working while the template has a syntax error", a
   notify("textDocument/didChange", { textDocument: { uri, version: 21 }, contentChanges: [{ text: counterText }] });
 }, 20000);
 
+// Same depth below the repo as the fixture, so its tsconfig paths and `typescript` still resolve.
+const diRoot = join(repo, "target", "tmp-lsp-di", String(process.pid));
+const diCounter = join(diRoot, "Counter.tszor");
+const diMain = join(diRoot, "main.ts");
+const zdi = (uri: string) => diagnostics.get(uri)?.find((d) => d.code === "ZDI04");
+
 test("@inject of an unprovided type reports ZDI04 on save, and clears when fixed", async () => {
-  const diCounter = join(repo, "tests", "fixtures", "lsp-di", "Counter.tszor");
+  rmSync(diRoot, { recursive: true, force: true });
+  cpSync(join(repo, "tests", "fixtures", "lsp-di"), diRoot, {
+    recursive: true,
+    filter: (src) => !/[\\/](\.zor|node_modules)$/.test(src),
+  });
   const good = await Bun.file(diCounter).text();
   const bad = good.replace("@inject Database db", "@inject Missing m");
   const uri = uriOf(diCounter);
   const save = () => notify("textDocument/didSave", { textDocument: { uri } });
-  const zdi = () => diagnostics.get(uri)?.find((d) => String(d.message).includes("ZDI04"));
-  try {
-    await Bun.write(diCounter, bad);
-    notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: bad } });
-    save();
-    const error = await waitFor(zdi, 30000);
-    const start = pos(bad, "@inject Missing", 8);
-    expect(error.range).toEqual({ start, end: { line: start.line, character: start.character + "Missing".length } });
-    expect(error.severity).toBe(1);
-    expect(error.source).toBe("zor");
-    expect(error.code).toBe("ZDI04");
+  await Bun.write(diCounter, bad);
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: bad } });
+  save();
+  const error = await waitFor(() => zdi(uri), 30000);
+  const start = pos(bad, "@inject Missing", 8);
+  expect(error.range).toEqual({ start, end: { line: start.line, character: start.character + "Missing".length } });
+  expect(error.severity).toBe(1);
+  expect(error.source).toBe("zor");
+  expect(error.message).not.toContain("ZDI04");
 
-    await Bun.write(diCounter, good);
-    notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: good }] });
-    save();
-    await waitFor(() => (diagnostics.get(uri) && !zdi() ? true : undefined), 30000);
-  } finally {
-    await Bun.write(diCounter, good);
-  }
+  await Bun.write(diCounter, good);
+  notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: good }] });
+  save();
+  await waitFor(() => (diagnostics.get(uri) && !zdi(uri) ? true : undefined), 30000);
+}, 60000);
+
+test("a watched provider .ts change reruns the DI analysis", async () => {
+  const uri = uriOf(diCounter);
+  const main = await Bun.file(diMain).text();
+  const changed = () =>
+    notify("workspace/didChangeWatchedFiles", {
+      changes: [
+        { uri: uriOf(join(diRoot, ".zor", "main.ts")), type: 2 },
+        { uri: uriOf(diMain), type: 2 },
+      ],
+    });
+  const unprovided = main.replace(/@Singleton\(Database\)\r?\n/, "");
+  expect(unprovided).not.toBe(main);
+  await Bun.write(diMain, unprovided);
+  changed();
+  const error = await waitFor(() => zdi(uri), 30000);
+  expect(error.range.start).toEqual(pos(await Bun.file(diCounter).text(), "@inject Database", 8));
+
+  await Bun.write(diMain, main);
+  changed();
+  await waitFor(() => (!zdi(uri) ? true : undefined), 30000);
+  notify("textDocument/didClose", { textDocument: { uri } });
+  rmSync(diRoot, { recursive: true, force: true });
 }, 60000);

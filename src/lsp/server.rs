@@ -3,7 +3,10 @@
 
 use super::features::{self, Context, Symbol};
 use super::{offset_at, path_to_uri, position_at, read_message, same_path, uri_to_path, write_message};
-use crate::build::{DiFailure, compile_all, declares_provider, di_checked, find_sources, in_project, inject_diags, output_path, project_root};
+use crate::build::{
+    DiFailure, InjectDiag, compile_all, declares_provider, di_checked, find_sources, in_project, inject_diags, output_path, project_root,
+    provider_files,
+};
 use crate::codegen::Generated;
 use crate::json::Json;
 use std::collections::HashMap;
@@ -17,6 +20,8 @@ enum Event {
     Ts(Json),
     ClientClosed,
     TsClosed,
+    /// A DI run's result; `marks` is `None` when compiling or the analyzer failed.
+    Di { root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf> },
 }
 
 #[derive(Clone, Copy)]
@@ -48,8 +53,17 @@ struct Doc {
     error: Option<crate::Diagnostic>,
     /// Last TypeScript diagnostics, mapped to this document.
     ts: Vec<Json>,
-    /// DI diagnostics from the last save.
+    /// DI diagnostics from the last analysis.
     di: Vec<Json>,
+}
+
+/// DI state of one project root.
+struct DiRoot {
+    root: PathBuf,
+    /// Bumped per request; results of older runs are dropped.
+    generation: u64,
+    /// Absolute provider `.ts` files seen by the last run.
+    providers: Vec<PathBuf>,
 }
 
 struct Ts {
@@ -65,6 +79,12 @@ struct Server {
     next_id: i64,
     pending: HashMap<i64, Pending>,
     docs: HashMap<String, Doc>,
+    di_running: bool,
+    /// Roots to analyze once the running analysis finishes.
+    di_queue: Vec<PathBuf>,
+    di_roots: Vec<DiRoot>,
+    /// Last DI diagnostics per `.tszor` source, open or not.
+    di_marks: Vec<(PathBuf, Vec<Json>)>,
 }
 
 pub fn run() -> io::Result<()> {
@@ -89,7 +109,17 @@ pub fn run() -> io::Result<()> {
             }
         }
     });
-    let mut server = Server { tx, ts: None, next_id: 0, pending: HashMap::new(), docs: HashMap::new() };
+    let mut server = Server {
+        tx,
+        ts: None,
+        next_id: 0,
+        pending: HashMap::new(),
+        docs: HashMap::new(),
+        di_running: false,
+        di_queue: Vec::new(),
+        di_roots: Vec::new(),
+        di_marks: Vec::new(),
+    };
     for event in rx {
         match event {
             Event::Client(msg) => {
@@ -108,6 +138,7 @@ pub fn run() -> io::Result<()> {
                     }
                 }
             }
+            Event::Di { root, generation, marks, providers } => server.di_done(root, generation, marks, providers)?,
             Event::ClientClosed => break,
         }
     }
@@ -357,7 +388,8 @@ impl Server {
                 let Some(path) = uri_to_path(&uri) else { return Ok(true) };
                 let text = params["textDocument"]["text"].as_str().unwrap_or_default().to_string();
                 let gen_uri = path_to_uri(&output_path(&path));
-                self.docs.insert(uri.clone(), Doc { text, path, gen_uri, compiled: None, version: 0, ts_open: false, error: None, ts: Vec::new(), di: Vec::new() });
+                let di = self.di_marks.iter().find(|(p, _)| same_path(p, &path)).map(|(_, d)| d.clone()).unwrap_or_default();
+                self.docs.insert(uri.clone(), Doc { text, path, gen_uri, compiled: None, version: 0, ts_open: false, error: None, ts: Vec::new(), di });
                 self.refresh(&uri)?;
             }
             "textDocument/didChange" => {
@@ -367,7 +399,32 @@ impl Server {
                     self.refresh(&uri)?;
                 }
             }
-            "textDocument/didSave" => self.saved(&uri)?,
+            "textDocument/didSave" => {
+                if let Some(root) = uri_to_path(&uri).and_then(|p| self.di_root_of(&p)) {
+                    self.di_request(root);
+                }
+            }
+            "workspace/didChangeWatchedFiles" => {
+                let mut roots: Vec<PathBuf> = Vec::new();
+                for change in params["changes"].as_array().into_iter().flatten() {
+                    let uri = change["uri"].as_str().unwrap_or_default();
+                    // DI writes `.zor/` files; reacting to them would loop.
+                    if uri.contains("/.zor/") || uri.contains("/node_modules/") {
+                        continue;
+                    }
+                    let Some(path) = uri_to_path(uri) else { continue };
+                    // Open `.tszor` documents are covered by `didSave`.
+                    if self.docs.values().any(|d| same_path(&d.path, &path)) {
+                        continue;
+                    }
+                    if let Some(root) = self.di_root_of(&path).filter(|r| !roots.iter().any(|x| same_path(x, r))) {
+                        roots.push(root);
+                    }
+                }
+                for root in roots {
+                    self.di_request(root);
+                }
+            }
             "textDocument/didClose" => {
                 if let Some(doc) = self.docs.remove(&uri) {
                     if doc.ts_open {
@@ -427,44 +484,89 @@ impl Server {
         Ok(())
     }
 
-    /// On save of a `.tszor` or a provider `.ts`: recompiles the project, runs the DI analysis and
-    /// publishes its `@inject` diagnostics. Provider graph errors in `.ts` files show in `zor build` only.
-    fn saved(&mut self, uri: &str) -> io::Result<()> {
-        let Some(path) = uri_to_path(uri) else { return Ok(()) };
-        let ext = path.extension().and_then(|e| e.to_str());
-        let relevant = match ext {
+    /// The project root to analyze when `path` changes: a `.tszor`, or a `.ts` that declares
+    /// (or, at the last run, declared) a provider, inside a tsconfig project.
+    fn di_root_of(&self, path: &Path) -> Option<PathBuf> {
+        let relevant = match path.extension().and_then(|e| e.to_str()) {
             Some("tszor") => true,
-            Some("ts") => std::fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t)),
+            Some("ts") => {
+                self.di_roots.iter().any(|r| r.providers.iter().any(|p| same_path(p, path)))
+                    || std::fs::read_to_string(path).is_ok_and(|t| declares_provider(&t))
+            }
             _ => false,
         };
-        if !relevant || !in_project(&path) {
-            return Ok(());
-        }
-        let root = project_root(&path);
-        let marks = match compile_all(&root) {
-            // The entry check is irrelevant here: only component diagnostics are published.
-            Ok(units) => match di_checked(&root, "main.ts", &units) {
-                Err(DiFailure::Diags(d)) => inject_diags(&root, &d, &units),
-                _ => Vec::new(),
-            },
-            Err(_) => Vec::new(),
+        (relevant && in_project(path)).then(|| project_root(path))
+    }
+
+    fn di_state(&mut self, root: &Path) -> &mut DiRoot {
+        let i = match self.di_roots.iter().position(|r| same_path(&r.root, root)) {
+            Some(i) => i,
+            None => {
+                self.di_roots.push(DiRoot { root: root.to_path_buf(), generation: 0, providers: Vec::new() });
+                self.di_roots.len() - 1
+            }
         };
-        let uris: Vec<String> = self.docs.keys().cloned().collect();
+        &mut self.di_roots[i]
+    }
+
+    /// Requests a DI analysis of `root`; while one runs, the root is queued once.
+    fn di_request(&mut self, root: PathBuf) {
+        self.di_state(&root).generation += 1;
+        if !self.di_running {
+            self.di_start(root);
+        } else if !self.di_queue.iter().any(|r| same_path(r, &root)) {
+            self.di_queue.push(root);
+        }
+    }
+
+    /// Compiles the project and runs the DI analysis on a worker thread.
+    fn di_start(&mut self, root: PathBuf) {
+        let generation = self.di_state(&root).generation;
+        self.di_running = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let files = provider_files(&root);
+            let marks = compile_all(&root).ok().and_then(|units| match di_checked(&root, "main.ts", &units, &files) {
+                // The entry check is irrelevant here: only component diagnostics are published.
+                Ok(_) => Some(Vec::new()),
+                Err(DiFailure::Diags(d)) => Some(inject_diags(&root, &d, &units)),
+                Err(DiFailure::Other(_)) => None,
+            });
+            let providers = files.iter().map(|f| root.join(f)).collect();
+            let _ = tx.send(Event::Di { root, generation, marks, providers });
+        });
+    }
+
+    /// Publishes a finished analysis's `@inject` diagnostics (unless a newer request superseded it) and
+    /// starts the next queued one. Provider graph errors in `.ts` files show in `zor build` only.
+    fn di_done(&mut self, root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf>) -> io::Result<()> {
+        self.di_running = false;
+        let state = self.di_state(&root);
+        state.providers = providers;
+        let current = state.generation == generation;
+        if !self.di_queue.is_empty() {
+            let next = self.di_queue.remove(0);
+            self.di_start(next);
+        }
+        let Some(marks) = marks.filter(|_| current) else { return Ok(()) };
+        self.di_marks.retain(|(p, _)| !p.starts_with(&root));
+        for m in marks {
+            let d = Json::obj([
+                ("range", Json::obj([("start", lsp_pos(m.start)), ("end", lsp_pos(m.end))])),
+                ("severity", 1usize.into()),
+                ("source", "zor".into()),
+                ("code", m.code.into()),
+                ("message", m.message.into()),
+            ]);
+            match self.di_marks.iter_mut().find(|(p, _)| *p == m.source) {
+                Some((_, list)) => list.push(d),
+                None => self.di_marks.push((m.source, vec![d])),
+            }
+        }
+        let uris: Vec<String> = self.docs.iter().filter(|(_, d)| same_path(&project_root(&d.path), &root)).map(|(u, _)| u.clone()).collect();
         for uri in uris {
             let doc = self.docs.get_mut(&uri).expect("key from docs");
-            let di: Vec<Json> = marks
-                .iter()
-                .filter(|m| same_path(&m.source, &doc.path))
-                .map(|m| {
-                    Json::obj([
-                        ("range", Json::obj([("start", lsp_pos(m.start)), ("end", lsp_pos(m.end))])),
-                        ("severity", 1usize.into()),
-                        ("source", "zor".into()),
-                        ("code", m.code.into()),
-                        ("message", format!("{}: {}", m.code, m.message).into()),
-                    ])
-                })
-                .collect();
+            let di = self.di_marks.iter().find(|(p, _)| same_path(p, &doc.path)).map(|(_, d)| d.clone()).unwrap_or_default();
             if doc.di != di {
                 doc.di = di;
                 self.emit(&uri)?;

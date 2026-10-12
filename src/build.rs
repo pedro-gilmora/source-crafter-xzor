@@ -5,7 +5,7 @@ use crate::lsp::{offset_at, position_at, same_path};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
-use std::io;
+use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
@@ -204,7 +204,7 @@ const DI_SCRIPT: &str = include_str!("di.ts");
 /// Compile-time DI: analyzes the project's providers, writes the generated providers into `.zor/`, and returns
 /// `.zor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
 pub fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
-    di_checked(root, entry, compiled).map_err(|f| match f {
+    di_checked(root, entry, compiled, &provider_files(root)).map_err(|f| match f {
         DiFailure::Diags(d) => format_diags(root, &d, compiled, &std::env::current_dir().unwrap_or_default()),
         DiFailure::Other(e) => e,
     })
@@ -222,10 +222,9 @@ impl From<String> for DiFailure {
     }
 }
 
-/// `di` with its diagnostics left structured.
-pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, DiFailure> {
+/// `di` with its diagnostics left structured; `files` are `provider_files(root)`.
+pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf]) -> Result<Option<PathBuf>, DiFailure> {
     let zor = root.join(".zor");
-    let files = provider_files(root);
     if files.is_empty() {
         prune(&zor, &[])?;
         return Ok(None);
@@ -234,7 +233,7 @@ pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Opt
     let script = root.join("node_modules").join(".cache").join("zor").join("di.ts");
     write_if_changed(&script, DI_SCRIPT)?;
     let mut cmd = Command::new("bun");
-    cmd.arg(&script).arg(root).args(&files).arg("--");
+    cmd.arg(&script).arg(root).args(files).arg("--");
     for unit in compiled.iter().filter(|u| !u.generated.injects.is_empty()) {
         let rel = unit.out.strip_prefix(root).map_err(|_| format!("{}: error: generated file is outside {}, cannot analyze its @inject", unit.source.display(), root.display()))?;
         cmd.arg(rel);
@@ -285,7 +284,9 @@ fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
     let mut files = Vec::new();
     walk(zor, &|n| n.ends_with(".ts") && !n.ends_with(".tszor.ts"), &mut files).map_err(|e| format!("{}: {e}", zor.display()))?;
     for file in files.iter().filter(|f| !written.contains(f)) {
-        let generated = fs::read_to_string(file).is_ok_and(|t| t.lines().next() == Some(crate::di::emit::HEADER));
+        let mut first = String::new();
+        let generated = fs::File::open(file).is_ok_and(|f| io::BufReader::new(f).read_line(&mut first).is_ok())
+            && first.trim_end_matches(['\r', '\n']) == crate::di::emit::HEADER;
         if generated {
             fs::remove_file(file).map_err(|e| format!("{}: {e}", file.display()))?;
         }
@@ -299,7 +300,7 @@ pub fn declares_provider(text: &str) -> bool {
 }
 
 /// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Mount`.
-fn provider_files(root: &Path) -> Vec<PathBuf> {
+pub fn provider_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if root.is_dir() {
         let _ = walk(root, &|n| n.ends_with(".ts") && !n.ends_with(".d.ts"), &mut files);
