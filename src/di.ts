@@ -394,8 +394,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       } else {
         const owner = r.owner!.value;
         const member = r.memberSym!.value?.valueDeclaration?.resolve();
-        if (r.member!.startsWith("#") || (member && member.modifierFlags & ModifierFlags.Private)) {
-          error(r.loc, `${owner?.name ?? r.owner!.node.getText(r.loc.sf)}.${r.member} must not be private`);
+        if (r.member!.startsWith("#") || (member && member.modifierFlags & (ModifierFlags.Private | ModifierFlags.Protected))) {
+          error(r.loc, `${owner?.name ?? r.owner!.node.getText(r.loc.sf)}.${r.member} must be public`);
           continue;
         }
         const sig = r.factory!.value && checker.getSignaturesOfType(r.factory!.value, SignatureKind.Call)[0];

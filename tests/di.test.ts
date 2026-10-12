@@ -195,23 +195,26 @@ export class P {}
   expect(out.providers[0].mount.target).toBe("a");
 });
 
-test("private factories are errors", () => {
+test("non-public factories are errors", () => {
   const main = `import { ServiceProvider, Singleton } from "@zor/runtime";
 export class Factories {
   private static hidden(): string { return ""; }
   static #secret(): string { return ""; }
+  protected static guarded(): string { return ""; }
   static open(): string { return ""; }
 }
 @ServiceProvider()
 @Singleton("a", Factories.hidden)
 @Singleton("c", Factories.#secret)
+@Singleton("d", Factories.guarded)
 @Singleton("b", Factories.open)
 export class P {}
 `;
   const out = analyzeTemp({ "main.ts": main });
   expect(out.errors).toEqual([
-    { file: "main.ts", at: main.indexOf("Factories.hidden)"), message: "Factories.hidden must not be private" },
-    { file: "main.ts", at: main.indexOf("Factories.#secret)"), message: "Factories.#secret must not be private" },
+    { file: "main.ts", at: main.indexOf("Factories.hidden)"), message: "Factories.hidden must be public" },
+    { file: "main.ts", at: main.indexOf("Factories.#secret)"), message: "Factories.#secret must be public" },
+    { file: "main.ts", at: main.indexOf("Factories.guarded)"), message: "Factories.guarded must be public" },
   ]);
 });
 
