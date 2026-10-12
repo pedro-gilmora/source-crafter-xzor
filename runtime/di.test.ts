@@ -12,7 +12,22 @@ import {
   Singleton,
   Transient,
   mount,
+  polyfillDisposeSymbols,
 } from "./index";
+
+// `Symbol.dispose` is non-configurable where it exists, so the polyfill is tested on a stand-in.
+test("polyfillDisposeSymbols fills missing dispose symbols and keeps native ones", () => {
+  const bare: { dispose?: symbol; asyncDispose?: symbol } = {};
+  polyfillDisposeSymbols(bare);
+  expect(bare.dispose).toBe(Symbol.for("Symbol.dispose"));
+  expect(bare.asyncDispose).toBe(Symbol.for("Symbol.asyncDispose"));
+
+  const native = { dispose: Symbol("native"), asyncDispose: Symbol("nativeAsync") };
+  const before = { ...native };
+  polyfillDisposeSymbols(native);
+  expect(native).toEqual(before);
+  expect(typeof (Symbol as unknown as { dispose: unknown }).dispose).toBe("symbol");
+});
 
 // Written the way zor emits components that take injected services.
 

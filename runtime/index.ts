@@ -60,9 +60,16 @@ function surface(result: unknown): void {
   if (result instanceof Promise) result.catch(rethrow);
 }
 // Projects on the ES2022 lib have no `Symbol.dispose` typing.
-const wellKnown = Symbol as unknown as { dispose?: symbol; asyncDispose?: symbol };
-const DISPOSE = wellKnown.dispose ?? Symbol.for("Symbol.dispose");
-const ASYNC_DISPOSE = wellKnown.asyncDispose ?? Symbol.for("Symbol.asyncDispose");
+type DisposeSymbols = { dispose: symbol; asyncDispose: symbol };
+const wellKnown = Symbol as unknown as DisposeSymbols;
+
+/** @internal Engines without explicit resource management get the registry symbols that TypeScript's downlevel helpers use. */
+export function polyfillDisposeSymbols(target: Partial<DisposeSymbols>): void {
+  target.dispose ??= Symbol.for("Symbol.dispose");
+  target.asyncDispose ??= Symbol.for("Symbol.asyncDispose");
+}
+// Runs before any generated provider's class body evaluates `[Symbol.dispose]`, since providers import this module.
+polyfillDisposeSymbols(wellKnown);
 type ServiceDecorator = {
   <T>(impl: new (...a: any[]) => T): ClassDecorator;
   <T>(key: string, factory: (...a: any[]) => T | Promise<T>): ClassDecorator;
@@ -511,8 +518,8 @@ function dispose(v: VNode): void {
 function disposeInstance(c: ComponentBase): void {
   hooks(c).dispose();
   const d = c as unknown as Record<symbol, (() => unknown) | undefined>;
-  d[DISPOSE]?.();
-  surface(d[ASYNC_DISPOSE]?.());
+  d[wellKnown.dispose]?.();
+  surface(d[wellKnown.asyncDispose]?.());
 }
 
 function remove(parent: Node, v: VNode): void {
