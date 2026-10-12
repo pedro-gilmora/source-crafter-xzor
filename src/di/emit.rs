@@ -266,12 +266,17 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    fn covered(&mut self, r: &Resolved, cls: &str, j: usize) -> String {
+    /// The value of a cached service, or `undefined` while it is pending: its field, or the import's `tryGetX()`.
+    fn settled(&mut self, r: &Resolved, cls: &str, j: usize) -> String {
         let s = &r.services[j];
         match self.delegate(r, s) {
-            Some((owner, d)) => format!("{owner}.tryGet{}()!", pascal(&d.getter)),
-            None => format!("{}!", Self::field(cls, s)),
+            Some((owner, d)) => format!("{owner}.tryGet{}()", pascal(&d.getter)),
+            None => Self::field(cls, s),
         }
+    }
+
+    fn covered(&mut self, r: &Resolved, cls: &str, j: usize) -> String {
+        format!("{}!", self.settled(r, cls, j))
     }
 
     /// The argument list; `awaited[n]` is the expression for the n-th `Awaited` arg.
@@ -320,15 +325,20 @@ impl<'a> Emitter<'a> {
         (pre, exprs)
     }
 
-    /// The settled-state check: `const vN = this.tryGetX();` lines and the `vN !== undefined && ...` condition.
-    fn fast(r: &Resolved, deps: &[usize], indent: &str, sep: &str) -> (String, String, Vec<String>) {
+    /// The settled-state check: `const vN = X$.#x;` lines and the `vN !== undefined && ...` condition.
+    fn fast(&mut self, r: &Resolved, cls: &str, deps: &[usize], indent: &str, sep: &str) -> (String, String) {
         let mut decls = String::new();
         let mut cond = Vec::with_capacity(deps.len());
         for (n, &j) in deps.iter().enumerate() {
-            let _ = write!(decls, "{indent}const v{n} = this.tryGet{}();{sep}", pascal(&r.services[j].getter));
+            let read = self.settled(r, cls, j);
+            let _ = write!(decls, "{indent}const v{n} = {read};{sep}");
             cond.push(format!("v{n} !== undefined"));
         }
-        (decls, cond.join(" && "), (0..deps.len()).map(|n| format!("v{n}")).collect())
+        (decls, cond.join(" && "))
+    }
+
+    fn fast_vars(deps: &[usize]) -> Vec<String> {
+        (0..deps.len()).map(|n| format!("v{n}")).collect()
     }
 
     fn class(&mut self, out: &mut String, r: &'a Resolved, mount: bool) {
@@ -441,8 +451,7 @@ impl<'a> Emitter<'a> {
         let args = self.args(r, cls, &s.args, &exprs);
         let call = self.build(s, &args);
         let fast_build = if fast {
-            let (_, _, vs) = Self::fast(r, &deps, "", "");
-            let args = self.args(r, cls, &s.args, &vs);
+            let args = self.args(r, cls, &s.args, &Self::fast_vars(&deps));
             self.build(s, &args)
         } else {
             String::new()
@@ -455,7 +464,7 @@ impl<'a> Emitter<'a> {
             w!(out, "  get{p}Async(): Promise<{st}> {{");
             w!(out, "    if ({field}$Promise) return {field}$Promise;");
             if fast {
-                let (decls, cond, _) = Self::fast(r, &deps, "    ", "\n");
+                let (decls, cond) = self.fast(r, cls, &deps, "    ", "\n");
                 out.push_str(&decls);
                 w!(out, "    return ({field}$Promise = {cond}");
                 w!(out, "      ? Promise.resolve(({field} = {fast_build}))");
@@ -471,7 +480,7 @@ impl<'a> Emitter<'a> {
             w!(out, "  get{p}Async(): Promise<{st}> {{ return {call}; }}");
         } else {
             if fast {
-                let (decls, cond, _) = Self::fast(r, &deps, "    ", "\n");
+                let (decls, cond) = self.fast(r, cls, &deps, "    ", "\n");
                 w!(out, "  get{p}Async(): Promise<{st}> {{");
                 out.push_str(&decls);
                 w!(out, "    return {cond} ? Promise.resolve({fast_build}) : this.{create}();");
@@ -502,8 +511,8 @@ impl<'a> Emitter<'a> {
             }
             let deps = awaited(args);
             if deps.iter().all(|&j| cached(&r.services[j])) {
-                let (decls, cond, vs) = Self::fast(r, &deps, "", " ");
-                let a = self.args(r, cls, args, &vs);
+                let (decls, cond) = self.fast(r, cls, &deps, "", " ");
+                let a = self.args(r, cls, args, &Self::fast_vars(&deps));
                 w!(out, "    if (type === {name}) {{ {decls}return {cond} ? new {name}({a}) : this.{create}(); }}");
             } else {
                 w!(out, "    if (type === {name}) return this.{create}();");
@@ -788,7 +797,7 @@ mod tests {
         has(&text, "  #authService?: AuthService;");
         has(&text, "  #authService$Promise?: Promise<AuthService>;");
         has(&text, "    if (this.#authService$Promise) return this.#authService$Promise;");
-        has(&text, "    const v0 = this.tryGetDatabase();");
+        has(&text, "    const v0 = DataServices$.#database;");
         has(&text, "    return (this.#authService$Promise = v0 !== undefined");
         has(&text, "      ? Promise.resolve((this.#authService = new AuthService(this.clock, v0)))");
         has(&text, "      : this.#authService$create());");
@@ -809,7 +818,7 @@ mod tests {
             ),
             false,
         );
-        has(&text, "    const v0 = this.tryGetDatabase();\n    const v1 = this.tryGetConfig();\n");
+        has(&text, "    const v0 = DataServices$.#database;\n    const v1 = DataServices$.#config;\n");
         has(&text, "v0 !== undefined && v1 !== undefined");
         has(
             &text,
@@ -873,7 +882,7 @@ mod tests {
         let text = emit_file("main.ts", &all, true);
         has(
             &text,
-            "    if (type === Counter) { const v0 = this.tryGetDatabase(); return v0 !== undefined ? new Counter(v0) : this.#counter$create(); }",
+            "    if (type === Counter) { const v0 = Application$.#database; return v0 !== undefined ? new Counter(v0) : this.#counter$create(); }",
         );
         has(&text, "  async #counter$create(): Promise<Counter> { return new Counter(await this.getDatabaseAsync()); }");
     }
@@ -893,7 +902,7 @@ mod tests {
         let text = emit_file("main.ts", &all, true);
         has(
             &text,
-            "    if (type === Counter) { const v0 = this.tryGetDatabase(); return v0 !== undefined ? new Counter(Application$.#someInt!, v0) : this.#counter$create(); }",
+            "    if (type === Counter) { const v0 = Application$.#database; return v0 !== undefined ? new Counter(Application$.#someInt!, v0) : this.#counter$create(); }",
         );
         has(
             &text,
@@ -931,6 +940,8 @@ mod tests {
         has(&text, "  getDatabaseAsync(): Promise<IDatabase> { return DataServices$[SharedInstance].getDatabaseAsync(); }");
         has(&text, "  tryGetDatabase(): IDatabase | undefined { return DataServices$[SharedInstance].tryGetDatabase(); }");
         has(&text, "new AuthService(await p0, DataServices$[SharedInstance].tryGetSomeInt()!)");
+        has(&text, "    const v0 = DataServices$[SharedInstance].tryGetDatabase();");
+        lacks(&text, "this.tryGet");
         lacks(&text, "#database");
         lacks(&text, "#someInt");
     }
