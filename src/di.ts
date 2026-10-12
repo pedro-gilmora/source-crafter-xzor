@@ -249,9 +249,15 @@ function analyze(root: string, program: Program, checker: Checker, files: string
   const fileOf = (path: string) => {
     if (!fileNames) {
       fileNames = new Map();
-      for (const n of program.getSourceFileNames()) fileNames.set(n, n).set(n.toLowerCase(), n);
+      const names = program.getSourceFileNames();
+      for (const n of names) fileNames.set(n, n);
+      // Exact names are registered first, so a case-folded key never shadows one.
+      for (const n of names) {
+        const lower = n.toLowerCase();
+        if (!fileNames.has(lower)) fileNames.set(lower, n);
+      }
     }
-    return fileNames.get(path);
+    return fileNames.get(path) ?? fileNames.get(path.toLowerCase());
   };
   const exportName = (s: Sym, fileName: string): string | undefined => {
     const parent = s.getParent();
