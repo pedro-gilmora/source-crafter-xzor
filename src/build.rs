@@ -226,6 +226,10 @@ impl From<String> for DiFailure {
 pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf]) -> Result<Option<PathBuf>, DiFailure> {
     let zor = root.join(".zor");
     if files.is_empty() {
+        let diags = unmounted_injects(root, compiled);
+        if !diags.is_empty() {
+            return Err(DiFailure::Diags(diags));
+        }
         prune(&zor, &[])?;
         return Ok(None);
     }
@@ -266,6 +270,21 @@ pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[Path
     }
     prune(&zor, &written)?;
     Ok(mount.map(|_| zor.join(entry)))
+}
+
+/// ZDI04 for every `@inject` when no `.ts` declares an application (same message as `di::graph` without `@Mount`).
+fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph::Diag> {
+    let mut out = Vec::new();
+    for unit in compiled {
+        let file = unit.source.strip_prefix(root).unwrap_or(&unit.source).display().to_string().replace('\\', "/");
+        let name = unit.source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let class = crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name));
+        for i in &unit.generated.injects {
+            let message = format!("{} (injected as {} in {class}) is not provided: no @Mount application", i.ty.text, i.name.text);
+            out.push(crate::di::graph::Diag { file: file.clone(), at: 0, code: "ZDI04", message, inject: Some(i.name.text.clone()) });
+        }
+    }
+    out
 }
 
 /// The analyzer's facts, or a clear error when it failed or printed something unparseable.
@@ -545,6 +564,18 @@ mod tests {
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
         assert!(err.lines().any(|l| l.ends_with("Counter.tszor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided: no @Mount application")), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn inject_without_any_application_is_an_error() {
+        let root = temp("injectnoapp");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
+        fs::write(root.join("Page.tszor"), "@inject Clock clock\n<p/>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let err = di(&root, "main.ts", &units).unwrap_err();
+        assert!(err.lines().any(|l| l.ends_with("Page.tszor(1,15): error ZDI04: Clock (injected as clock in Page) is not provided: no @Mount application")), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 
