@@ -1,5 +1,6 @@
-import { beforeAll, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { beforeAll, afterAll, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "fixtures", "di");
@@ -32,7 +33,7 @@ const reg = (p: string, pred: (r: any) => boolean) => provider(p).registrations.
 beforeAll(() => {
   mkdirSync(join(root, ".zor"), { recursive: true });
   for (const [name, text] of Object.entries(generated)) writeFileSync(join(root, ".zor", name), text);
-  const args = ["services/data.ts", "services/hidden.ts", "main.ts", "--", ".zor/App.tszor.ts", ".zor/Counter.tszor.ts"];
+  const args = ["services/data.ts", "services/hidden.ts", "services/dispose.ts", "main.ts", "--", ".zor/App.tszor.ts", ".zor/Counter.tszor.ts"];
   const run = Bun.spawnSync(["bun", script, root, ...args]);
   expect(run.stderr.toString()).toBe("");
   expect(run.exitCode).toBe(0);
@@ -50,6 +51,15 @@ test("reads registrations", () => {
   expect(db.params[0].type.text).toBe("ILogger");
   expect(db.dispose).toBe("dispose");
   expect(regs[0].dispose).toBeNull();
+  expect(regs[0].at).toBe(readFileSync(join(root, "services", "data.ts"), "utf8").indexOf("@Singleton<ILogger>"));
+});
+
+test("reads dispose members", () => {
+  const dispose = (name: string) => reg("DisposeServices", (r) => r.impl.text === name).dispose;
+  expect(dispose("SyncSymbol")).toBe("Symbol.dispose");
+  expect(dispose("AsyncSymbol")).toBe("Symbol.asyncDispose");
+  expect(dispose("Both")).toBe("Symbol.asyncDispose");
+  expect(dispose("NotCallable")).toBeNull();
 });
 
 test("type identity ignores aliases", () => {
@@ -77,6 +87,7 @@ test("reads mount and imports", () => {
   expect(app.mount.component.module).toBe("App.tszor");
   expect(app.mount.component.export).toBe("default");
   expect(app.mount.target).toBe("app");
+  expect(app.mount.component.id).toBe(facts.components.find((c: any) => c.class.text === "App").class.id);
   expect(app.imports[0].text).toBe("DataServices");
   expect(app.imports[0].id).toBe("services/data.ts#DataServices");
   expect(provider("DataServices").mount).toBeNull();
@@ -101,4 +112,85 @@ test("unexported type", () => {
   expect(facts.errors).toHaveLength(1);
   expect(facts.errors[0].message).toBe("Hidden must be exported to be injected");
   expect(facts.errors[0].file).toBe("services/hidden.ts");
+});
+
+// Temp project copies; `paths: false` leaves @zor/runtime unresolvable.
+const temps: string[] = [];
+afterAll(() => temps.forEach((d) => rmSync(d, { recursive: true, force: true })));
+function analyzeTemp(files: Record<string, string>, paths = true) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "zor-di-")));
+  temps.push(dir);
+  const runtime = join(import.meta.dir, "..", "runtime", "index.ts").replaceAll("\\", "/");
+  const compilerOptions: any = { target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ESNext", "DOM"], strict: true, noEmit: true, skipLibCheck: true };
+  if (paths) compilerOptions.paths = { "@zor/runtime": [runtime] };
+  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["**/*.ts"] }));
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+  const run = Bun.spawnSync(["bun", script, dir, ...Object.keys(files)]);
+  expect(run.stderr.toString()).toBe("");
+  expect(run.exitCode).toBe(0);
+  return JSON.parse(run.stdout.toString());
+}
+
+test("unresolvable runtime is an error", () => {
+  const main = `import { ServiceProvider } from "@zor/runtime";\n\n@ServiceProvider()\nexport class P {}\n`;
+  const out = analyzeTemp({ "main.ts": main }, false);
+  expect(out.providers).toEqual([]);
+  expect(out.errors).toEqual([{ file: "main.ts", at: main.indexOf("@ServiceProvider"), message: "cannot resolve @zor/runtime" }]);
+});
+
+test("non-importable types are errors, primitives and lib types are not", () => {
+  const main = `import { ServiceProvider, Singleton } from "@zor/runtime";
+export class Svc {}
+export type Shape = { a: number };
+export type Either = Svc | Date;
+export type Both = Svc & { x: 1 };
+export type Other = { b: 1 };
+export class Uses {
+  constructor(
+    readonly shape: Shape,
+    readonly either: Either,
+    readonly both: Both,
+    readonly lit: { a: 1 },
+    readonly date: Date,
+    readonly map: Map<string, number>,
+    readonly el: HTMLElement,
+    readonly pr: Promise<Svc>,
+    readonly s: string,
+    readonly n: number,
+    readonly b: boolean,
+    readonly big: bigint,
+    readonly sym: symbol,
+  ) {}
+}
+export class ShapeImpl {}
+@ServiceProvider()
+@Singleton(Uses)
+@Singleton<Other>(ShapeImpl)
+export class P {}
+`;
+  const out = analyzeTemp({ "main.ts": main });
+  const suffix = " must be a class, interface or enum to be injected";
+  expect(out.errors.map((e: any) => e.message)).toEqual(["Other", "Shape", "Either", "Both", "{ a: 1; }"].map((t) => t + suffix));
+  expect(out.errors[0].at).toBe(main.indexOf("Other>(ShapeImpl)"));
+  expect(out.errors[1].at).toBe(main.indexOf("readonly shape: Shape"));
+  const params = out.providers[0].registrations[0].params;
+  const prims = params.slice(4).map((p: any) => [p.type.text, p.type.module]);
+  expect(prims).toEqual([["Date", null], ["Map<string, number>", null], ["HTMLElement", null], ["Svc", "main"], ["string", null], ["number", null], ["boolean", null], ["bigint", null], ["symbol", null]]);
+});
+
+test("decorator misuse", () => {
+  const main = `import { Mount, ServiceProvider } from "@zor/runtime";
+export class App {}
+
+@Mount(App, "a")
+@Mount(App, "b")
+@ServiceProvider
+export class P {}
+`;
+  const out = analyzeTemp({ "main.ts": main });
+  expect(out.errors).toEqual([
+    { file: "main.ts", at: main.indexOf("@ServiceProvider"), message: "@ServiceProvider must be called" },
+    { file: "main.ts", at: main.indexOf('@Mount(App, "b")'), message: "duplicate @Mount" },
+  ]);
+  expect(out.providers[0].mount.target).toBe("a");
 });

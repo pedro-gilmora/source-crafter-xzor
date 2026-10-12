@@ -9,7 +9,8 @@
 // checker.getTypeFromTypeNode(typeArgument) reads `@Singleton<T>`; checker.getDeclaredTypeOfSymbol(class) is the instance type.
 // checker.getTypeOfSymbol(classes[]) then getSignaturesOfType(t, SignatureKind.Construct)[0].getParameters() for constructors.
 // checker.getTypeAtLocation(nodes[]) then getSignaturesOfType(t, SignatureKind.Call)[0] and getReturnTypeOfSignature for factories.
-// checker.getTypeOfSymbol(parameters[]) is batched; optional ones go through getNonNullableType; valueDeclaration.resolve() gives `?`/initializer.
+// checker.getTypeOfSymbol(parameters[]) is batched; optional ones use getTypeFromTypeNode(annotation) (drops only the implicit undefined); valueDeclaration.resolve() gives `?`/initializer.
+// symbol.declarations[0].path + program.getSourceFileMetadataByPath(path).isDefaultLibrary detect lib types without fetching the AST; program.getSourceFileNames() maps the lowercased path back to the real file name.
 // checker.resolveName("Promise", SymbolFlags.Type, undefined, false) plus getTypeArguments(reference) unwraps Promise<T>.
 // checker.getPropertiesOfType(t): `dispose`, or `__@dispose@N`/`__@asyncDispose@N` compared with the global Disposable/AsyncDisposable members.
 // symbol.getParent() is the module only for exported declarations; parent.getExports() keys are export names ("default" included).
@@ -24,7 +25,7 @@ import {
   isPropertyAccessExpression,
   isStringLiteral,
 } from "typescript/unstable/ast/is";
-import { API, ModifierFlags, SignatureKind, SymbolFlags, type Checker, type Program, type Signature, type Symbol as Sym, type Type } from "typescript/unstable/sync";
+import { API, ModifierFlags, SignatureKind, SymbolFlags, TypeFlags, type Checker, type Program, type Signature, type Symbol as Sym, type Type } from "typescript/unstable/sync";
 
 type TypeRef = { id: string; text: string; module: string | null; export: string | null };
 type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef };
@@ -55,6 +56,7 @@ type Kind = "ServiceProvider" | "Mount" | "Import" | "Singleton" | "Scoped" | "T
 const KINDS: Kind[] = ["ServiceProvider", "Mount", "Import", "Singleton", "Scoped", "Transient"];
 const LIFETIMES = { Singleton: "singleton", Scoped: "scoped", Transient: "transient" } as const;
 const NAMED = SymbolFlags.Class | SymbolFlags.Interface | SymbolFlags.Enum;
+const PRIMITIVE = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.BigInt | TypeFlags.ESSymbol;
 const RUNTIME = "@zor/runtime";
 
 type Loc = { sf: SourceFile; node: Node };
@@ -66,7 +68,8 @@ const slash = (p: string) => p.replaceAll("\\", "/");
 function analyze(root: string, program: Program, checker: Checker, files: string[], componentFiles: string[]): Facts {
   const facts: Facts = { providers: [], components: [], errors: [] };
   const rel = (fileName: string) => slash(relative(root, fileName));
-  const error = (loc: Loc, message: string) => facts.errors.push({ file: rel(loc.sf.fileName), at: loc.node.getStart(loc.sf), message });
+  const errorAt = (sf: SourceFile, at: number, message: string) => facts.errors.push({ file: rel(sf.fileName), at, message });
+  const error = (loc: Loc, message: string) => errorAt(loc.sf, loc.node.getStart(loc.sf), message);
   const source = (file: string) => {
     const sf = program.getSourceFile(file);
     if (!sf) facts.errors.push({ file: rel(file), at: 0, message: `${rel(file)} is not part of the project` });
@@ -99,28 +102,32 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       const sym = exports?.get(kind as never);
       if (sym) kinds.set(sym.id, kind);
     }
-    break;
+    if (kinds.size) break;
   }
 
   type Deco = { kind: Kind; call: CallExpression; at: number };
-  type Candidate = { sf: SourceFile; cls: ClassDeclaration; calls: { call: CallExpression; at: number; callee: Lookup<Sym | undefined> }[] };
+  type Candidate = { sf: SourceFile; cls: ClassDeclaration; calls: { call: CallExpression | undefined; at: number; callee: Lookup<Sym | undefined> }[] };
   const candidates: Candidate[] = [];
   const callees: Lookup<Sym | undefined>[] = [];
-  if (kinds.size) {
-    for (const sf of sources) {
-      for (const cls of sf.statements) {
-        if (!isClassDeclaration(cls) || !cls.modifiers) continue;
-        const calls: Candidate["calls"] = [];
-        for (const m of cls.modifiers) {
-          if (!isDecorator(m) || !isCallExpression(m.expression)) continue;
-          const callee = { node: m.expression.expression as Node };
-          callees.push(callee);
-          calls.push({ call: m.expression, at: m.getStart(sf), callee });
-        }
-        if (calls.length) candidates.push({ sf, cls, calls });
+  let firstDecorator: { sf: SourceFile; at: number } | undefined;
+  for (const sf of sources) {
+    for (const cls of sf.statements) {
+      if (!isClassDeclaration(cls) || !cls.modifiers) continue;
+      const calls: Candidate["calls"] = [];
+      for (const m of cls.modifiers) {
+        if (!isDecorator(m)) continue;
+        const at = m.getStart(sf);
+        firstDecorator ??= { sf, at };
+        if (!kinds.size) continue;
+        const call = isCallExpression(m.expression) ? m.expression : undefined;
+        const callee = { node: (call ? call.expression : m.expression) as Node };
+        callees.push(callee);
+        calls.push({ call, at, callee });
       }
+      if (calls.length) candidates.push({ sf, cls, calls });
     }
   }
+  if (!kinds.size && firstDecorator) errorAt(firstDecorator.sf, firstDecorator.at, `cannot resolve ${RUNTIME}`);
   symbols(callees);
 
   // --- plan every provider, queueing the lookups it needs ---
@@ -154,7 +161,9 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     const decos: Deco[] = [];
     for (const c of calls) {
       const kind = c.callee.value && kinds.get(c.callee.value.id);
-      if (kind) decos.push({ kind, call: c.call, at: c.at });
+      if (!kind) continue;
+      if (c.call) decos.push({ kind, call: c.call, at: c.at });
+      else errorAt(sf, c.at, `@${kind} must be called`);
     }
     if (!decos.length) continue;
     const plan: ProviderPlan = { sf, cls, self: sym(cls.name ?? cls), imports: [], regs: [] };
@@ -165,7 +174,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         for (const a of args) plan.imports.push({ lookup: sym(a), loc: { sf, node: a } });
       } else if (deco.kind === "Mount") {
         const [component, target] = args;
-        if (!component || !target || !isStringLiteral(target)) error(loc, "@Mount expects a component and a string literal target");
+        if (plan.mount) errorAt(sf, deco.at, "duplicate @Mount");
+        else if (!component || !target || !isStringLiteral(target)) error(loc, "@Mount expects a component and a string literal target");
         else plan.mount = { component: sym(component), target: target.text, at: deco.at, loc: { sf, node: component } };
       } else if (deco.kind !== "ServiceProvider") {
         const [first, second] = args;
@@ -234,37 +244,50 @@ function analyze(root: string, program: Program, checker: Checker, files: string
   };
 
   const typeRefs = new Map<number, TypeRef>();
-  const libFiles = new Map<string, boolean>();
-  const exportName = (s: Sym, sf: SourceFile): string | undefined => {
+  // Handle paths are canonical (lowercased on Windows); the program's file names keep their case.
+  let fileNames: Map<string, string> | undefined;
+  const fileOf = (path: string) => {
+    if (!fileNames) {
+      fileNames = new Map();
+      for (const n of program.getSourceFileNames()) fileNames.set(n, n).set(n.toLowerCase(), n);
+    }
+    return fileNames.get(path);
+  };
+  const exportName = (s: Sym, fileName: string): string | undefined => {
     const parent = s.getParent();
     if (parent) return parent.getExports().get(s.escapedName)?.id === s.id ? s.name : undefined;
     // `class X {}; export { X as Y }` leaves X without a parent.
-    for (const [name, e] of checker.getSymbolAtLocation(sf)?.getExports() ?? []) {
+    const sf = program.getSourceFile(fileName);
+    for (const [name, e] of (sf && checker.getSymbolAtLocation(sf)?.getExports()) ?? []) {
       if (e.flags & SymbolFlags.Alias && target(e)?.id === s.id) return name as string;
     }
     return undefined;
   };
-  const symbolRef = (s: Sym, text: string, loc: Loc): TypeRef => {
-    const sf = s.flags & NAMED ? s.declarations[0]?.resolve()?.getSourceFile() : undefined;
-    if (!sf) return { id: text, text, module: null, export: null };
-    let lib = libFiles.get(sf.fileName);
-    if (lib === undefined) libFiles.set(sf.fileName, (lib = program.isSourceFileDefaultLibrary(sf)));
-    if (lib) return { id: text, text, module: null, export: null };
-    const file = rel(sf.fileName).replace(/^\.zor\//, "");
+  const symbolRef = (s: Sym, t: Type, text: string, loc: Loc): TypeRef => {
+    const decl = s.declarations?.[0];
+    // Default-lib types (Date, Map, HTMLElement, ...) are global: nothing to import.
+    if (decl && program.getSourceFileMetadataByPath(decl.path)?.isDefaultLibrary) return { id: text, text, module: null, export: null };
+    const fileName = decl && s.flags & NAMED ? fileOf(decl.path) : undefined;
+    if (!fileName) return nonImportable(t, text, loc);
+    const file = rel(fileName).replace(/^\.zor\//, "");
     const module = file.replace(/\.(d\.)?[cm]?tsx?$/, "");
-    const name = exportName(s, sf);
+    const name = exportName(s, fileName);
     if (name === undefined) {
       error(loc, `${text} must be exported to be injected`);
       return { id: `${file}#${s.name}`, text, module, export: null };
     }
     return { id: `${file}#${name}`, text, module, export: name };
   };
+  const nonImportable = (t: Type, text: string, loc: Loc): TypeRef => {
+    if (!(t.flags & PRIMITIVE)) error(loc, `${text} must be a class, interface or enum to be injected`);
+    return { id: text, text, module: null, export: null };
+  };
   const typeRef = (t: Type, loc: Loc): TypeRef => {
     let ref = typeRefs.get(t.id);
     if (!ref) {
       const text = checker.typeToString(t);
       const s = t.getSymbol();
-      typeRefs.set(t.id, (ref = s ? symbolRef(s, text, loc) : { id: text, text, module: null, export: null }));
+      typeRefs.set(t.id, (ref = s && !(t.flags & PRIMITIVE) ? symbolRef(s, t, text, loc) : nonImportable(t, text, loc)));
     }
     return ref;
   };
@@ -282,12 +305,17 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     let sync = false;
     let symbolDispose = false;
     d = null;
+    const callable = (p: Sym) => {
+      const pt = checker.getTypeOfSymbol(p);
+      return !!pt && checker.getSignaturesOfType(pt, SignatureKind.Call).length > 0;
+    };
     for (const p of checker.getPropertiesOfType(t)) {
-      if (p.name === "dispose") sync = true;
+      if (p.name === "dispose") sync ||= callable(p);
       else if (p.name.startsWith("__@")) {
         wellKnown ??= { dispose: memberName("Disposable"), asyncDispose: memberName("AsyncDisposable") };
-        if (p.escapedName === wellKnown.asyncDispose) d = "Symbol.asyncDispose";
-        else if (p.escapedName === wellKnown.dispose) symbolDispose = true;
+        if (p.escapedName === wellKnown.asyncDispose) {
+          if (callable(p)) d = "Symbol.asyncDispose";
+        } else if (p.escapedName === wellKnown.dispose) symbolDispose ||= callable(p);
       }
     }
     d ??= sync ? "dispose" : symbolDispose ? "Symbol.dispose" : null;
@@ -392,7 +420,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           if (sf && decl) error({ sf, node: decl }, `cannot resolve the type of parameter ${param.name}`);
           continue;
         }
-        if (optional) t = checker.getNonNullableType(t) ?? t;
+        // The annotation excludes the implicit `undefined` of `x?: T` without dropping a written `null`.
+        if (optional && isParameterDeclaration(decl) && decl.type) t = checker.getTypeFromTypeNode(decl.type as never) ?? t;
         const awaited = unwrapPromise(t);
         out.push({ name: param.name, optional, promise: awaited !== undefined, type: typeRef(awaited ?? t, { sf, node: decl }) });
       }
