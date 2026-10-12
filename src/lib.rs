@@ -40,6 +40,10 @@ pub fn compile_mapped(source: &str, path: &Path) -> Result<codegen::Generated, D
     let file_name = path.file_name().map_or_else(|| "component.tszor".into(), |n| n.to_string_lossy());
     let stem = file_name.strip_suffix(".tszor").unwrap_or(&file_name);
     let components = imported_components(&doc, path);
+    if let Some(offset) = codegen::inject_constructor(&doc) {
+        let (line, column) = line_col(source, offset);
+        return Err(Diagnostic { message: codegen::ZDI08.into(), line, column, offset });
+    }
     codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components)
         .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })
 }

@@ -366,6 +366,7 @@ impl<'a> Emitter<'a> {
                 (false, false) => " implements Disposable",
                 (false, true) => " implements AsyncDisposable",
             };
+            // Unconditional: the `@zor/runtime` import also guarantees the Symbol.dispose polyfill loads first.
             let shared = self.runtime("SharedInstance");
             w!(out, "export class {cls} extends {base}{implements} {{");
             w!(out, "  static #shared?: {cls};");

@@ -2,7 +2,7 @@
 // and the bundle's source map is composed with each generated file's map so it points at the `.tszor` sources.
 // Usage: bun bundle.ts <entry> <outdir>
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, posix, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 type Segment = number[];
 type SourceMap = { version: number; sources: string[]; sourcesContent?: (string | null)[]; names: string[]; mappings: string };
@@ -114,6 +114,12 @@ function projectRoot(dir: string): string {
     if (existsSync(join(d, "tsconfig.json"))) return d;
     if (dirname(d) === d) return dir;
   }
+}
+
+/** Whether `path` is inside the directory `root`. */
+export function inProject(path: string, root: string): boolean {
+  const rel = relative(root, path);
+  return rel !== "" && !/^\.\.(?:[\\/]|$)/.test(rel) && !isAbsolute(rel);
 }
 
 function generatedPath(source: string): string {
@@ -270,6 +276,7 @@ export function stripMarkerDecorators(src: string): string {
 }
 
 async function main(entry: string, outdir: string): Promise<void> {
+  const root = projectRoot(dirname(resolve(entry)));
   // Stripped sources by absolute path; the source map shows the originals.
   const originals = new Map<string, string>();
   const result = await Bun.build({
@@ -287,7 +294,7 @@ async function main(entry: string, outdir: string): Promise<void> {
           build.onLoad({ filter: /\.ts$/ }, (args) => {
             const path = args.path.replaceAll("\\", "/");
             const text = readFileSync(args.path, "utf8");
-            if (path.includes("/node_modules/") || path.includes("/.zor/")) return { contents: text, loader: "ts" };
+            if (!inProject(args.path, root) || path.includes("/node_modules/") || path.includes("/.zor/")) return { contents: text, loader: "ts" };
             const stripped = stripMarkerDecorators(text);
             if (stripped !== text) originals.set(resolve(args.path), text);
             return { contents: stripped, loader: "ts" };

@@ -67,7 +67,7 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
         return Err(facts
             .errors
             .iter()
-            .map(|e| Diag { file: e.file.clone(), at: e.at, code: "ZDI02", message: e.message.clone(), inject: None })
+            .map(|e| Diag { file: e.file.clone(), at: e.at, code: "ZDI11", message: e.message.clone(), inject: None })
             .collect());
     }
     let providers = &facts.providers;
@@ -95,6 +95,14 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
     if let Some(&m) = mounts.first() {
         if let State::Done(r, _) = &mut cx.states[m] {
             r.components = components(facts, r, &mut cx.diags);
+        }
+    } else {
+        for c in &facts.components {
+            let file = c.class.module.as_deref().unwrap_or(&c.class.text);
+            for prm in &c.injects {
+                let message = format!("{} (injected as {} in {}) is not provided: no @Mount application", prm.ty.text, prm.name, c.class.text);
+                cx.diags.push(Diag { file: file.to_string(), at: 0, code: "ZDI04", message, inject: Some(prm.name.clone()) });
+            }
         }
     }
 
@@ -746,14 +754,14 @@ mod tests {
     }
 
     #[test]
-    fn analyzer_errors_are_zdi02() {
+    fn analyzer_errors_are_zdi11() {
         let f = Facts {
             errors: vec![FactError { file: "s.ts".into(), at: 4, message: "Hidden must be exported to be injected".into() }],
             ..facts(vec![provider("P", &[], vec![])])
         };
         assert_eq!(
             err(&f),
-            [Diag { file: "s.ts".into(), at: 4, code: "ZDI02", message: "Hidden must be exported to be injected".into(), inject: None }]
+            [Diag { file: "s.ts".into(), at: 4, code: "ZDI11", message: "Hidden must be exported to be injected".into(), inject: None }]
         );
     }
 
@@ -803,6 +811,18 @@ mod tests {
         assert_eq!(codes(&d), ["ZDI04"]);
         assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.tszor", 0, Some("db")));
         assert_eq!(d[0].message, "IDatabase (injected as db in Counter) is not provided by Application");
+    }
+
+    #[test]
+    fn zdi04_inject_without_mount() {
+        let f = Facts {
+            components: vec![component("Counter", vec![param("db", "IDatabase")])],
+            ..facts(vec![provider("Application", &[], vec![single("IDatabase", "Database", vec![])])])
+        };
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI04"]);
+        assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.tszor", 0, Some("db")));
+        assert_eq!(d[0].message, "IDatabase (injected as db in Counter) is not provided: no @Mount application");
     }
 
     #[test]

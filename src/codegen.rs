@@ -188,6 +188,16 @@ impl M {
     }
 }
 
+pub const ZDI08: &str = "ZDI08: a component with @inject cannot declare a constructor";
+
+/// The source offset of a user `constructor` in a component that also uses `@inject` (ZDI08).
+pub fn inject_constructor(doc: &Document) -> Option<usize> {
+    if doc.injects.is_empty() {
+        return None;
+    }
+    doc.code.iter().find_map(|c| member_decls(c).into_iter().find(|d| d.is_method && d.name == "constructor").map(|d| c.at + d.offset))
+}
+
 pub fn generate(doc: &Document, class_name: &str, source_name: &str) -> Result<Generated, String> {
     generate_with(doc, class_name, source_name, &HashMap::new())
 }
@@ -223,8 +233,8 @@ pub fn generate_with(
         .flat_map(|c| collect_members(c))
         .chain(doc.injects.iter().map(|i| i.name.text.clone()))
         .collect();
-    if !doc.injects.is_empty() && doc.code.iter().any(|c| member_decls(c).iter().any(|d| d.is_method && d.name == "constructor")) {
-        return Err("ZDI08: a component with @inject cannot declare a constructor".into());
+    if inject_constructor(doc).is_some() {
+        return Err(ZDI08.into());
     }
     let mut g = Gen {
         out: String::new(),
@@ -1523,9 +1533,11 @@ mod tests {
 
     #[test]
     fn inject_with_user_constructor_fails() {
-        let (doc, _) = crate::parser::parse("@inject A a\n@code { constructor() { super(); } }").unwrap();
+        let src = "@inject A a\n@code { constructor() { super(); } }";
+        let (doc, _) = crate::parser::parse(src).unwrap();
         let err = generate(&doc, "C", "C.tszor").unwrap_err();
-        assert!(err.contains("ZDI08"), "{err}");
+        assert_eq!(err, ZDI08);
+        assert_eq!(inject_constructor(&doc), src.find("constructor"));
     }
 
     #[test]

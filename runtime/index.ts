@@ -367,6 +367,7 @@ function construct(type: Ctor<ComponentBase>, app: IApplication | undefined): Co
   if (!inject?.length) return new type();
   const made = app?.createComponent?.(type);
   if (made) return made;
+  if (app) throw new Error(`zor: ${type.name} is not registered with the application`);
   throw new Error(`zor: ${type.name} needs injected services (${inject.join(", ")}) but has no application`);
 }
 

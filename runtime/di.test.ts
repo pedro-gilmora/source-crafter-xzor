@@ -126,6 +126,11 @@ test("injected component without an app throws", () => {
   expect(() => mount(Needs, host())).toThrow("zor: Needs needs injected services (dep) but has no application");
 });
 
+test("injected component the app does not create throws", () => {
+  expect(() => mount(Needs, host(), { createComponent: () => undefined })).toThrow("zor: Needs is not registered with the application");
+  expect(() => mount(Needs, host(), {})).toThrow("zor: Needs is not registered with the application");
+});
+
 test("components without inject are built without asking the app", () => {
   const asked: Function[] = [];
   const el = host();

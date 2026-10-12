@@ -37,6 +37,7 @@ fn run(args: &[String]) -> Result<(), String> {
     match command.as_str() {
         "compile" => {
             let paths = if rest.is_empty() { vec![".".to_string()] } else { rest.to_vec() };
+            let mut failed = false;
             for p in paths {
                 let path = PathBuf::from(p);
                 let units = build::compile_all(&path)?;
@@ -48,8 +49,12 @@ fn run(args: &[String]) -> Result<(), String> {
                     let kept: Vec<&str> = e.lines().filter(|l| !l.contains("error ZDI07: @Mount must be declared in the entry module")).collect();
                     if !kept.is_empty() {
                         eprintln!("{}", kept.join("\n"));
+                        failed = true;
                     }
                 }
+            }
+            if failed {
+                return Err("zor: DI analysis failed".to_string());
             }
         }
         "build" => {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { stripMarkerDecorators } from "../src/bundle";
+import { join } from "node:path";
+import { inProject, stripMarkerDecorators } from "../src/bundle";
 
 const IMPORT = `import { Import, Mount, Scoped, ServiceProvider, Singleton, Transient } from "@zor/runtime";\n`;
 
@@ -63,4 +64,14 @@ test("files without a value import from @zor/runtime are unchanged", () => {
 test("an @ inside a string or mid-expression is not a decorator", () => {
   const src = `${IMPORT}const s = "@Singleton(A)";\nconst t = x @Singleton(B);\n`;
   expect(stripMarkerDecorators(src)).toBe(src);
+});
+
+test("only files under the project root are stripped", () => {
+  const root = join(import.meta.dir, "app");
+  expect(inProject(join(root, "main.ts"), root)).toBe(true);
+  expect(inProject(join(root, "services", "data.ts"), root)).toBe(true);
+  expect(inProject(join(root, "..foo.ts"), root)).toBe(true);
+  expect(inProject(root, root)).toBe(false);
+  expect(inProject(join(import.meta.dir, "lib", "x.ts"), root)).toBe(false);
+  expect(inProject(join(import.meta.dir, "app2", "x.ts"), root)).toBe(false);
 });

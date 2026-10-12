@@ -31,6 +31,13 @@ fn parse_errors_have_positions() {
 }
 
 #[test]
+fn inject_constructor_error_points_at_the_constructor() {
+    let err = zor::compile("@inject A a\n@code {\n  n = 1;\n  constructor() { super(); }\n}\n<p/>", Path::new("C.tszor")).unwrap_err();
+    assert_eq!((err.line, err.column), (4, 3));
+    assert_eq!(err.message, "ZDI08: a component with @inject cannot declare a constructor");
+}
+
+#[test]
 fn non_string_component_props_take_expressions() {
     let dir = std::env::temp_dir().join(format!("zor-props-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

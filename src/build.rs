@@ -535,6 +535,20 @@ mod tests {
     }
 
     #[test]
+    fn inject_without_mount_is_an_error() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let files = [("main.ts", "console.log(1);\n"), ("services/data.ts", &*data), ("Counter.tszor", COUNTER)];
+        let root = di_project("injectnomount", &files);
+        let units = compile_all(&root).unwrap();
+        let err = di(&root, "main.ts", &units).unwrap_err();
+        assert!(err.lines().any(|l| l.ends_with("Counter.tszor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided: no @Mount application")), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn di_errors_are_mapped() {
         if !has_bun() {
             return;
@@ -619,6 +633,9 @@ mod tests {
         assert!(root.join(".zor/main.ts").is_file());
 
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
+        // Without @Mount, @inject would be ZDI04.
+        fs::write(root.join("Counter.tszor"), "<p/>\n").unwrap();
+        let units = compile_all(&root).unwrap();
         assert_eq!(di(&root, "main.ts", &units), Ok(None));
         assert!(!root.join(".zor/main.ts").exists());
         assert!(root.join(".zor/services/data.provider.ts").is_file());
