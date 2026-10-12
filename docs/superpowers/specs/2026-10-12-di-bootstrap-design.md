@@ -207,9 +207,10 @@ export default class Counter extends ComponentBase {
 | ZDI04 | A `@inject` type in a component is not provided by the application. |
 | ZDI05 | Ambiguous: two registrations satisfy one unkeyed parameter. |
 | ZDI06 | Interface-only registration without an implementation or factory. |
-| ZDI07 | `@Mount` on more than one class in a bundle entry, or on a class not implementing `IApplication`. |
+| ZDI07 | `@Mount` on more than one class, or outside the build's entry module. |
 | ZDI08 | A user constructor in a `@code` block that also uses `@inject`. |
 | ZDI10 | Captive dependency: a singleton depends on a scoped service, directly or through transients. |
+| ZDI11 | Invalid registration found by the analyzer: an unexported or non-importable type, a generic project type, a non-public factory, a decorator misuse, or an unresolvable `@zor/runtime`. |
 
 ## My calls (review these)
 
