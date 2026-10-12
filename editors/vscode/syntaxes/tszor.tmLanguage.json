@@ -3,7 +3,73 @@
   "scopeName": "source.tszor",
   "name": "TSZor",
   "patterns": [{ "include": "#markup" }],
+  "injections": {
+    "L:meta.embedded.block.typescript - comment - string": {
+      "comment": "Markup used as a value inside @code and @{ }, where TypeScript would read a cast.",
+      "patterns": [{ "include": "#code-markup-value" }]
+    }
+  },
   "repository": {
+    "code-markup-value": {
+      "comment": "Starts at the whitespace before `<` so it wins over TypeScript's cast rule, which starts there too.",
+      "begin": "(?:(?<![\\w$.)\\]>])|(?<=\\breturn|\\byield|\\bawait))\\s+(?=@?<[A-Za-z][\\w.:-]*[\\s/>])",
+      "end": "(?<=>)",
+      "patterns": [{ "include": "#code-void-element" }, { "include": "#code-element" }]
+    },
+    "code-void-element": {
+      "name": "meta.tag.tszor",
+      "begin": "(@)?(<)(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)(?=[\\s/>])",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "punctuation.definition.tag.begin.html" },
+        "3": { "name": "entity.name.tag.html" }
+      },
+      "end": "/?>",
+      "endCaptures": { "0": { "name": "punctuation.definition.tag.end.html" } },
+      "patterns": [{ "include": "#tag-attributes" }]
+    },
+    "code-element": {
+      "begin": "(@)?(<)(?:([A-Z][\\w.]*)|([a-z][\\w:-]*))(?=[\\s/>])",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "punctuation.definition.tag.begin.html" },
+        "3": { "name": "support.class.component.tszor" },
+        "4": { "name": "entity.name.tag.html" }
+      },
+      "end": "(/>)|(</)(?:([A-Z][\\w.]*)|([a-z][\\w:-]*))\\s*(>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.html" },
+        "2": { "name": "punctuation.definition.tag.begin.html" },
+        "3": { "name": "support.class.component.tszor" },
+        "4": { "name": "entity.name.tag.html" },
+        "5": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "patterns": [
+        { "include": "#tag-attributes" },
+        {
+          "comment": "Children run from the start tag's `>` up to the matching close tag.",
+          "begin": ">",
+          "beginCaptures": { "0": { "name": "punctuation.definition.tag.end.html" } },
+          "end": "(?=</)",
+          "patterns": [
+            { "include": "#razor-comment" },
+            { "include": "#comment" },
+            { "include": "#code-void-element" },
+            { "include": "#code-element" },
+            { "include": "#escape" },
+            { "include": "#slot-definition-args" },
+            { "include": "#slot-fill-params" },
+            { "include": "#slot" },
+            { "include": "#switch" },
+            { "include": "#control" },
+            { "include": "#explicit" },
+            { "include": "#implicit-call" },
+            { "include": "#implicit" },
+            { "include": "#entity" }
+          ]
+        }
+      ]
+    },
     "markup": {
       "patterns": [
         { "include": "#razor-comment" },
@@ -268,6 +334,9 @@
       },
       "end": "/?>",
       "endCaptures": { "0": { "name": "punctuation.definition.tag.end.html" } },
+      "patterns": [{ "include": "#tag-attributes" }]
+    },
+    "tag-attributes": {
       "patterns": [
         { "include": "#event-attribute" },
         { "include": "#quoted-attribute" },

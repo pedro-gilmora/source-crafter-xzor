@@ -210,3 +210,53 @@ test("type errors land on the .tszor line", async () => {
   expect(error.message).toContain("number");
   notify("textDocument/didChange", { textDocument: { uri, version: 3 }, contentChanges: [{ text: counterText }] });
 }, 20000);
+
+test("find references maps template uses back to the .tszor", async () => {
+  const refs = await request("textDocument/references", {
+    textDocument: { uri: uriOf(counter) },
+    position: pos(counterText, "count: number"),
+    context: { includeDeclaration: true },
+  });
+  const starts = refs.filter((r: any) => r.uri === uriOf(counter)).map((r: any) => r.range.start);
+  expect(starts).toContainEqual(pos(counterText, "count: number"));
+  expect(starts).toContainEqual(pos(counterText, "@count</h2>", 1));
+  expect(refs.every((r: any) => !r.uri.includes(".zor/"))).toBe(true);
+}, 20000);
+
+test("rename edits the declaration and template uses", async () => {
+  const edit = await request("textDocument/rename", {
+    textDocument: { uri: uriOf(counter) },
+    position: pos(counterText, "@count</h2>", 2),
+    newName: "total",
+  });
+  const edits = edit.changes[uriOf(counter)];
+  const starts = edits.map((e: any) => e.range.start);
+  expect(starts).toContainEqual(pos(counterText, "count: number"));
+  expect(starts).toContainEqual(pos(counterText, "@count</h2>", 1));
+  expect(starts).toContainEqual(pos(counterText, "count >= 10"));
+  expect(edits.every((e: any) => e.newText === "total")).toBe(true);
+  expect(Object.keys(edit.changes).every((u) => !u.includes(".zor/"))).toBe(true);
+}, 20000);
+
+test("renaming a prop also renames its attributes in other components", async () => {
+  const edit = await request("textDocument/rename", {
+    textDocument: { uri: uriOf(counter) },
+    position: pos(counterText, "step: number"),
+    newName: "by",
+  });
+  const starts = edit.changes[uriOf(app)].map((e: any) => e.range.start);
+  expect(starts).toContainEqual(pos(appText, 'step="5"'));
+}, 20000);
+
+test("TypeScript features keep working while the template has a syntax error", async () => {
+  const text = counterText.replace("<h2>@label: @count</h2>", "<h2>@label: @count</h2>\n  <p");
+  const uri = uriOf(counter);
+  notify("textDocument/didChange", { textDocument: { uri, version: 20 }, contentChanges: [{ text }] });
+  const hover = await request("textDocument/hover", {
+    textDocument: { uri },
+    position: pos(text, "+@step", 2),
+  });
+  expect(JSON.stringify(hover.contents)).toContain("number");
+  expect(hover.range.start).toEqual(pos(text, "+@step", 2));
+  notify("textDocument/didChange", { textDocument: { uri, version: 21 }, contentChanges: [{ text: counterText }] });
+}, 20000);

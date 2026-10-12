@@ -23,6 +23,34 @@
   inc() { this.count++; }
 <!-- <~~--- meta.embedded.block.typescript entity.name.function.ts
 <!--      ^^^^ variable.language.this.ts
+  card: RenderFragment = <Card title="x"><b>@n</b></Card>;
+<!--                      ^^^^ support.class.component.tszor
+<!--                           ^^^^^ entity.other.attribute-name.html
+<!--                                      ^ entity.name.tag.html
+<!--                                        ^ keyword.control.transition.tszor
+<!--                                                ^^^^ support.class.component.tszor
+<!--                                                     ^ punctuation.terminator.statement.ts
+  row(): RenderFragment { return <li class="r">@this.x</li>; }
+<!--                      ^^^^^^ keyword.control.flow.ts
+<!--                              ^^ entity.name.tag.html
+<!--                                                    ^^ entity.name.tag.html
+  frag = @<p/>;
+<!--     ^ keyword.control.transition.tszor
+<!--       ^ entity.name.tag.html
+  less = a < b;
+<!--       ^ keyword.operator.relational.ts
+<!--         ^ - entity.name.tag.html
+  multi = <div>
+<!--       ^^^ entity.name.tag.html
+    <div>in<br>x</div>
+<!-- ^^^ entity.name.tag.html
+<!--        ^^ entity.name.tag.html
+<!--              ^^^ entity.name.tag.html
+  </div>;
+<!-- <~~~~--- entity.name.tag.html
+<!--    ^ punctuation.terminator.statement.ts
+  after = 1;
+<!--      ^ constant.numeric.decimal.ts
 }
 <!-- <- meta.embedded.block.typescript punctuation.definition.block.ts
 <div class="a @kind" @onclick="() => go(1)">Hi @user.name, @(x + 1) a@b.com @@</div>
