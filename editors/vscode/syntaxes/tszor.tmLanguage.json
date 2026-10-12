@@ -80,6 +80,7 @@
         { "include": "#line-text" },
         { "include": "#page" },
         { "include": "#typeparam" },
+        { "include": "#inject" },
         { "include": "#import" },
         { "include": "#escape" },
         { "include": "#slot-definition-args" },
@@ -161,6 +162,15 @@
         "2": { "name": "keyword.control.directive.tszor" },
         "3": { "name": "entity.name.type.parameter.tszor" },
         "4": { "patterns": [{ "include": "source.ts#type" }] }
+      }
+    },
+    "inject": {
+      "match": "(?<![[:alnum:]])(@)(inject)\\s+(.+?)\\s+([_$[:alpha:]][_$[:alnum:]]*)\\s*$",
+      "captures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.directive.tszor" },
+        "3": { "patterns": [{ "include": "source.ts#type" }] },
+        "4": { "name": "variable.other.readwrite.tszor" }
       }
     },
     "import": {
