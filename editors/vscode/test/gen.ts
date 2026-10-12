@@ -3,6 +3,8 @@ type A = [needle: string, scopes: string, nth?: number];
 const spec: [string, A[]][] = [
   ['@page "/"', [["@", "keyword.control.transition.tszor"], ["page", "keyword.control.directive.tszor"], ['"/"', "string.quoted.double.tszor"]]],
   ['@import Counter from "./Counter.tszor"', [["@", "keyword.control.transition.tszor"], ["import", "keyword.control.import.ts"], ['"./Counter.tszor"', "string.quoted.double.ts"]]],
+  ["@typeparam T extends object", [["typeparam", "keyword.control.directive.tszor"], ["T", "entity.name.type.parameter.tszor"]]],
+  ['<input @bind="name" @bind:event="oninput" />', [["@bind", "entity.other.attribute-name.html"], ["name", "meta.embedded.expression.typescript"]]],
   ["@code {", [["@", "keyword.control.transition.tszor"], ["code", "keyword.control.directive.tszor"], ["{", "meta.embedded.block.typescript punctuation.definition.block.ts"]]],
   ["  count: number = 0;", [["count", "meta.embedded.block.typescript variable.object.property.ts"], ["number", "support.type.primitive.ts"]]],
   ["  inc() { this.count++; }", [["inc", "meta.embedded.block.typescript entity.name.function.ts"], ["this", "variable.language.this.ts"]]],
@@ -48,6 +50,12 @@ const spec: [string, A[]][] = [
   ["  default:", [["default", "keyword.control.tszor"]]],
   ["}", []],
   ["<p>after</p>", [["p", "entity.name.tag.html"]]],
+  ["  @slot:header { <h3>t</h3> }", [["@", "keyword.control.transition.tszor"], ["slot", "keyword.control.tszor"], ["header", "entity.name.function.slot.tszor"], ["h3", "entity.name.tag.html"]]],
+  ["  @slot:item(items[i] as T, i) { @i }", [["item", "entity.name.function.slot.tszor"], ["as", "keyword.control.as.ts"], ["T", "entity.name.type.ts"]]],
+  ["  @slot", [["slot", "keyword.control.tszor"]]],
+  ["  @slot row(step: string, i) { <b>@step</b> }", [["slot", "keyword.control.tszor"], ["row", "entity.name.function.slot.tszor"], ["step", "variable.parameter.ts"], ["string", "support.type.primitive.ts"], ["b", "entity.name.tag.html"]]],
+  ["  @slot { <i/> }", [["slot", "keyword.control.tszor"], ["i", "entity.name.tag.html"]]],
+  ["  @slot more text", [["more", "- entity.name.function.slot.tszor"]]],
 ];
 
 const out = ['<!-- SYNTAX TEST "source.tszor" "tszor grammar"'];

@@ -444,7 +444,7 @@ impl Server {
         let ctx = features::context(&doc.text, off);
         let mapped = doc.generated.as_ref().and_then(|g| src_to_gen(g, off));
         match (&ctx, mapped) {
-            (Context::Tag { .. } | Context::Attr { .. }, _) | (_, None) => {
+            (Context::Tag { .. } | Context::Attr { .. } | Context::SlotName { .. }, _) | (_, None) => {
                 let items = self.local_completions(&uri, off);
                 self.respond(id, Json::obj([("isIncomplete", false.into()), ("items", Json::Arr(items))]))
             }
@@ -458,7 +458,10 @@ impl Server {
     fn local_completions(&self, uri: &str, off: usize) -> Vec<Json> {
         let doc = &self.docs[uri];
         let start = match features::context(&doc.text, off) {
-            Context::Tag { start, .. } | Context::Attr { start, .. } | Context::Directive { start, .. } => start,
+            Context::Tag { start, .. }
+            | Context::Attr { start, .. }
+            | Context::Directive { start, .. }
+            | Context::SlotName { start, .. } => start,
             Context::Other => off,
         };
         let comps = self.components(&doc.path);
@@ -499,6 +502,10 @@ impl Server {
                     .find(|c| &c.name == component)
                     .and_then(|c| c.props.iter().find(|p| &p.name == name))
                     .map(|p| format!("```ts\n(prop) {component}.{}\n```", p.decl)),
+                Symbol::Slot { component, name } => comps
+                    .iter()
+                    .find(|c| &c.name == component && c.slots.iter().any(|(n, _)| n == name))
+                    .map(|_| format!("```ts\n(slot) {component}.{name}\n```")),
             };
             if let Some(value) = value {
                 let contents = Json::obj([("kind", "markdown".into()), ("value", value.into())]);
@@ -523,6 +530,10 @@ impl Server {
                 Symbol::Prop { component, name } => comps.iter().find(|c| &c.name == component).and_then(|c| {
                     let p = c.props.iter().find(|p| &p.name == name)?;
                     Some((c.path.clone(), p.offset, p.offset + p.name.len()))
+                }),
+                Symbol::Slot { component, name } => comps.iter().find(|c| &c.name == component).and_then(|c| {
+                    let (n, at) = c.slots.iter().find(|(n, _)| n == name)?;
+                    Some((c.path.clone(), *at, at + n.len()))
                 }),
             };
             if let Some((path, start, end)) = target {

@@ -1,6 +1,7 @@
 //! Component-level language features. Text-based so they keep working while the
 //! document is mid-edit and does not parse.
 
+use crate::ast::Node;
 use crate::codegen::{class_name, member_decls};
 use crate::{is_ident_char, parser};
 use std::path::{Component as PathPart, Path, PathBuf};
@@ -10,6 +11,8 @@ pub struct Component {
     pub name: String,
     pub path: PathBuf,
     pub props: Vec<Prop>,
+    /// Named slots it defines (`@slot:name`), with the byte offset of each name.
+    pub slots: Vec<(String, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +28,7 @@ pub fn component_from_source(path: &Path, text: &str) -> Component {
     let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let name = class_name(file.strip_suffix(".tszor").unwrap_or(&file));
     let mut props = Vec::new();
+    let mut slots = Vec::new();
     if let Ok((doc, _)) = parser::parse(text) {
         for code in &doc.code {
             for m in member_decls(code).into_iter().filter(|m| !m.is_method && m.name != "constructor") {
@@ -35,8 +39,75 @@ pub fn component_from_source(path: &Path, text: &str) -> Component {
                 props.push(Prop { name: m.name, decl, offset });
             }
         }
+        collect_slot_names(&doc.nodes, &mut slots);
     }
-    Component { name, path: path.to_path_buf(), props }
+    Component { name, path: path.to_path_buf(), props, slots }
+}
+
+fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
+    for node in nodes {
+        match node {
+            Node::Slot(s) => {
+                if let Some(n) = &s.name {
+                    out.push((n.to_string(), n.at));
+                }
+            }
+            Node::Element(e) => collect_slot_names(&e.children, out),
+            Node::If { branches, otherwise } => {
+                for (_, body) in branches {
+                    collect_slot_names(body, out);
+                }
+                if let Some(body) = otherwise {
+                    collect_slot_names(body, out);
+                }
+            }
+            Node::For { body, .. } => collect_slot_names(body, out),
+            Node::Switch { cases, .. } => cases.iter().for_each(|c| collect_slot_names(&c.body, out)),
+            Node::SlotFill(f) => collect_slot_names(&f.body, out),
+            Node::Text(_) | Node::Expr(_) => {}
+        }
+    }
+}
+
+/// The component tag whose direct content contains `offset`, found by matching open and close tags.
+fn enclosing_component(text: &str, offset: usize) -> Option<String> {
+    let b = text.as_bytes();
+    let mut stack: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < offset {
+        if b[i] == b'<' && i + 1 < offset {
+            let closing = b[i + 1] == b'/';
+            let start = i + 1 + closing as usize;
+            let name: String = text[start..offset].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+            if !name.is_empty() && name.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                let end = text[start..offset].find('>').map(|e| start + e);
+                if closing {
+                    if let Some(at) = stack.iter().rposition(|n| *n == name) {
+                        stack.truncate(at);
+                    }
+                } else if let Some(end) = end {
+                    let self_closing = b[end - 1] == b'/';
+                    let void = matches!(name.to_ascii_lowercase().as_str(), "br" | "hr" | "img" | "input" | "meta" | "link");
+                    if !self_closing && !void {
+                        stack.push(name);
+                    }
+                }
+                i = end.unwrap_or(offset);
+                continue;
+            }
+        }
+        i += 1;
+    }
+    stack.pop().filter(|n| n.starts_with(|c: char| c.is_ascii_uppercase()))
+}
+
+/// `@slot name` inside a component tag: the component and where the name starts.
+fn slot_fill_at(text: &str, start: usize) -> Option<String> {
+    let before = text[..start].trim_end_matches([' ', '\t']);
+    if before.len() == start || !before.ends_with("@slot") {
+        return None;
+    }
+    enclosing_component(text, start)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +118,8 @@ pub enum Context {
     Attr { tag: String, prefix: String, start: usize },
     /// After `@` in markup.
     Directive { prefix: String, start: usize },
+    /// After `@slot ` inside a component tag: one of its slot names.
+    SlotName { component: String, prefix: String, start: usize },
     Other,
 }
 
@@ -87,6 +160,9 @@ pub fn context(text: &str, offset: usize) -> Context {
     let start = word_start(text, offset);
     let prefix = text[start..offset].to_string();
     let prev = text[..start].bytes().last();
+    if let Some(component) = slot_fill_at(text, start) {
+        return Context::SlotName { component, prefix, start };
+    }
     if prev == Some(b'<') {
         return Context::Tag { prefix, start };
     }
@@ -111,6 +187,7 @@ pub fn context(text: &str, offset: usize) -> Context {
 pub enum Symbol {
     Component(String),
     Prop { component: String, name: String },
+    Slot { component: String, name: String },
 }
 
 /// The component or component prop named at `offset`, if any.
@@ -121,6 +198,9 @@ pub fn symbol_at(text: &str, offset: usize) -> Option<(Symbol, usize, usize)> {
         return None;
     }
     let word = &text[start..end];
+    if let Some(component) = slot_fill_at(text, start) {
+        return Some((Symbol::Slot { component, name: word.to_string() }, start, end));
+    }
     let is_component = |w: &str| w.starts_with(|c: char| c.is_ascii_uppercase());
     let before = &text[..start];
     if (before.ends_with('<') || before.ends_with("</")) && is_component(word) {
@@ -163,6 +243,13 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("switch", "switch ($1) {\n\tcase $2:\n\t\t$0\n}", "Switch on a value"),
     ("page", "page \"$1\"", "Route for this component"),
     ("import", "import $1 from \"$2\"", "Import a module or component"),
+    ("typeparam", "typeparam $1", "Generic type parameter of this component"),
+];
+
+const BIND_ATTRS: &[(&str, &str)] = &[
+    ("@bind", "Two-way binding (value or checked)"),
+    ("@bind:event", "Event that updates the binding, e.g. oninput"),
+    ("@bind:after", "Handler to run after the bound value changes"),
 ];
 
 fn matches_prefix(label: &str, prefix: &str) -> bool {
@@ -203,6 +290,20 @@ pub fn relative_import(from_dir: &Path, to: &Path) -> String {
 
 pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Component]) -> Vec<Completion> {
     match context(text, offset) {
+        Context::SlotName { component, prefix, .. } => components
+            .iter()
+            .filter(|c| c.name == component)
+            .flat_map(|c| c.slots.iter())
+            .filter(|(n, _)| matches_prefix(n, &prefix))
+            .map(|(n, _)| Completion {
+                label: n.clone(),
+                kind: KIND_PROPERTY,
+                detail: format!("slot of {component}"),
+                insert: n.clone(),
+                snippet: false,
+                extra_edit: None,
+            })
+            .collect(),
         Context::Tag { prefix, .. } => components
             .iter()
             .filter(|c| matches_prefix(&c.name, &prefix))
@@ -242,13 +343,14 @@ pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Com
             }
             DOM_EVENTS
                 .iter()
-                .map(|e| format!("@on{e}"))
-                .filter(|label| prefix.starts_with('@') && matches_prefix(label, &prefix))
-                .map(|label| Completion {
+                .map(|e| (format!("@on{e}"), "DOM event handler"))
+                .chain(BIND_ATTRS.iter().map(|(a, d)| (a.to_string(), *d)))
+                .filter(|(label, _)| prefix.starts_with('@') && matches_prefix(label, &prefix))
+                .map(|(label, detail)| Completion {
                     insert: format!("{label}=\"$1\""),
                     label,
                     kind: KIND_EVENT,
-                    detail: "DOM event handler".into(),
+                    detail: detail.into(),
                     snippet: true,
                     extra_edit: None,
                 })
@@ -290,6 +392,22 @@ mod tests {
     }
 
     #[test]
+    fn slot_names_inside_component_tags() {
+        let card = component_from_source(Path::new("/app/Card.tszor"), "<section>@slot:header @slot:footer(1) @slot</section>");
+        assert_eq!(card.slots.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["header", "footer"]);
+
+        let doc = "<Card title=\"x\">\n  <p/>\n  @slot he";
+        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[card.clone()]);
+        assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["header"]);
+
+        let doc = "<Card>\n  <div>@slot he";
+        assert_eq!(context(doc, doc.len()), Context::Other);
+
+        let doc = "<Card>@slot footer { x }</Card>";
+        assert_eq!(symbol_at(doc, 14).map(|s| s.0), Some(Symbol::Slot { component: "Card".into(), name: "footer".into() }));
+    }
+
+    #[test]
     fn contexts() {
         let t = "<main>\n  <Cou";
         assert_eq!(context(t, t.len()), Context::Tag { prefix: "Cou".into(), start: t.len() - 3 });
@@ -328,6 +446,10 @@ mod tests {
         let doc = "<button @onc";
         let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
         assert_eq!(items[0].label, "@onclick");
+
+        let doc = "<input @bi";
+        let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]).into_iter().map(|i| i.label).collect();
+        assert_eq!(labels, ["@bind", "@bind:event", "@bind:after"]);
 
         let doc = "\n@i";
         let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]).into_iter().map(|i| i.label).collect();

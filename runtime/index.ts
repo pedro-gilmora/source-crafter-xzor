@@ -36,19 +36,35 @@ const elementHandlers = new WeakMap<Element, { owner: ComponentBase; events: Rec
 
 const FRAGMENT: unique symbol = Symbol("zor.fragment");
 
+type Fragment = ((builder: RenderTreeBuilder) => void) & { readonly [FRAGMENT]: true };
+
 /** Markup held as a value (Blazor's RenderFragment); render it with `@member`. */
-export type RenderFragment = ((builder: RenderTreeBuilder) => void) & { readonly [FRAGMENT]: true };
+export type RenderFragment = Fragment;
 export type Renderer = RenderFragment;
 
-function isFragment(value: unknown): value is RenderFragment {
+/** A component event; invoking it re-renders the component that passed it in. */
+export type EventCallback<T = void> = (arg: T) => unknown;
+
+function isFragment(value: unknown): value is Fragment {
   return typeof value === "function" && FRAGMENT in value;
 }
 
 export abstract class ComponentBase {
-  /** Wraps builder calls as a RenderFragment; zor emits this for markup inside `@code`. */
+  /** Wraps builder calls as a RenderFragment; zor emits this for markup used as a value. */
   static fragment(build: (builder: RenderTreeBuilder) => void): RenderFragment {
     return Object.assign(build, { [FRAGMENT]: true as const });
   }
+
+  /** Reads a bound input's new value, converted to the bound field's current type. */
+  static bindValue<T>(e: Event, current: T): T {
+    const input = e.target as HTMLInputElement;
+    if (typeof current === "boolean") return input.checked as T;
+    if (typeof current === "number") return Number(input.value) as T;
+    return input.value as T;
+  }
+
+  /** Content the parent passed for each `@slot`; zor declares the exact type per component. */
+  slots: {} = {};
 
   protected abstract buildRenderTree(builder: RenderTreeBuilder): void;
 
@@ -129,7 +145,7 @@ export class RenderTreeBuilder {
     this.#append({ kind: "text", text: String(value) });
   }
 
-  addComponent<C extends ComponentBase>(type: Ctor<C>, props: Partial<C>): void {
+  addComponent<C extends ComponentBase>(type: Ctor<C>, props: Partial<C>, slots?: C["slots"]): void {
     const children = childInstances.get(this.owner) ?? [];
     childInstances.set(this.owner, children);
     const index = this.#childIndex++;
@@ -146,8 +162,37 @@ export class RenderTreeBuilder {
       if (!Object.is(current[key], value) || (typeof value === "object" && value !== null)) changed = true;
     }
     Object.assign(instance, props);
+    if (slots) {
+      // Slot lambdas are recreated on every parent render, so the child always refreshes.
+      instance.slots = slots;
+      changed = true;
+    }
     this.#append({ kind: "component", instance, changed });
   }
+
+  /** Wraps a handler passed to a child as an EventCallback (re-renders this owner). */
+  callback<T>(handler: (arg: T) => unknown): EventCallback<T> {
+    const owner = this.owner;
+    return (arg: T) => {
+      const result = handler(arg);
+      update(owner);
+      if (result instanceof Promise) void result.then(() => update(owner));
+      return result;
+    };
+  }
+}
+
+// Inputs keep live state in properties, so bound attributes are mirrored onto them.
+function setAttr(el: Element, name: string, value: string): void {
+  el.setAttribute(name, value);
+  if (name === "value" && "value" in el) (el as HTMLInputElement).value = value;
+  if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = true;
+}
+
+function removeAttr(el: Element, name: string): void {
+  el.removeAttribute(name);
+  if (name === "value" && "value" in el) (el as HTMLInputElement).value = "";
+  if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = false;
 }
 
 function render(component: ComponentBase): VNode[] {
@@ -192,7 +237,7 @@ function create(v: VNode, owner: ComponentBase): Node[] {
       return [v.dom];
     case "element": {
       const el = document.createElement(v.tag);
-      for (const [name, value] of Object.entries(v.attrs)) el.setAttribute(name, value);
+      for (const [name, value] of Object.entries(v.attrs)) setAttr(el, name, value);
       elementHandlers.set(el, { owner, events: v.events, listening: new Set() });
       for (const event of Object.keys(v.events)) listen(el, event);
       for (const child of v.children) el.append(...create(child, owner));
@@ -239,8 +284,11 @@ function patch(o: VNode, n: VNode, owner: ComponentBase): void {
     case "element": {
       const old = o as VElement;
       const el = (n.dom = old.dom!);
-      for (const name of Object.keys(old.attrs)) if (!(name in n.attrs)) el.removeAttribute(name);
-      for (const [name, value] of Object.entries(n.attrs)) if (old.attrs[name] !== value) el.setAttribute(name, value);
+      for (const name of Object.keys(old.attrs)) if (!(name in n.attrs)) removeAttr(el, name);
+      for (const [name, value] of Object.entries(n.attrs)) {
+        const live = name === "value" ? (el as HTMLInputElement).value : undefined;
+        if (old.attrs[name] !== value || (live !== undefined && live !== value)) setAttr(el, name, value);
+      }
       const record = elementHandlers.get(el)!;
       record.events = n.events;
       for (const event of Object.keys(n.events)) if (!record.listening.has(event)) listen(el, event);

@@ -9,8 +9,12 @@
         { "include": "#comment" },
         { "include": "#code-block" },
         { "include": "#page" },
+        { "include": "#typeparam" },
         { "include": "#import" },
         { "include": "#escape" },
+        { "include": "#slot-definition-args" },
+        { "include": "#slot-fill-params" },
+        { "include": "#slot" },
         { "include": "#switch" },
         { "include": "#control" },
         { "include": "#explicit" },
@@ -51,6 +55,15 @@
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.directive.tszor" },
         "3": { "name": "string.quoted.double.tszor" }
+      }
+    },
+    "typeparam": {
+      "match": "(?<![[:alnum:]])(@)(typeparam)\\s+([_$[:alpha:]][_$[:alnum:]]*)(.*)$",
+      "captures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.directive.tszor" },
+        "3": { "name": "entity.name.type.parameter.tszor" },
+        "4": { "patterns": [{ "include": "source.ts#type" }] }
       }
     },
     "import": {
@@ -119,6 +132,49 @@
         { "include": "#condition" },
         { "include": "#block" }
       ]
+    },
+    "slot-definition-args": {
+      "comment": "@slot:name(args): arguments are TypeScript expressions.",
+      "begin": "(?<![[:alnum:]])(@)(slot)(:)([_$[:alpha:]][_$[:alnum:]]*)(?=\\()",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.tszor" },
+        "3": { "name": "punctuation.separator.slot.tszor" },
+        "4": { "name": "entity.name.function.slot.tszor" }
+      },
+      "end": "(?<=\\))",
+      "patterns": [
+        {
+          "begin": "\\(",
+          "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.tszor" } },
+          "end": "\\)",
+          "endCaptures": { "0": { "name": "punctuation.section.parens.end.tszor" } },
+          "contentName": "meta.embedded.expression.typescript",
+          "patterns": [{ "include": "source.ts#expression" }]
+        }
+      ]
+    },
+    "slot-fill-params": {
+      "comment": "@slot name(params) inside a component tag: a TypeScript parameter list.",
+      "begin": "(?<![[:alnum:]])(@)(slot)(?:[ \\t]+([_$[:alpha:]][_$[:alnum:]]*))?[ \\t]*(?=\\()",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.tszor" },
+        "3": { "name": "entity.name.function.slot.tszor" }
+      },
+      "end": "(?<=\\))",
+      "contentName": "meta.embedded.expression.typescript",
+      "patterns": [{ "include": "source.ts#function-parameters" }]
+    },
+    "slot": {
+      "match": "(?<![[:alnum:]])(@)(slot)(?:(:)([_$[:alpha:]][_$[:alnum:]]*)|[ \\t]+([_$[:alpha:]][_$[:alnum:]]*)(?=\\s*\\{))?",
+      "captures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.tszor" },
+        "3": { "name": "punctuation.separator.slot.tszor" },
+        "4": { "name": "entity.name.function.slot.tszor" },
+        "5": { "name": "entity.name.function.slot.tszor" }
+      }
     },
     "switch": {
       "begin": "(?<![[:alnum:]])(@)(switch)\\b",
@@ -192,7 +248,7 @@
       ]
     },
     "event-attribute": {
-      "begin": "(@on[\\w-]+)\\s*(=)\\s*([\"'])",
+      "begin": "(@[A-Za-z][\\w:.-]*)\\s*(=)\\s*([\"'])",
       "beginCaptures": {
         "1": { "name": "entity.other.attribute-name.html entity.other.attribute-name.event.tszor" },
         "2": { "name": "punctuation.separator.key-value.html" },

@@ -1,0 +1,10 @@
+@code {
+  title = "";
+}
+
+<section class="card">
+  @slot:header {
+    <h3>@title</h3>
+  }
+  @slot
+</section>

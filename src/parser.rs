@@ -47,6 +47,7 @@ pub fn parse(src: &str) -> PResult<(Document, Vec<Token>)> {
         tokens: Vec::new(),
         doc: Document::default(),
         case_break: false,
+        in_component: false,
     };
     p.doc.nodes = p.nodes(Until::Eof)?;
     Ok((p.doc, p.tokens))
@@ -74,6 +75,8 @@ struct Parser<'a> {
     tokens: Vec<Token>,
     doc: Document,
     case_break: bool,
+    /// Parsing the direct children of a component tag, where `@slot name { }` fills a slot.
+    in_component: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -274,7 +277,7 @@ impl<'a> Parser<'a> {
 
         let word_start = self.pos;
         let word = self.ident();
-        let is_keyword = matches!(word, "code" | "page" | "import" | "if" | "for" | "switch");
+        let is_keyword = matches!(word, "code" | "page" | "import" | "if" | "for" | "switch" | "typeparam" | "slot");
         self.mark(TokenKind::Transition, at, at + 1);
         if is_keyword {
             self.mark(TokenKind::Keyword, word_start, self.pos);
@@ -313,6 +316,17 @@ impl<'a> Parser<'a> {
                 self.doc.imports.push(stmt);
                 Ok(Transition::Nothing)
             }
+            "typeparam" => {
+                let s = self.pos;
+                self.skip_line();
+                self.mark(TokenKind::Code, s, self.pos);
+                let param = self.span(s, self.pos);
+                if param.is_empty() {
+                    return self.err("expected a type parameter after @typeparam");
+                }
+                self.doc.type_params.push(param);
+                Ok(Transition::Nothing)
+            }
             "if" => self.if_block().map(Transition::Node),
             "for" => {
                 let head = self.condition()?;
@@ -320,6 +334,7 @@ impl<'a> Parser<'a> {
                 Ok(Transition::Node(Node::For { head, body }))
             }
             "switch" => self.switch_block().map(Transition::Node),
+            "slot" => self.slot().map(Transition::Node),
             _ => {
                 loop {
                     match (self.peek(), self.peek_at(1)) {
@@ -478,6 +493,13 @@ impl<'a> Parser<'a> {
         }
         self.mark(TokenKind::Transition, self.pos, self.pos + 1);
         self.pos += 1;
+        let saved = std::mem::replace(&mut self.in_component, false);
+        let result = self.switch_cases(subject);
+        self.in_component = saved;
+        result
+    }
+
+    fn switch_cases(&mut self, subject: Src) -> PResult<Node> {
         let mut cases: Vec<Case> = Vec::new();
         // Labels with an empty body and no `break;` share the next label's body.
         let mut open = false;
@@ -559,7 +581,129 @@ impl<'a> Parser<'a> {
         }
         self.mark(TokenKind::Transition, self.pos, self.pos + 1);
         self.pos += 1;
-        self.nodes(Until::Brace)
+        let saved = std::mem::replace(&mut self.in_component, false);
+        let nodes = self.nodes(Until::Brace);
+        self.in_component = saved;
+        nodes
+    }
+
+    /// After `@slot`: `:name` defines a named slot; inside a component tag, ` name` fills one.
+    fn slot(&mut self) -> PResult<Node> {
+        if self.peek() == Some(b':') {
+            self.pos += 1;
+            let start = self.pos;
+            let name = self.ident();
+            if name.is_empty() {
+                return self.err("expected a slot name after @slot:");
+            }
+            self.mark(TokenKind::Code, start, self.pos);
+            return self.slot_definition(Some(Src::new(name, start)));
+        }
+        if self.in_component {
+            return self.slot_fill();
+        }
+        self.slot_definition(None)
+    }
+
+    fn slot_definition(&mut self, name: Option<Src>) -> PResult<Node> {
+        let args = if self.peek() == Some(b'(') { Some(self.slot_args()?) } else { None };
+        let (save, tokens) = (self.pos, self.tokens.len());
+        self.skip_ws();
+        let fallback = if self.peek() == Some(b'{') {
+            Some(trim_edges(self.block()?))
+        } else {
+            self.pos = save;
+            self.tokens.truncate(tokens);
+            None
+        };
+        Ok(Node::Slot(Slot { name, args, fallback }))
+    }
+
+    /// Slot arguments: TypeScript expressions or markup, separated by commas.
+    fn slot_args(&mut self) -> PResult<Vec<SlotArg>> {
+        let open = self.pos;
+        self.pos += 1;
+        let mut args = Vec::new();
+        let unclosed = || ParseError { message: "unclosed '(' in slot arguments".into(), offset: open };
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                None => return Err(unclosed()),
+                Some(b')') => {
+                    self.pos += 1;
+                    return Ok(args);
+                }
+                Some(b'<') if matches!(self.peek_at(1), Some(c) if c.is_ascii_alphabetic()) => {
+                    args.push(SlotArg::Markup(self.element()?));
+                }
+                _ => {
+                    let start = self.pos;
+                    let mut depth = 0usize;
+                    loop {
+                        match self.peek() {
+                            None => return Err(unclosed()),
+                            Some(b'"' | b'\'') => self.string_lit()?,
+                            Some(b'`') => self.template_lit()?,
+                            Some(b'(' | b'[' | b'{') => {
+                                depth += 1;
+                                self.pos += 1;
+                            }
+                            Some(b')' | b']' | b'}') if depth > 0 => {
+                                depth -= 1;
+                                self.pos += 1;
+                            }
+                            Some(b',' | b')') => break,
+                            Some(_) => self.pos += 1,
+                        }
+                    }
+                    self.mark(TokenKind::Code, start, self.pos);
+                    let arg = self.span(start, self.pos);
+                    if arg.is_empty() {
+                        return self.err("expected a slot argument");
+                    }
+                    args.push(SlotArg::Expr(arg));
+                }
+            }
+            self.skip_ws();
+            match self.peek() {
+                Some(b',') => self.pos += 1,
+                Some(b')') => {}
+                _ => return self.err("expected ',' or ')' in slot arguments"),
+            }
+        }
+    }
+
+    /// `@slot name(params) { body }` inside a component tag; name and params are optional.
+    fn slot_fill(&mut self) -> PResult<Node> {
+        let at = self.pos;
+        while matches!(self.peek(), Some(b' ' | b'\t')) {
+            self.pos += 1;
+        }
+        let name = match self.peek() {
+            Some(c) if is_ident_start(c) => {
+                let start = self.pos;
+                let name = self.ident();
+                self.mark(TokenKind::Code, start, self.pos);
+                Some(Src::new(name, start))
+            }
+            _ => None,
+        };
+        let params = if self.peek() == Some(b'(') {
+            let (s, e) = self.balanced(b'(', b')')?;
+            self.mark(TokenKind::Code, s, e);
+            Some(self.span(s + 1, e - 1))
+        } else {
+            None
+        };
+        self.skip_ws();
+        if self.peek() != Some(b'{') {
+            return self.err("expected '{' with the slot content");
+        }
+        let body = trim_edges(self.block()?);
+        if body.is_empty() {
+            return Err(ParseError { message: "slot body is empty".into(), offset: at });
+        }
+        Ok(Node::SlotFill(SlotFill { name, params, body }))
     }
 
     /// Skips a TypeScript region delimited by `open`/`close`, honouring strings,
@@ -712,7 +856,12 @@ impl<'a> Parser<'a> {
         if self_closing || is_void {
             return Ok(element);
         }
-        let children = self.nodes(Until::EndTag(&element.name))?;
+        let children = {
+            let saved = std::mem::replace(&mut self.in_component, element.is_component());
+            let children = self.nodes(Until::EndTag(&element.name));
+            self.in_component = saved;
+            children?
+        };
         Ok(Element {
             children,
             ..element
@@ -742,7 +891,7 @@ impl<'a> Parser<'a> {
         }
         self.pos += 1;
         self.skip_ws();
-        let value = if name.starts_with("@on") {
+        let value = if name.starts_with('@') {
             self.expr_value()?
         } else {
             self.attr_value()?
@@ -852,6 +1001,17 @@ fn tag_kind(name: &str) -> TokenKind {
     } else {
         TokenKind::TagName
     }
+}
+
+/// Removes whitespace-only text at both ends of a slot body.
+fn trim_edges(mut nodes: Vec<Node>) -> Vec<Node> {
+    let blank = |n: &Node| matches!(n, Node::Text(t) if t.trim().is_empty());
+    while nodes.last().is_some_and(blank) {
+        nodes.pop();
+    }
+    let lead = nodes.iter().take_while(|n| blank(n)).count();
+    nodes.drain(..lead);
+    nodes
 }
 
 /// Drops whitespace-only runs that span lines (formatting) and collapses the rest.
@@ -1032,6 +1192,34 @@ after"#;
         let CodePart::Ts(mid) = &parts[2] else { panic!() };
         assert!(mid.contains("return t < 1 ? "));
         assert_eq!(&*doc.code[0], &src["@code {".len()..src.len() - 1]);
+    }
+
+    #[test]
+    fn slot_definitions_and_fills() {
+        let src = "@slot\n@slot:head\n@slot:row(item, <b/>) { <i>@item</i> }\n@slot(1) { d }\n<Card>\n  @slot head { <h1/> }\n  @slot row(item: string = \"\", i) { @item }\n  <p/>\n</Card>";
+        let (doc, _) = parse(src).unwrap();
+        let slots: Vec<&Slot> = doc.nodes.iter().filter_map(|n| match n { Node::Slot(s) => Some(s), _ => None }).collect();
+        assert_eq!(slots.len(), 4);
+        assert_eq!((slots[0].name.is_none(), slots[0].args.is_none(), slots[0].fallback.is_none()), (true, true, true));
+        assert_eq!(slots[1].name.as_deref(), Some("head"));
+        let args = slots[2].args.as_ref().unwrap();
+        assert!(matches!(&args[0], SlotArg::Expr(e) if &**e == "item" && &src[e.at..e.at + 4] == "item"));
+        assert!(matches!(&args[1], SlotArg::Markup(e) if &*e.name == "b"));
+        assert_eq!(slots[2].fallback.as_ref().map(Vec::len), Some(1));
+        assert!(slots[3].name.is_none() && slots[3].fallback.is_some());
+
+        let Some(Node::Element(card)) = doc.nodes.last() else { panic!() };
+        let fills: Vec<&SlotFill> = card.children.iter().filter_map(|n| match n { Node::SlotFill(f) => Some(f), _ => None }).collect();
+        assert_eq!(fills.len(), 2);
+        assert_eq!(fills[0].name.as_deref(), Some("head"));
+        assert!(fills[0].params.is_none());
+        let params = fills[1].params.as_ref().unwrap();
+        assert_eq!(&**params, "item: string = \"\", i");
+        assert_eq!(&src[params.at..params.at + params.len()], &**params);
+        assert!(card.children.iter().any(|n| matches!(n, Node::Element(e) if &*e.name == "p")));
+
+        assert!(parse("<Card>@slot a { }</Card>").unwrap_err().message.contains("slot body is empty"));
+        assert!(parse("<div>@slot a { x }</div>").is_ok(), "outside a component, `@slot a` is a default slot followed by text");
     }
 
     #[test]

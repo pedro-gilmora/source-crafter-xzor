@@ -7,6 +7,12 @@
 <!-- <- keyword.control.transition.tszor
 <!-- <~------ keyword.control.import.ts
 <!--                 ^^^^^^^^^^^^^^^^^ string.quoted.double.ts
+@typeparam T extends object
+<!-- <~--------- keyword.control.directive.tszor
+<!--       ^ entity.name.type.parameter.tszor
+<input @bind="name" @bind:event="oninput" />
+<!--   ^^^^^ entity.other.attribute-name.html
+<!--          ^^^^ meta.embedded.expression.typescript
 @code {
 <!-- <- keyword.control.transition.tszor
 <!-- <~---- keyword.control.directive.tszor
@@ -94,3 +100,25 @@ else {
 }
 <p>after</p>
 <!-- <~- entity.name.tag.html
+  @slot:header { <h3>t</h3> }
+<!-- <~~- keyword.control.transition.tszor
+<!-- <~~~---- keyword.control.tszor
+<!--    ^^^^^^ entity.name.function.slot.tszor
+<!--              ^^ entity.name.tag.html
+  @slot:item(items[i] as T, i) { @i }
+<!--    ^^^^ entity.name.function.slot.tszor
+<!--                  ^^ keyword.control.as.ts
+<!--                     ^ entity.name.type.ts
+  @slot
+<!-- <~~~---- keyword.control.tszor
+  @slot row(step: string, i) { <b>@step</b> }
+<!-- <~~~---- keyword.control.tszor
+<!--    ^^^ entity.name.function.slot.tszor
+<!--        ^^^^ variable.parameter.ts
+<!--              ^^^^^^ support.type.primitive.ts
+<!--                            ^ entity.name.tag.html
+  @slot { <i/> }
+<!-- <~~~---- keyword.control.tszor
+<!--       ^ entity.name.tag.html
+  @slot more text
+<!--    ^^^^ - entity.name.function.slot.tszor

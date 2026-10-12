@@ -1,10 +1,14 @@
+@import { type EventCallback } from "@zor/runtime"
+
 @code {
   label: string = "Count";
   step: number = 1;
   count: number = 0;
+  onChange?: EventCallback<number>;
 
   increment() {
     this.count += this.step;
+    this.onChange?.(this.count);
   }
 }
 

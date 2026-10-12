@@ -26,6 +26,10 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `attr="text @expr"`, `attr="@expr"` | Interpolated and typed attribute values (`false`/`null` removes the attribute) |
 | `@onclick="handler"`, `@onclick="() => ..."` | DOM event; typed through `HTMLElementEventMap`; triggers a re-render |
 | `<Child prop="x" n="5" />` | Component (capitalized tag); props are type-checked as `Partial<Child>`. As in Blazor, a prop declared with a non-string type (`n: number`, `on: () => void`, or inferred from a non-string initializer) takes its value as a TypeScript expression. String props take text. |
+| `@typeparam T extends X` | Generic component class `C<T extends X>`. Callers pass the argument as an attribute: `<List T="string" …>` compiles to `List<string>`. |
+| `onChange?: EventCallback<T>` | A prop the parent sets with `onChange="handler"`. Calling it re-renders the parent. |
+| `@bind="x"`, `@bind:event="oninput"`, `@bind:after="save"` | Two-way binding on inputs. Checkboxes and radios bind `checked`, and numbers stay numbers. |
+| `@bind-value="x"` | Two-way binding on a component: passes `value` and a `valueChanged` callback. |
 
 In template expressions, free identifiers that name `@code` members are rewritten to `this.x`. Loop variables shadow members.
 
@@ -46,6 +50,52 @@ Inside `@code`, markup can be used as a value, like Blazor's `RenderFragment`. I
 @panel(kind)
 ```
 
+### Slots
+
+Slots work like functions. A component defines where each one renders, optionally with arguments and fallback content. The parent supplies a body, optionally taking parameters.
+
+```tszor
+<!-- Card.tszor (definition) -->
+<section>
+  @slot:header { <h3>@title</h3> }      <!-- named, with fallback content -->
+  @slot                                 <!-- the nameless (default) slot -->
+</section>
+
+<!-- List.tszor (definition with arguments) -->
+@for (const item of items) {
+  <li>@slot:item(item, items.indexOf(item) as number) { @item }</li>
+}
+
+<!-- Parent (usage, no semicolons) -->
+<Card>
+  @slot header { <em>Title</em> }
+  <p>Content outside any @slot fills the default slot.</p>
+</Card>
+<List T="string" items="@names">
+  @slot item(name, i) { <b>@i: @name.toUpperCase()</b> }   <!-- name: string, inferred -->
+</List>
+```
+
+The forms are:
+
+| Form | Syntax |
+|---|---|
+| Definitions | `@slot`, `@slot(args)`, `@slot { fallback }`, `@slot:name`, `@slot:name(args) { fallback }`. Arguments and fallback are each optional. |
+| Usage, as direct children of a component tag | `@slot { … }`, `@slot(params) { … }`, `@slot name { … }`, `@slot name(params) { … }`. Parameters may carry types and defaults (`item: T = x`). The body must not be empty. |
+
+The rules:
+
+- Each name, including the nameless `default` slot, is defined at most once and filled at most once. Content outside any `@slot` fills the default slot. Filling it both ways is an error.
+- A definition compiles to `__b.addContent(this.slots.name?.(args) ?? fallbackFragment)`. A fill compiles to a lambda in `addComponent(C, props, { name: (params) => fragment })`.
+- The component class declares `declare slots: { name?: (p: T, …) => RenderFragment; … }`, so TypeScript checks slot names and parameter types, and infers untyped parameters. zor infers each argument's type at compile time:
+  - a member `x` or `this.x.y` becomes `this["x"]["y"]`
+  - a loop variable from `const x of <member path>` becomes `…[number]`; `in` gives `string`, and `let i = 0` gives `number`
+  - `expr as T` becomes `T`
+  - a literal becomes `number`, `string` or `boolean`
+  - markup becomes `RenderFragment`
+
+  Any other argument is an error asking for `as Type`.
+
 ## Rendering
 
 - An event re-renders only the component that owns the handler. `stateHasChanged()` does the same for any component.
@@ -56,8 +106,7 @@ Inside `@code`, markup can be used as a value, like Blazor's `RenderFragment`. I
 ## Roadmap
 
 1. Rename and find references, through the same mappings.
-2. `@key` for loop items (today items are matched by index).
-3. Child content and `@bind`, plus component events (`EventCallback`).
-4. Lifecycle hooks (`onInitialized`, `onParametersSet`, async).
-5. TextMate grammar and LSP semantic tokens from the parser's token spans.
-6. Watch mode and incremental compilation.
+2. `@key` for loop items (today items are matched by index), and `@ref`.
+3. Lifecycle hooks (`onInitialized`, `onParametersSet`, async).
+4. Template syntax: `@* *@`, `@{ }`, `@while`, `<text>`/`@:`, `@attributes`, event modifiers, `@inherits`/`@implements`/`@attribute`.
+5. Watch mode and incremental compilation.

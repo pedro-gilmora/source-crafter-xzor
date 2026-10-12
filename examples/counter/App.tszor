@@ -1,9 +1,13 @@
 @page "/"
 @import Counter from "./Counter.tszor"
+@import Card from "./Card.tszor"
+@import List from "./List.tszor"
 @import { type RenderFragment } from "@zor/runtime"
 
 @code {
   title = "zor demo";
+  name = "world";
+  total = 0;
   steps: string[] = ["parse .tszor", "generate .ts", "type check", "bundle .js"];
   view: "steps" | "summary" | "counter" = "steps";
   summary: RenderFragment = <p>@this.steps.length steps, compiled ahead of time.</p>;
@@ -26,8 +30,20 @@
 
 <main>
   <h1>@title</h1>
-  <Counter label="Clicks" />
+  <Counter label="Clicks" onChange="(n) => total = n" />
   <Counter label="Fives" step="5" />
+  <Card title="Binding">
+    <input @bind="name" @bind:event="oninput" />
+    <p>Hello, @name! First counter total: @total</p>
+  </Card>
+  <Card>
+    @slot header { <em>Steps as a templated list</em> }
+    @slot {
+      <List T="string" items="@steps">
+        @slot item(step, index) { <code>@(index + 1). @step.toUpperCase()</code> }
+      </List>
+    }
+  </Card>
   <nav>
     <button @onclick="() => view = 'steps'">steps</button>
     <button @onclick="() => view = 'summary'">summary</button>

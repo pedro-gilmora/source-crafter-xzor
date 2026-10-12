@@ -129,6 +129,34 @@ test("go to definition from a template expression maps into @code", async () => 
   expect(defs[0].range.start).toEqual(pos(counterText, "count: number"));
 }, 20000);
 
+test("slot names complete inside a component tag and jump to their definition", async () => {
+  const text = appText.replace("@slot header", "@slot he");
+  notify("textDocument/didChange", { textDocument: { uri: uriOf(app), version: 10 }, contentChanges: [{ text }] });
+  const items = await request("textDocument/completion", {
+    textDocument: { uri: uriOf(app) },
+    position: pos(text, "@slot he", 8),
+  });
+  expect(items.items.map((i: any) => i.label)).toEqual(["header"]);
+  notify("textDocument/didChange", { textDocument: { uri: uriOf(app), version: 11 }, contentChanges: [{ text: appText }] });
+
+  const card = join(root, "Card.tszor");
+  const cardText = await Bun.file(card).text();
+  const defs = await request("textDocument/definition", {
+    textDocument: { uri: uriOf(app) },
+    position: pos(appText, "@slot header", 7),
+  });
+  expect(defs[0].uri).toBe(uriOf(card));
+  expect(defs[0].range.start).toEqual(pos(cardText, "@slot:header", 6));
+}, 20000);
+
+test("slot parameters are typed from the slot definition", async () => {
+  const hover = await request("textDocument/hover", {
+    textDocument: { uri: uriOf(app) },
+    position: pos(appText, "@slot item(step", 11),
+  });
+  expect(JSON.stringify(hover.contents)).toContain("step: string");
+}, 20000);
+
 test("completion offers components and members", async () => {
   const text = appText.replace("<h1>", "<Cou\n  <h1>");
   notify("textDocument/didChange", { textDocument: { uri: uriOf(app), version: 2 }, contentChanges: [{ text }] });

@@ -6,7 +6,7 @@ pub mod json;
 pub mod lsp;
 pub mod parser;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 
@@ -38,13 +38,13 @@ pub fn compile_mapped(source: &str, path: &Path) -> Result<codegen::Generated, D
     })?;
     let file_name = path.file_name().map_or_else(|| "component.tszor".into(), |n| n.to_string_lossy());
     let stem = file_name.strip_suffix(".tszor").unwrap_or(&file_name);
-    let expr_props = imported_expression_props(&doc, path);
-    codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &expr_props)
+    let components = imported_components(&doc, path);
+    codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components)
         .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })
 }
 
-/// Non-string props of each `.tszor` component imported by `doc`, read from disk.
-fn imported_expression_props(doc: &ast::Document, path: &Path) -> HashMap<String, HashSet<String>> {
+/// Type parameters and prop kinds of each `.tszor` component imported by `doc`, read from disk.
+fn imported_components(doc: &ast::Document, path: &Path) -> HashMap<String, codegen::ComponentInfo> {
     let dir = path.parent().unwrap_or(Path::new("."));
     doc.imports
         .iter()
@@ -55,7 +55,7 @@ fn imported_expression_props(doc: &ast::Document, path: &Path) -> HashMap<String
                 return None;
             }
             let text = std::fs::read_to_string(dir.join(spec)).ok()?;
-            Some((name.to_string(), codegen::expression_props(&text)))
+            Some((name.to_string(), codegen::component_info(&text)))
         })
         .collect()
 }

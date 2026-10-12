@@ -57,6 +57,8 @@ impl From<&str> for Src {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Document {
     pub page: Option<String>,
+    /// `@typeparam` declarations, e.g. `T extends object`.
+    pub type_params: Vec<Src>,
     /// What follows `@import`, without a trailing `;`.
     pub imports: Vec<Src>,
     /// Raw bodies of `@code { ... }` blocks; they become class members.
@@ -89,6 +91,33 @@ pub enum Node {
         subject: Src,
         cases: Vec<Case>,
     },
+    /// `@slot`, `@slot:name(args) { fallback }` in a component's own template.
+    Slot(Slot),
+    /// `@slot name(params) { body }` as a direct child of a component tag.
+    SlotFill(SlotFill),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Slot {
+    /// `None` is the default (nameless) slot.
+    pub name: Option<Src>,
+    pub args: Option<Vec<SlotArg>>,
+    pub fallback: Option<Vec<Node>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SlotArg {
+    Expr(Src),
+    Markup(Element),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlotFill {
+    /// `None` fills the default slot.
+    pub name: Option<Src>,
+    /// The parameter list between the parentheses, verbatim TypeScript.
+    pub params: Option<Src>,
+    pub body: Vec<Node>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
