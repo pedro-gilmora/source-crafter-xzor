@@ -17,6 +17,8 @@ pub struct Mapping {
 pub struct Generated {
     pub code: String,
     pub mappings: Vec<Mapping>,
+    /// `@inject` names, with their offsets in the `.tszor`.
+    pub injects: Vec<Src>,
 }
 
 impl Generated {
@@ -302,7 +304,8 @@ pub fn generate_with(
     g.line("}");
     g.depth = 0;
     g.line("}");
-    Ok(Generated { code: g.out, mappings: g.mappings })
+    let injects = doc.injects.iter().map(|i| i.name.clone()).collect();
+    Ok(Generated { code: g.out, mappings: g.mappings, injects })
 }
 
 struct Gen<'p> {

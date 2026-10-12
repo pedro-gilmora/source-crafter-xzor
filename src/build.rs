@@ -3,6 +3,7 @@
 use crate::codegen::Generated;
 use crate::lsp::{offset_at, position_at, same_path};
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,19 +16,25 @@ pub fn find_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
         out.push(root.to_path_buf());
         return Ok(out);
     }
-    for entry in fs::read_dir(root)? {
+    walk(root, &|n| n.ends_with(".tszor"), &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+/// Files under `dir` whose name passes `keep`, skipping dot-dirs, `node_modules`, `dist` and `target`.
+fn walk(dir: &Path, keep: &dyn Fn(&str) -> bool, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
         let path = entry?.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         if path.is_dir() {
             if !name.starts_with('.') && !matches!(&*name, "node_modules" | "dist" | "target") {
-                out.extend(find_sources(&path)?);
+                walk(&path, keep, out)?;
             }
-        } else if name.ends_with(".tszor") {
+        } else if keep(&name) {
             out.push(path);
         }
     }
-    out.sort();
-    Ok(out)
+    Ok(())
 }
 
 /// Nearest ancestor directory holding a `tsconfig.json`, else the file's own directory.
@@ -136,10 +143,15 @@ fn normalize(p: &Path) -> PathBuf {
     p.components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect()
 }
 
-/// Modification times of every project `.tszor` under `root`.
+/// Modification times of every `.tszor` and `.ts` source under `root` (`.ts` covers providers and the entry).
 pub fn snapshot(root: &Path) -> HashMap<PathBuf, SystemTime> {
-    find_sources(root)
-        .unwrap_or_default()
+    let mut files = Vec::new();
+    if root.is_dir() {
+        let _ = walk(root, &|n| n.ends_with(".tszor") || (n.ends_with(".ts") && !n.ends_with(".d.ts")), &mut files);
+    } else {
+        files.push(root.to_path_buf());
+    }
+    files
         .into_iter()
         .filter_map(|p| Some((p.clone(), fs::metadata(&p).ok()?.modified().ok()?)))
         .collect()
@@ -185,6 +197,101 @@ pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result
     let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     print!("{}", map_tsc_output(&text, compiled, &cwd));
     if output.status.success() { Ok(()) } else { Err(format!("type check failed ({})", output.status)) }
+}
+
+// `.zor/**/*.ts` is in the project's `include`; the analyzer itself is not part of the app.
+const DI_SCRIPT: &str = concat!("// @ts-nocheck\n", include_str!("di.ts"));
+
+/// Compile-time DI: analyzes the project's providers, writes the generated providers into `.zor/`, and returns
+/// `.zor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
+pub fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
+    let files = provider_files(root);
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let zor = root.join(".zor");
+    let script = zor.join("zor-di.ts");
+    write_if_changed(&script, DI_SCRIPT)?;
+    let mut cmd = Command::new("bun");
+    cmd.arg(&script).arg(root).args(&files).arg("--");
+    for unit in compiled.iter().filter(|u| !u.generated.injects.is_empty()) {
+        if let Ok(rel) = unit.out.strip_prefix(root) {
+            cmd.arg(rel);
+        }
+    }
+    let output = cmd.output().map_err(|e| format!("DI analysis: failed to run bun: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("DI analysis failed ({})\n{}", output.status, String::from_utf8_lossy(&output.stderr)));
+    }
+    let facts = crate::di::model::Facts::from_json(&String::from_utf8_lossy(&output.stdout)).map_err(|e| format!("DI analysis: {e}"))?;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let resolved = crate::di::graph::resolve(&facts).map_err(|d| format_diags(root, &d, compiled, &cwd))?;
+
+    let entry = entry.replace('\\', "/");
+    let entry = entry.strip_prefix("./").unwrap_or(&entry);
+    let mount = resolved.iter().find_map(|r| Some((&r.provider.file, r.provider.mount.as_ref()?)));
+    if let Some((file, m)) = mount.filter(|(file, _)| *file != entry) {
+        let message = format!("@Mount must be declared in the entry module {entry}");
+        let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None };
+        return Err(format_diags(root, &[d], compiled, &cwd));
+    }
+    let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
+    for r in &resolved {
+        let file = r.provider.file.as_str();
+        if done.contains(&file) {
+            continue;
+        }
+        done.push(file);
+        let is_entry = mount.is_some() && file == entry;
+        let out = zor.join(crate::di::emit::output_name(file, is_entry));
+        write_if_changed(&out, &crate::di::emit::emit_file(file, &resolved, is_entry))?;
+    }
+    Ok(mount.map(|_| zor.join(entry)))
+}
+
+/// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Mount`.
+fn provider_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if root.is_dir() {
+        let _ = walk(root, &|n| n.ends_with(".ts") && !n.ends_with(".d.ts"), &mut files);
+    }
+    files.retain(|p| fs::read_to_string(p).is_ok_and(|t| t.contains("@ServiceProvider") || t.contains("@Mount")));
+    files.iter_mut().for_each(|p| *p = p.strip_prefix(root).map_or_else(|_| p.clone(), Path::to_path_buf));
+    files
+}
+
+/// `file(line,col): error ZDInn: message` lines; positions are 1-based in the `.ts` or `.tszor` source.
+fn format_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled], cwd: &Path) -> String {
+    let mut out = String::new();
+    for d in diags {
+        let path = normalize(&root.join(&d.file));
+        let unit = compiled.iter().find(|u| same_path(&normalize(&u.source), &path));
+        let (line, col) = match (&d.inject, unit) {
+            (Some(name), Some(u)) => position_at(&u.text, u.generated.injects.iter().find(|i| i.text == *name).map_or(0, |i| i.at)),
+            (Some(_), None) => (0, 0),
+            (None, _) => {
+                let text = fs::read_to_string(&path).unwrap_or_default();
+                position_at(&text, utf16_to_byte(&text, d.at))
+            }
+        };
+        let shown = path.strip_prefix(cwd).unwrap_or(&path).display().to_string().replace('\\', "/");
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let _ = write!(out, "{shown}({},{}): error {}: {}", line + 1, col + 1, d.code, d.message);
+    }
+    out
+}
+
+fn utf16_to_byte(text: &str, at: usize) -> usize {
+    let mut units = 0;
+    for (i, c) in text.char_indices() {
+        if units >= at {
+            return i;
+        }
+        units += c.len_utf16();
+    }
+    text.len()
 }
 
 const BUNDLE_SCRIPT: &str = include_str!("bundle.ts");
@@ -278,6 +385,135 @@ mod tests {
         assert_eq!(changed(&before, &snapshot(&root)), [file.clone()]);
         fs::write(root.join("B.tszor"), "<p/>").unwrap();
         assert_eq!(changed(&before, &snapshot(&root)).len(), 2);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn has_bun() -> bool {
+        let ok = Command::new("bun").arg("--version").output().is_ok_and(|o| o.status.success());
+        if !ok {
+            println!("note: bun not found; skipping DI build test");
+        }
+        ok
+    }
+
+    /// A project under `target/` so `typescript` resolves from the repo's `node_modules`.
+    fn di_project(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.join("target").join("tmp-di-tests").join(format!("{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("services")).unwrap();
+        let runtime = manifest.join("runtime").join("index.ts").display().to_string().replace('\\', "/");
+        let tsconfig = format!(
+            r#"{{"compilerOptions":{{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ESNext","DOM"],"strict":true,"noEmit":true,"skipLibCheck":true,"rootDirs":[".",".zor"],"paths":{{"@zor/runtime":["{runtime}"]}}}},"include":["**/*.ts",".zor/**/*.ts"]}}"#
+        );
+        fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
+        for (path, text) in files {
+            fs::write(root.join(path), text).unwrap();
+        }
+        root
+    }
+
+    fn fixture(path: &str) -> String {
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/di").join(path)).unwrap()
+    }
+
+    const COUNTER: &str = "@import { type IDatabase } from \"./services/data\"\n@inject IDatabase db\n<p>@db.name</p>\n";
+
+    #[test]
+    fn no_mount_keeps_entry() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let root = di_project("nomount", &[("main.ts", "console.log(1);\n"), ("services/data.ts", &data)]);
+        let units = compile_all(&root).unwrap();
+        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        assert!(!root.join(".zor/main.ts").exists());
+        assert!(root.join(".zor/services/data.provider.ts").is_file());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn no_providers_runs_nothing() {
+        let root = temp("noproviders");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
+        assert_eq!(di(&root, "main.ts", &[]), Ok(None));
+        assert!(!root.join(".zor").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn mount_writes_entry_and_providers() {
+        if !has_bun() {
+            return;
+        }
+        let (main, data) = (fixture("main.ts"), fixture("services/data.ts"));
+        let app = "@import Counter from \"./Counter.tszor\"\n<div><Counter /></div>\n";
+        let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.tszor", app), ("Counter.tszor", COUNTER)];
+        let root = di_project("mount", &files);
+        let units = compile_all(&root).unwrap();
+        assert_eq!(di(&root, "main.ts", &units), Ok(Some(root.join(".zor").join("main.ts"))));
+        assert!(root.join(".zor/services/data.provider.ts").is_file());
+        let entry = fs::read_to_string(root.join(".zor/main.ts")).unwrap();
+        assert!(entry.contains("Counter"), "{entry}");
+        check(&root, None, &units).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn di_errors_are_mapped() {
+        if !has_bun() {
+            return;
+        }
+        let data = "import { ServiceProvider, Singleton } from \"@zor/runtime\";\nexport class Log {} export class Db { constructor(readonly log: Log) {} }\n@ServiceProvider() // ünï 🙂\n@Singleton(Db)\nexport class DataServices {}\n";
+        let root = di_project("errors", &[("services/data.ts", data)]);
+        let err = di(&root, "main.ts", &[]).unwrap_err();
+        let expected = "services/data.ts(4,1): error ZDI02: Log (needed by Db in provider DataServices) is not registered or imported";
+        assert!(err.lines().any(|l| l.ends_with(expected) && !l.contains('\\')), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn inject_errors_point_at_the_tszor() {
+        if !has_bun() {
+            return;
+        }
+        let main = "import { Mount, ServiceProvider } from \"@zor/runtime\";\nimport App from \"./App.tszor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let data = "export interface IDatabase { readonly name: string }\n";
+        let files = [("main.ts", main), ("services/data.ts", data), ("App.tszor", "<p/>"), ("Counter.tszor", COUNTER)];
+        let root = di_project("injecterr", &files);
+        let units = compile_all(&root).unwrap();
+        let err = di(&root, "main.ts", &units).unwrap_err();
+        assert!(err.lines().any(|l| l.ends_with("Counter.tszor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided by Application")), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn mount_outside_the_entry_is_an_error() {
+        if !has_bun() {
+            return;
+        }
+        let main = "import { Mount, ServiceProvider } from \"@zor/runtime\";\nimport App from \"./App.tszor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let root = di_project("mountentry", &[("app.ts", main), ("App.tszor", "<p/>")]);
+        let units = compile_all(&root).unwrap();
+        let err = di(&root, "main.ts", &units).unwrap_err();
+        assert!(err.lines().any(|l| l.ends_with("app.ts(3,1): error ZDI07: @Mount must be declared in the entry module main.ts")), "{err}");
+        assert!(!root.join(".zor/app.ts").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn watch_sees_provider_ts() {
+        let root = temp("watchdi");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::create_dir_all(root.join("services")).unwrap();
+        let file = root.join("services").join("data.ts");
+        fs::write(&file, "@ServiceProvider()\nexport class S {}\n").unwrap();
+        let before = snapshot(&root);
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options().write(true).open(&file).unwrap().set_modified(later).unwrap();
+        assert_eq!(changed(&before, &snapshot(&root)), [file.clone()]);
         fs::remove_dir_all(&root).unwrap();
     }
 }
