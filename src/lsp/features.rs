@@ -260,6 +260,7 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("inject", "inject $1 $2", "Inject a service from the application"),
     ("attribute", "attribute $1", "Decorator on the component class"),
     ("slot", "slot", "Where slot content renders"),
+    ("cascade", "cascade:$1($2) {\n\t$0\n}", "Cascading value for the components inside"),
 ];
 
 const BIND_ATTRS: &[(&str, &str)] = &[
@@ -508,6 +509,16 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "inject");
         assert_eq!(items[0].insert, "inject $1 $2");
+    }
+
+    #[test]
+    fn directive_completions_include_cascade() {
+        let doc = "\n@cas";
+        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "cascade");
+        assert_eq!(items[0].insert, "cascade:$1($2) {\n\t$0\n}");
+        assert_eq!(items[0].detail, "Cascading value for the components inside");
     }
 
     #[test]

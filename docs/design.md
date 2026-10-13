@@ -39,6 +39,8 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@bind="x"`, `@bind:event="oninput"`, `@bind:after="save"` | Two-way binding on inputs. Checkboxes and radios bind `checked`, and numbers stay numbers. |
 | `@bind-value="x"` | Two-way binding on a component: passes `value` and a `valueChanged` callback. |
 | `@key="expr"` | On an element or component in a list: the diff matches it by key, moving DOM nodes and component state when items reorder. |
+| `@cascade:name(value[, fixed]) { … }` | Provides `value` under `name` to every component rendered inside the body, at any depth. `@cascade` is a keyword only when followed by `:`; otherwise it is a normal `@expr`. Providers nest, and the nearest one wins. `fixed` promises the value never changes, so consumers are not tracked. |
+| `@Cascade`, `@Cascade("name")` | In `@code`, on an instance field: it receives the nearest provider's value for its own name or the given one. No import is needed, and the generated code has no decorator call. Methods and statics are errors. |
 | `@ref="field"` | On an element, assigns the DOM element, typed from the tag (`<input>` gives `HTMLInputElement`). On a component, assigns the instance. Updated after each render. |
 | `protected override onInitialized()` and similar | Lifecycle methods, in Blazor's order: `onInitialized`/`onInitializedAsync` once, `onParametersSet`/`onParametersSetAsync` on mount and whenever props change, then render, then `onAfterRender(first)`/`onAfterRenderAsync(first)`. `shouldRender()` can veto re-renders, and `dispose()` runs when the component leaves the tree. A settled `...Async` promise re-renders the component. |
 
@@ -106,6 +108,27 @@ The rules:
   - markup becomes `RenderFragment`
 
   Any other argument is an error asking for `as Type`.
+
+### Cascading values
+
+A provider passes a value down to any depth without threading props. A consumer field declares what it receives.
+
+```tszor
+<!-- App.tszor -->
+@cascade:theme(currentTheme) {
+  <Toolbar />
+}
+
+<!-- Button.tszor -->
+@code {
+  @Cascade theme!: string;               // by field name
+  @Cascade("theme") mode!: string;       // by explicit name
+}
+```
+
+- Matching is by name and is not checked across files: a typo or a type mismatch between provider and consumer is not reported.
+- `@Cascade` needs no import. Statics and methods are rejected, and it takes at most one string literal argument.
+- A consumer whose provider value changes gets the new value, runs `onParametersSet`/`onParametersSetAsync`, then re-renders, like a prop change. With no provider, the field is left untouched.
 
 ## Rendering
 
