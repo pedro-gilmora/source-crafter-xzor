@@ -301,6 +301,10 @@ fn range_json(text: &str, start: usize, end: usize) -> Json {
 
 /// The route info of a `.tszor` read from disk; `None` when it has no pages and no routes block.
 fn route_unit(path: &Path, text: String) -> Option<RouteUnit> {
+    // Compiling is the cost; a project without routes only pays for this scan.
+    if !text.contains("@page") && !text.contains("@ClientRoutes") && !text.contains("@ServerRoutes") {
+        return None;
+    }
     let g = crate::compile_mapped_with(&text, path, &|p| std::fs::read_to_string(p).ok()).ok()?;
     if g.routes.is_empty() && g.routes_block.is_none() {
         return None;
@@ -316,7 +320,8 @@ fn class_of(path: &Path) -> String {
 
 /// Length of the route token (tag, pattern or block keyword) starting at `at`.
 fn route_token(text: &str, at: usize) -> usize {
-    text[at..].find(|c: char| c.is_whitespace() || matches!(c, '"' | '(' | ')' | '{')).unwrap_or(text.len() - at)
+    let rest = text.get(at..).unwrap_or_default();
+    rest.find(|c: char| c.is_whitespace() || matches!(c, '"' | '(' | ')' | '{')).unwrap_or(rest.len())
 }
 
 fn offset_of(text: &str, pos: &Json) -> usize {
@@ -570,6 +575,7 @@ impl Server {
             }
             "workspace/didChangeWatchedFiles" => {
                 let mut roots: Vec<PathBuf> = Vec::new();
+                let mut route_roots: Vec<PathBuf> = Vec::new();
                 for change in params["changes"].as_array().into_iter().flatten() {
                     let uri = change["uri"].as_str().unwrap_or_default();
                     // DI writes `.zor/` files; reacting to them would loop.
@@ -583,13 +589,16 @@ impl Server {
                     }
                     self.refresh_inheritors(&path)?;
                     if path.extension().is_some_and(|e| e == "tszor")
-                        && let Some(root) = tsconfig_root(&path).filter(|r| self.has_routes(r))
+                        && let Some(root) = tsconfig_root(&path).filter(|r| self.tracks_routes(r) && !route_roots.iter().any(|x| same_path(x, r)))
                     {
-                        self.sync_routes(&root, "")?;
+                        route_roots.push(root);
                     }
                     if let Some(root) = self.di_root_of(&path, tsconfig_root(&path).as_deref(), None).filter(|r| !roots.iter().any(|x| same_path(x, r))) {
                         roots.push(root);
                     }
+                }
+                for root in route_roots {
+                    self.sync_routes(&root, None)?;
                 }
                 for root in roots {
                     self.di_request(root, true);
@@ -610,8 +619,8 @@ impl Server {
                         // Its unsaved text no longer overlays the disk.
                         root => {
                             self.di_schedule(&doc.path, root.as_deref(), None);
-                            if let Some(root) = root.filter(|_| routed) {
-                                self.sync_routes(&root, "")?;
+                            if let Some(root) = root.filter(|r| routed || self.tracks_routes(r)) {
+                                self.sync_routes(&root, None)?;
                             }
                         }
                     }
@@ -668,8 +677,8 @@ impl Server {
                     );
                 }
                 let params = Json::obj([("textDocument", Json::obj([("uri", gen_uri.into())]))]);
-                if let Some(root) = root.filter(|r| resync || !self.has_routes(r)) {
-                    self.sync_routes(&root, uri)?;
+                if let Some(root) = root.filter(|r| resync || !self.tracks_routes(r)) {
+                    self.sync_routes(&root, Some(uri))?;
                 }
                 if !self.ts_request("textDocument/diagnostic", params, Pending::Diagnostics { uri: uri.to_string(), version }) {
                     self.publish(uri, Vec::new())?;
@@ -700,8 +709,8 @@ impl Server {
         Ok(())
     }
 
-    /// Whether the project at `root` already has a route table.
-    fn has_routes(&self, root: &Path) -> bool {
+    /// Whether a route table is already tracked for the project at `root`.
+    fn tracks_routes(&self, root: &Path) -> bool {
         self.routes.iter().any(|r| same_path(&r.root, root))
     }
 
@@ -723,10 +732,12 @@ impl Server {
     /// then disk), syncs it to TypeScript as an in-memory document like a generated component, and
     /// publishes the project-wide route errors. `skip` is the document whose TypeScript diagnostics the
     /// caller requests itself.
-    fn sync_routes(&mut self, root: &Path, skip: &str) -> io::Result<()> {
+    fn sync_routes(&mut self, root: &Path, skip: Option<&str>) -> io::Result<()> {
         let i = match self.routes.iter().position(|r| same_path(&r.root, root)) {
             Some(i) => i,
             None => {
+                // TypeScript resolves `./routes` through `rootDirs` only when the directory exists.
+                let _ = std::fs::create_dir_all(root.join(".zor"));
                 let uri = path_to_uri(&root.join(".zor").join("routes.ts"));
                 let state =
                     RoutesRoot { root: root.to_path_buf(), uri, text: String::new(), version: 0, ts_open: false, cache: HashMap::new(), marks: Vec::new() };
@@ -828,7 +839,7 @@ impl Server {
             }
             // The table they import changed, so their type errors may have.
             let doc = &self.docs[&uri];
-            if changed && uri != skip && doc.ts_open && doc.root.as_deref().is_some_and(|r| same_path(r, root)) {
+            if changed && skip != Some(uri.as_str()) && doc.ts_open && doc.root.as_deref().is_some_and(|r| same_path(r, root)) {
                 let (gen_uri, version) = (doc.gen_uri.clone(), doc.version);
                 let params = Json::obj([("textDocument", Json::obj([("uri", gen_uri.into())]))]);
                 self.ts_request("textDocument/diagnostic", params, Pending::Diagnostics { uri, version });

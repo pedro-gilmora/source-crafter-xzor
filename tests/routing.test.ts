@@ -1,9 +1,16 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
-const dir = join(root, "target", "tmp-routing");
+const dir = join(root, "target", `tmp-routing-${process.pid}`);
+const happyDOM = () => (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM;
+
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true });
+  happyDOM().setURL("http://localhost/");
+  document.body.innerHTML = "";
+});
 
 const home = `@page "/"
 
@@ -62,7 +69,7 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   const out = run.stdout.toString() + run.stderr.toString();
   expect(run.exitCode, out).toBe(0);
 
-  (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL("http://localhost/");
+  happyDOM().setURL("http://localhost/");
   document.body.innerHTML = `<div id="app"></div>`;
   await import(join(dir, "dist", "main.js"));
   // A page without a tag falls to @default.

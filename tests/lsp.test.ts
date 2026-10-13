@@ -462,7 +462,7 @@ test("an @inherits base that can't be read shows a warning on the base name", as
 function project(name: string): string {
   const dir = join(repo, "target", "tmp-lsp-routes", `${name}-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
-  mkdirSync(join(dir, ".zor"), { recursive: true });
+  mkdirSync(dir, { recursive: true });
   cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
   return dir;
 }
