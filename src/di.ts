@@ -12,7 +12,8 @@
 // checker.getTypeOfSymbol(parameters[]) is batched; optional ones use getTypeFromTypeNode(annotation) (drops only the implicit undefined); valueDeclaration.resolve() gives `?`/initializer.
 // symbol.declarations[0].path + program.getSourceFileMetadataByPath(path).isDefaultLibrary detect lib types without fetching the AST; program.getSourceFileNames() maps the lowercased path back to the real file name.
 // checker.resolveName("Promise", SymbolFlags.Type, undefined, false) plus getTypeArguments(reference) unwraps Promise<T>.
-// checker.getPropertiesOfType(t): `dispose`, or `__@dispose@N`/`__@asyncDispose@N` compared with the global Disposable/AsyncDisposable members.
+// checker.getPropertiesOfType(t): `dispose`, or `__@dispose@N`/`__@asyncDispose@N` compared with the global Disposable/AsyncDisposable members; `?` sets SymbolFlags.Optional.
+// checker.isTypeAssignableTo(source, target) is not batched: it runs only for parameters named like a key.
 // symbol.getParent() is the module only for exported declarations; parent.getExports() keys are export names ("default" included).
 import { relative, resolve } from "node:path";
 import type { CallExpression, ClassDeclaration, Node, SourceFile } from "typescript/unstable/ast";
@@ -28,7 +29,7 @@ import {
 import { API, ModifierFlags, SignatureKind, SymbolFlags, TypeFlags, type Checker, type Program, type Signature, type Symbol as Sym, type Type } from "typescript/unstable/sync";
 
 type TypeRef = { id: string; text: string; module: string | null; export: string | null };
-type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef };
+type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef; file: string; at: number; badKeys: string[] };
 type Dispose = null | "dispose" | "Symbol.dispose" | "Symbol.asyncDispose";
 type Registration = {
   lifetime: "singleton" | "scoped" | "transient";
@@ -39,6 +40,7 @@ type Registration = {
   async: boolean;
   params: Param[];
   dispose: Dispose;
+  disposeOptional: boolean;
   at: number;
 };
 type Provider = {
@@ -60,6 +62,10 @@ const PRIMITIVE = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | Type
 const RUNTIME = "@zor/runtime";
 
 type Loc = { sf: SourceFile; node: Node };
+type Disposal = { dispose: Dispose; optional: boolean };
+const NOT_DISPOSABLE: Disposal = { dispose: null, optional: false };
+// Shared by every parameter without a bad key; never mutated.
+const NO_KEYS: string[] = [];
 // Symbol and type lookups are queued, then answered by one batched request each.
 type Lookup<T> = { node: Node; value?: T };
 
@@ -321,33 +327,39 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     const g = checker.resolveName(global, SymbolFlags.Type, undefined, false);
     return g && (checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(g))[0]?.escapedName as string | undefined);
   };
-  const disposeCache = new Map<number, Dispose>();
-  const disposal = (t: Type): Dispose => {
+  const disposeCache = new Map<number, Disposal>();
+  const disposal = (t: Type): Disposal => {
     let d = disposeCache.get(t.id);
-    if (d !== undefined) return d;
-    let sync = false;
-    let symbolDispose = false;
-    d = null;
+    if (d) return d;
+    let sync: Sym | undefined;
+    let symbolDispose: Sym | undefined;
+    let asyncDispose: Sym | undefined;
     const callable = (p: Sym) => {
-      const pt = checker.getTypeOfSymbol(p);
+      let pt = checker.getTypeOfSymbol(p);
+      // `dispose?()` is typed `(() => void) | undefined`.
+      if (pt && p.flags & SymbolFlags.Optional) pt = checker.getNonNullableType(pt);
       return !!pt && checker.getSignaturesOfType(pt, SignatureKind.Call).length > 0;
     };
     for (const p of checker.getPropertiesOfType(t)) {
-      if (p.name === "dispose") sync ||= callable(p);
-      else if (p.name.startsWith("__@")) {
+      if (p.name === "dispose") {
+        if (!sync && callable(p)) sync = p;
+      } else if (p.name.startsWith("__@")) {
         wellKnown ??= { dispose: memberName("Disposable"), asyncDispose: memberName("AsyncDisposable") };
         if (p.escapedName === wellKnown.asyncDispose) {
-          if (callable(p)) d = "Symbol.asyncDispose";
-        } else if (p.escapedName === wellKnown.dispose) symbolDispose ||= callable(p);
+          if (callable(p)) asyncDispose = p;
+        } else if (p.escapedName === wellKnown.dispose && !symbolDispose && callable(p)) symbolDispose = p;
       }
     }
-    d ??= sync ? "dispose" : symbolDispose ? "Symbol.dispose" : null;
+    const member = asyncDispose ?? sync ?? symbolDispose;
+    d = member
+      ? { dispose: asyncDispose ? "Symbol.asyncDispose" : sync ? "dispose" : "Symbol.dispose", optional: !!(member.flags & SymbolFlags.Optional) }
+      : NOT_DISPOSABLE;
     disposeCache.set(t.id, d);
     return d;
   };
 
   // --- build ---
-  type Pending = { reg: Registration; type: Type | undefined; serviceLoc: Loc; typeArg: Node | undefined; sf: SourceFile };
+  type Pending = { reg: Registration; type: Type | undefined; serviceLoc: Loc; typeArg: Node | undefined; sf: SourceFile; id: string };
   const pendings: Pending[] = [];
   for (const p of plans) {
     const self = p.self.value;
@@ -380,6 +392,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           continue;
         }
         type = checker.getDeclaredTypeOfSymbol(impl);
+        const d = disposal(type);
         reg = {
           lifetime,
           service: undefined!,
@@ -388,7 +401,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           factory: null,
           async: false,
           params: paramsOf(ctors.get(impl.id)),
-          dispose: disposal(type),
+          dispose: d.dispose,
+          disposeOptional: d.optional,
           at: r.deco.at,
         };
       } else {
@@ -406,6 +420,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         }
         const awaited = unwrapPromise(ret);
         type = awaited ?? ret;
+        const d = disposal(type);
         reg = {
           lifetime,
           service: undefined!,
@@ -414,15 +429,18 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           factory: { owner: classRef(owner, { sf: r.loc.sf, node: r.owner!.node }), member: r.member! },
           async: awaited !== undefined,
           params: paramsOf(sig),
-          dispose: disposal(type),
+          dispose: d.dispose,
+          disposeOptional: d.optional,
           at: r.deco.at,
         };
       }
-      pendings.push({ reg, type, serviceLoc: r.loc, typeArg: r.typeArg, sf: p.sf });
+      pendings.push({ reg, type, serviceLoc: r.loc, typeArg: r.typeArg, sf: p.sf, id: `${provider.class.id}:${provider.registrations.length}` });
       provider.registrations.push(reg);
     }
     facts.providers.push(provider);
   }
+  // Keyed registrations by key: their `badKeys` id and service type.
+  const keyed = new Map<string, { id: string; type: Type }[]>();
   for (const pending of pendings) {
     const declared = pending.typeArg && checker.getTypeFromTypeNode(pending.typeArg as never);
     const loc = declared ? { sf: pending.sf, node: pending.typeArg! } : pending.serviceLoc;
@@ -432,6 +450,12 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       error(pending.serviceLoc, `generic service types are not supported: ${checker.typeToString(pending.type)}`);
     }
     pending.reg.service = typeRef(service, loc);
+    const key = pending.reg.key;
+    if (key !== null) {
+      const list = keyed.get(key);
+      if (list) list.push({ id: pending.id, type: service });
+      else keyed.set(key, [{ id: pending.id, type: service }]);
+    }
   }
   for (const c of componentPlans) {
     const self = c.self.value;
@@ -456,7 +480,25 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         // The annotation excludes the implicit `undefined` of `x?: T` without dropping a written `null`.
         if (optional && isParameterDeclaration(decl) && decl.type) t = checker.getTypeFromTypeNode(decl.type as never) ?? t;
         const awaited = unwrapPromise(t);
-        out.push({ name: param.name, optional, promise: awaited !== undefined, type: typeRef(awaited ?? t, { sf, node: decl }) });
+        let badKeys = NO_KEYS;
+        const candidates = keyed.get(param.name);
+        if (candidates) {
+          let target = awaited ?? t;
+          if (optional) target = checker.getNonNullableType(target) ?? target;
+          for (const c of candidates) {
+            if (!checker.isTypeAssignableTo(c.type, target)) (badKeys === NO_KEYS ? (badKeys = []) : badKeys).push(c.id);
+          }
+        }
+        const name = isParameterDeclaration(decl) ? decl.name : decl;
+        out.push({
+          name: param.name,
+          optional,
+          promise: awaited !== undefined,
+          type: typeRef(awaited ?? t, { sf, node: decl }),
+          file: rel(sf.fileName),
+          at: name.getStart(sf),
+          badKeys,
+        });
       }
     }
   }

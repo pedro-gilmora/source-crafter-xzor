@@ -182,13 +182,14 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 | ZDI08 | A user constructor in a component with `@inject`. |
 | ZDI10 | Reserved. Captive dependencies are allowed: a singleton keeps the scoped instance of the scope that first resolved it. |
 | ZDI11 | Invalid registration found by the analyzer (unexported type, generic type, non-public factory, decorator misuse). |
+| ZDI12 | A key matched by parameter name provides a type that is not assignable to the parameter. |
 
 ### Gotchas
 
 - The tsconfig `lib` needs `ESNext.Disposable` (for `Disposable` and `Symbol.dispose`).
 - A class cannot reference itself in its own decorators, so keyed factories must be public static methods of another class.
 - A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
-- Optional members such as `dispose?()` are not detected as disposal.
+- Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
 - `@Mount` must be in the entry module (`--entry`, default `main.ts`).
 
 ## Build

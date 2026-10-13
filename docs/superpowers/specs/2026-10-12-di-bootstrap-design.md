@@ -212,6 +212,7 @@ export default class Counter extends ComponentBase {
 | ZDI08 | A user constructor in a `@code` block that also uses `@inject`. |
 | ZDI10 | Reserved (captive dependencies are allowed; see Scopes). |
 | ZDI11 | Invalid registration found by the analyzer: an unexported or non-importable type, a generic project type, a non-public factory, a decorator misuse, or an unresolvable `@zor/runtime`. |
+| ZDI12 | A key matched by parameter name provides a type that is not assignable to the parameter (added in roadmap 3). |
 
 ## My calls (review these)
 

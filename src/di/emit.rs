@@ -577,10 +577,11 @@ impl<'a> Emitter<'a> {
 /// Clears the field, then releases its value; an async service awaits a pending promise and skips a rejection.
 fn release(out: &mut String, ind: &str, field: &str, s: &Service, n: usize) {
     let (d, p) = (format!("d{n}"), format!("p{n}"));
+    let q = if s.reg.dispose_optional { "?." } else { "" };
     let call = match s.reg.dispose {
-        Some(Dispose::Method) => format!("{d}?.dispose();"),
-        Some(Dispose::Symbol) => format!("{d}?.[Symbol.dispose]();"),
-        Some(Dispose::AsyncSymbol) => format!("await {d}?.[Symbol.asyncDispose]();"),
+        Some(Dispose::Method) => format!("{d}?.dispose{q}();"),
+        Some(Dispose::Symbol) => format!("{d}?.[Symbol.dispose]{q}();"),
+        Some(Dispose::AsyncSymbol) => format!("await {d}?.[Symbol.asyncDispose]{q}();"),
         None => return,
     };
     if !s.is_async {
@@ -626,7 +627,7 @@ mod tests {
     }
 
     fn param(name: &str, ty: TypeRef) -> Param {
-        Param { name: name.into(), optional: false, promise: false, ty }
+        Param { name: name.into(), optional: false, promise: false, ty, file: String::new(), at: 0, bad_keys: vec![] }
     }
 
     fn promise(name: &str, ty: TypeRef) -> Param {
@@ -634,7 +635,18 @@ mod tests {
     }
 
     fn reg(lifetime: Lifetime, service: TypeRef, impl_: TypeRef, params: Vec<Param>) -> Registration {
-        Registration { lifetime, service, impl_: Some(impl_), key: None, factory: None, is_async: false, params, dispose: None, at: 1 }
+        Registration {
+            lifetime,
+            service,
+            impl_: Some(impl_),
+            key: None,
+            factory: None,
+            is_async: false,
+            params,
+            dispose: None,
+            dispose_optional: false,
+            at: 1,
+        }
     }
 
     /// A service whose implementation is its own type.
@@ -1003,6 +1015,26 @@ mod tests {
         has(&text, "  get database(): IDatabase {");
         has(&text, "  get database1(): Database {");
         has(&text, "  static #database1?: Database;");
+    }
+
+    #[test]
+    fn optional_dispose_uses_optional_calls() {
+        let maybe = |r: Registration, d: Dispose| Registration { dispose_optional: true, ..disposable(r, d) };
+        let text = emit_file(
+            "services/data.ts",
+            &ok(
+                vec![data(vec![
+                    maybe(reg(Singleton, d("IDatabase"), d("Database"), vec![]), Dispose::Method),
+                    maybe(class(Scoped, d("UnitOfWork"), vec![]), Dispose::Symbol),
+                    maybe(class(Scoped, d("Session"), vec![]), Dispose::AsyncSymbol),
+                ])],
+                vec![],
+            ),
+            false,
+        );
+        has(&text, "      const d0 = DataServices$.#database; DataServices$.#database = undefined; d0?.dispose?.();");
+        has(&text, "    const d0 = this.#session; this.#session = undefined; await d0?.[Symbol.asyncDispose]?.();");
+        has(&text, "    const d1 = this.#unitOfWork; this.#unitOfWork = undefined; d1?.[Symbol.dispose]?.();");
     }
 
     #[test]

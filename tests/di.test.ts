@@ -33,7 +33,7 @@ const reg = (p: string, pred: (r: any) => boolean) => provider(p).registrations.
 beforeAll(() => {
   mkdirSync(join(root, ".zor"), { recursive: true });
   for (const [name, text] of Object.entries(generated)) writeFileSync(join(root, ".zor", name), text);
-  const args = ["services/data.ts", "services/hidden.ts", "services/dispose.ts", "main.ts", "--", ".zor/App.tszor.ts", ".zor/Counter.tszor.ts"];
+  const args = ["services/data.ts", "services/hidden.ts", "services/dispose.ts", "services/keys.ts", "main.ts", "--", ".zor/App.tszor.ts", ".zor/Counter.tszor.ts"];
   const run = Bun.spawnSync(["bun", script, root, ...args]);
   expect(run.stderr.toString()).toBe("");
   expect(run.exitCode).toBe(0);
@@ -55,11 +55,36 @@ test("reads registrations", () => {
 });
 
 test("reads dispose members", () => {
-  const dispose = (name: string) => reg("DisposeServices", (r) => r.impl.text === name).dispose;
+  const dispose = (name: string) => reg("DisposeServices", (r) => r.impl?.text === name).dispose;
   expect(dispose("SyncSymbol")).toBe("Symbol.dispose");
   expect(dispose("AsyncSymbol")).toBe("Symbol.asyncDispose");
   expect(dispose("Both")).toBe("Symbol.asyncDispose");
   expect(dispose("NotCallable")).toBeNull();
+  expect(provider("DisposeServices").registrations.filter((r: any) => r.impl).map((r: any) => r.disposeOptional)).toEqual([false, false, false, false]);
+});
+
+test("optional disposer", () => {
+  const maybe = reg("DisposeServices", (r) => r.key === "maybe");
+  expect(maybe.service.text).toBe("MaybeDisposable");
+  expect(maybe.dispose).toBe("dispose");
+  expect(maybe.disposeOptional).toBe(true);
+});
+
+test("parameter positions", () => {
+  const keys = readFileSync(join(root, "services", "keys.ts"), "utf8");
+  const [port, clock] = reg("KeyServices", (r) => r.impl?.text === "Server").params;
+  expect([port.file, port.at]).toEqual(["services/keys.ts", keys.indexOf("port: string")]);
+  expect([clock.file, clock.at]).toEqual(["services/keys.ts", keys.indexOf("clock: IClock")]);
+  const counter = facts.components.find((c: any) => c.class.text === "Counter");
+  const db = counter.injects[0];
+  expect([db.file, db.at]).toEqual([".zor/Counter.tszor.ts", generated["Counter.tszor.ts"]!.indexOf("db: IDatabase,")]);
+});
+
+test("bad keys", () => {
+  const [port, clock] = reg("KeyServices", (r) => r.impl?.text === "Server").params;
+  expect(port.badKeys).toEqual(["services/keys.ts#KeyServices:0"]);
+  expect(clock.badKeys).toEqual([]);
+  expect(reg("DataServices", (r) => r.impl?.text === "Database").params[0].badKeys).toEqual([]);
 });
 
 test("type identity ignores aliases", () => {
@@ -106,6 +131,8 @@ test("promise params", () => {
   expect(report.lifetime).toBe("transient");
   expect(report.params[0]).toMatchObject({ name: "cache", optional: false, promise: true, type: { text: "Cache" } });
   expect(report.params[1]).toMatchObject({ name: "requestId", optional: true, promise: false, type: { text: "string" } });
+  // Keyed matches compare against the awaited `T` and the non-nullable type.
+  expect(report.params.map((p: any) => p.badKeys)).toEqual([[], []]);
 });
 
 test("unexported type", () => {

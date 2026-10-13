@@ -251,7 +251,7 @@ pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[Path
     let mount = resolved.iter().find_map(|r| Some((&r.provider.file, r.provider.mount.as_ref()?)));
     if let Some((file, m)) = mount.filter(|(file, _)| *file != entry) {
         let message = format!("@Mount must be declared in the entry module {entry}");
-        let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None };
+        let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None, param_at: None };
         return Err(DiFailure::Diags(vec![d]));
     }
     let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
@@ -281,7 +281,7 @@ fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph
         let class = crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name));
         for i in &unit.generated.injects {
             let message = format!("{} (injected as {} in {class}) is not provided: no @Mount application", i.ty.text, i.name.text);
-            out.push(crate::di::graph::Diag { file: file.clone(), at: 0, code: "ZDI04", message, inject: Some(i.name.text.clone()) });
+            out.push(crate::di::graph::Diag { file: file.clone(), at: 0, code: "ZDI04", message, inject: Some(i.name.text.clone()), param_at: None });
         }
     }
     out
@@ -356,14 +356,15 @@ pub fn inject_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[C
 fn format_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled], cwd: &Path) -> String {
     let mut out = String::new();
     for d in diags {
-        let path = normalize(&root.join(&d.file));
+        let (file, at) = d.param_at.as_ref().map_or((&d.file, d.at), |(f, a)| (f, *a));
+        let path = normalize(&root.join(file));
         let unit = compiled.iter().find(|u| same_path(&normalize(&u.source), &path));
-        let (line, col) = match (&d.inject, unit) {
-            (Some(name), Some(u)) => position_at(&u.text, u.generated.injects.iter().find(|i| i.name.text == *name).map_or(0, |i| i.name.at)),
-            (Some(_), None) => (0, 0),
-            (None, _) => {
+        let (line, col) = match (&d.param_at, &d.inject, unit) {
+            (None, Some(name), Some(u)) => position_at(&u.text, u.generated.injects.iter().find(|i| i.name.text == *name).map_or(0, |i| i.name.at)),
+            (None, Some(_), None) => (0, 0),
+            _ => {
                 let text = fs::read_to_string(&path).unwrap_or_default();
-                position_at(&text, utf16_to_byte(&text, d.at))
+                position_at(&text, utf16_to_byte(&text, at))
             }
         };
         let shown = path.strip_prefix(cwd).unwrap_or(&path).display().to_string().replace('\\', "/");
@@ -580,14 +581,15 @@ mod tests {
     }
 
     #[test]
-    fn di_errors_are_mapped() {
+    fn zdi02_points_at_the_constructor_parameter() {
         if !has_bun() {
             return;
         }
-        let data = "import { ServiceProvider, Singleton } from \"@zor/runtime\";\nexport class Log {} export class Db { constructor(readonly log: Log) {} }\n@ServiceProvider() // ünï 🙂\n@Singleton(Db)\nexport class DataServices {}\n";
-        let root = di_project("errors", &[("services/data.ts", data)]);
+        let db = "export class Log {}\nexport class Db {\n  /* ünï 🙂 */ constructor(readonly log: Log) {}\n}\n";
+        let data = "import { ServiceProvider, Singleton } from \"@zor/runtime\";\nimport { Db } from \"./db\";\n@ServiceProvider()\n@Singleton(Db)\nexport class DataServices {}\n";
+        let root = di_project("errors", &[("services/db.ts", db), ("services/data.ts", data)]);
         let err = di(&root, "main.ts", &[]).unwrap_err();
-        let expected = "services/data.ts(4,1): error ZDI02: Log (needed by Db in provider DataServices) is not registered or imported";
+        let expected = "services/db.ts(3,37): error ZDI02: Log (needed by Db in provider DataServices) is not registered or imported";
         assert!(err.lines().any(|l| l.ends_with(expected) && !l.contains('\\')), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
@@ -695,7 +697,7 @@ mod tests {
     #[test]
     fn component_without_a_unit_falls_back_to_the_start() {
         let root = temp("fallback");
-        let diag = |inject: Option<&str>| crate::di::graph::Diag { file: "Missing.tszor".into(), at: 0, code: "ZDI04", message: "nope".into(), inject: inject.map(String::from) };
+        let diag = |inject: Option<&str>| crate::di::graph::Diag { file: "Missing.tszor".into(), at: 0, code: "ZDI04", message: "nope".into(), inject: inject.map(String::from), param_at: None };
         let out = format_diags(&root, &[diag(Some("db"))], &[], &root);
         assert_eq!(out, "Missing.tszor(1,1): error ZDI04: nope");
         fs::remove_dir_all(&root).unwrap();

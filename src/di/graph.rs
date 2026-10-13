@@ -13,6 +13,8 @@ pub struct Diag {
     pub message: String,
     /// The `@inject` name, for diagnostics about a component's injects.
     pub inject: Option<String>,
+    /// (file, UTF-16 offset) of the constructor or factory parameter the diagnostic is about; overrides `file`/`at`.
+    pub param_at: Option<(String, usize)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +69,7 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
         return Err(facts
             .errors
             .iter()
-            .map(|e| Diag { file: e.file.clone(), at: e.at, code: "ZDI11", message: e.message.clone(), inject: None })
+            .map(|e| Diag { file: e.file.clone(), at: e.at, code: "ZDI11", message: e.message.clone(), inject: None, param_at: None })
             .collect());
     }
     let providers = &facts.providers;
@@ -93,15 +95,15 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
     }
 
     if let Some(&m) = mounts.first() {
-        if let State::Done(r, _) = &mut cx.states[m] {
-            r.components = components(facts, r, &mut cx.diags);
+        if let State::Done(r, o) = &mut cx.states[m] {
+            r.components = components(facts, r, o, &mut cx.diags);
         }
     } else {
         for c in &facts.components {
             let file = c.class.module.as_deref().unwrap_or(&c.class.text);
             for prm in &c.injects {
                 let message = format!("{} (injected as {} in {}) is not provided: no @Mount application", prm.ty.text, prm.name, c.class.text);
-                cx.diags.push(Diag { file: file.to_string(), at: 0, code: "ZDI04", message, inject: Some(prm.name.clone()) });
+                cx.diags.push(Diag { file: file.to_string(), at: 0, code: "ZDI04", message, inject: Some(prm.name.clone()), param_at: None });
             }
         }
     }
@@ -123,7 +125,12 @@ struct Cx<'a> {
 
 impl<'a> Cx<'a> {
     fn error(&mut self, file: &str, at: usize, code: &'static str, message: String) {
-        self.diags.push(Diag { file: file.to_string(), at, code, message, inject: None });
+        self.diags.push(Diag { file: file.to_string(), at, code, message, inject: None, param_at: None });
+    }
+
+    fn param_error(&mut self, file: &str, at: usize, code: &'static str, message: String, prm: &Param) {
+        let param_at = Some((prm.file.clone(), prm.at));
+        self.diags.push(Diag { file: file.to_string(), at, code, message, inject: None, param_at });
     }
 
     /// Resolves provider `pi` on its own (self-sufficiency); true when it resolved cleanly.
@@ -241,16 +248,20 @@ impl<'a> Cx<'a> {
             let mut args = Vec::with_capacity(s.reg.params.len());
             for prm in &s.reg.params {
                 args.push(match table.find(prm) {
+                    Found::One(i) if mismatched(facts, prm, &services[i], origins[i]) => {
+                        self.param_error(&p.file, s.reg.at, "ZDI12", zdi12(prm, &services[i]), prm);
+                        Arg::Undefined
+                    }
                     Found::One(i) => if prm.promise { Arg::Promise(i) } else { Arg::Service(i) },
                     Found::None if prm.optional => Arg::Undefined,
                     Found::None => {
                         let m = format!("{} (needed by {needer} in provider {}) is not registered or imported", prm.ty.text, p.class.text);
-                        self.error(&p.file, s.reg.at, "ZDI02", m);
+                        self.param_error(&p.file, s.reg.at, "ZDI02", m, prm);
                         Arg::Undefined
                     }
                     Found::Many(c) => {
                         let m = format!("{} (needed by {needer} in provider {}) is ambiguous: {}", prm.ty.text, p.class.text, table.names(&c));
-                        self.error(&p.file, s.reg.at, "ZDI05", m);
+                        self.param_error(&p.file, s.reg.at, "ZDI05", m, prm);
                         Arg::Undefined
                     }
                 });
@@ -290,7 +301,7 @@ impl<'a> Cx<'a> {
 }
 
 /// Resolves the injects of every `@inject` component against the mount provider.
-fn components(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) -> Vec<(Component, Vec<Arg>, bool)> {
+fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Diag>) -> Vec<(Component, Vec<Arg>, bool)> {
     let table = Table::new(&r.services);
     let sets = Sets::new(&r.services);
     let app = &r.provider.class.text;
@@ -299,6 +310,7 @@ fn components(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) -> Vec<(Compon
         let mut args = Vec::with_capacity(c.injects.len());
         for prm in &c.injects {
             let (code, message) = match table.find(prm) {
+                Found::One(i) if mismatched(facts, prm, &r.services[i], origins[i]) => ("ZDI12", zdi12(prm, &r.services[i])),
                 Found::One(i) => {
                     args.push(if prm.promise { Arg::Promise(i) } else { Arg::Service(i) });
                     continue;
@@ -311,7 +323,7 @@ fn components(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) -> Vec<(Compon
                 Found::Many(m) => ("ZDI05", format!("{} (injected as {} in {}) is ambiguous: {}", prm.ty.text, prm.name, c.class.text, table.names(&m))),
             };
             let file = c.class.module.as_deref().unwrap_or(&c.class.text).to_string();
-            diags.push(Diag { file, at: 0, code, message, inject: Some(prm.name.clone()) });
+            diags.push(Diag { file, at: 0, code, message, inject: Some(prm.name.clone()), param_at: None });
             args.push(Arg::Undefined);
         }
         let args = classify(&r.services, &sets, &args);
@@ -319,6 +331,19 @@ fn components(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) -> Vec<(Compon
         out.push((c.clone(), args, is_async));
     }
     out
+}
+
+/// A key match (the key equals the parameter name) whose registration the analyzer listed in `badKeys`.
+fn mismatched(facts: &Facts, prm: &Param, s: &Service, (pi, ri): Origin) -> bool {
+    !prm.bad_keys.is_empty()
+        && s.reg.key.as_deref() == Some(prm.name.as_str())
+        && prm.bad_keys.iter().any(|b| {
+            b.rsplit_once(':').is_some_and(|(class, n)| class == facts.providers[pi].class.id && n.parse() == Ok(ri))
+        })
+}
+
+fn zdi12(prm: &Param, s: &Service) -> String {
+    format!("{}: key \"{}\" provides {}, which is not assignable to {}", prm.name, prm.name, s.reg.service.text, prm.ty.text)
 }
 
 /// A transient with an implementation, no factory and no parameters: emitted as `new Impl()`, with no member.
@@ -546,7 +571,7 @@ mod tests {
     }
 
     fn param(name: &str, t: &str) -> Param {
-        Param { name: name.into(), optional: false, promise: false, ty: ty(t) }
+        Param { name: name.into(), optional: false, promise: false, ty: ty(t), file: "params.ts".into(), at: 11, bad_keys: vec![] }
     }
 
     fn promise(name: &str, t: &str) -> Param {
@@ -563,6 +588,7 @@ mod tests {
             is_async: false,
             params,
             dispose: None,
+            dispose_optional: false,
             at: 7,
         }
     }
@@ -715,6 +741,7 @@ mod tests {
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI02"]);
         assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("DataServices.ts", 7, None));
+        assert_eq!(d[0].param_at, Some(("params.ts".into(), 11)));
         assert_eq!(d[0].message, "ILogger (needed by Database in provider DataServices) is not registered or imported");
     }
 
@@ -738,7 +765,7 @@ mod tests {
         };
         assert_eq!(
             err(&f),
-            [Diag { file: "s.ts".into(), at: 4, code: "ZDI11", message: "Hidden must be exported to be injected".into(), inject: None }]
+            [Diag { file: "s.ts".into(), at: 4, code: "ZDI11", message: "Hidden must be exported to be injected".into(), inject: None, param_at: None }]
         );
     }
 
@@ -787,6 +814,7 @@ mod tests {
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI04"]);
         assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.tszor", 0, Some("db")));
+        assert_eq!(d[0].param_at, None);
         assert_eq!(d[0].message, "IDatabase (injected as db in Counter) is not provided by Application");
     }
 
@@ -815,7 +843,54 @@ mod tests {
         )]);
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI05"]);
+        assert_eq!(d[0].param_at, Some(("params.ts".into(), 11)));
         assert_eq!(d[0].message, "ILogger (needed by Database in provider P) is ambiguous: a, b");
+    }
+
+    fn bad(p: Param, keys: &[&str]) -> Param {
+        Param { bad_keys: keys.iter().map(|k| k.to_string()).collect(), file: "server.ts".into(), at: 42, ..p }
+    }
+
+    #[test]
+    fn zdi12_key_type_mismatch() {
+        let port = keyed("port", single("Port", "Port", vec![]));
+        let f = facts(vec![provider("P", &[], vec![port.clone(), single("Server", "Server", vec![bad(param("port", "Text"), &["m.ts#P:0"])])])]);
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI12"]);
+        assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("P.ts", 7, None));
+        assert_eq!(d[0].param_at, Some(("server.ts".into(), 42)));
+        assert_eq!(d[0].message, "port: key \"port\" provides Port, which is not assignable to Text");
+
+        // The id is the registration's origin, through imports.
+        let f = facts(vec![
+            provider("App", &["Data"], vec![single("Server", "Server", vec![bad(param("port", "Text"), &["m.ts#Data:0"])])]),
+            provider("Data", &[], vec![port.clone()]),
+        ]);
+        assert_eq!(codes(&err(&f)), ["ZDI12"]);
+        let f = facts(vec![
+            provider("App", &["Data"], vec![single("Server", "Server", vec![bad(param("port", "Text"), &["m.ts#App:0"])])]),
+            provider("Data", &[], vec![port.clone()]),
+        ]);
+        ok(&f);
+
+        let f = Facts {
+            components: vec![component("Counter", vec![bad(param("port", "Text"), &["m.ts#Application:0"])])],
+            ..facts(vec![mounted(provider("Application", &[], vec![port]))])
+        };
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI12"]);
+        assert_eq!((d[0].file.as_str(), d[0].inject.as_deref(), d[0].param_at.as_ref()), ("Counter.tszor", Some("port"), None));
+    }
+
+    #[test]
+    fn keyed_supertype_is_not_a_mismatch() {
+        // The analyzer leaves `badKeys` empty when the keyed SystemClock implements IClock.
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![keyed("clock", single("SystemClock", "SystemClock", vec![])), single("Server", "Server", vec![param("clock", "IClock")])],
+        )]);
+        assert_eq!(ok(&f)[0].services[1].args, [Arg::Service(0)]);
     }
 
     #[test]

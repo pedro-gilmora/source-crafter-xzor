@@ -17,9 +17,20 @@ export class NotCallable {
   dispose = 1;
 }
 
+export interface MaybeDisposable {
+  dispose?(): void;
+}
+
+export class DisposeFactories {
+  static maybe(): MaybeDisposable {
+    return {};
+  }
+}
+
 @ServiceProvider()
 @Singleton(SyncSymbol)
 @Singleton(AsyncSymbol)
 @Singleton(Both)
 @Singleton(NotCallable)
+@Singleton("maybe", DisposeFactories.maybe)
 export class DisposeServices {}
