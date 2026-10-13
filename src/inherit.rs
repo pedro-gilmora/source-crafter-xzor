@@ -204,6 +204,14 @@ fn parameter_properties(ctor: &str, out: &mut HashSet<String>) {
             i = end;
             continue;
         }
+        if is_ident_start(b[i]) && (i == 0 || !is_ident_char(b[i - 1])) {
+            let start = i;
+            while i < b.len() && is_ident_char(b[i]) {
+                i += 1;
+            }
+            prev = Some(word_prev(&ctor[start..i]));
+            continue;
+        }
         match b[i] {
             b'(' | b'[' | b'{' | b'<' => depth += 1,
             b'>' if prev == Some(b'=') => {}
@@ -436,6 +444,13 @@ export class After { late = 1; }
         let base = "export class R {\n  m() { return /}/.test(\"x\") }\n  n() { throw /}/ }\n  b7 = 2;\n}\n";
         let code = compile(&[("r.ts", base)], "@import { R } from \"./r\"\n@inherits R\n<p>@b7</p>\n");
         assert!(code.contains("this.b7"), "{code}");
+    }
+
+    #[test]
+    fn constructor_regex_with_paren_keeps_later_properties() {
+        let base = "export class K {\n  constructor(public check = (s: string) => { return /[)]/.test(s); }, public n = 0) { super(); }\n}\n";
+        let code = compile(&[("k.ts", base)], "@import { K } from \"./k\"\n@inherits K\n<p>@check @n</p>\n");
+        assert!(code.contains("this.check") && code.contains("this.n"), "{code}");
     }
 
     #[test]
