@@ -99,6 +99,7 @@ async #authService$create(): Promise<AuthService> {
   - creates transients on every resolution, as everywhere.
 - A scoped service is cached in the scope that resolves it. An application that imports a provider is itself the scope for that provider's scoped services: it caches them in its own fields and builds them with the imported provider's singletons (taken from `SharedInstance`) and its scoped services (resolved in the same application scope).
 - A singleton of an imported provider is read through `DataServices[SharedInstance]`. Because it is `static`, it is shared by every application and every `DataServices$` instance in the bundle.
+- Captive dependencies are allowed, as in SourceCrafter: a singleton that depends on a scoped service keeps the instance of the scope where it was first resolved. A scoped service is therefore never considered resolved because a singleton that depends on it is: each scope awaits its own.
 
 ## Generated code
 
@@ -209,7 +210,7 @@ export default class Counter extends ComponentBase {
 | ZDI06 | Interface-only registration without an implementation or factory. |
 | ZDI07 | `@Mount` on more than one class, or outside the build's entry module. |
 | ZDI08 | A user constructor in a `@code` block that also uses `@inject`. |
-| ZDI10 | Captive dependency: a singleton depends on a scoped service, directly or through transients. |
+| ZDI10 | Reserved (captive dependencies are allowed; see Scopes). |
 | ZDI11 | Invalid registration found by the analyzer: an unexported or non-importable type, a generic project type, a non-public factory, a decorator misuse, or an unresolvable `@zor/runtime`. |
 
 ## My calls (review these)

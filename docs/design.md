@@ -180,7 +180,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 | ZDI06 | Registration without an implementation or factory. |
 | ZDI07 | `@Mount` on more than one class, or outside the entry module. |
 | ZDI08 | A user constructor in a component with `@inject`. |
-| ZDI10 | Captive dependency: a singleton depends on a scoped service. |
+| ZDI10 | Reserved. Captive dependencies are allowed: a singleton keeps the scoped instance of the scope that first resolved it. |
 | ZDI11 | Invalid registration found by the analyzer (unexported type, generic type, non-public factory, decorator misuse). |
 
 ### Gotchas

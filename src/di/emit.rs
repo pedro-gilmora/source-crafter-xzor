@@ -863,6 +863,21 @@ mod tests {
     }
 
     #[test]
+    fn captive_scoped_dependency_is_awaited_in_each_scope() {
+        let all = ok(
+            vec![data(vec![
+                class(Scoped, d("AuthService"), vec![param("db", d("IDatabase")), param("tenant", d("Tenant"))]),
+                reg(Singleton, d("IDatabase"), d("Database"), vec![param("tenant", d("Tenant"))]),
+                async_factory(Scoped, d("Tenant"), d("DataServices"), "_tenant"),
+            ])],
+            vec![],
+        );
+        let text = emit_file("services/data.ts", &all, false);
+        has(&text, "const p0 = this.getDatabaseAsync(); const p1 = this.getTenantAsync();");
+        lacks(&text, "this.#tenant!");
+    }
+
+    #[test]
     fn covered_before_awaited_is_read_after_the_await() {
         let text = reuse(
             async_factory(Singleton, d("SomeInt"), d("DataServices"), "_someInt"),

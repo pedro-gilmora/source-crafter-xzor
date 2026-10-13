@@ -281,17 +281,6 @@ impl<'a> Cx<'a> {
         for i in 0..own {
             services[i].args = classify(&services, &sets, &services[i].args);
         }
-
-        for (i, s) in services.iter().enumerate() {
-            if s.reg.lifetime != Lifetime::Singleton {
-                continue;
-            }
-            if let Some(j) = captive(&services, i) {
-                let at = if s.source == Source::Own { s.reg.at } else { p.at };
-                let m = format!("captive dependency: singleton {} depends on scoped {}", needer(&s.reg), services[j].reg.service.text);
-                self.error(&p.file, at, "ZDI10", m);
-            }
-        }
         if self.diags.len() > start {
             return None;
         }
@@ -394,6 +383,14 @@ impl Sets {
         if services[i].is_async && services[i].reg.lifetime != Lifetime::Transient {
             self.bits[i * self.words + i / 64] |= 1 << (i % 64);
         }
+        // A singleton may have been resolved in another scope: its scoped dependencies are not this scope's.
+        if services[i].reg.lifetime == Lifetime::Singleton {
+            for (k, s) in services.iter().enumerate() {
+                if s.reg.lifetime == Lifetime::Scoped {
+                    self.bits[i * self.words + k / 64] &= !(1 << (k % 64));
+                }
+            }
+        }
     }
 
     /// Whether `j` is a cached async service in `k`'s subtree.
@@ -439,26 +436,6 @@ fn visit(i: usize, services: &mut [Service], color: &mut [Color], path: &mut Vec
     let is_async = s.reg.is_async || s.args.iter().any(|a| matches!(a, Arg::Service(j) if services[*j].is_async));
     services[i].is_async = is_async;
     Ok(())
-}
-
-/// The first scoped service that singleton `i` reaches directly or through transients.
-fn captive(services: &[Service], i: usize) -> Option<usize> {
-    let mut seen = vec![false; services.len()];
-    let mut stack = vec![i];
-    while let Some(k) = stack.pop() {
-        for a in &services[k].args {
-            let (Arg::Service(j) | Arg::Awaited(j) | Arg::Covered(j) | Arg::Promise(j)) = *a else { continue };
-            if std::mem::replace(&mut seen[j], true) {
-                continue;
-            }
-            match services[j].reg.lifetime {
-                Lifetime::Scoped => return Some(j),
-                Lifetime::Transient => stack.push(j),
-                Lifetime::Singleton => {}
-            }
-        }
-    }
-    None
 }
 
 fn needer(r: &Registration) -> &str {
@@ -934,67 +911,55 @@ mod tests {
     }
 
     #[test]
-    fn zdi10_captive_dependency_direct() {
-        let f = facts(vec![provider(
-            "P",
-            &[],
-            vec![scoped("UnitOfWork", vec![]), Registration { at: 9, ..single("IDatabase", "Database", vec![param("uow", "UnitOfWork")]) }],
-        )]);
-        let d = err(&f);
-        assert_eq!(codes(&d), ["ZDI10"]);
-        assert_eq!((d[0].file.as_str(), d[0].at), ("P.ts", 9));
-        assert_eq!(d[0].message, "captive dependency: singleton Database depends on scoped UnitOfWork");
-    }
-
-    #[test]
-    fn zdi10_captive_dependency_through_a_transient() {
+    fn captive_dependencies_are_allowed() {
         let f = facts(vec![provider(
             "P",
             &[],
             vec![
+                single("IDatabase", "Database", vec![param("uow", "UnitOfWork")]),
                 single("Report", "Report", vec![promise("clock", "Clock")]),
                 transient("Clock", vec![param("uow", "UnitOfWork")]),
                 scoped("UnitOfWork", vec![]),
             ],
         )]);
-        let d = err(&f);
-        assert_eq!(codes(&d), ["ZDI10"]);
-        assert_eq!(d[0].message, "captive dependency: singleton Report depends on scoped UnitOfWork");
-    }
-
-    #[test]
-    fn zdi10_stops_at_singletons() {
-        let f = facts(vec![provider(
-            "P",
-            &[],
-            vec![
-                single("Report", "Report", vec![param("db", "IDatabase")]),
-                single("IDatabase", "Database", vec![param("uow", "UnitOfWork")]),
-                scoped("UnitOfWork", vec![]),
-            ],
-        )]);
-        // Only Database is captive; Report reaches the scoped service only through a singleton.
-        let d = err(&f);
-        assert_eq!(codes(&d), ["ZDI10"]);
-        assert_eq!(d[0].message, "captive dependency: singleton Database depends on scoped UnitOfWork");
-
-        let f = facts(vec![provider(
-            "P",
-            &[],
-            vec![single("Report", "Report", vec![param("db", "IDatabase")]), single("IDatabase", "Database", vec![]), scoped("UnitOfWork", vec![param("db", "IDatabase")])],
-        )]);
         ok(&f);
-    }
-
-    #[test]
-    fn zdi10_through_imported_services() {
         let f = facts(vec![
             provider("App", &["Data"], vec![single("Auth", "Auth", vec![param("clock", "Clock")])]),
             provider("Data", &[], vec![transient("Clock", vec![param("session", "Session")]), scoped("Session", vec![])]),
         ]);
-        let d = err(&f);
-        assert_eq!(codes(&d), ["ZDI10"]);
-        assert_eq!((d[0].file.as_str(), d[0].message.as_str()), ("App.ts", "captive dependency: singleton Auth depends on scoped Session"));
+        ok(&f);
+    }
+
+    #[test]
+    fn scoped_behind_a_singleton_is_not_covered() {
+        // The singleton may have been resolved in another scope, so this scope's tenant is awaited again.
+        let tenant = Registration { lifetime: Lifetime::Scoped, ..async_factory("Tenant") };
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![
+                scoped("AuthService", vec![param("db", "IDatabase"), param("tenant", "Tenant")]),
+                single("IDatabase", "Database", vec![param("tenant", "Tenant")]),
+                tenant,
+            ],
+        )]);
+        let s = &ok(&f)[0].services;
+        assert_eq!(s[0].args, [Arg::Awaited(1), Arg::Awaited(2)]);
+    }
+
+    #[test]
+    fn scoped_behind_a_scoped_is_covered() {
+        let tenant = Registration { lifetime: Lifetime::Scoped, ..async_factory("Tenant") };
+        let f = facts(vec![provider(
+            "P",
+            &[],
+            vec![
+                scoped("AuthService", vec![param("db", "IDatabase"), param("tenant", "Tenant")]),
+                scoped("IDatabase", vec![param("tenant", "Tenant")]),
+                tenant,
+            ],
+        )]);
+        assert_eq!(ok(&f)[0].services[0].args, [Arg::Awaited(1), Arg::Covered(2)]);
     }
 
     fn covered_services(some_int: Registration) -> Vec<Registration> {
