@@ -170,10 +170,34 @@ fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, 
 }
 
 /// Components whose text mentions a changed `.tszor` file name: codegen reads imported components'
-/// type parameters and prop kinds. Excludes the changed ones themselves.
+/// type parameters and prop kinds. For a changed script, those with `@inherits` that mention its
+/// [`crate::inherit::mention`]. Excludes the changed ones themselves.
 pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
-    let names: Vec<_> = changed.iter().map(|c| c.file_name().unwrap_or_default().to_string_lossy()).collect();
-    units.iter().filter(|u| !changed.contains(&u.source.as_path()) && names.iter().any(|n| u.text.contains(&**n))).map(|u| u.source.clone()).collect()
+    let names: Vec<(String, bool)> = changed
+        .iter()
+        .filter_map(|c| {
+            let name = c.file_name()?.to_string_lossy();
+            if name.ends_with(".tszor") { Some((name.into_owned(), false)) } else { crate::inherit::mention(c).map(|m| (m, true)) }
+        })
+        .collect();
+    units
+        .iter()
+        .filter(|u| {
+            !changed.contains(&u.source.as_path())
+                && names.iter().any(|(n, inherits)| (!inherits || u.text.contains("@inherits")) && u.text.contains(n.as_str()))
+        })
+        .map(|u| u.source.clone())
+        .collect()
+}
+
+/// The scripts among watched `paths` (relative to `root`), which `@inherits` bases may live in.
+pub fn changed_scripts(paths: &[String], root: &Path) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .map(|p| p.replace('\\', "/"))
+        .filter(|p| !watch_ignored(p) && (p.ends_with(".ts") || p.ends_with(".tsx")) && !p.ends_with(".d.ts"))
+        .map(|p| root.join(p.replace('/', std::path::MAIN_SEPARATOR_STR)))
+        .collect()
 }
 
 /// Decides what a batch of watched `paths` (relative to `root`) requires. `known_injects` holds the
@@ -811,6 +835,20 @@ mod tests {
         // Two changes mentioned by the same unit list it once; changed units are excluded.
         assert_eq!(dependents(&units, &[card.as_path(), other.as_path()]), vec![root.join("App.tszor")]);
         assert!(dependents(&units, &[other.as_path()]).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dependents_cover_inherited_ts_bases() {
+        let root = temp("dependents-ts");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("App.tszor"), "@import { Titled } from \"./base\"\n@inherits Titled\n<p/>\n").unwrap();
+        fs::write(root.join("Dir.tszor"), "@import { Titled } from \"./shared\"\n@inherits Titled\n<p/>\n").unwrap();
+        fs::write(root.join("Plain.tszor"), "<p>base</p>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        assert_eq!(dependents(&units, &[root.join("base.ts").as_path()]), vec![root.join("App.tszor")]);
+        assert_eq!(dependents(&units, &[root.join("shared").join("index.ts").as_path()]), vec![root.join("Dir.tszor")]);
+        assert!(dependents(&units, &[root.join("base.d.ts").as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 

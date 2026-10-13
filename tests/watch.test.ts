@@ -95,3 +95,19 @@ test("a tsconfig.json change rebuilds everything", async () => {
   expect(seen).toContain("compiled 2 component(s)");
   await quiet();
 }, 30_000);
+
+test("renaming a member of an inherited .ts base recompiles the inheriting component", async () => {
+  const base = (name: string) =>
+    `import { ComponentBase } from "@zor/runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
+  writeFileSync(join(dir, "base.ts"), base("title"));
+  await waitFor("watching");
+  writeFileSync(join(dir, "D.tszor"), `@import { Titled } from "./base"\n@inherits Titled\n<p>@title</p>\n`);
+  expect(await waitFor("watching")).toContain("type check passed");
+  expect(readFileSync(join(dir, ".zor", "D.tszor.ts"), "utf8")).toContain("this.title");
+  writeFileSync(join(dir, "base.ts"), base("heading"));
+  const seen = await waitFor("watching");
+  expect(seen).toContain("compiled 1 component(s)");
+  expect(seen).toMatch(/D\.tszor\(\d+,\d+\)/);
+  expect(readFileSync(join(dir, ".zor", "D.tszor.ts"), "utf8")).toContain("addContent(title)");
+  await quiet();
+}, 30_000);

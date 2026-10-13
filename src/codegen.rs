@@ -199,7 +199,7 @@ pub fn inject_constructor(doc: &Document) -> Option<usize> {
 }
 
 pub fn generate(doc: &Document, class_name: &str, source_name: &str) -> Result<Generated, String> {
-    generate_with(doc, class_name, source_name, &HashMap::new())
+    generate_with(doc, class_name, source_name, &HashMap::new(), &HashSet::new())
 }
 
 /// How a component prop takes its attribute value, from its declared type.
@@ -220,18 +220,21 @@ pub struct ComponentInfo {
     pub props: HashMap<String, PropKind>,
 }
 
-/// `components` describes the `.tszor` components this document uses, by name.
+/// `components` describes the `.tszor` components this document uses, by name; `inherited` names
+/// the base class's instance members.
 pub fn generate_with(
     doc: &Document,
     class_name: &str,
     source_name: &str,
     components: &HashMap<String, ComponentInfo>,
+    inherited: &HashSet<String>,
 ) -> Result<Generated, String> {
     let members: HashSet<String> = doc
         .code
         .iter()
         .flat_map(|c| collect_members(c))
         .chain(doc.injects.iter().map(|i| i.name.text.clone()))
+        .chain(inherited.iter().cloned())
         .collect();
     if inject_constructor(doc).is_some() {
         return Err(ZDI08.into());
@@ -1262,6 +1265,7 @@ pub struct MemberDecl {
     /// Byte offset of the name within the code block.
     pub offset: usize,
     pub is_method: bool,
+    pub is_static: bool,
 }
 
 pub fn member_decls(code: &str) -> Vec<MemberDecl> {
@@ -1273,30 +1277,32 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
     let mut out = Vec::new();
     let mut depth = 0i32;
     let mut at_decl = true;
+    let mut is_static = false;
+    let mut prev = None;
     let mut i = 0;
     while i < b.len() {
+        if let Some(end) = skip_literal(b, i, prev) {
+            if !is_comment(b, i) {
+                prev = Some(b'"');
+            }
+            i = end;
+            continue;
+        }
         let c = b[i];
         match c {
-            b'"' | b'\'' | b'`' => {
-                i = skip_string(b, i);
-                continue;
-            }
-            b'/' if b.get(i + 1) == Some(&b'/') => {
-                i = b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |p| i + p);
-                continue;
-            }
-            b'/' if b.get(i + 1) == Some(&b'*') => {
-                i = code[i + 2..].find("*/").map_or(b.len(), |p| i + 2 + p + 2);
-                continue;
-            }
             b'{' | b'(' | b'[' => depth += 1,
             b'}' | b')' | b']' => {
                 depth -= 1;
                 if depth == 0 && c == b'}' {
                     at_decl = true;
+                    is_static = false;
                 }
             }
-            b';' | b'\n' if depth == 0 => at_decl = true,
+            b';' if depth == 0 => {
+                at_decl = true;
+                is_static = false;
+            }
+            b'\n' if depth == 0 => at_decl = true,
             _ if depth == 0 && at_decl && is_ident_start(c) => {
                 let start = i;
                 while i < b.len() && is_ident_char(b[i]) {
@@ -1310,16 +1316,112 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
                         name: word.to_string(),
                         offset: start,
                         is_method: matches!(next, Some(b'(' | b'<')),
+                        is_static,
                     });
                     at_decl = false;
+                    is_static = false;
+                } else if word == "static" {
+                    is_static = true;
                 }
+                prev = Some(b'a');
                 continue;
             }
             _ => {}
         }
+        if !c.is_ascii_whitespace() {
+            prev = Some(c);
+        }
         i += 1;
     }
     out
+}
+
+/// End of the string, template literal, comment or regex literal starting at `i`, if any.
+/// `prev` is the last significant byte before `i`; it tells a regex from a division.
+pub(crate) fn skip_literal(b: &[u8], i: usize, prev: Option<u8>) -> Option<usize> {
+    match b[i] {
+        b'"' | b'\'' => Some(skip_string(b, i)),
+        b'`' => Some(skip_template(b, i)),
+        b'/' => match b.get(i + 1) {
+            Some(b'/') => Some(b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |p| i + p)),
+            Some(b'*') => Some(b[i + 2..].windows(2).position(|w| w == b"*/").map_or(b.len(), |p| i + 2 + p + 2)),
+            _ if prev.is_none_or(|p| b"(,=:[!&|?{};+-*%~^".contains(&p)) => skip_regex(b, i),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub(crate) fn is_comment(b: &[u8], i: usize) -> bool {
+    b[i] == b'/' && matches!(b.get(i + 1), Some(b'/' | b'*'))
+}
+
+fn skip_template(b: &[u8], start: usize) -> usize {
+    let mut i = start + 1;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'`' => return i + 1,
+            b'$' if b.get(i + 1) == Some(&b'{') => i = skip_braces(b, i + 1),
+            _ => i += 1,
+        }
+    }
+    b.len()
+}
+
+/// Index just past the `}` that closes the `{` at `open`.
+pub(crate) fn skip_braces(b: &[u8], open: usize) -> usize {
+    let mut depth = 0usize;
+    let mut prev = None;
+    let mut i = open;
+    while i < b.len() {
+        if let Some(end) = skip_literal(b, i, prev) {
+            if !is_comment(b, i) {
+                prev = Some(b'"');
+            }
+            i = end;
+            continue;
+        }
+        match b[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            _ => {}
+        }
+        if !b[i].is_ascii_whitespace() {
+            prev = Some(b[i]);
+        }
+        i += 1;
+    }
+    b.len()
+}
+
+/// End of a regex literal at `i`, or `None` when the line ends first (it was a division).
+fn skip_regex(b: &[u8], i: usize) -> Option<usize> {
+    let mut class = false;
+    let mut j = i + 1;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 1,
+            b'\n' => return None,
+            b'[' => class = true,
+            b']' => class = false,
+            b'/' if !class => {
+                j += 1;
+                while j < b.len() && is_ident_char(b[j]) {
+                    j += 1;
+                }
+                return Some(j);
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
 }
 
 /// Variables declared by a `for (...)` head, which shadow members inside the loop body.
@@ -1518,7 +1620,7 @@ mod tests {
     fn gen_with(src: &str, components: &[(&str, &str)]) -> Generated {
         let (doc, _) = crate::parser::parse(src).unwrap();
         let infos = components.iter().map(|(n, s)| (n.to_string(), component_info(s))).collect();
-        let g = generate_with(&doc, "C", "C.tszor", &infos).unwrap();
+        let g = generate_with(&doc, "C", "C.tszor", &infos, &HashSet::new()).unwrap();
         for m in &g.mappings {
             assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}\n{}", g.code);
         }
@@ -1577,7 +1679,7 @@ mod tests {
     fn gen_err(src: &str, components: &[(&str, &str)]) -> String {
         let (doc, _) = crate::parser::parse(src).unwrap();
         let infos = components.iter().map(|(n, s)| (n.to_string(), component_info(s))).collect();
-        generate_with(&doc, "C", "C.tszor", &infos).unwrap_err()
+        generate_with(&doc, "C", "C.tszor", &infos, &HashSet::new()).unwrap_err()
     }
 
     #[test]

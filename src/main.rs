@@ -162,9 +162,11 @@ fn watch_loop(o: &Options) -> Result<(), String> {
             errors.remove(src);
             build::remove_outputs(src);
         }
-        // Components importing a changed one read its type parameters and prop kinds.
+        // Components importing a changed one read its type parameters and prop kinds, and
+        // inheriting ones read their base's members.
         let mut recompile = plan.recompile;
-        let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).map(PathBuf::as_path).collect();
+        let scripts = build::changed_scripts(&batch, dir);
+        let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
         let dependents = build::dependents(&units, &changed);
         recompile.extend(dependents);
         for src in &recompile {

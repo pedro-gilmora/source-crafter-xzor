@@ -4,6 +4,7 @@ pub mod build;
 pub mod codegen;
 pub mod di;
 pub mod highlight;
+pub mod inherit;
 pub mod json;
 pub mod lsp;
 pub mod parser;
@@ -34,6 +35,11 @@ pub fn compile(source: &str, path: &Path) -> Result<String, Diagnostic> {
 
 /// Like [`compile`], plus the source mappings between the `.tszor` and the generated code.
 pub fn compile_mapped(source: &str, path: &Path) -> Result<codegen::Generated, Diagnostic> {
+    compile_mapped_with(source, path, &|p| std::fs::read_to_string(p).ok())
+}
+
+/// Like [`compile_mapped`], reading `@inherits` base sources through `read`.
+pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Option<String>) -> Result<codegen::Generated, Diagnostic> {
     let (doc, _) = parser::parse(source).map_err(|e| {
         let (line, column) = line_col(source, e.offset);
         Diagnostic { message: e.message, line, column, offset: e.offset }
@@ -45,8 +51,14 @@ pub fn compile_mapped(source: &str, path: &Path) -> Result<codegen::Generated, D
         let (line, column) = line_col(source, offset);
         return Err(Diagnostic { message: codegen::ZDI08.into(), line, column, offset });
     }
-    codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components)
+    let inherited = inherit::base_members(&doc, path, read);
+    codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &inherited)
         .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })
+}
+
+/// Instance members `doc` inherits through `@inherits`, read from disk.
+pub fn base_members(doc: &ast::Document, path: &Path) -> std::collections::HashSet<String> {
+    inherit::base_members(doc, path, &|p| std::fs::read_to_string(p).ok())
 }
 
 /// Type parameters and prop kinds of each `.tszor` component imported by `doc`, read from disk.
