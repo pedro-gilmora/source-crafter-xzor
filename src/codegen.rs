@@ -354,12 +354,12 @@ pub fn generate_with(
     g.depth = 0;
     g.line("}");
     let injects = doc.injects.clone();
-    let routes = page_routes(doc, &decls);
+    let routes = page_routes(doc, &decls, inherited);
     Ok(Generated { code: g.out, mappings: g.mappings, injects, routes, deps: Vec::new(), warnings: Vec::new() })
 }
 
 /// The `@page` routes of a document, with params typed from the props.
-fn page_routes(doc: &Document, decls: &[Vec<MemberDecl>]) -> Vec<RouteInfo> {
+fn page_routes(doc: &Document, decls: &[Vec<MemberDecl>], inherited: &HashSet<String>) -> Vec<RouteInfo> {
     doc.pages
         .iter()
         .map(|page| {
@@ -371,7 +371,7 @@ fn page_routes(doc: &Document, decls: &[Vec<MemberDecl>]) -> Vec<RouteInfo> {
                 .into_iter()
                 .map(|p| (p.to_string(), declared_param_kind(doc, decls, p)))
                 .collect();
-            let rest = declaration_of(doc, decls, "rest").is_some();
+            let rest = declaration_of(doc, decls, "rest").is_some() || inherited.contains("rest");
             RouteInfo { tag, tag_at, pattern: page.pattern.text.clone(), pattern_at: page.pattern.at, params, rest }
         })
         .collect()
@@ -1980,6 +1980,9 @@ mod tests {
         let (doc, _) = crate::parser::parse("@page \"/a/*\"\n<p/>").unwrap();
         let g = generate_with(&doc, "A", "A.tszor", &HashMap::new(), &HashSet::new()).unwrap();
         assert!(!g.routes[0].rest);
+        let inherited = HashSet::from(["rest".to_string()]);
+        let g = generate_with(&doc, "A", "A.tszor", &HashMap::new(), &inherited).unwrap();
+        assert!(g.routes[0].rest);
     }
 
     #[test]
