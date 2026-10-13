@@ -1,6 +1,6 @@
 // End-to-end: drives `zor lsp` over stdio against examples/counter, like an editor would.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { cpSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dir, "..");
@@ -409,3 +409,32 @@ test("feature requests on a .ts document return nothing", async () => {
   notify("textDocument/didClose", { textDocument: { uri: uriOf(diCounter) } });
   rmSync(diRoot, { recursive: true, force: true });
 }, 30000);
+
+test("an open .tszor refreshes when a base .ts anywhere in its @inherits chain changes, without saving", async () => {
+  const dir = join(repo, "target", "tmp-lsp-inherits", String(process.pid));
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
+  const base = (name: string) =>
+    `import { ComponentBase } from "@zor/runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
+  // D -> Mid (mid.ts) -> Titled (base.ts): D's text never mentions base.
+  const mid = `import { Titled } from "./base";\nexport abstract class Mid extends Titled {}\n`;
+  const text = `@import { Mid } from "./mid"\n@inherits Mid\n<p>@title</p>\n`;
+  const [basePath, midPath, comp] = [join(dir, "base.ts"), join(dir, "mid.ts"), join(dir, "D.tszor")];
+  await Bun.write(basePath, base("title"));
+  await Bun.write(midPath, mid);
+  await Bun.write(comp, text);
+  const [baseUri, uri] = [uriOf(basePath), uriOf(comp)];
+  notify("textDocument/didOpen", { textDocument: { uri: baseUri, languageId: "typescript", version: 1, text: base("title") } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text } });
+  const ok = await waitFor(() => diagnostics.get(uri), 20000);
+  expect(ok.filter((d) => d.severity === 1)).toEqual([]);
+  notify("textDocument/didChange", { textDocument: { uri: baseUri, version: 2 }, contentChanges: [{ text: base("heading") }] });
+  const error = await waitFor(() => diagnostics.get(uri)?.find((d) => d.severity === 1), 20000);
+  expect(error.message).toContain("title");
+  expect(error.range.start).toEqual(pos(text, "title</p>"));
+  expect(await Bun.file(basePath).text()).toBe(base("title"));
+  notify("textDocument/didClose", { textDocument: { uri } });
+  notify("textDocument/didClose", { textDocument: { uri: baseUri } });
+  rmSync(dir, { recursive: true, force: true });
+}, 60000);

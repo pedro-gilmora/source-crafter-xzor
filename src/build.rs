@@ -169,11 +169,30 @@ fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, 
     (files, removed_dir)
 }
 
-/// Components whose text mentions a changed `.tszor` file name: codegen reads imported components'
-/// type parameters and prop kinds. Excludes the changed ones themselves.
+/// Components that read something that changed: those whose text mentions a changed `.tszor` file name
+/// (codegen reads imported components' type parameters and prop kinds), and those whose `@inherits`
+/// chain probed a changed file (`Generated::deps`). Excludes the changed ones themselves.
 pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
-    let names: Vec<_> = changed.iter().map(|c| c.file_name().unwrap_or_default().to_string_lossy()).collect();
-    units.iter().filter(|u| !changed.contains(&u.source.as_path()) && names.iter().any(|n| u.text.contains(&**n))).map(|u| u.source.clone()).collect()
+    let names: Vec<_> = changed.iter().filter_map(|c| c.file_name()).map(|n| n.to_string_lossy()).filter(|n| n.ends_with(".tszor")).collect();
+    let changed_norm: Vec<PathBuf> = changed.iter().map(|c| normalize(c)).collect();
+    units
+        .iter()
+        .filter(|u| {
+            !changed.contains(&u.source.as_path())
+                && (names.iter().any(|n| u.text.contains(&**n)) || u.generated.deps.iter().any(|d| changed_norm.iter().any(|c| same_path(c, d))))
+        })
+        .map(|u| u.source.clone())
+        .collect()
+}
+
+/// The scripts among watched `paths` (relative to `root`), which `@inherits` bases may live in.
+pub fn changed_scripts(paths: &[String], root: &Path) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .map(|p| p.replace('\\', "/"))
+        .filter(|p| !watch_ignored(p) && (p.ends_with(".ts") || p.ends_with(".tsx")) && !p.ends_with(".d.ts"))
+        .map(|p| root.join(p.replace('/', std::path::MAIN_SEPARATOR_STR)))
+        .collect()
 }
 
 /// Decides what a batch of watched `paths` (relative to `root`) requires. `known_injects` holds the
@@ -311,7 +330,7 @@ fn map_tsc_line(line: &str, compiled: &[Compiled], cwd: &Path) -> Option<String>
     let (l, c): (usize, usize) = (l.trim().parse().ok()?, c.trim().parse().ok()?);
     let path = Path::new(line[..open].trim());
     let path = if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) };
-    let unit = compiled.iter().find(|u| same_path(&normalize(&u.out), &normalize(&path)))?;
+    let unit = compiled.iter().find(|u| same_path(&normalize(&cwd.join(&u.out)), &normalize(&path)))?;
     let src = unit.generated.to_src_nearest(offset_at(&unit.generated.code, l - 1, c - 1));
     let (sl, sc) = position_at(&unit.text, src);
     let shown = unit.source.strip_prefix(cwd).map_or_else(|_| unit.source.display().to_string(), |p| p.display().to_string());
@@ -685,6 +704,21 @@ mod tests {
     }
 
     #[test]
+    fn maps_tsc_output_for_relative_out() {
+        let root = temp("tscrelative");
+        let source = root.join("x").join("A.tszor");
+        let text = "@code { n: number = 1; }\n<p>@n.foo</p>\n".to_string();
+        let generated = crate::compile_mapped(&text, &source).unwrap();
+        let at = generated.code.find(".foo").unwrap() + 1;
+        let (line, col) = crate::lsp::position_at(&generated.code, at);
+        let out = PathBuf::from("x").join(".zor").join("A.tszor.ts");
+        let compiled = vec![Compiled { source, out: out.clone(), text, generated }];
+        let tsc = format!("{}({},{}): error TS1: m\n", root.join(&out).display(), line + 1, col + 1);
+        assert_eq!(map_tsc_output(&tsc, &compiled, &root), "x/A.tszor(2,7): error TS1: m\n");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn watch_batch_plan() {
         let root = temp("watchplan");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
@@ -796,6 +830,37 @@ mod tests {
         // Two changes mentioned by the same unit list it once; changed units are excluded.
         assert_eq!(dependents(&units, &[card.as_path(), other.as_path()]), vec![root.join("App.tszor")]);
         assert!(dependents(&units, &[other.as_path()]).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dependents_cover_inherited_ts_bases() {
+        let root = temp("dependents-ts");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("App.tszor"), "@import { Titled } from \"./base\"\n@inherits Titled\n<p/>\n").unwrap();
+        fs::write(root.join("Dir.tszor"), "@import { Titled } from \"./shared\"\n@inherits Titled\n<p/>\n").unwrap();
+        fs::write(root.join("Plain.tszor"), "<p>base</p>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        assert_eq!(dependents(&units, &[root.join("base.ts").as_path()]), vec![root.join("App.tszor")]);
+        assert_eq!(dependents(&units, &[root.join("shared").join("index.ts").as_path()]), vec![root.join("Dir.tszor")]);
+        assert!(dependents(&units, &[root.join("base.d.ts").as_path()]).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dependents_follow_the_whole_inherits_chain() {
+        let root = temp("dependents-chain");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("a.ts"), "export class A { a = 1; }\n").unwrap();
+        fs::write(root.join("b.ts"), "import { A } from \"./a\";\nexport class B extends A { b = 1; }\n").unwrap();
+        fs::write(root.join("C.tszor"), "@import { B } from \"./b\"\n@inherits B\n<p/>\n").unwrap();
+        // Mentions `a` and `@inherits` but never reaches a.ts.
+        fs::write(root.join("D.tszor"), "@import { Pkg } from \"pkg\"\n@inherits Pkg\n<p>a</p>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let c = vec![root.join("C.tszor")];
+        assert_eq!(dependents(&units, &[root.join("a.ts").as_path()]), c);
+        assert_eq!(dependents(&units, &[root.join("b.ts").as_path()]), c);
+        assert!(dependents(&units, &[root.join("zzz.ts").as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 

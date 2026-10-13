@@ -25,7 +25,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@* comment *@` | A comment, removed at compile time |
 | `@{ const x = f(); <p>@x</p> @: text @x }` | Statements inside `buildRenderTree`. Variables declared there are usable later in the same scope. Markup at statement start and `@:` lines render in place, and markup used as a value becomes a `RenderFragment`. |
 | `<text>…</text>` | Renders its content only, with no wrapper element |
-| `@inherits Base<T>`, `@implements A, B`, `@attribute dec(args)` | `@dec(args)` then `export default class C extends Base<T> implements A, B`. The base must derive from `ComponentBase`. |
+| `@inherits Base<T>`, `@implements A, B`, `@attribute dec(args)` | `@dec(args)` then `export default class C extends Base<T> implements A, B`. The base must derive from `ComponentBase`. When the base resolves through a relative `@import` (a `.ts` class or a `.tszor`, following its own `extends` chain), its instance members are usable as bare names in the template, like `@code` members. |
 | `@switch (v) { case a: case b: ... break; default: ... }` | Each case is block-scoped and always ends in `break` (no fall-through into a body). Stacked labels share one body. `break;` is optional. |
 | `@@`, `a@b.com` | Literal `@` |
 | `attr="text @expr"`, `attr="@expr"` | Interpolated and typed attribute values (`false`/`null` removes the attribute) |

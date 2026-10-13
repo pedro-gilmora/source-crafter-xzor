@@ -495,9 +495,13 @@ impl Server {
                 if !ts_file {
                     self.refresh(&uri)?;
                 }
+                self.refresh_inheritors(&path)?;
                 self.di_schedule(&path, root.as_deref(), Some(text));
             }
             "textDocument/didSave" => {
+                if let Some(path) = uri_to_path(&uri).filter(|_| !self.docs.contains_key(&uri)) {
+                    self.refresh_inheritors(&path)?;
+                }
                 let root = match self.docs.get(&uri) {
                     Some(d) => self.di_root_of(&d.path, d.root.as_deref(), Some(&d.text)),
                     None => uri_to_path(&uri).and_then(|p| self.di_root_of(&p, tsconfig_root(&p).as_deref(), None)),
@@ -519,6 +523,7 @@ impl Server {
                     if self.docs.values().any(|d| same_path(&d.path, &path)) {
                         continue;
                     }
+                    self.refresh_inheritors(&path)?;
                     if let Some(root) = self.di_root_of(&path, tsconfig_root(&path).as_deref(), None).filter(|r| !roots.iter().any(|x| same_path(x, r))) {
                         roots.push(root);
                     }
@@ -547,8 +552,15 @@ impl Server {
 
     /// Recompiles a document, syncs the generated code to TypeScript and requests diagnostics.
     fn refresh(&mut self, uri: &str) -> io::Result<()> {
-        let Some(doc) = self.docs.get_mut(uri) else { return Ok(()) };
-        match crate::compile_mapped(&doc.text, &doc.path) {
+        let Some(doc) = self.docs.get(uri) else { return Ok(()) };
+        // `@inherits` bases open in the editor are read from their unsaved text.
+        let read = |p: &Path| match self.docs.values().find(|d| same_path(&d.path, p)) {
+            Some(d) => Some(d.text.clone()),
+            None => std::fs::read_to_string(p).ok(),
+        };
+        let compiled = crate::compile_mapped_with(&doc.text, &doc.path, &read);
+        let doc = self.docs.get_mut(uri).expect("checked above");
+        match compiled {
             Ok(g) => {
                 doc.error = None;
                 doc.version += 1;
@@ -587,6 +599,22 @@ impl Server {
                 doc.error = Some(d);
                 self.publish(uri, Vec::new())?;
             }
+        }
+        Ok(())
+    }
+
+    /// Refreshes the open `.tszor` documents whose `@inherits` chain probed the changed `path`.
+    fn refresh_inheritors(&mut self, path: &Path) -> io::Result<()> {
+        let uris: Vec<String> = self
+            .docs
+            .iter()
+            .filter(|(_, d)| {
+                !d.ts_file && !same_path(&d.path, path) && d.compiled.as_ref().is_some_and(|c| c.g.deps.iter().any(|p| same_path(p, path)))
+            })
+            .map(|(u, _)| u.clone())
+            .collect();
+        for uri in uris {
+            self.refresh(&uri)?;
         }
         Ok(())
     }
