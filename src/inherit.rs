@@ -271,20 +271,24 @@ fn exports_types(exports: &Json, key: &str) -> Option<String> {
     Some(declaration(target))
 }
 
-/// The target of a single-`*` subpath pattern matching `key`, with the matched text spliced in.
+/// The target of the single-`*` subpath pattern matching `key` with the longest prefix (as Node picks),
+/// with the matched text spliced in.
 fn pattern_types(exports: &Json, key: &str) -> Option<String> {
     let Json::Obj(entries) = exports else { return None };
-    entries.iter().find_map(|(k, v)| {
-        let (prefix, suffix) = k.split_once('*')?;
-        if !prefix.starts_with("./") || suffix.contains('*') {
-            return None;
-        }
-        let matched = key.strip_prefix(prefix)?.strip_suffix(suffix)?;
-        let target = condition_types(v)?;
-        Some(match target.split_once('*') {
-            Some((head, tail)) => format!("{head}{matched}{tail}"),
-            None => target,
+    let (_, matched, v) = entries
+        .iter()
+        .filter_map(|(k, v)| {
+            let (prefix, suffix) = k.split_once('*')?;
+            if !prefix.starts_with("./") || suffix.contains('*') {
+                return None;
+            }
+            Some((prefix, key.strip_prefix(prefix)?.strip_suffix(suffix)?, v))
         })
+        .max_by_key(|(prefix, _, _)| prefix.len())?;
+    let target = condition_types(v)?;
+    Some(match target.split_once('*') {
+        Some((head, tail)) => format!("{head}{matched}{tail}"),
+        None => target,
     })
 }
 
@@ -870,6 +874,18 @@ export class After { late = 1; }
         let main = "@import { Form } from \"pat/forms\"\n@inherits Form\n<p>@form @wrong</p>\n";
         let code = compile_at(&files, main, "src/C.tszor");
         assert!(code.contains("this.form") && !code.contains("this.wrong"), "{code}");
+    }
+
+    #[test]
+    fn the_longest_pattern_prefix_wins() {
+        let files = [
+            ("node_modules/pat/package.json", r#"{"exports":{"./*":{"types":"./dist/*.d.ts"},"./ui/*":{"types":"./ui/*.d.ts"}}}"#),
+            ("node_modules/pat/dist/ui/grid.d.ts", "export declare class Grid { wrong: number; }\n"),
+            ("node_modules/pat/ui/grid.d.ts", "export declare class Grid { grid: number; }\n"),
+        ];
+        let main = "@import { Grid } from \"pat/ui/grid\"\n@inherits Grid\n<p>@grid @wrong</p>\n";
+        let code = compile_at(&files, main, "src/C.tszor");
+        assert!(code.contains("this.grid") && !code.contains("this.wrong"), "{code}");
     }
 
     #[test]
