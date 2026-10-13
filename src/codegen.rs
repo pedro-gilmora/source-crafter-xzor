@@ -575,12 +575,14 @@ const ROUTE_TYPE: u8 = 1;
 const ROUTE_PARAMS: u8 = 2;
 const ROUTE_FRAGMENT: u8 = 4;
 
-/// Whether `word` appears in `text` as a whole identifier.
+/// Whether `word` is used as a free identifier in generated code `text` (not in strings or as a property).
 fn mentions(text: &str, word: &str) -> bool {
-    text.match_indices(word).any(|(i, _)| {
-        let b = text.as_bytes();
-        !(i > 0 && is_ident_char(b[i - 1])) && !b.get(i + word.len()).is_some_and(|&c| is_ident_char(c))
-    })
+    let found = std::cell::Cell::new(false);
+    rewrite(text, &|w| {
+        found.set(found.get() || w == word);
+        false
+    });
+    found.get()
 }
 
 impl Gen<'_> {
@@ -2259,6 +2261,9 @@ mod tests {
         assert!(g.code.contains("import { routes as __routes } from \"./routes\";"), "{}", g.code);
         let none = gen_with("@ClientRoutes(route) { @notFound { <p/> } }", &[]);
         assert!(none.code.contains("import { ComponentBase, type RenderTreeBuilder } from \"@zor/runtime\";"), "{}", none.code);
+        // The names inside text are not uses.
+        let text = gen_with("@ClientRoutes(route) { @a(page) { <p>the page route</p> } @notFound { <p>route not found</p> } }", &[]);
+        assert!(!text.code.contains("const route") && !text.code.contains(" page:"), "{}", text.code);
         let used = gen_with("@ClientRoutes(route) { @a(page) { <p>@route.params.x</p> } }", &[]);
         assert!(used.code.contains("render: (__route: Route) => { const route = __route as Route<__RouteParams[\"a\"]>; return "), "{}", used.code);
         assert!(used.code.contains("import { routes as __routes, type RouteParams as __RouteParams } from \"./routes\";"), "{}", used.code);

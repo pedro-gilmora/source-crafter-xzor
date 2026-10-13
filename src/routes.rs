@@ -307,7 +307,7 @@ fn emit(root: &Path, units: &[Unit], entries: &[(usize, usize)]) -> String {
         return out;
     }
     out.push_str(&helpers(units, entries));
-    out.push_str("type __P<C, K extends string> = K extends keyof C ? C[K] : string;\n\nexport const routes: RouteTable = [\n");
+    out.push_str("export type __P<C, K extends string> = K extends keyof C ? C[K] : string;\n\nexport const routes: RouteTable = [\n");
     for &(i, k) in entries {
         let r = &units[i].routes[k];
         let tag = r.tag.as_ref().map_or_else(|| "undefined".to_string(), |t| format!("{t:?}"));
