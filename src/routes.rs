@@ -133,9 +133,29 @@ fn initializer_pos(ty: &str) -> Option<usize> {
     })
 }
 
-fn is_ident(s: &str) -> bool {
+pub fn is_ident(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty() && is_ident_start(b[0]) && b[1..].iter().all(|&c| is_ident_char(c))
+}
+
+/// The `.zor/routes.ts` specifier a component imports, relative to its own directory
+/// (`rootDirs` maps `<root>/routes` onto the generated table).
+pub fn table_spec(root: &Path, source: &Path) -> String {
+    let dir = source.parent().unwrap_or(Path::new("."));
+    let spec = crate::build::relative_from(dir, &root.join("routes"), "routes");
+    if spec.starts_with("..") { spec } else { format!("./{spec}") }
+}
+
+/// `__d`, the decode guard the generated matchers share: a malformed escape yields `null` instead
+/// of throwing, and a segment without `%` skips the `try` entirely.
+pub const DECODE: &str =
+    "function __d(v: string): string | null {\n  if (!v.includes(\"%\")) return v;\n  try {\n    return decodeURIComponent(v);\n  } catch {\n    return null;\n  }\n}\n";
+
+/// The matcher body of a `@"pattern"` routes section, generated like the table's. A section has no
+/// props to read types from, so every param is a string and a trailing `*` always fills `rest`.
+pub fn section_matcher(pattern: &str) -> String {
+    let params = param_names(pattern).into_iter().map(|n| (n.to_string(), ParamKind::String)).collect();
+    matcher_body(&RouteInfo { tag: None, tag_at: 0, pattern: pattern.to_string(), pattern_at: 0, params, rest: true })
 }
 
 /// Which router a `@ClientRoutes`/`@ServerRoutes` block selects.
@@ -348,9 +368,7 @@ fn helpers(units: &[Unit], entries: &[(usize, usize)]) -> String {
     if !(decode || num || boolean) {
         return String::new();
     }
-    let mut out = String::from(
-        "function __d(v: string): string | null {\n  if (!v.includes(\"%\")) return v;\n  try {\n    return decodeURIComponent(v);\n  } catch {\n    return null;\n  }\n}\n",
-    );
+    let mut out = String::from(DECODE);
     if num {
         out.push_str("const __decimal = /^-?\\d+(?:\\.\\d+)?$/;\n");
         out.push_str("function __num(v: string): number {\n  const d = __d(v);\n  return d !== null && __decimal.test(d) ? Number(d) : NaN;\n}\n");
@@ -502,6 +520,24 @@ mod table_tests {
     use std::path::PathBuf;
 
     const ROOT: &str = "/proj";
+
+    #[test]
+    fn table_specifier_is_relative_to_the_source_directory() {
+        assert_eq!(table_spec(Path::new("/p"), Path::new("/p/src/app/App.tszor")), "../../routes");
+        assert_eq!(table_spec(Path::new("/p"), Path::new("/p/App.tszor")), "./routes");
+        assert_eq!(table_spec(Path::new("/p"), Path::new("/p/src/App.tszor")), "../routes");
+        assert_eq!(table_spec(Path::new(""), Path::new("App.tszor")), "./routes");
+    }
+
+    #[test]
+    fn section_matchers_bind_every_pattern_param_as_a_string() {
+        let body = section_matcher("/legal/:doc");
+        assert!(body.contains("if (s.length !== 2) return null;"), "{body}");
+        assert!(body.contains("if (s[0] !== \"legal\") return null;"), "{body}");
+        assert!(body.contains("const _doc = __d(s[1]);"), "{body}");
+        assert!(body.contains("return { doc: _doc };"), "{body}");
+        assert!(section_matcher("/files/*").contains("return { rest: _rest };"), "{body}");
+    }
 
     struct Page {
         source: PathBuf,

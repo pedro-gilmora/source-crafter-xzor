@@ -65,6 +65,40 @@ export type RouteEntry = {
 /** The project's routes, in precedence order. */
 export type RouteTable = readonly RouteEntry[];
 
+/** The state of the current navigation, published to the routes block and as the cascading value `route`. */
+export class Route<P = Record<string, unknown>> {
+  constructor(
+    readonly path: string,
+    readonly tag: string | undefined,
+    readonly params: P,
+    readonly query: URLSearchParams,
+    readonly match: Record<string, string>,
+  ) {}
+
+  /** Narrows `params` to the routes carrying `tag`. */
+  is(tag: string): boolean {
+    return this.tag === tag;
+  }
+
+  navigate(url: string, _opts?: { replace?: boolean }): void {
+    location.href = url;
+  }
+}
+
+/** One section of a `@ClientRoutes`/`@ServerRoutes` block; zor emits these in source order. */
+export type RouteSection =
+  | { kind: "tag"; tag: string; render: (route: Route, page: RenderFragment) => RenderFragment }
+  | { kind: "regex"; re: RegExp; page: boolean; render: (route: Route, page: RenderFragment) => RenderFragment }
+  | {
+      kind: "pattern";
+      match: (segments: string[]) => Record<string, string> | null;
+      page: boolean;
+      render: (route: Route, page: RenderFragment) => RenderFragment;
+    }
+  | { kind: "notFound"; render: (route: Route) => RenderFragment }
+  | { kind: "catch"; render: (route: Route, error: unknown) => RenderFragment }
+  | { kind: "default"; render: (route: Route, page: RenderFragment) => RenderFragment };
+
 type Ctor<C extends ComponentBase> = new (...args: any[]) => C;
 // `latest` is the current vnode of a component still waiting for its instance; cleared on arrival or removal.
 type Mounted = {
@@ -245,6 +279,11 @@ export class RenderTreeBuilder {
 
   closeRegion(): void {
     this.#open.pop();
+  }
+
+  /** `@ClientRoutes`/`@ServerRoutes`: renders the section that matches the current navigation. */
+  addRoutes(_engine: "client" | "server", _table: RouteTable, _sections: readonly RouteSection[]): void {
+    throw new Error("zor: routes block not implemented yet");
   }
 
   addAttribute(name: string, value: unknown): void {

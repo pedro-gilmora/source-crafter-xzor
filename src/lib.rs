@@ -57,8 +57,10 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
         return Err(Diagnostic { message, line, column, offset });
     }
     let base = inherit::base_members(&doc, path, read);
-    let mut generated = codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &base.members)
-        .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
+    let table = routes::table_spec(&build::project_root(path), path);
+    let mut generated =
+        codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &base.members, &table)
+            .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
     generated.deps = base.deps;
     if let (Some(name), Some(inherits)) = (base.unresolved, &doc.inherits) {
         let (line, column) = line_col(source, inherits.at);

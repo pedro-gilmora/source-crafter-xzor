@@ -127,10 +127,53 @@ pub enum Node {
         fixed: bool,
         body: Vec<Node>,
     },
+    /// `@ClientRoutes(route) { ... }` or `@ServerRoutes(route) { ... }`: the project's routes block.
+    Routes {
+        engine: crate::routes::Engine,
+        /// The name the sections see the route state under.
+        var: Src,
+        sections: Vec<RouteSectionNode>,
+    },
     /// `@slot`, `@slot:name(args) { fallback }` in a component's own template.
     Slot(Slot),
     /// `@slot name(params) { body }` as a direct child of a component tag.
     SlotFill(SlotFill),
+}
+
+/// One section of a routes block and the markup it renders.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouteSectionNode {
+    pub kind: RouteSectionKind,
+    pub body: Vec<Node>,
+}
+
+/// What a routes-block section matches, with the names it binds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RouteSectionKind {
+    /// `@<tag>(page)`: any `@page` route carrying `tag`.
+    Tag { tag: Src, page: Src },
+    /// `@/re/flags(page?)`: the regex literal, verbatim.
+    Regex { re: Src, page: Option<Src> },
+    /// `@"pattern"(page?)`: a Bun.serve pattern, without its quotes.
+    Pattern { pattern: Src, page: Option<Src> },
+    /// `@notFound`.
+    NotFound,
+    /// `@catch(e)`.
+    Catch { error: Src },
+    /// `@default(page)`, always last.
+    Default { page: Src },
+}
+
+impl RouteSectionKind {
+    /// The name the section binds in its body: the page fragment, or the `@catch` error.
+    pub fn binding(&self) -> Option<&Src> {
+        match self {
+            RouteSectionKind::Tag { page, .. } | RouteSectionKind::Default { page } => Some(page),
+            RouteSectionKind::Regex { page, .. } | RouteSectionKind::Pattern { page, .. } => page.as_ref(),
+            RouteSectionKind::Catch { error } => Some(error),
+            RouteSectionKind::NotFound => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
