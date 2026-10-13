@@ -55,6 +55,11 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
     let mut generated = codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &base.members)
         .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
     generated.deps = base.deps;
+    if let (Some(name), Some(inherits)) = (base.unresolved, &doc.inherits) {
+        let (line, column) = line_col(source, inherits.at);
+        let message = format!("could not read base class '{name}'; use this.<member> for its members");
+        generated.warnings.push(Diagnostic { message, line, column, offset: inherits.at });
+    }
     Ok(generated)
 }
 
@@ -89,4 +94,29 @@ pub(crate) fn is_ident_start(c: u8) -> bool {
 
 pub(crate) fn is_ident_char(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn warnings(src: &str) -> Vec<Diagnostic> {
+        compile_mapped(src, Path::new("App.tszor")).unwrap().warnings
+    }
+
+    #[test]
+    fn warns_when_the_base_cannot_be_read() {
+        let src = "@import { Base } from \"pkg-missing\"\n@inherits Base\n<p/>\n";
+        let w = warnings(src);
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].message, "could not read base class 'Base'; use this.<member> for its members");
+        assert_eq!((w[0].line, w[0].column), (2, 11));
+        assert_eq!(w[0].offset, src.find("Base\n<p/>").unwrap());
+    }
+
+    #[test]
+    fn no_warning_without_a_readable_chain() {
+        assert!(warnings("<p/>\n").is_empty());
+        assert!(warnings("@import { ComponentBase } from \"@zor/runtime\"\n@inherits ComponentBase\n<p/>\n").is_empty());
+    }
 }

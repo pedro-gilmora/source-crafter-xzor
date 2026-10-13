@@ -21,6 +21,8 @@ pub struct Generated {
     pub injects: Vec<Inject>,
     /// Files probed while resolving the `@inherits` chain, found or not; a change to one invalidates this output.
     pub deps: Vec<std::path::PathBuf>,
+    /// Problems that don't stop the build.
+    pub warnings: Vec<crate::Diagnostic>,
 }
 
 impl Generated {
@@ -325,7 +327,7 @@ pub fn generate_with(
     g.depth = 0;
     g.line("}");
     let injects = doc.injects.clone();
-    Ok(Generated { code: g.out, mappings: g.mappings, injects, deps: Vec::new() })
+    Ok(Generated { code: g.out, mappings: g.mappings, injects, deps: Vec::new(), warnings: Vec::new() })
 }
 
 struct Gen<'p> {

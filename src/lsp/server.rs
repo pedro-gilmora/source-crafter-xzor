@@ -806,6 +806,18 @@ impl Server {
                 ("message", e.message.clone().into()),
             ]));
         }
+        // With a syntax error `compiled` is the last good compile, whose offsets may be stale.
+        if doc.error.is_none() {
+            for w in doc.compiled.iter().flat_map(|c| &c.g.warnings) {
+                let name = doc.text.as_bytes().get(w.offset..).map_or(0, |b| b.iter().take_while(|&&c| crate::is_ident_char(c)).count());
+                all.push(Json::obj([
+                    ("range", range_json(&doc.text, w.offset, w.offset + name.max(1))),
+                    ("severity", 2usize.into()),
+                    ("source", "zor".into()),
+                    ("message", w.message.clone().into()),
+                ]));
+            }
+        }
         all.extend(doc.di.iter().cloned());
         all.extend(doc.ts.iter().cloned());
         self.notify("textDocument/publishDiagnostics", Json::obj([("uri", uri.into()), ("diagnostics", Json::Arr(all))]))

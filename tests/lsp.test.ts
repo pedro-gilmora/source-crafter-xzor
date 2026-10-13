@@ -438,3 +438,22 @@ test("an open .tszor refreshes when a base .ts anywhere in its @inherits chain c
   notify("textDocument/didClose", { textDocument: { uri: baseUri } });
   rmSync(dir, { recursive: true, force: true });
 }, 60000);
+
+test("an @inherits base that can't be read shows a warning on the base name", async () => {
+  const dir = join(repo, "target", "tmp-lsp-inherits", `warn-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
+  const text = `@import { Base } from "pkg-missing"\n@inherits Base\n<p/>\n`;
+  const comp = join(dir, "W.tszor");
+  await Bun.write(comp, text);
+  const uri = uriOf(comp);
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text } });
+  const warning = await waitFor(() => diagnostics.get(uri)?.find((d) => d.severity === 2), 20000);
+  expect(warning.source).toBe("zor");
+  expect(warning.message).toBe("could not read base class 'Base'; use this.<member> for its members");
+  const start = pos(text, "Base\n<p/>");
+  expect(warning.range).toEqual({ start, end: { line: start.line, character: start.character + "Base".length } });
+  notify("textDocument/didClose", { textDocument: { uri } });
+  rmSync(dir, { recursive: true, force: true });
+}, 60000);

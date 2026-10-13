@@ -98,6 +98,9 @@ pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
 pub fn compile_one(src: &Path) -> Result<Compiled, String> {
     let text = fs::read_to_string(src).map_err(|e| format!("{}: {e}", src.display()))?;
     let generated = crate::compile_mapped(&text, src).map_err(|d| format!("{}:{d}", src.display()))?;
+    for w in &generated.warnings {
+        eprintln!("warning: {}:{}:{}: {}", src.display(), w.line, w.column, w.message);
+    }
     let out = output_path(src);
     let name = src.file_name().unwrap_or_default().to_string_lossy();
     let map = generated.source_map(&text, &relative_from(out.parent().unwrap_or(Path::new(".")), src, &name));
