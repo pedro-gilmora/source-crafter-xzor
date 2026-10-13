@@ -66,7 +66,7 @@ Every directive line (`@inject`, `@inherits`, `@implements`, `@typeparam`, `@att
 - **Batching:** Rust batches events for 50 ms and ignores `.zor/`, `dist/`, `node_modules/` and dot-dirs. That covers external and internal edits without looping on our own writes.
 - **Per batch:**
   - only the changed `.tszor` files recompile;
-  - DI reruns only if a provider `.ts` changed, a `.tszor`'s `@inject` set changed, or a `.tszor` was added or removed;
+  - DI reruns when any project `.ts` changed in a project that has providers (ruling: a service constructor change in a non-provider file makes the generated code stale; a warm analyzer request costs a few ms), when a `.tszor`'s `@inject` set changed, or when a `.tszor` was added or removed;
   - the type check and the bundle always run.
 
 ## 8. `.zor` cleanup
