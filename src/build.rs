@@ -129,37 +129,54 @@ fn is_source(name: &str) -> bool {
 
 /// Whether a watched path (relative, `/`-separated) is outside the sources: our outputs, dependencies, dot-dirs.
 fn watch_ignored(rel: &str) -> bool {
-    rel.is_empty() || rel.split('/').any(|s| s.starts_with('.') || s == "dist" || s == "node_modules")
+    rel.is_empty() || rel.split('/').any(|s| s.starts_with('.') || matches!(s, "dist" | "node_modules" | "target"))
 }
 
 /// The sources behind a batch of watched `paths` (relative to `root`): files, files under added
-/// directories, and known files under removed ones.
-fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, provider_ts: &HashSet<PathBuf>, root: &Path) -> Vec<PathBuf> {
+/// directories, and known files under removed ones. The flag is set when a directory-like path was
+/// removed (its untracked `.ts` files may have gone too).
+fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, provider_ts: &HashSet<PathBuf>, root: &Path) -> (Vec<PathBuf>, bool) {
     let mut files = Vec::new();
-    for rel in paths.iter().filter(|p| !watch_ignored(p)) {
+    let mut removed_dir = false;
+    for rel in paths.iter().map(|p| p.replace('\\', "/")).filter(|p| !watch_ignored(p)) {
         let path = root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
         if path.is_dir() {
-            let _ = walk(&path, &is_source, &mut files);
-        } else if is_source(rel) {
+            // A directory with known files reports their changes itself; only a new one needs walking.
+            if !known_injects.keys().chain(provider_ts).any(|k| k.starts_with(&path)) {
+                let _ = walk(&path, &is_source, &mut files);
+            }
+        } else if is_source(&rel) {
             files.push(path);
         } else if !path.exists() {
             files.extend(known_injects.keys().chain(provider_ts).filter(|k| k.starts_with(&path)).cloned());
+            removed_dir |= !rel.rsplit('/').next().is_some_and(|s| s.contains('.'));
         }
     }
     files.sort();
     files.dedup();
-    files
+    (files, removed_dir)
+}
+
+/// Components whose text mentions a changed `.tszor` file name: codegen reads imported components'
+/// type parameters and prop kinds. Excludes the changed ones themselves.
+pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
+    let names: Vec<_> = changed.iter().map(|c| c.file_name().unwrap_or_default().to_string_lossy()).collect();
+    units.iter().filter(|u| !changed.contains(&u.source.as_path()) && names.iter().any(|n| u.text.contains(&**n))).map(|u| u.source.clone()).collect()
 }
 
 /// Decides what a batch of watched `paths` (relative to `root`) requires. `known_injects` holds the
 /// compiled `.tszor` files (by source path) with their `inject_signature`; `provider_ts` the provider `.ts` files.
 pub fn watch_plan(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, provider_ts: &HashSet<PathBuf>, root: &Path) -> WatchPlan {
     let mut plan = WatchPlan::default();
-    for path in watch_files(paths, known_injects, provider_ts, root) {
+    let (files, removed_dir) = watch_files(paths, known_injects, provider_ts, root);
+    plan.rebuild = removed_dir;
+    for path in files {
         let name = path.to_string_lossy();
         if !name.ends_with(".tszor") {
             plan.rebuild = true;
-            plan.di |= provider_ts.contains(&path) || (!name.ends_with(".d.ts") && fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t)));
+            // Providers import other `.ts` files, so any of them may change the generated providers.
+            plan.di |= provider_ts.contains(&path)
+                || (!name.ends_with(".d.ts") && (!provider_ts.is_empty() || fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t))));
             continue;
         }
         let known = known_injects.get(&path);
@@ -187,7 +204,7 @@ pub fn watch_plan(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>
 
 /// Brings `provider_ts` up to date with a batch of watched `paths`.
 pub fn update_providers(provider_ts: &mut HashSet<PathBuf>, paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, root: &Path) {
-    for path in watch_files(paths, known_injects, provider_ts, root) {
+    for path in watch_files(paths, known_injects, provider_ts, root).0 {
         let name = path.to_string_lossy();
         if name.ends_with(".ts") && !name.ends_with(".d.ts") && fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t)) {
             provider_ts.insert(path);
@@ -624,7 +641,15 @@ mod tests {
         fs::write(root.join("util.ts"), "@Mount(App, \"app\")\nexport class M {}\n").unwrap();
         assert_eq!(plan(&["util.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
         fs::write(root.join("util.ts"), "export const x = 2;\n").unwrap();
-        assert_eq!(plan(&["util.ts"]), WatchPlan { rebuild: true, ..Default::default() });
+        // Providers import other `.ts` files, so with providers any `.ts` change reruns DI; without, only the rebuild.
+        assert_eq!(plan(&["util.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
+        let no_providers = HashSet::new();
+        let plan_without = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &no_providers, &root);
+        assert_eq!(plan_without(&["util.ts"]), WatchPlan { rebuild: true, ..Default::default() });
+
+        // Windows separators, as `fs.watch` reports them, behave like `/`.
+        assert_eq!(plan(&["services\\data.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
+        assert_eq!(plan(&[".zor\\Counter.tszor.ts", "node_modules\\x\\index.ts", "dist\\a.ts", "target\\a.ts"]), WatchPlan::default());
 
         fs::write(root.join("New.tszor"), "<p/>\n").unwrap();
         assert_eq!(plan(&["New.tszor"]), WatchPlan { recompile: vec![root.join("New.tszor")], remove: vec![], di: true, rebuild: true });
@@ -634,8 +659,71 @@ mod tests {
         // Our own outputs (and tooling folders) never trigger a rebuild, so `--watch` cannot loop.
         fs::create_dir_all(root.join(".zor")).unwrap();
         fs::write(root.join(".zor/Counter.tszor.ts"), "").unwrap();
-        let ignored = [".zor/Counter.tszor.ts", ".zor/X.tszor", "dist/main.js", "dist/a.ts", "node_modules/x/index.ts", ".git/HEAD", ".git/a.ts", ""];
+        let ignored = [".zor/Counter.tszor.ts", ".zor/X.tszor", "dist/main.js", "dist/a.ts", "target/debug/a.ts", "node_modules/x/index.ts", ".git/HEAD", ".git/a.ts", ""];
         assert_eq!(plan(&ignored), WatchPlan::default());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn watch_directory_events() {
+        let root = temp("watchdirs");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::create_dir_all(root.join("services")).unwrap();
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::write(root.join("services/data.ts"), "@ServiceProvider()\nexport class S {}\n").unwrap();
+        fs::write(root.join("lib/Card.tszor"), "<p/>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let known: HashMap<PathBuf, Vec<String>> = units.iter().map(|u| (u.source.clone(), inject_signature(&u.generated.injects))).collect();
+        let providers: HashSet<PathBuf> = provider_files(&root).into_iter().map(|p| root.join(p)).collect();
+        let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &providers, &root);
+
+        // Directories holding known files report their children themselves.
+        assert_eq!(plan(&["lib", "services"]), WatchPlan::default());
+
+        // A newly added directory is walked.
+        fs::create_dir_all(root.join("fresh/deep")).unwrap();
+        fs::write(root.join("fresh/deep/New.tszor"), "<p/>\n").unwrap();
+        let new = root.join("fresh/deep/New.tszor");
+        assert_eq!(plan(&["fresh"]), WatchPlan { recompile: vec![new], remove: vec![], di: true, rebuild: true });
+
+        // A removed directory maps to the known files under it; one with only untracked `.ts` files still rebuilds.
+        fs::remove_dir_all(root.join("lib")).unwrap();
+        assert_eq!(plan(&["lib"]), WatchPlan { recompile: vec![], remove: vec![root.join("lib/Card.tszor")], di: true, rebuild: true });
+        let nothing_known = HashMap::new();
+        let none = HashSet::new();
+        let gone = vec!["scratch".to_string()];
+        assert_eq!(watch_plan(&gone, &nothing_known, &none, &root), WatchPlan { rebuild: true, ..Default::default() });
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn watch_deleting_a_never_compiled_component_clears_it() {
+        let root = temp("watchstale");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        let bad = root.join("Bad.tszor");
+        fs::write(&bad, "<p>\n").unwrap();
+        assert!(compile_one(&bad).is_err());
+        // watch_loop records `known.entry(src).or_default()` on failure.
+        let known: HashMap<PathBuf, Vec<String>> = HashMap::from([(bad.clone(), Vec::new())]);
+        let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &HashSet::new(), &root);
+        fs::remove_file(&bad).unwrap();
+        assert_eq!(plan(&["Bad.tszor"]), WatchPlan { recompile: vec![], remove: vec![bad], di: true, rebuild: true });
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dependents_mention_a_changed_component() {
+        let root = temp("dependents");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("Card.tszor"), "<p/>\n").unwrap();
+        fs::write(root.join("App.tszor"), "@import Card from \"./Card.tszor\"\n<Card/>\n").unwrap();
+        fs::write(root.join("Other.tszor"), "<p/>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let (card, other) = (root.join("Card.tszor"), root.join("Other.tszor"));
+        assert_eq!(dependents(&units, &[card.as_path()]), vec![root.join("App.tszor")]);
+        // Two changes mentioned by the same unit list it once; changed units are excluded.
+        assert_eq!(dependents(&units, &[card.as_path(), other.as_path()]), vec![root.join("App.tszor")]);
+        assert!(dependents(&units, &[other.as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 

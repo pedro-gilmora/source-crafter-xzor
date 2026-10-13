@@ -3,8 +3,11 @@
 import { watch, writeSync } from "node:fs";
 
 const root = process.argv[2] ?? ".";
+const ignored = (path: string) => path.split("/").some((s) => s.startsWith(".") || s === "node_modules" || s === "dist" || s === "target");
 watch(root, { recursive: true }, (_event, file) => {
-  if (file) writeSync(1, `${String(file).replaceAll("\\", "/")}\n`);
+  if (!file) return;
+  const path = String(file).replaceAll("\\", "/");
+  if (!ignored(path)) writeSync(1, `${path}\n`);
 });
 writeSync(1, "\n");
 process.stdin.on("end", () => process.exit(0));

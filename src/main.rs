@@ -152,13 +152,8 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         }
         // Components importing a changed one read its type parameters and prop kinds.
         let mut recompile = plan.recompile;
-        let mut dependents = Vec::new();
-        for changed in recompile.iter().chain(&plan.remove) {
-            let name = changed.file_name().unwrap_or_default().to_string_lossy();
-            dependents.extend(units.iter().filter(|u| u.text.contains(&*name) && !recompile.contains(&u.source)).map(|u| u.source.clone()));
-        }
-        dependents.sort_unstable();
-        dependents.dedup();
+        let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).map(PathBuf::as_path).collect();
+        let dependents = build::dependents(&units, &changed);
         recompile.extend(dependents);
         for src in &recompile {
             match build::compile_one(src) {
@@ -171,12 +166,18 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                     }
                 }
                 Err(e) => {
+                    // Tracked, so deleting a never-compiled file takes the remove path and clears its error.
+                    known.entry(src.clone()).or_default();
                     errors.insert(src.clone(), e);
                 }
             }
         }
         if plan.rebuild {
-            println!("zor: compiled {} component(s)", recompile.len());
+            if errors.is_empty() {
+                println!("zor: compiled {} component(s)", recompile.len());
+            } else {
+                println!("zor: compiled {} component(s), {} with errors", recompile.len(), errors.len());
+            }
             if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry) {
                 eprintln!("{e}");
             }
