@@ -31,21 +31,30 @@ pub fn validate_pattern(p: &str) -> Result<(), String> {
         return Ok(());
     }
     let mut segments = rest.split('/').peekable();
+    let mut seen: Vec<&str> = Vec::new();
     while let Some(segment) = segments.next() {
         if segment.is_empty() {
             return Err("empty segment".into());
         }
-        if segment == "*" {
+        let name = if segment == "*" {
             if segments.peek().is_some() {
                 return Err("'*' must be the last segment".into());
             }
+            "rest"
         } else if let Some(name) = segment.strip_prefix(':') {
             if !is_ident(name) {
                 return Err(format!("invalid parameter name {name:?}"));
             }
+            name
         } else if segment.contains([':', '*']) {
             return Err(format!("invalid segment {segment:?}"));
+        } else {
+            continue;
+        };
+        if seen.contains(&name) {
+            return Err(format!("duplicate param {name:?}"));
         }
+        seen.push(name);
     }
     Ok(())
 }
@@ -79,7 +88,14 @@ fn from_type(ty: &str) -> ParamKind {
         "number" => ParamKind::Number,
         "boolean" => ParamKind::Boolean,
         _ => {
-            let parts: Vec<&str> = ty.split('|').map(str::trim).collect();
+            // `null`/`undefined` only make the prop optional; they don't change the conversion.
+            let parts: Vec<&str> =
+                ty.split('|').map(str::trim).filter(|p| !matches!(*p, "" | "undefined" | "null")).collect();
+            match parts.as_slice() {
+                ["number"] => return ParamKind::Number,
+                ["boolean"] => return ParamKind::Boolean,
+                _ => {}
+            }
             let literals: Option<Vec<String>> = parts.iter().map(|p| string_literal(p)).collect();
             match literals {
                 Some(values) if !values.is_empty() => ParamKind::Union(values),
@@ -131,6 +147,20 @@ mod tests {
         assert_eq!(validate_pattern("/:1x"), Err("invalid parameter name \"1x\"".into()));
         assert_eq!(validate_pattern("/a//b"), Err("empty segment".into()));
         assert_eq!(validate_pattern("/a*"), Err("invalid segment \"a*\"".into()));
+        assert_eq!(validate_pattern("/:a/:a"), Err("duplicate param \"a\"".into()));
+        assert_eq!(validate_pattern("/:rest/*"), Err("duplicate param \"rest\"".into()));
+    }
+
+    #[test]
+    fn reads_nullable_and_multiline_types() {
+        let u = || ParamKind::Union(vec!["a".into(), "b".into()]);
+        assert_eq!(param_kind("id: number | undefined"), ParamKind::Number);
+        assert_eq!(param_kind("id: null | number"), ParamKind::Number);
+        assert_eq!(param_kind("id?: number"), ParamKind::Number);
+        assert_eq!(param_kind("on: boolean | null"), ParamKind::Boolean);
+        assert_eq!(param_kind("tab: | \"a\" | \"b\""), u());
+        assert_eq!(param_kind("tab:\n | \"a\"\n | \"b\""), u());
+        assert_eq!(param_kind("id: number | string"), ParamKind::String);
     }
 
     #[test]

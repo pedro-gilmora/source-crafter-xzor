@@ -377,16 +377,61 @@ fn page_routes(doc: &Document, decls: &[Vec<MemberDecl>]) -> Vec<RouteInfo> {
 }
 
 /// Conversion for a route param, from the member of the same name; anything not declared here
-/// (inherited or absent, like an undeclared `rest`) stays a string.
+/// (inherited, static or absent, like an undeclared `rest`) stays a string.
 fn declared_param_kind(doc: &Document, decls: &[Vec<MemberDecl>], param: &str) -> ParamKind {
     for (code, decls) in doc.code.iter().zip(decls) {
-        if let Some(m) = decls.iter().find(|m| !m.is_method && m.name == param) {
-            let rest = &code[m.offset..];
-            let end = rest.find(['\n', ';']).unwrap_or(rest.len());
-            return crate::routes::param_kind(&rest[..end]);
+        if let Some(m) = decls.iter().find(|m| !m.is_method && !m.is_static && m.name == param) {
+            return crate::routes::param_kind(&declaration_text(&code[m.offset..]));
         }
     }
     ParamKind::String
+}
+
+/// The member declaration at the start of `s` without comments: up to a top-level `;` or newline,
+/// except that a line ending in `:`, `|` or `=`, or followed by a line starting with `|`, continues.
+fn declaration_text(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::new();
+    let (mut i, mut depth) = (0, 0i32);
+    while i < b.len() {
+        match b[i] {
+            q @ (b'"' | b'\'' | b'`') => {
+                let start = i;
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                i = (i + 1).min(b.len());
+                out.push_str(&s[start..i]);
+                continue;
+            }
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                i = s[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2);
+                out.push(' ');
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth <= 0 => break,
+            b'\n' if depth <= 0 => {
+                let next = s[i..].trim_start().bytes().next();
+                if !(out.trim_end().ends_with([':', '|', '=']) || next == Some(b'|')) {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 struct Gen<'p> {
@@ -1920,6 +1965,16 @@ mod tests {
         );
         assert_eq!(g.routes[1].pattern_at, 44);
         assert_eq!(g.routes[1].params, [("id".to_string(), ParamKind::Number)]);
+    }
+
+    #[test]
+    fn route_param_kinds_ignore_comments_statics_and_span_lines() {
+        use crate::routes::ParamKind::*;
+        let src = "@page \"/:a/:b/:c/:d/:e/:f\"\n@code {\n  a = 0 // c\n  b: number /* c */ = 0\n  c: boolean // c\n  d: number | undefined\n  e:\n    | \"x\"\n    | \"y\"\n  static f = 1;\n}\n<p/>";
+        let (doc, _) = crate::parser::parse(src).unwrap();
+        let g = generate_with(&doc, "C", "C.tszor", &HashMap::new(), &HashSet::new()).unwrap();
+        let kinds: Vec<_> = g.routes[0].params.iter().map(|p| p.1.clone()).collect();
+        assert_eq!(kinds, [Number, Number, Boolean, Number, Union(vec!["x".into(), "y".into()]), String]);
     }
 
     #[test]

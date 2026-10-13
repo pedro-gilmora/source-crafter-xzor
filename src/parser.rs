@@ -199,7 +199,7 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
         let kw = self.pos;
-        if !self.starts_with("as") || matches!(self.peek_at(2), Some(c) if is_ident_char(c)) {
+        if kw == before || !self.starts_with("as") || matches!(self.peek_at(2), Some(c) if is_ident_char(c)) {
             self.pos = before;
             return Ok(None);
         }
@@ -419,6 +419,12 @@ impl<'a> Parser<'a> {
                 }
                 let tag = self.route_tag()?;
                 self.doc.pages.push(PageRoute { pattern, tag });
+                while matches!(self.peek(), Some(b' ' | b'\t')) {
+                    self.pos += 1;
+                }
+                if !matches!(self.peek(), None | Some(b'\n' | b'\r')) && !self.starts_with("//") && !self.starts_with("@*") {
+                    return self.err("expected \"as <tag>\" or end of line after the @page route");
+                }
                 self.trailing_comment()?;
                 Ok(Transition::Nothing)
             }
@@ -1601,6 +1607,18 @@ after"#;
         assert_eq!(e.message, "invalid route pattern \"/a/*/b\": '*' must be the last segment");
         let e = parse("@page \"/:1x\"\n<p/>").unwrap_err();
         assert_eq!(e.message, "invalid route pattern \"/:1x\": invalid parameter name \"1x\"");
+        let e = parse("@page \"/:a/:a\"\n<p/>").unwrap_err();
+        assert_eq!(e.message, "invalid route pattern \"/:a/:a\": duplicate param \"a\"");
+    }
+
+    #[test]
+    fn page_rejects_junk_after_the_route() {
+        for src in ["@page \"/x\" as t as u\n<p/>", "@page \"/x\"as t\n<p/>", "@page \"/x\" junk\n<p/>"] {
+            let e = parse(src).unwrap_err();
+            assert_eq!(e.message, "expected \"as <tag>\" or end of line after the @page route", "{src}");
+        }
+        assert!(parse("@page \"/x\" as t // c\n<p/>").is_ok());
+        assert!(parse("@page \"/x\"").is_ok());
     }
 
     #[test]
