@@ -80,7 +80,7 @@ A component imports it relatively from its source directory to the project root 
 - Sections:
   - `@<tag>(page)`: a found route with that tag. `(page)` required. A tag no `@page` uses = compile error.
   - `@/regex/flags(page?)`: JS regex literal matched against the pathname (no query). Named groups typed as `route.match.<group>: string`. Only in `@ClientRoutes`; in `@ServerRoutes` it is the compile error `Bun.serve routes don't support regex; use a pattern`. The regex is a static constant.
-  - `@"pattern"(page?)`: Bun pattern syntax; `route.params` typed from the pattern (all `string`).
+  - `@"pattern"(page?)`: Bun pattern syntax. Without `(page)`, `route.params` holds its captures (all `string`); with `(page)`, `route.params` stays the page's converted params and the captures are on `route.match`.
   - `@notFound { }`: no `(page)` allowed.
   - `@catch(e) { }`: renders when the matched page fails: its module fails to load, its `onInitialized`/`onInitializedAsync` throws/rejects, or its first render throws. Cleared on the next navigation. Without `@catch` the error propagates as today.
   - `@default(page) { }`: required `(page)`; must be the last section.

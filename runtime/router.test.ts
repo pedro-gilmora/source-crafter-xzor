@@ -683,6 +683,17 @@ test("a failure from the page we navigated away from is not shown on the new rou
   expect(r.html()).toBe("<aside><u>1</u></aside>");
 });
 
+test("a page kept across a query-only navigation still reports its failure", async () => {
+  const memory = nav("/boom");
+  const r = routed(caught, { table: breaking(SlowPage) });
+  memory.go("/boom?x=1");
+  expect(r.html()).toBe("<aside>slow</aside>");
+
+  failSlow!(new Error("kept"));
+  await tick();
+  expect(r.html()).toBe("<em>Error: kept</em>");
+});
+
 let tracked: Tracked | undefined;
 
 class Tracked extends ComponentBase {
