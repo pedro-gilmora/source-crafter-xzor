@@ -59,6 +59,9 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
   tsconfig.compilerOptions.paths = { "@zor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  // Bun's default tsconfig turns these on, and the generated table is code the user cannot edit.
+  tsconfig.compilerOptions.noUncheckedIndexedAccess = true;
+  tsconfig.compilerOptions.noPropertyAccessFromIndexSignature = true;
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "Home.tszor"), home);
   writeFileSync(join(dir, "UserPage.tszor"), userPage);

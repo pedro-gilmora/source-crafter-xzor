@@ -402,19 +402,20 @@ fn matcher_body(r: &RouteInfo) -> String {
             }
         } else if let Some(name) = segment.strip_prefix(':') {
             let kind = r.params.iter().find(|(n, _)| n == name).map_or(&ParamKind::String, |(_, k)| k);
+            // `!`: the length check above guarantees the index, and `noUncheckedIndexedAccess` does not know it.
             let _ = match kind {
                 ParamKind::Number => {
-                    writeln!(out, "      const _{name} = __num(s[{i}]);\n      if (Number.isNaN(_{name})) return null;")
+                    writeln!(out, "      const _{name} = __num(s[{i}]!);\n      if (Number.isNaN(_{name})) return null;")
                 }
                 ParamKind::Boolean => {
-                    writeln!(out, "      const _{name} = __bool(s[{i}]);\n      if (_{name} === null) return null;")
+                    writeln!(out, "      const _{name} = __bool(s[{i}]!);\n      if (_{name} === null) return null;")
                 }
                 ParamKind::Union(values) => {
                     let tests = values.iter().map(|v| format!("_{name} !== {v:?}")).collect::<Vec<_>>().join(" && ");
-                    writeln!(out, "      const _{name} = __d(s[{i}]);\n      if ({tests}) return null;")
+                    writeln!(out, "      const _{name} = __d(s[{i}]!);\n      if ({tests}) return null;")
                 }
                 ParamKind::String => {
-                    writeln!(out, "      const _{name} = __d(s[{i}]);\n      if (_{name} === null) return null;")
+                    writeln!(out, "      const _{name} = __d(s[{i}]!);\n      if (_{name} === null) return null;")
                 }
             };
         } else {
@@ -447,7 +448,7 @@ fn emit_href(out: &mut String, unit: &Unit, entries: &[(usize, usize)], index: u
     for (names, r) in &sigs {
         let mut test = format!("n === {}", names.len());
         for name in names {
-            let _ = write!(test, " && p.{name} !== undefined");
+            let _ = write!(test, " && p[{name:?}] !== undefined");
         }
         let _ = writeln!(out, "  if ({test}) return {};", href_expr(r));
     }
@@ -472,12 +473,12 @@ fn href_expr(r: &RouteInfo) -> String {
             parts.push(format!("{literal:?}"));
             literal.clear();
             if r.rest {
-                parts.push("String(p.rest).split(\"/\").map(encodeURIComponent).join(\"/\")".into());
+                parts.push("String(p[\"rest\"]).split(\"/\").map(encodeURIComponent).join(\"/\")".into());
             }
         } else if let Some(name) = segment.strip_prefix(':') {
             parts.push(format!("{literal:?}"));
             literal.clear();
-            parts.push(format!("encodeURIComponent(String(p.{name}))"));
+            parts.push(format!("encodeURIComponent(String(p[{name:?}]))"));
         } else {
             literal.push_str(segment);
         }
@@ -534,7 +535,7 @@ mod table_tests {
         let body = section_matcher("/legal/:doc");
         assert!(body.contains("if (s.length !== 2) return null;"), "{body}");
         assert!(body.contains("if (s[0] !== \"legal\") return null;"), "{body}");
-        assert!(body.contains("const _doc = __d(s[1]);"), "{body}");
+        assert!(body.contains("const _doc = __d(s[1]!);"), "{body}");
         assert!(body.contains("return { doc: _doc };"), "{body}");
         assert!(section_matcher("/files/*").contains("return { rest: _rest };"), "{body}");
     }
@@ -648,6 +649,24 @@ mod table_tests {
         let pages = [page("A.tszor", "A", vec![route(None, "/a/b", &[])])];
         let (ts, _) = generate(&pages);
         assert!(!ts.contains("function __d("), "{ts}");
+    }
+
+    /// `noUncheckedIndexedAccess` and `noPropertyAccessFromIndexSignature` are on by default in a
+    /// `bun init` tsconfig, and the table is code the user cannot edit.
+    #[test]
+    fn generated_code_survives_the_index_access_checks() {
+        let pages = [page(
+            "A.tszor",
+            "A",
+            vec![route(None, "/a/:id/*", &[("id", ParamKind::Number), ("rest", ParamKind::String)])],
+        )];
+        let (ts, _) = generate(&pages);
+        assert!(ts.contains("const _id = __num(s[1]!);"), "{ts}");
+        assert!(ts.contains("p[\"id\"] !== undefined"), "{ts}");
+        assert!(ts.contains("encodeURIComponent(String(p[\"id\"]))"), "{ts}");
+        assert!(ts.contains("String(p[\"rest\"]).split"), "{ts}");
+        assert!(!ts.contains("p.id"), "{ts}");
+        assert!(!ts.contains("p.rest"), "{ts}");
     }
 
     #[test]
