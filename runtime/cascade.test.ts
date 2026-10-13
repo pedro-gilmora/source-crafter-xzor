@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, type IApplication, type RenderTreeBuilder, mount } from "./index";
+import { ComponentBase, type IApplication, type RenderTreeBuilder, type VRegion, mount } from "./index";
 
 // Written the way zor emits `@cascade:name(value)` providers and `@Cascade` members.
 
@@ -227,4 +227,214 @@ test("an async consumer gets the current value on arrival", async () => {
   resolve(new Injected());
   await arrival;
   expect(html(el)).toBe("<b>light</b>");
+});
+
+// `@if` emits one region for all branches, so two different regions can meet at the same index.
+class BranchSwap extends ComponentBase {
+  provide = true;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openRegion();
+    if (this.provide) {
+      b.openCascade("theme", "dark");
+      b.addComponent(Themed, {});
+      b.closeRegion();
+    } else {
+      b.openRegion();
+      b.addComponent(Themed, {});
+      b.closeRegion();
+    }
+    b.closeRegion();
+  }
+}
+
+test("a provider region is never patched against a plain region", () => {
+  const el = host();
+  const root = mount(BranchSwap, el);
+  expect(html(el)).toBe("<span>dark</span>");
+
+  root.provide = false;
+  root.stateHasChanged();
+  expect(html(el)).toBe("<span>none</span>");
+
+  root.provide = true;
+  root.stateHasChanged();
+  expect(html(el)).toBe("<span>dark</span>");
+});
+
+class NameSwap extends ComponentBase {
+  role = false;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openRegion();
+    if (this.role) {
+      b.openCascade("role", "admin");
+      b.addComponent(Themed, {});
+      b.closeRegion();
+    } else {
+      b.openCascade("theme", "dark");
+      b.addComponent(Themed, {});
+      b.closeRegion();
+    }
+    b.closeRegion();
+  }
+}
+
+test("providers with different names are never patched against each other", () => {
+  const el = host();
+  const root = mount(NameSwap, el);
+  expect(html(el)).toBe("<span>dark</span>");
+
+  root.role = true;
+  root.stateHasChanged();
+  expect(html(el)).toBe("<span>none</span>");
+});
+
+class Boxed extends ComponentBase {
+  static readonly cascades = [["theme", "theme"]] as const;
+  theme = "none";
+  data: object = {};
+  renders = 0;
+  paramsSet = 0;
+  protected override onParametersSet(): void {
+    this.paramsSet++;
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.renders++;
+    b.addContent(this.theme);
+  }
+}
+
+class Pair extends ComponentBase {
+  theme = "dark";
+  data = { n: 1 };
+  consumer?: Boxed;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openCascade("theme", this.theme);
+    b.addComponent(Boxed, { data: this.data }, undefined, { ref: (c) => (this.consumer = c) });
+    b.closeRegion();
+  }
+}
+
+test("a consumer whose props and cascade both change renders once", () => {
+  const el = host();
+  const root = mount(Pair, el);
+  const consumer = root.consumer!;
+  expect(consumer.renders).toBe(1);
+
+  root.theme = "light";
+  root.stateHasChanged();
+  expect(html(el)).toBe("light");
+  expect(consumer.renders).toBe(2);
+  expect(consumer.paramsSet).toBe(2);
+});
+
+class Fragile extends ComponentBase {
+  static readonly cascades = [["theme", "theme"]] as const;
+  theme = "none";
+  protected override onParametersSet(): void {
+    if (this.theme === "light") throw new Error("boom");
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addContent(this.theme);
+  }
+}
+
+class TwoConsumers extends ComponentBase {
+  theme = "dark";
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openCascade("theme", this.theme);
+    b.addComponent(Fragile, {});
+    b.addComponent(Themed, {});
+    b.closeRegion();
+  }
+}
+
+// The runtime rethrows from a microtask; capture it instead of failing the runner.
+async function thrownFrom(run: () => unknown): Promise<unknown[]> {
+  const original = globalThis.queueMicrotask;
+  const thrown: unknown[] = [];
+  globalThis.queueMicrotask = (fn) =>
+    original(() => {
+      try {
+        fn();
+      } catch (err) {
+        thrown.push(err);
+      }
+    });
+  try {
+    await run();
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    globalThis.queueMicrotask = original;
+  }
+  return thrown;
+}
+
+test("a throwing consumer does not stop the others", async () => {
+  const el = host();
+  const root = mount(TwoConsumers, el);
+  const thrown = await thrownFrom(() => {
+    root.theme = "light";
+    root.stateHasChanged();
+  });
+  expect((thrown[0] as Error).message).toBe("boom");
+  expect(el.querySelector("span")!.textContent).toBe("light");
+});
+
+class FixedLate extends ComponentBase {
+  cfg = "one";
+  show = false;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openCascade("cfg", this.cfg, true);
+    b.openRegion();
+    if (this.show) b.addComponent(Configured, {});
+    b.closeRegion();
+    b.closeRegion();
+  }
+}
+
+test("a fixed provider keeps its first value for later consumers", () => {
+  const el = host();
+  const root = mount(FixedLate, el);
+  root.cfg = "two";
+  root.show = true;
+  root.stateHasChanged();
+  expect(html(el)).toBe("one");
+});
+
+class Twice extends ComponentBase {
+  static readonly cascades = [
+    ["theme", "theme"],
+    ["alt", "theme"],
+  ] as const;
+  theme = "none";
+  alt = "none";
+  renders = 0;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.renders++;
+    b.addContent(`${this.theme}/${this.alt}`);
+  }
+}
+
+class TwiceRoot extends ComponentBase {
+  theme = "dark";
+  consumer?: Twice;
+  region?: VRegion;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openCascade("theme", this.theme);
+    b.addComponent(Twice, {}, undefined, { ref: (c) => (this.consumer = c) });
+    b.closeRegion();
+    this.region ??= b.nodes[0] as VRegion;
+  }
+}
+
+test("two members bound to one name are set together and subscribe once", () => {
+  const el = host();
+  const root = mount(TwiceRoot, el);
+  expect(html(el)).toBe("dark/dark");
+  expect(root.region!.cascade!.consumers).toHaveLength(1);
+
+  root.theme = "light";
+  root.stateHasChanged();
+  expect(html(el)).toBe("light/light");
+  expect(root.consumer!.renders).toBe(2);
 });
