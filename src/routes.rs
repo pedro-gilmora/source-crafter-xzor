@@ -297,8 +297,10 @@ fn emit(root: &Path, units: &[Unit], entries: &[(usize, usize)]) -> String {
         }
     }
     pages.sort_unstable();
+    // Prefixed local names: a page class called `RouteTable`, `href` or `__P` would clash otherwise.
+    let local = |i: usize| format!("__p{}", pages.iter().position(|&p| p == i).expect("page of an entry"));
     for &i in &pages {
-        let _ = writeln!(out, "import {} from {:?};", units[i].class, import_spec(root, units[i].out));
+        let _ = writeln!(out, "import {} from {:?};", local(i), import_spec(root, units[i].out));
     }
     out.push('\n');
     if entries.is_empty() {
@@ -311,18 +313,20 @@ fn emit(root: &Path, units: &[Unit], entries: &[(usize, usize)]) -> String {
     for &(i, k) in entries {
         let r = &units[i].routes[k];
         let tag = r.tag.as_ref().map_or_else(|| "undefined".to_string(), |t| format!("{t:?}"));
-        let _ = writeln!(out, "  {{\n    tag: {tag},\n    pattern: {:?},\n    component: {},", r.pattern, units[i].class);
+        let _ = writeln!(out, "  {{\n    tag: {tag},\n    pattern: {:?},", r.pattern);
+        // A getter, so a page holding the routes block itself is not read while its module initializes.
+        let _ = writeln!(out, "    get component() {{\n      return {};\n    }},", local(i));
         out.push_str("    match: (s) => {\n");
         out.push_str(&matcher_body(r));
         out.push_str("    },\n  },\n");
     }
     out.push_str("];\n\n");
     for &i in &pages {
-        emit_href(&mut out, &units[i], entries, i);
+        emit_href(&mut out, &units[i], entries, i, &local(i));
     }
     let names = pages.iter().map(|&i| format!("{0}: __href_{0}", units[i].class)).collect::<Vec<_>>().join(", ");
     let _ = writeln!(out, "export const href = {{ {names} }};\n");
-    emit_tag_types(&mut out, units, entries);
+    emit_tag_types(&mut out, units, entries, &local);
     out
 }
 
@@ -446,8 +450,9 @@ fn encode_literal(segment: &str) -> String {
     out
 }
 
-/// One overload per distinct parameter set of a page component, plus the implementation.
-fn emit_href(out: &mut String, unit: &Unit, entries: &[(usize, usize)], index: usize) {
+/// One overload per distinct parameter set of a page component, plus the implementation. `local` is
+/// the name the table imports the page class under.
+fn emit_href(out: &mut String, unit: &Unit, entries: &[(usize, usize)], index: usize, local: &str) {
     let class = unit.class;
     let mut sigs: Vec<(Vec<&str>, &RouteInfo)> = Vec::new();
     for (k, r) in unit.routes.iter().enumerate() {
@@ -457,7 +462,7 @@ fn emit_href(out: &mut String, unit: &Unit, entries: &[(usize, usize)], index: u
         }
     }
     for (names, _) in &sigs {
-        let _ = writeln!(out, "function __href_{class}(p: {}): string;", params_type(class, names));
+        let _ = writeln!(out, "function __href_{class}(p: {}): string;", params_type(local, names));
     }
     let _ = writeln!(out, "function __href_{class}(p: Record<string, unknown>): string {{");
     let _ = writeln!(out, "  let n = 0;\n  for (const k in p) if (p[k] !== undefined) n++;");
@@ -471,11 +476,11 @@ fn emit_href(out: &mut String, unit: &Unit, entries: &[(usize, usize)], index: u
     let _ = writeln!(out, "  throw new Error(\"no route of {class} matches these parameters\");\n}}\n");
 }
 
-/// `{ id: __P<UserPage, "id"> }` for the parameters of one route.
-fn params_type(class: &str, names: &[&str]) -> String {
+/// `{ id: __P<__p0, "id"> }` for the parameters of one route.
+fn params_type(local: &str, names: &[&str]) -> String {
     match names.is_empty() {
         true => "Record<string, never>".to_string(),
-        false => format!("{{ {} }}", names.iter().map(|n| format!("{n}: __P<{class}, {n:?}>")).collect::<Vec<_>>().join("; ")),
+        false => format!("{{ {} }}", names.iter().map(|n| format!("{n}: __P<{local}, {n:?}>")).collect::<Vec<_>>().join("; ")),
     }
 }
 
@@ -508,12 +513,12 @@ fn href_expr(r: &RouteInfo) -> String {
     }
 }
 
-fn emit_tag_types(out: &mut String, units: &[Unit], entries: &[(usize, usize)]) {
+fn emit_tag_types(out: &mut String, units: &[Unit], entries: &[(usize, usize)], local: &dyn Fn(usize) -> String) {
     let mut tags: Vec<(&str, Vec<String>)> = Vec::new();
     for (i, unit) in units.iter().enumerate() {
         for (k, r) in unit.routes.iter().enumerate() {
             let Some(tag) = r.tag.as_deref().filter(|_| entries.contains(&(i, k))) else { continue };
-            let params = params_type(unit.class, &route_params(r));
+            let params = params_type(&local(i), &route_params(r));
             match tags.iter_mut().find(|(t, _)| *t == tag) {
                 Some((_, variants)) if variants.contains(&params) => {}
                 Some((_, variants)) => variants.push(params),
@@ -621,21 +626,30 @@ mod table_tests {
         let at = |p: &str| ts.find(&format!("pattern: {p:?}")).unwrap_or_else(|| panic!("missing {p} in\n{ts}"));
         assert!(at("/users/new") < at("/users/:id"), "{ts}");
         assert!(at("/users/:id") < at("/users/*"), "{ts}");
-        assert!(ts.contains("import U from \"./U.tszor\";"), "{ts}");
+        assert!(ts.contains("import __p0 from \"./U.tszor\";"), "{ts}");
+    }
+
+    /// A page that holds the routes block imports the table that imports it back; a getter keeps the
+    /// class out of the table's own initialization.
+    #[test]
+    fn entries_read_their_component_lazily() {
+        let pages = [page("A.tszor", "A", vec![route(None, "/a", &[])])];
+        let (ts, _) = generate(&pages);
+        assert!(ts.contains("get component() {\n      return __p0;\n    },"), "{ts}");
     }
 
     #[test]
     fn pages_are_imported_relative_to_the_zor_directory() {
         let pages = [page("src/pages/Home.tszor", "Home", vec![route(None, "/", &[])])];
         let (ts, _) = generate(&pages);
-        assert!(ts.contains("import Home from \"./src/pages/Home.tszor\";"), "{ts}");
+        assert!(ts.contains("import __p0 from \"./src/pages/Home.tszor\";"), "{ts}");
     }
 
     #[test]
     fn imports_never_become_absolute() {
         let pages = [page_in(Path::new("/elsewhere"), "X.tszor", "X", vec![route(None, "/x", &[])])];
         let (ts, _) = table(Path::new("rel"), &units(&pages));
-        assert!(ts.contains("import X from \"./elsewhere/.zor/X.tszor\";"), "{ts}");
+        assert!(ts.contains("import __p0 from \"./elsewhere/.zor/X.tszor\";"), "{ts}");
     }
 
     #[test]
@@ -748,7 +762,7 @@ mod table_tests {
         assert!(diags.is_empty(), "{diags:?}");
         assert!(ts.contains("export type RouteTag = \"admin\";"), "{ts}");
         assert!(
-            ts.contains("export type RouteParams = { admin: { id: __P<A, \"id\"> } | { slug: __P<B, \"slug\"> } };"),
+            ts.contains("export type RouteParams = { admin: { id: __P<__p0, \"id\"> } | { slug: __P<__p1, \"slug\"> } };"),
             "{ts}"
         );
     }

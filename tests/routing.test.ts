@@ -31,12 +31,15 @@ const adminHome = `@page "/admin" as admin
 <p class="admin-home">admin</p>
 `;
 
-const app = `@import { href } from "./routes"
+// The shell is a page too: the table imports it while it imports the table.
+const app = `@page "/shell"
+@import { href } from "./routes"
 
 <nav>
   <a class="user-link" href="@href.UserPage({ id: 2 })">user 2</a>
   <a class="admin-link" href="@href.AdminHome({})">admin</a>
   <a class="missing-link" href="/nope">nope</a>
+  <a class="shell-link" href="@href.App({})">shell</a>
 </nav>
 @ClientRoutes(route) {
   @admin(page) { <section class="admin">@page</section> }
@@ -77,6 +80,8 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   await import(join(dir, "dist", "main.js"));
   // A page without a tag falls to @default.
   expect(text("main.main .home")).toBe("home");
+  // The shell's own route is in the table, so the cycle between the two modules loaded cleanly.
+  expect(document.querySelector("#app .shell-link")?.getAttribute("href")).toBe("/shell");
 
   // The generated href builder fills the link, and the click is a History navigation.
   expect(document.querySelector("#app .user-link")?.getAttribute("href")).toBe("/users/2");
