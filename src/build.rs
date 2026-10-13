@@ -308,7 +308,7 @@ pub(crate) fn write_if_changed(path: &Path, content: &str) -> Result<(), String>
 }
 
 /// `to` relative to directory `from`, with forward slashes (`fallback` when unrelated).
-fn relative_from(from: &Path, to: &Path, fallback: &str) -> String {
+pub(crate) fn relative_from(from: &Path, to: &Path, fallback: &str) -> String {
     let from: Vec<_> = from.components().collect();
     let target: Vec<_> = to.components().collect();
     let common = from.iter().zip(&target).take_while(|(a, b)| a == b).count();
