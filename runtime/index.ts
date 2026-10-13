@@ -20,12 +20,12 @@ export type VElement = {
 };
 
 /** One `@cascade:name(value)` provider; created on the region's first render and carried across the next ones. */
-export type Cascade = {
+type CascadeRecord = {
   name: string;
   value: unknown;
   fixed: boolean;
-  consumers: ComponentBase[] | undefined;
-  parent: Cascade | undefined;
+  consumers: Set<ComponentBase> | undefined;
+  parent: CascadeRecord | undefined;
 };
 
 /** Output of one `@if`/`@for`/`@switch`/`@cascade`; its contents are diffed in isolation. */
@@ -37,7 +37,7 @@ export type VRegion = {
   name?: string;
   value?: unknown;
   fixed?: boolean;
-  cascade?: Cascade;
+  cascade?: CascadeRecord;
 };
 
 /** A child component; the diff decides whether it keeps its previous instance. */
@@ -60,7 +60,7 @@ type Mounted = {
   tree: VNode[];
   anchor: Comment;
   app: IApplication | undefined;
-  scope: Cascade | undefined;
+  scope: CascadeRecord | undefined;
   latest: VComponent | undefined;
   // The render pass that last refreshed this component's parameters; a cascade skips it then.
   pass: number;
@@ -365,41 +365,33 @@ const cascadesOf = (type: Function): CascadeList | undefined => (type as { casca
 
 const fields = (c: ComponentBase) => c as unknown as Record<string, unknown>;
 
-function findCascade(scope: Cascade | undefined, name: string): Cascade | undefined {
+function findCascade(scope: CascadeRecord | undefined, name: string): CascadeRecord | undefined {
   for (let s = scope; s; s = s.parent) if (s.name === name) return s;
   return undefined;
 }
 
 /** Gives each `@Cascade` member the nearest provider's value and subscribes to later changes. */
-function resolveCascades(instance: ComponentBase, type: Ctor<ComponentBase>, scope: Cascade | undefined): void {
+function resolveCascades(instance: ComponentBase, type: Ctor<ComponentBase>, scope: CascadeRecord | undefined): void {
   const list = cascadesOf(type);
   if (!list) return;
   for (const [prop, name] of list) {
     const record = findCascade(scope, name);
     if (!record) continue;
     fields(instance)[prop] = record.value;
-    // Several members may share one name; the instance subscribes once (its own entries are consecutive).
-    if (!record.fixed) {
-      const consumers = (record.consumers ??= []);
-      if (consumers[consumers.length - 1] !== instance) consumers.push(instance);
-    }
+    // Several members may share one name; the set keeps one entry per instance, in subscription order.
+    if (!record.fixed) (record.consumers ??= new Set()).add(instance);
   }
 }
 
-function unsubscribeCascades(instance: ComponentBase, type: Ctor<ComponentBase>, scope: Cascade | undefined): void {
+function unsubscribeCascades(instance: ComponentBase, type: Ctor<ComponentBase>, scope: CascadeRecord | undefined): void {
   const list = cascadesOf(type);
   if (!list) return;
-  for (const [, name] of list) {
-    const consumers = findCascade(scope, name)?.consumers;
-    if (!consumers) continue;
-    const at = consumers.indexOf(instance);
-    if (at >= 0) consumers.splice(at, 1);
-  }
+  for (const [, name] of list) findCascade(scope, name)?.consumers?.delete(instance);
 }
 
 // Assigning before the region's children are patched lets a consumer whose props also changed
 // render once with both; the leftovers are told afterwards.
-function assignCascade(record: Cascade, consumers: ComponentBase[]): void {
+function assignCascade(record: CascadeRecord, consumers: readonly ComponentBase[]): void {
   for (const consumer of consumers) {
     for (const [prop, name] of cascadesOf(consumer.constructor)!) {
       if (name === record.name) fields(consumer)[prop] = record.value;
@@ -408,7 +400,7 @@ function assignCascade(record: Cascade, consumers: ComponentBase[]): void {
 }
 
 // A changed cascade takes the same path as a changed prop: onParametersSet, then re-render.
-function notifyCascade(consumers: ComponentBase[]): void {
+function notifyCascade(consumers: readonly ComponentBase[]): void {
   for (const consumer of consumers) {
     const m = mountedComponents.get(consumer);
     if (!m || m.pass === pass) continue;
@@ -446,7 +438,7 @@ function update(component: ComponentBase): void {
 function mountComponent(
   component: ComponentBase,
   app: IApplication | undefined,
-  scope: Cascade | undefined,
+  scope: CascadeRecord | undefined,
   into?: Mounted,
 ): { nodes: Node[]; mounted: Mounted } {
   hooks(component).onInitialized();
@@ -541,7 +533,7 @@ function listen(el: Element, event: string): void {
   });
 }
 
-function create(v: VNode, owner: ComponentBase, app: IApplication | undefined, scope: Cascade | undefined): Node[] {
+function create(v: VNode, owner: ComponentBase, app: IApplication | undefined, scope: CascadeRecord | undefined): Node[] {
   switch (v.kind) {
     case "text":
       v.dom = document.createTextNode(v.text);
@@ -620,7 +612,11 @@ function same(o: VNode, n: VNode): boolean {
 function dispose(v: VNode): void {
   switch (v.kind) {
     case "element":
+      v.children.forEach(dispose);
+      return;
     case "region":
+      // The provider goes away with its region, so its consumers need not unsubscribe one by one.
+      if (v.cascade) v.cascade.consumers = undefined;
       v.children.forEach(dispose);
       return;
     case "component":
@@ -653,7 +649,7 @@ function patch(
   n: VNode,
   owner: ComponentBase,
   app: IApplication | undefined,
-  scope: Cascade | undefined,
+  scope: CascadeRecord | undefined,
 ): void {
   switch (n.kind) {
     case "text": {
@@ -691,8 +687,10 @@ function patch(
         // A fixed provider keeps the value of its first render, for consumers mounted later too.
         if (!record.fixed && !Object.is(record.value, n.value)) {
           record.value = n.value;
-          subscribers = record.consumers?.slice();
-          if (subscribers) assignCascade(record, subscribers);
+          if (record.consumers?.size) {
+            subscribers = [...record.consumers];
+            assignCascade(record, subscribers);
+          }
         }
       }
       patchList(anchor.parentNode!, old.children, n.children, anchor, owner, app, inner);
@@ -731,7 +729,7 @@ function patchList(
   end: Node | null,
   owner: ComponentBase,
   app: IApplication | undefined,
-  scope: Cascade | undefined,
+  scope: CascadeRecord | undefined,
 ): void {
   if (old.some((v) => keyOf(v) != null) || next.some((v) => keyOf(v) != null)) {
     patchKeyed(parent, old, next, end, owner, app, scope);
@@ -760,7 +758,7 @@ function patchKeyed(
   end: Node | null,
   owner: ComponentBase,
   app: IApplication | undefined,
-  scope: Cascade | undefined,
+  scope: CascadeRecord | undefined,
 ): void {
   const byKey = new Map<unknown, VNode>();
   for (const o of old) if (keyOf(o) != null) byKey.set(keyOf(o), o);

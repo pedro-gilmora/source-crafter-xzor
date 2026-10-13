@@ -285,7 +285,7 @@
     },
     "cascade": {
       "comment": "@cascade:name(value[, fixed]) { body }: the value is a TypeScript expression.",
-      "begin": "(?<![[:alnum:]])(@)(cascade)(:)([_$[:alpha:]][_$[:alnum:]]*)(?=\\()",
+      "begin": "(?<![[:alnum:]])(@)(cascade)(:)([_$[:alpha:]][_$[:alnum:]]*)[ \\t]*(?=\\()",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.tszor" },

@@ -22,6 +22,8 @@ const app = `@import Badge from "./Badge.tszor"
     <Badge />
   }
 }
+@cascade:a(1) { @{ const tag = "a"; } <i class="one">@tag</i> }
+@cascade:b(2) { @{ const tag = "b"; } <i class="two">@tag</i> }
 <button @onclick="toggle">toggle</button>
 `;
 
@@ -69,6 +71,8 @@ test("a @Cascade member follows the value of its @cascade provider", async () =>
   const text = (sel: string) => document.querySelector(`#app ${sel}`)?.textContent;
   expect(text(".badge")).toBe("dark");
   expect(text(".role")).toBe("admin");
+  // Sibling cascade bodies are separate JS block scopes, so both can declare `tag`.
+  expect([text(".one"), text(".two")]).toEqual(["a", "b"]);
   (document.querySelector("#app button") as HTMLElement).click();
   expect(text(".badge")).toBe("light");
   expect(text(".role")).toBe("admin");

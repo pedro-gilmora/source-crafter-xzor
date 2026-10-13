@@ -77,6 +77,8 @@ const spec: [string, A[]][] = [
   ["  @cascade:cfg(f(a, b), fixed) {", [["cfg", "variable.other.constant.cascade.tszor"], ["f", "entity.name.function.ts", 1], ["fixed", "keyword.other.fixed.tszor"]]],
   ["  }", []],
   ["  @cascade:x(a ? b : c) { <i/> }", [["x", "variable.other.constant.cascade.tszor"], ["i", "entity.name.tag.html"]]],
+  ["  @cascade:y (v) { <i/> }", [["y", "variable.other.constant.cascade.tszor"], ["v", "variable.other.readwrite.ts"]]],
+  ["  @cascade: on", [["cascade", "- keyword.control.tszor"]]],
   ["  @cascade x", [["cascade", "- keyword.control.tszor"]]],
   ["  @cascadeX", [["cascadeX", "- keyword.control.tszor"]]],
   ["@code {", []],

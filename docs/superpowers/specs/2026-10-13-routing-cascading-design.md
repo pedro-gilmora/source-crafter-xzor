@@ -34,8 +34,8 @@ Receive (in `@code`):
 @Cascade("theme") t!: Theme;      // explicit name
 ```
 
-- Matched by name. The nearest enclosing provider with that name wins; no provider leaves the property `undefined`.
-- `@Cascade` is exported by `@zor/runtime`. zor recognizes it in `@code` at compile time and emits a static list of cascading members (name and property) on the class; the runtime decorator itself is a no-op marker, like `Mount`.
+- Matched by name. The nearest enclosing provider with that name wins; a missing provider leaves the field as initialized.
+- `@Cascade` needs no import: it is zor syntax, not a runtime export. zor recognizes it in `@code` at compile time, emits a static list of cascading members (name and property) on the class, and blanks the decorator out of the generated TypeScript.
 - Providers live on the existing component/region vnode (a field), not in a `WeakMap`. Consumers resolve their provider once when mounted (walk up the parent chain) and subscribe. When the provider's value changes (`!==`) on re-render, only subscribed consumers get the new value and re-render (`onParametersSet` runs, like a prop change). `fixed` skips subscription entirely.
 - The body of `@cascade` renders in place (like a region); a provider is not a component.
 
@@ -129,7 +129,7 @@ Each part ships working and tested on its own.
 4. **Precedence follows Bun:** segment by segment, static > `:param` > `*`; identical patterns on different routes are a compile error. Client and server agree.
 5. **No DI requirement.** Routing works without `@Mount`. There is no injectable `Navigation`; components reach navigation through the cascading value `route` (`@Cascade route!: Route`). The browser `Navigation` is internal to the runtime, with a test hook to swap in the memory implementation.
 6. **`@catch` scope:** errors thrown by the page's constructor/DI arrival, `onInitialized`, rejected `onInitializedAsync`, and its first render. The page's partial output is discarded and the `@catch` body renders in its place. Module load errors don't apply (no lazy loading yet). Implemented as a field on the page's vnode that the runtime checks on those paths, not a wrapper component.
-7. **Cascading is unchecked across files** (as in Blazor): no compile-time match between providers and consumers; a missing provider leaves `undefined`. Documented.
+7. **Cascading is unchecked across files** (as in Blazor): no compile-time match between providers and consumers; a missing provider leaves the field as initialized. Documented.
 8. **`@ServerRoutes` and unknown paths:** `@notFound` produces its own entry (`.zor/pages/notFound.*`) exported from `server-routes.ts` as `notFound` for the user's `fetch` fallback (`fetch: () => new Response(...)`) — no hidden catch-all. `@catch` applies per page load. In client mode regex/pattern-only sections are reachable through navigation, and through Bun.serve only if covered by a pattern.
 9. **Param-only navigation keeps the page instance** (same route name, same component): new params are set as props and `onParametersSet` runs, like Blazor. Props without a matching param keep their defaults; `rest` is only set if declared.
 

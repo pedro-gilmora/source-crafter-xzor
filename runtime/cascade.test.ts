@@ -98,10 +98,12 @@ class Configured extends ComponentBase {
 class FixedRoot extends ComponentBase {
   cfg = "one";
   consumer?: Configured;
+  region?: VRegion;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openCascade("cfg", this.cfg, true);
     b.addComponent(Configured, {}, undefined, { ref: (c) => (this.consumer = c) });
     b.closeRegion();
+    this.region ??= b.nodes[0] as VRegion;
   }
 }
 
@@ -114,6 +116,8 @@ test("fixed providers do not update consumers", () => {
   root.stateHasChanged();
   expect(html(el)).toBe("one");
   expect(root.consumer!.renders).toBe(1);
+  // No subscriber, no set.
+  expect(root.region!.cascade!.consumers).toBeUndefined();
 });
 
 class Leaf extends ComponentBase {
@@ -186,6 +190,35 @@ test("disposed consumers are unsubscribed", () => {
   expect(html(el)).toBe("");
   expect(consumer.renders).toBe(1);
   expect(consumer.theme).toBe("dark");
+});
+
+class Removable extends ComponentBase {
+  show = true;
+  theme = "dark";
+  region?: VRegion;
+  consumer?: Themed;
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openRegion();
+    if (this.show) {
+      b.openCascade("theme", this.theme);
+      b.addComponent(Themed, {}, undefined, { ref: (c) => (this.consumer = c) });
+      b.closeRegion();
+      this.region ??= (b.nodes[0] as VRegion).children[0] as VRegion;
+    }
+    b.closeRegion();
+  }
+}
+
+test("disposing a provider region drops the record instead of unsubscribing", () => {
+  const el = host();
+  const root = mount(Removable, el);
+  const record = root.region!.cascade!;
+  expect(record.consumers!.size).toBe(1);
+
+  root.show = false;
+  root.stateHasChanged();
+  expect(html(el)).toBe("");
+  expect(record.consumers).toBeUndefined();
 });
 
 test("a missing provider leaves the field", () => {
@@ -431,7 +464,7 @@ test("two members bound to one name are set together and subscribe once", () => 
   const el = host();
   const root = mount(TwiceRoot, el);
   expect(html(el)).toBe("dark/dark");
-  expect(root.region!.cascade!.consumers).toHaveLength(1);
+  expect(root.region!.cascade!.consumers!.size).toBe(1);
 
   root.theme = "light";
   root.stateHasChanged();

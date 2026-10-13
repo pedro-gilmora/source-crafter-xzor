@@ -353,8 +353,8 @@ impl<'a> Parser<'a> {
 
         let word_start = self.pos;
         let word = self.ident();
-        // `@cascade` is only a block when a name follows; otherwise it is a member reference.
-        let cascade = word == "cascade" && self.peek() == Some(b':');
+        // `@cascade` is only a block when `:` and a name follow; otherwise it is a member reference.
+        let cascade = word == "cascade" && self.peek() == Some(b':') && matches!(self.peek_at(1), Some(c) if is_ident_start(c));
         let is_keyword = cascade
             || matches!(
                 word,
@@ -734,14 +734,11 @@ impl<'a> Parser<'a> {
     }
 
     /// `@cascade:name(value) { body }`, with an optional second argument `fixed`.
-    /// Called with the parser on the `:`.
+    /// Called with the parser on the `:`, which a name is known to follow.
     fn cascade_block(&mut self) -> PResult<Node> {
         self.pos += 1;
         let start = self.pos;
         let name = self.ident();
-        if name.is_empty() {
-            return self.err("expected a name after @cascade:");
-        }
         self.mark(TokenKind::Code, start, self.pos);
         let name = Src::new(name, start);
         self.skip_ws();
@@ -1584,8 +1581,10 @@ after"#;
         assert_eq!(&src[name.at..name.at + name.len()], "x");
         assert_eq!(&src[value.at..value.at + value.len()], "theme");
 
+        let Node::Cascade { name, value, .. } = &nodes("@cascade:x (v) { <A/> }")[0] else { panic!() };
+        assert_eq!((name, value), (&Src::from("x"), &Src::from("v")));
+
         let err = |src: &str| parse(src).unwrap_err().message;
-        assert_eq!(err("@cascade: {}"), "expected a name after @cascade:");
         assert_eq!(err("@cascade:x(a, b) {}"), "the second @cascade argument must be fixed");
         assert_eq!(err("@cascade:x(a)"), "expected { after @cascade:x(...)");
     }
@@ -1595,6 +1594,12 @@ after"#;
         assert_eq!(nodes("<p>@cascade</p>"), vec![el("p", vec![], vec![Node::Expr("cascade".into())])]);
         assert_eq!(nodes("<p>@cascade.name</p>"), vec![el("p", vec![], vec![Node::Expr("cascade.name".into())])]);
         assert_eq!(nodes("@cascade(x)"), vec![Node::Expr("cascade(x)".into())]);
+        // A colon with no name after it stays a member reference followed by text.
+        assert_eq!(
+            nodes("<p>@cascade: on</p>"),
+            vec![el("p", vec![], vec![Node::Expr("cascade".into()), Node::Text(": on".into())])]
+        );
+        assert_eq!(nodes("<p>@cascade:</p>"), vec![el("p", vec![], vec![Node::Expr("cascade".into()), Node::Text(":".into())])]);
         let (_, tokens) = parse("<p>@cascade</p>").unwrap();
         assert!(!tokens.iter().any(|t| t.kind == TokenKind::Keyword), "{tokens:?}");
         let (_, tokens) = parse("@cascade:x(v) { <A/> }").unwrap();

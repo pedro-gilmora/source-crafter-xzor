@@ -166,6 +166,11 @@ else {
   @cascade:x(a ? b : c) { <i/> }
 <!--       ^ variable.other.constant.cascade.tszor
 <!--                       ^ entity.name.tag.html
+  @cascade:y (v) { <i/> }
+<!--       ^ variable.other.constant.cascade.tszor
+<!--          ^ variable.other.readwrite.ts
+  @cascade: on
+<!-- <~~~------- - keyword.control.tszor
   @cascade x
 <!-- <~~~------- - keyword.control.tszor
   @cascadeX

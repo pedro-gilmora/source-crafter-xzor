@@ -609,7 +609,10 @@ impl Gen<'_> {
                 };
                 let open = M::lit("__b.openCascade(").add(literal).lit_then(", ").add(self.expr(value));
                 self.emit(open.lit_then(if *fixed { ", true);" } else { ");" }));
+                // The body is a block so that sibling providers can declare the same `@{ const }` names.
+                self.line("{");
                 self.block(body)?;
+                self.line("}");
                 self.line("__b.closeRegion();");
             }
             Node::Element(el) if el.is_component() => self.component(el)?,
@@ -2018,7 +2021,8 @@ mod tests {
         let src = "@code { theme = \"dark\"; }\n@cascade:theme(theme) { <b/> }\n@cascade:cfg(1, fixed) { <i/> }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "missing {s:?} in\n{}", g.code);
-        has("    __b.openCascade(\"theme\", this.theme);\n      __b.openElement(\"b\");\n      __b.closeElement();\n    __b.closeRegion();");
+        // The body is a JS block so that siblings can declare the same `@{ const }` names.
+        has("    __b.openCascade(\"theme\", this.theme);\n    {\n      __b.openElement(\"b\");\n      __b.closeElement();\n    }\n    __b.closeRegion();");
         has("    __b.openCascade(\"cfg\", 1, true);");
         let at = src.find("(theme)").unwrap() + 1;
         assert!(g.mappings.iter().any(|m| m.src == at && m.len == "theme".len()), "the value is mapped\n{:?}", g.mappings);
