@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,4 +66,34 @@ test.skipIf(process.platform !== "linux")("does not watch inside ignored directo
   expect(w.lines()).toEqual([]);
   writeFileSync(join(root, "src", "y.ts"), "");
   expect(await w.until(() => w.lines().includes("src/y.ts"), 3000)).toBe(true);
+});
+
+test.skipIf(process.platform !== "linux")("re-watches a directory removed and recreated under the same name", async () => {
+  const root = tmp();
+  mkdirSync(join(root, "d"));
+  writeFileSync(join(root, "d", "a.ts"), "");
+  const w = await start(root);
+  rmSync(join(root, "d"), { recursive: true });
+  mkdirSync(join(root, "d"));
+  await Bun.sleep(300);
+  writeFileSync(join(root, "d", "new.ts"), "");
+  expect(await w.until(() => w.lines().includes("d/new.ts"), 3000)).toBe(true);
+});
+
+test.skipIf(process.platform !== "linux")("re-watches a renamed directory under its new name", async () => {
+  const root = tmp();
+  mkdirSync(join(root, "a"));
+  const w = await start(root);
+  renameSync(join(root, "a"), join(root, "z"));
+  await Bun.sleep(300);
+  writeFileSync(join(root, "z", "x.ts"), "");
+  expect(await w.until(() => w.lines().includes("z/x.ts"), 3000)).toBe(true);
+});
+
+test("exits non-zero with the error on stderr when the root cannot be watched", async () => {
+  const proc = Bun.spawn(["bun", script, join(tmp(), "missing")], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  cleanups.push(() => proc.kill());
+  expect(await proc.exited).not.toBe(0);
+  expect((await new Response(proc.stderr).text()).length).toBeGreaterThan(0);
+  expect(await new Response(proc.stdout).text()).toBe("");
 });

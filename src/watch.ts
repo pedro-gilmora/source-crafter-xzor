@@ -1,6 +1,6 @@
 // `bun watch.ts <root>`: prints each changed path under root, relative to it with `/` separators, one per line.
 // The first line is empty: the watch is active. Exits when stdin closes (zor holds it open).
-import { readdirSync, statSync, watch, writeSync, type FSWatcher } from "node:fs";
+import { lstatSync, readdirSync, statSync, watch, writeSync, type FSWatcher } from "node:fs";
 
 const root = process.argv[2] ?? ".";
 const ignored = (path: string) => path.split("/").some((s) => s.startsWith(".") || s === "node_modules" || s === "dist" || s === "target");
@@ -14,9 +14,10 @@ if (process.platform !== "linux") {
   });
 } else {
   // Linux has no native recursive watch: one watcher per directory, so ignored trees cost no inotify watches.
-  const watchers = new Map<string, FSWatcher>();
+  const watchers = new Map<string, { w: FSWatcher; ino: number }>();
   const drop = (dir: string) => {
-    for (const [key, w] of watchers) if (key === dir || key.startsWith(`${dir}/`)) (w.close(), watchers.delete(key));
+    if (!watchers.has(dir)) return;
+    for (const [key, e] of watchers) if (!dir || key === dir || key.startsWith(`${dir}/`)) (e.w.close(), watchers.delete(key));
   };
   // Watches `dir` (relative, "" is the root) and its subtree; `report` prints the files found in it.
   const add = (dir: string, report: boolean) => {
@@ -28,17 +29,28 @@ if (process.platform !== "linux") {
         const path = dir ? `${dir}/${file}` : String(file);
         if (ignored(path)) return;
         try {
-          if (statSync(`${root}/${path}`).isDirectory()) add(path, true);
+          const st = lstatSync(`${root}/${path}`);
+          if (st.isDirectory()) {
+            // Same name, new inode: the directory was removed and recreated.
+            if (watchers.get(path)?.ino !== st.ino) drop(path);
+            add(path, true);
+          }
         } catch {
           drop(path);
         }
         print(path);
       });
-    } catch {
-      return;
+    } catch (e) {
+      if (dir) return;
+      writeSync(2, `${(e as Error).message}\n`);
+      process.exit(1);
     }
     w.on("error", () => drop(dir));
-    watchers.set(dir, w);
+    let ino = 0;
+    try {
+      ino = statSync(dir ? `${root}/${dir}` : root).ino;
+    } catch {}
+    watchers.set(dir, { w, ino });
     let entries;
     try {
       entries = readdirSync(dir ? `${root}/${dir}` : root, { withFileTypes: true });
