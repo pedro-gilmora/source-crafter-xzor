@@ -54,6 +54,17 @@ export type VComponent = {
 
 export type VNode = VText | VElement | VRegion | VComponent;
 
+/** One entry of the generated `.zor/routes.ts` table; `match` converts the path segments or rejects them. */
+export type RouteEntry = {
+  tag: string | undefined;
+  pattern: string;
+  component: unknown;
+  match: (s: string[]) => Record<string, unknown> | null;
+};
+
+/** The project's routes, in precedence order. */
+export type RouteTable = readonly RouteEntry[];
+
 type Ctor<C extends ComponentBase> = new (...args: any[]) => C;
 // `latest` is the current vnode of a component still waiting for its instance; cleared on arrival or removal.
 type Mounted = {

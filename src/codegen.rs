@@ -371,7 +371,8 @@ fn page_routes(doc: &Document, decls: &[Vec<MemberDecl>]) -> Vec<RouteInfo> {
                 .into_iter()
                 .map(|p| (p.to_string(), declared_param_kind(doc, decls, p)))
                 .collect();
-            RouteInfo { tag, tag_at, pattern: page.pattern.text.clone(), pattern_at: page.pattern.at, params }
+            let rest = declaration_of(doc, decls, "rest").is_some();
+            RouteInfo { tag, tag_at, pattern: page.pattern.text.clone(), pattern_at: page.pattern.at, params, rest }
         })
         .collect()
 }
@@ -379,12 +380,15 @@ fn page_routes(doc: &Document, decls: &[Vec<MemberDecl>]) -> Vec<RouteInfo> {
 /// Conversion for a route param, from the member of the same name; anything not declared here
 /// (inherited, static or absent, like an undeclared `rest`) stays a string.
 fn declared_param_kind(doc: &Document, decls: &[Vec<MemberDecl>], param: &str) -> ParamKind {
-    for (code, decls) in doc.code.iter().zip(decls) {
-        if let Some(m) = decls.iter().find(|m| !m.is_method && !m.is_static && m.name == param) {
-            return crate::routes::param_kind(&declaration_text(&code[m.offset..]));
-        }
-    }
-    ParamKind::String
+    declaration_of(doc, decls, param).map_or(ParamKind::String, |d| crate::routes::param_kind(&d))
+}
+
+/// The declaration text of an instance member of this document, if it declares one.
+fn declaration_of(doc: &Document, decls: &[Vec<MemberDecl>], name: &str) -> Option<String> {
+    doc.code.iter().zip(decls).find_map(|(code, decls)| {
+        let m = decls.iter().find(|m| !m.is_method && !m.is_static && m.name == name)?;
+        Some(declaration_text(&code[m.offset..]))
+    })
 }
 
 /// The member declaration at the start of `s` without comments: up to a top-level `;` or newline,
@@ -1965,6 +1969,17 @@ mod tests {
         );
         assert_eq!(g.routes[1].pattern_at, 44);
         assert_eq!(g.routes[1].params, [("id".to_string(), ParamKind::Number)]);
+    }
+
+    #[test]
+    fn rest_is_recorded_only_when_the_page_declares_it() {
+        let declared = "@page \"/a/*\"\n@code { rest = \"\"; }\n<p/>";
+        let (doc, _) = crate::parser::parse(declared).unwrap();
+        let g = generate_with(&doc, "A", "A.tszor", &HashMap::new(), &HashSet::new()).unwrap();
+        assert!(g.routes[0].rest);
+        let (doc, _) = crate::parser::parse("@page \"/a/*\"\n<p/>").unwrap();
+        let g = generate_with(&doc, "A", "A.tszor", &HashMap::new(), &HashSet::new()).unwrap();
+        assert!(!g.routes[0].rest);
     }
 
     #[test]

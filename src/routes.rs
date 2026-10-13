@@ -3,7 +3,7 @@
 use crate::{is_ident_char, is_ident_start};
 use std::cmp::Ordering;
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// One `@page` route of a component, with the offsets of its tag (if any) and pattern in the `.tszor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +13,8 @@ pub struct RouteInfo {
     pub pattern: String,
     pub pattern_at: usize,
     pub params: Vec<(String, ParamKind)>,
+    /// Whether the page declares a `rest` prop; a trailing `*` fills it only then.
+    pub rest: bool,
 }
 
 /// How a matched path segment is converted before it fills the page's prop.
@@ -190,14 +192,16 @@ pub fn table(root: &Path, units: &[Unit]) -> (String, Vec<(PathBuf, crate::Diagn
             {
                 diags.push(diag(u, r.tag_at, format!("{tag:?} is reserved in routes")));
             }
+            if shadowed[i] {
+                continue;
+            }
             let same = entries.iter().find(|&&(j, l)| shape_order(&units[j].routes[l].pattern, &r.pattern) == Ordering::Equal);
             match same {
                 Some(&(j, _)) => {
                     let other = rel_display(root, units[j].source);
                     diags.push(diag(u, r.pattern_at, format!("duplicate route pattern {:?} (also in {other})", r.pattern)));
                 }
-                None if !shadowed[i] => entries.push((i, k)),
-                None => {}
+                None => entries.push((i, k)),
             }
         }
     }
@@ -282,6 +286,7 @@ fn emit(root: &Path, units: &[Unit], entries: &[(usize, usize)]) -> String {
         out.push_str("export type RouteTag = never;\nexport type RouteParams = {};\n");
         return out;
     }
+    out.push_str(&helpers(units, entries));
     out.push_str("type __P<C, K extends string> = K extends keyof C ? C[K] : string;\n\nexport const routes: RouteTable = [\n");
     for &(i, k) in entries {
         let r = &units[i].routes[k];
@@ -304,9 +309,59 @@ fn emit(root: &Path, units: &[Unit], entries: &[(usize, usize)]) -> String {
 /// `./<path under .zor>` for a generated component module, as the other generated modules write it.
 fn import_spec(root: &Path, out: &Path) -> String {
     let module = out.to_string_lossy();
-    let module = module.strip_suffix(".ts").unwrap_or(&module);
-    let spec = crate::build::relative_from(&root.join(".zor"), Path::new(module), module);
+    let module = Path::new(module.strip_suffix(".ts").unwrap_or(&module));
+    let spec = crate::build::relative_from(&root.join(".zor"), module, "");
+    let spec = match spec.is_empty() {
+        // Unrelated paths (no shared component at all): keep the output relative rather than absolute.
+        true => module.components().filter_map(normal_part).collect::<Vec<_>>().join("/"),
+        false => spec,
+    };
     if spec.starts_with("..") { spec } else { format!("./{spec}") }
+}
+
+fn normal_part(c: Component) -> Option<String> {
+    match c {
+        Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+        _ => None,
+    }
+}
+
+/// The param names a route fills: the pattern's params, minus a `rest` the page does not declare.
+fn route_params(r: &RouteInfo) -> Vec<&str> {
+    param_names(&r.pattern).into_iter().filter(|n| r.rest || *n != "rest").collect()
+}
+
+/// The conversion helpers the matchers need. `__d` turns a malformed escape into `null` instead of
+/// throwing, and skips the `try` entirely for the common segment without a `%`.
+fn helpers(units: &[Unit], entries: &[(usize, usize)]) -> String {
+    let (mut decode, mut num, mut boolean) = (false, false, false);
+    for &(i, k) in entries {
+        let r = &units[i].routes[k];
+        for name in route_params(r) {
+            match r.params.iter().find(|(n, _)| n == name).map(|(_, kind)| kind) {
+                Some(ParamKind::Number) => num = true,
+                Some(ParamKind::Boolean) => boolean = true,
+                _ => decode = true,
+            }
+        }
+    }
+    if !(decode || num || boolean) {
+        return String::new();
+    }
+    let mut out = String::from(
+        "function __d(v: string): string | null {\n  if (!v.includes(\"%\")) return v;\n  try {\n    return decodeURIComponent(v);\n  } catch {\n    return null;\n  }\n}\n",
+    );
+    if num {
+        out.push_str("const __decimal = /^-?\\d+(?:\\.\\d+)?$/;\n");
+        out.push_str("function __num(v: string): number {\n  const d = __d(v);\n  return d !== null && __decimal.test(d) ? Number(d) : NaN;\n}\n");
+    }
+    if boolean {
+        out.push_str(
+            "function __bool(v: string): boolean | null {\n  const d = __d(v);\n  return d === \"true\" ? true : d === \"false\" ? false : null;\n}\n",
+        );
+    }
+    out.push('\n');
+    out
 }
 
 /// The body of an entry's `match`: segment comparisons, conversions, then the props object.
@@ -321,29 +376,34 @@ fn matcher_body(r: &RouteInfo) -> String {
     };
     for (i, segment) in segments.iter().enumerate() {
         if *segment == "*" {
-            let _ = writeln!(out, "      const _rest = decodeURIComponent(s.slice({i}).join(\"/\"));");
+            if r.rest {
+                let _ = writeln!(
+                    out,
+                    "      const _rest = __d(s.slice({i}).join(\"/\"));\n      if (_rest === null) return null;"
+                );
+            }
         } else if let Some(name) = segment.strip_prefix(':') {
             let kind = r.params.iter().find(|(n, _)| n == name).map_or(&ParamKind::String, |(_, k)| k);
             let _ = match kind {
-                ParamKind::Number => writeln!(
-                    out,
-                    "      const _{name} = Number(decodeURIComponent(s[{i}]));\n      if (s[{i}] === \"\" || Number.isNaN(_{name})) return null;"
-                ),
-                ParamKind::Boolean => writeln!(
-                    out,
-                    "      if (s[{i}] !== \"true\" && s[{i}] !== \"false\") return null;\n      const _{name} = s[{i}] === \"true\";"
-                ),
+                ParamKind::Number => {
+                    writeln!(out, "      const _{name} = __num(s[{i}]);\n      if (Number.isNaN(_{name})) return null;")
+                }
+                ParamKind::Boolean => {
+                    writeln!(out, "      const _{name} = __bool(s[{i}]);\n      if (_{name} === null) return null;")
+                }
                 ParamKind::Union(values) => {
                     let tests = values.iter().map(|v| format!("_{name} !== {v:?}")).collect::<Vec<_>>().join(" && ");
-                    writeln!(out, "      const _{name} = decodeURIComponent(s[{i}]);\n      if ({tests}) return null;")
+                    writeln!(out, "      const _{name} = __d(s[{i}]);\n      if ({tests}) return null;")
                 }
-                ParamKind::String => writeln!(out, "      const _{name} = decodeURIComponent(s[{i}]);"),
+                ParamKind::String => {
+                    writeln!(out, "      const _{name} = __d(s[{i}]);\n      if (_{name} === null) return null;")
+                }
             };
         } else {
             let _ = writeln!(out, "      if (s[{i}] !== {segment:?}) return null;");
         }
     }
-    let fields = param_names(&r.pattern).iter().map(|n| format!("{n}: _{n}")).collect::<Vec<_>>().join(", ");
+    let fields = route_params(r).iter().map(|n| format!("{n}: _{n}")).collect::<Vec<_>>().join(", ");
     let _ = match fields.is_empty() {
         true => writeln!(out, "      return {{}};"),
         false => writeln!(out, "      return {{ {fields} }};"),
@@ -354,24 +414,24 @@ fn matcher_body(r: &RouteInfo) -> String {
 /// One overload per distinct parameter set of a page component, plus the implementation.
 fn emit_href(out: &mut String, unit: &Unit, entries: &[(usize, usize)], index: usize) {
     let class = unit.class;
-    let mut sigs: Vec<(Vec<&str>, &str)> = Vec::new();
+    let mut sigs: Vec<(Vec<&str>, &RouteInfo)> = Vec::new();
     for (k, r) in unit.routes.iter().enumerate() {
-        let names = param_names(&r.pattern);
+        let names = route_params(r);
         if entries.contains(&(index, k)) && !sigs.iter().any(|(n, _)| *n == names) {
-            sigs.push((names, &r.pattern));
+            sigs.push((names, r));
         }
     }
     for (names, _) in &sigs {
         let _ = writeln!(out, "function __href_{class}(p: {}): string;", params_type(class, names));
     }
     let _ = writeln!(out, "function __href_{class}(p: Record<string, unknown>): string {{");
-    let _ = writeln!(out, "  const n = Object.keys(p).length;");
-    for (names, pattern) in &sigs {
+    let _ = writeln!(out, "  let n = 0;\n  for (const k in p) if (p[k] !== undefined) n++;");
+    for (names, r) in &sigs {
         let mut test = format!("n === {}", names.len());
         for name in names {
-            let _ = write!(test, " && {name:?} in p");
+            let _ = write!(test, " && p.{name} !== undefined");
         }
-        let _ = writeln!(out, "  if ({test}) return {};", href_expr(pattern));
+        let _ = writeln!(out, "  if ({test}) return {};", href_expr(r));
     }
     let _ = writeln!(out, "  throw new Error(\"no route of {class} matches these parameters\");\n}}\n");
 }
@@ -385,15 +445,17 @@ fn params_type(class: &str, names: &[&str]) -> String {
 }
 
 /// The url expression of a route: literal pieces plus the encoded parameters.
-fn href_expr(pattern: &str) -> String {
+fn href_expr(r: &RouteInfo) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut literal = String::new();
-    for segment in segments(pattern) {
+    for segment in segments(&r.pattern) {
         literal.push('/');
         if segment == "*" {
             parts.push(format!("{literal:?}"));
             literal.clear();
-            parts.push("String(p.rest).split(\"/\").map(encodeURIComponent).join(\"/\")".into());
+            if r.rest {
+                parts.push("String(p.rest).split(\"/\").map(encodeURIComponent).join(\"/\")".into());
+            }
         } else if let Some(name) = segment.strip_prefix(':') {
             parts.push(format!("{literal:?}"));
             literal.clear();
@@ -416,7 +478,7 @@ fn emit_tag_types(out: &mut String, units: &[Unit], entries: &[(usize, usize)]) 
     for (i, unit) in units.iter().enumerate() {
         for (k, r) in unit.routes.iter().enumerate() {
             let Some(tag) = r.tag.as_deref().filter(|_| entries.contains(&(i, k))) else { continue };
-            let params = params_type(unit.class, &param_names(&r.pattern));
+            let params = params_type(unit.class, &route_params(r));
             match tags.iter_mut().find(|(t, _)| *t == tag) {
                 Some((_, variants)) if variants.contains(&params) => {}
                 Some((_, variants)) => variants.push(params),
@@ -460,6 +522,7 @@ mod table_tests {
         page_in(Path::new(ROOT), rel, class, routes)
     }
 
+    /// A route whose page declares exactly the props listed in `params`.
     fn route(tag: Option<&str>, pattern: &str, params: &[(&str, ParamKind)]) -> RouteInfo {
         RouteInfo {
             tag: tag.map(str::to_string),
@@ -467,6 +530,7 @@ mod table_tests {
             pattern: pattern.into(),
             pattern_at: 0,
             params: params.iter().map(|(n, k)| ((*n).to_string(), k.clone())).collect(),
+            rest: params.iter().any(|(n, _)| *n == "rest"),
         }
     }
 
@@ -515,6 +579,42 @@ mod table_tests {
     }
 
     #[test]
+    fn imports_never_become_absolute() {
+        let pages = [page_in(Path::new("/elsewhere"), "X.tszor", "X", vec![route(None, "/x", &[])])];
+        let (ts, _) = table(Path::new("rel"), &units(&pages));
+        assert!(ts.contains("import X from \"./elsewhere/.zor/X.tszor\";"), "{ts}");
+    }
+
+    #[test]
+    fn segments_are_decoded_through_the_guarded_helper() {
+        let pages = [page(
+            "A.tszor",
+            "A",
+            vec![route(None, "/a/:id/:slug/*", &[("id", ParamKind::Number), ("slug", ParamKind::String), ("rest", ParamKind::String)])],
+        )];
+        let (ts, _) = generate(&pages);
+        assert!(!ts.contains("decodeURIComponent(s"), "{ts}");
+        assert!(ts.contains("function __d("), "{ts}");
+    }
+
+    #[test]
+    fn rest_fills_the_prop_only_when_the_page_declares_it() {
+        let pages = [page("A.tszor", "A", vec![route(None, "/a/*", &[])])];
+        let (ts, diags) = generate(&pages);
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(!ts.contains("_rest"), "{ts}");
+        assert!(ts.contains("function __href_A(p: Record<string, never>): string;"), "{ts}");
+        assert!(ts.contains("return \"/a/\";"), "{ts}");
+    }
+
+    #[test]
+    fn tables_without_parameters_declare_no_helpers() {
+        let pages = [page("A.tszor", "A", vec![route(None, "/a/b", &[])])];
+        let (ts, _) = generate(&pages);
+        assert!(!ts.contains("function __d("), "{ts}");
+    }
+
+    #[test]
     fn an_empty_project_gets_an_empty_table() {
         let (ts, diags) = generate(&[page("A.tszor", "A", Vec::new())]);
         assert!(diags.is_empty(), "{diags:?}");
@@ -534,15 +634,19 @@ mod table_tests {
         b.routes[0].pattern_at = 8;
         let (_, diags) = generate(&[a, b]);
         let messages: Vec<&str> = diags.iter().map(|(_, d)| d.message.as_str()).collect();
-        assert_eq!(
-            messages,
-            [
-                "duplicate page component \"A\" (also in a/A.tszor)",
-                "duplicate route pattern \"/x/:other\" (also in a/A.tszor)",
-            ]
-        );
-        assert_eq!(diags[1].0, PathBuf::from("/proj").join("b/A.tszor"));
-        assert_eq!((diags[1].1.line, diags[1].1.column), (2, 8));
+        assert_eq!(messages, ["duplicate page component \"A\" (also in a/A.tszor)"]);
+        assert_eq!(diags[0].0, PathBuf::from("/proj").join("b/A.tszor"));
+        assert_eq!((diags[0].1.line, diags[0].1.column), (2, 8));
+
+        let mut c = page("a/A.tszor", "A", vec![route(None, "/x/:id", &[("id", ParamKind::String)])]);
+        c.text = "@page \"/x/:id\"\n".into();
+        c.routes[0].pattern_at = 7;
+        let mut d = page("b/B.tszor", "B", vec![route(None, "/x/:other", &[("other", ParamKind::String)])]);
+        d.text = "\n@page \"/x/:other\"\n".into();
+        d.routes[0].pattern_at = 8;
+        let (_, diags) = generate(&[c, d]);
+        let messages: Vec<&str> = diags.iter().map(|(_, d)| d.message.as_str()).collect();
+        assert_eq!(messages, ["duplicate route pattern \"/x/:other\" (also in a/A.tszor)"]);
     }
 
     #[test]
@@ -623,6 +727,7 @@ mod table_tests {
                 vec![
                     route(None, "/p/:id", &[("id", ParamKind::Number)]),
                     route(None, "/p/:id/*", &[("id", ParamKind::Number), ("rest", ParamKind::String)]),
+                    route(None, "/s/:slug", &[("slug", ParamKind::String)]),
                 ],
             ),
             page_in(
@@ -635,18 +740,22 @@ mod table_tests {
                     &[("on", ParamKind::Boolean), ("tab", ParamKind::Union(vec!["a".into(), "b".into()]))],
                 )],
             ),
+            page_in(&dir, "Root.tszor", "Root", vec![route(None, "/", &[]), route(None, "/*", &[])]),
+            page_in(&dir, "Docs.tszor", "Docs", vec![route(None, "/docs/*", &[])]),
         ];
         let (ts, diags) = table(&dir, &units(&pages));
         assert!(diags.is_empty(), "{diags:?}");
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         std::fs::write(dir.join("routes.ts"), &ts).unwrap();
         std::fs::write(dir.join("UserPage.tszor.ts"), "export default class UserPage {\n  id = 0;\n  rest = \"\";\n}\n").unwrap();
-        std::fs::write(dir.join("P.tszor.ts"), "export default class P {\n  id = 0;\n  rest = \"\";\n}\n").unwrap();
+        std::fs::write(dir.join("P.tszor.ts"), "export default class P {\n  id = 0;\n  rest = \"\";\n  slug = \"\";\n}\n").unwrap();
         std::fs::write(
             dir.join("pages").join("Flags.tszor.ts"),
             "export default class Flags {\n  on = false;\n  tab: \"a\" | \"b\" = \"a\";\n}\n",
         )
         .unwrap();
+        std::fs::write(dir.join("Root.tszor.ts"), "export default class Root {}\n").unwrap();
+        std::fs::write(dir.join("Docs.tszor.ts"), "export default class Docs {}\n").unwrap();
     }
 }
 
