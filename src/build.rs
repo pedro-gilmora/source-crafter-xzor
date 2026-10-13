@@ -113,6 +113,40 @@ pub fn compile_one(src: &Path) -> Result<Compiled, String> {
     Ok(Compiled { source: src.to_path_buf(), out, text, generated })
 }
 
+/// Writes `<root>/.zor/routes.ts` for the compiled pages (deleting it when there are none).
+/// Route errors fail like compile errors, as `<path>:<line>:<col>: <message>`.
+pub fn write_routes(root: &Path, units: &[Compiled]) -> Result<(), String> {
+    let path = root.join(".zor").join("routes.ts");
+    if !units.iter().any(|u| !u.generated.routes.is_empty() || u.generated.routes_block.is_some()) {
+        let _ = fs::remove_file(&path);
+        return Ok(());
+    }
+    let classes: Vec<String> = units
+        .iter()
+        .map(|u| {
+            let name = u.source.file_name().unwrap_or_default().to_string_lossy();
+            crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name))
+        })
+        .collect();
+    let views: Vec<crate::routes::Unit> = units
+        .iter()
+        .zip(&classes)
+        .map(|(u, class)| crate::routes::Unit {
+            source: &u.source,
+            out: &u.out,
+            text: &u.text,
+            class,
+            routes: &u.generated.routes,
+            block: u.generated.routes_block.as_ref(),
+        })
+        .collect();
+    let (table, diags) = crate::routes::table(root, &views);
+    if !diags.is_empty() {
+        return Err(diags.iter().map(|(file, d)| format!("{}:{d}", file.display())).collect::<Vec<_>>().join("\n"));
+    }
+    write_if_changed(&path, &table)
+}
+
 fn map_path(out: &Path) -> PathBuf {
     let mut p = out.as_os_str().to_owned();
     p.push(".map");
@@ -891,6 +925,38 @@ mod tests {
         assert!(!root.join(".zor/B.tszor.ts").exists() && !root.join(".zor/B.tszor.ts.map").exists());
         remove_outputs(&root.join("A.tszor"));
         assert!(!root.join(".zor/A.tszor.ts").exists() && !root.join(".zor/A.tszor.ts.map").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn write_routes_writes_and_removes() {
+        let root = temp("routes-write");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("A.tszor"), "@page \"/a\"\n<p/>").unwrap();
+        fs::write(root.join("B.tszor"), "@page \"/b/:id\"\n<p/>").unwrap();
+        let units = compile_all(&root).unwrap();
+        write_routes(&root, &units).unwrap();
+        let table = fs::read_to_string(root.join(".zor/routes.ts")).unwrap();
+        assert!(table.contains("\"/a\"") && table.contains("\"/b/:id\""), "{table}");
+
+        fs::write(root.join("A.tszor"), "<p/>").unwrap();
+        fs::write(root.join("B.tszor"), "<p/>").unwrap();
+        let units = compile_all(&root).unwrap();
+        write_routes(&root, &units).unwrap();
+        assert!(!root.join(".zor/routes.ts").exists());
+        write_routes(&root, &units).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn table_errors_fail_the_build() {
+        let root = temp("routes-dup");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("A.tszor"), "@page \"/x\"\n<p/>").unwrap();
+        fs::write(root.join("B.tszor"), "@page \"/x\"\n<p/>").unwrap();
+        let units = compile_all(&root).unwrap();
+        let e = write_routes(&root, &units).unwrap_err();
+        assert!(e.contains("B.tszor:1:8: duplicate route pattern \"/x\" (also in A.tszor)"), "{e}");
         fs::remove_dir_all(&root).unwrap();
     }
 

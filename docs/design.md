@@ -216,6 +216,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
 - Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
 - `@Mount` must be in the entry module (`--entry`, default `main.ts`).
+- `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.zor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
 - Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
 
 ## Build

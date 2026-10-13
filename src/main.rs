@@ -43,6 +43,7 @@ fn run(args: &[String]) -> Result<(), String> {
             for p in paths {
                 let path = PathBuf::from(p);
                 let units = build::compile_all(&path)?;
+                build::write_routes(&path, &units)?;
                 for unit in &units {
                     build::print_warnings(unit);
                     println!("{}", unit.out.display());
@@ -82,6 +83,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 return watch_loop(&opts);
             }
             let units = build::compile_all(&opts.dir)?;
+            build::write_routes(&opts.dir, &units)?;
             units.iter().for_each(build::print_warnings);
             println!("zor: compiled {} component(s)", units.len());
             let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
@@ -227,6 +229,7 @@ fn rebuild(
     if !errors.is_empty() {
         return Err(errors.values().cloned().collect::<Vec<_>>().join("\n"));
     }
+    build::write_routes(&o.dir, units)?;
     if *di_due {
         let mut files: Vec<PathBuf> = providers.iter().map(|p| p.strip_prefix(&o.dir).unwrap_or(p).to_path_buf()).collect();
         files.sort_unstable();

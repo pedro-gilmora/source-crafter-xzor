@@ -22,6 +22,8 @@ pub struct Generated {
     pub injects: Vec<Inject>,
     /// `@page` routes, with their params typed from the props.
     pub routes: Vec<RouteInfo>,
+    /// The `@ClientRoutes`/`@ServerRoutes` block, if any.
+    pub routes_block: Option<crate::routes::RoutesBlockInfo>,
     /// Files probed while resolving the `@inherits` chain, found or not; a change to one invalidates this output.
     pub deps: Vec<std::path::PathBuf>,
     /// Problems that don't stop the build.
@@ -355,7 +357,7 @@ pub fn generate_with(
     g.line("}");
     let injects = doc.injects.clone();
     let routes = page_routes(doc, &decls, inherited);
-    Ok(Generated { code: g.out, mappings: g.mappings, injects, routes, deps: Vec::new(), warnings: Vec::new() })
+    Ok(Generated { code: g.out, mappings: g.mappings, injects, routes, routes_block: None, deps: Vec::new(), warnings: Vec::new() })
 }
 
 /// The `@page` routes of a document, with params typed from the props.

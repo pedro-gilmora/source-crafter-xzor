@@ -88,6 +88,16 @@ test("a new component is picked up and a deleted one is removed", async () => {
   await quiet();
 }, 30_000);
 
+test("removing the only page removes the route table", async () => {
+  writeFileSync(join(dir, "E.tszor"), `@page "/e"\n<p>e</p>\n`);
+  expect(await waitFor("watching")).toContain("type check passed");
+  expect(readFileSync(join(dir, ".zor", "routes.ts"), "utf8")).toContain(`"/e"`);
+  rmSync(join(dir, "E.tszor"));
+  await waitFor("watching");
+  expect(() => readFileSync(join(dir, ".zor", "routes.ts"))).toThrow();
+  await quiet();
+}, 30_000);
+
 test("a tsconfig.json change rebuilds everything", async () => {
   writeFileSync(join(dir, "tsconfig.json"), readFileSync(join(dir, "tsconfig.json"), "utf8") + "\n");
   const seen = await waitFor("watching");
