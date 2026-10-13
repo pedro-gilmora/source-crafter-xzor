@@ -1364,11 +1364,21 @@ pub(crate) fn skip_literal(b: &[u8], i: usize, prev: Option<u8>) -> Option<usize
         b'/' => match b.get(i + 1) {
             Some(b'/') => Some(b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |p| i + p)),
             Some(b'*') => Some(b[i + 2..].windows(2).position(|w| w == b"*/").map_or(b.len(), |p| i + 2 + p + 2)),
-            _ if prev.is_none_or(|p| b"(,=:[!&|?{};+-*%~^".contains(&p)) => skip_regex(b, i),
+            _ if prev.is_none_or(|p| b"(,=:[!&|?{};+-*%~^>".contains(&p)) && !after_postfix(b, i, prev) => skip_regex(b, i),
             _ => None,
         },
         _ => None,
     }
+}
+
+/// Whether the `+`/`-` before `i` (the last significant byte) is the second of a postfix `++`/`--`.
+fn after_postfix(b: &[u8], i: usize, prev: Option<u8>) -> bool {
+    let Some(p @ (b'+' | b'-')) = prev else { return false };
+    let mut j = i;
+    while j > 0 && b[j - 1].is_ascii_whitespace() {
+        j -= 1;
+    }
+    j >= 2 && b[j - 1] == p && b[j - 2] == p
 }
 
 pub(crate) fn is_comment(b: &[u8], i: usize) -> bool {
@@ -1541,6 +1551,28 @@ mod tests {
         let is = |w: &str| ["title", "name", "ok"].contains(&w);
         assert_eq!(rewrite("ok = /title/i.test(name) && f(x / title / 2)", &is), "this.ok = /title/i.test(this.name) && f(x / this.title / 2)");
         assert_eq!(rewrite("() => { return /name/.test(s) }", &is), "() => { return /name/.test(s) }");
+    }
+
+    #[test]
+    fn division_after_postfix_increment() {
+        let is = |w: &str| ["i", "b", "c"].contains(&w);
+        assert_eq!(rewrite("i++ / b / c", &is), "this.i++ / this.b / this.c");
+        assert_eq!(rewrite("i-- / b / c", &is), "this.i-- / this.b / this.c");
+        assert_eq!(rewrite("i ++ / b / c", &is), "this.i ++ / this.b / this.c");
+    }
+
+    #[test]
+    fn regex_after_arrow_typeof_and_in() {
+        let is = |w: &str| ["title", "name"].contains(&w);
+        assert_eq!(rewrite("() => /title/.test(name)", &is), "() => /title/.test(this.name)");
+        assert_eq!(rewrite("typeof /title/ + name", &is), "typeof /title/ + this.name");
+        assert_eq!(rewrite("x in /title/ ? name : 1", &is), "x in /title/ ? this.name : 1");
+    }
+
+    #[test]
+    fn unterminated_interpolation_does_not_panic() {
+        let is = |w: &str| w == "name";
+        assert_eq!(rewrite("`${ name", &is), "`${ this.name");
     }
 
     #[test]
