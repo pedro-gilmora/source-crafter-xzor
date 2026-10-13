@@ -299,10 +299,13 @@ impl<'a> Emitter<'a> {
         out.join(", ")
     }
 
-    /// `new Impl(args)` or `Owner.member(args)`.
+    /// `new Impl(args)`, `Owner.member(args)` or `factory(args)`.
     fn build(&mut self, s: &Service, args: &str) -> String {
         match (&s.reg.factory, &s.reg.impl_) {
-            (Some(f), _) => format!("{}.{}({args})", self.value(&f.owner), f.member),
+            (Some(f), _) => match &f.member {
+                Some(m) => format!("{}.{m}({args})", self.value(&f.owner)),
+                None => format!("{}({args})", self.value(&f.owner)),
+            },
             (None, Some(i)) => format!("new {}({args})", self.value(i)),
             (None, None) => unreachable!("ZDI06 rejects a registration without impl or factory"),
         }
@@ -657,7 +660,7 @@ mod tests {
     fn async_factory(lifetime: Lifetime, service: TypeRef, owner: TypeRef, member: &str) -> Registration {
         Registration {
             impl_: None,
-            factory: Some(Factory { owner, member: member.into() }),
+            factory: Some(Factory { owner, member: Some(member.into()) }),
             is_async: true,
             ..class(lifetime, service, vec![])
         }
@@ -759,6 +762,21 @@ mod tests {
         has(&text, "import { mount, SharedInstance } from \"@zor/runtime\";");
         lacks(&text, "dispose");
         lacks(&text, "createScope");
+    }
+
+    #[test]
+    fn function_factory_is_imported_and_called() {
+        let new_id = TypeRef { id: "ids.ts#newId".into(), text: "newId".into(), module: Some("ids".into()), export: Some("newId".into()) };
+        let string = TypeRef { id: "string".into(), text: "string".into(), module: None, export: None };
+        let r = Registration {
+            key: Some("requestId".into()),
+            factory: Some(Factory { owner: new_id, member: None }),
+            is_async: false,
+            ..async_factory(Singleton, string, d("unused"), "unused")
+        };
+        let text = emit_file("main.ts", &ok(vec![application(vec![], vec![r])], vec![]), true);
+        has(&text, "  get requestId(): string { return (Application$.#requestId ??= newId()); }");
+        has(&text, "import { newId } from \"../ids\";");
     }
 
     #[test]

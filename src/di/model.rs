@@ -43,8 +43,9 @@ pub enum Dispose {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Factory {
+    /// The class of a static method, or the function itself when `member` is `None`.
     pub owner: TypeRef,
-    pub member: String,
+    pub member: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,7 +208,7 @@ fn registration(j: &Json, path: &str) -> Result<Registration, String> {
         factory: nullable("factory")?
             .map(|v| {
                 let p = join(path, "factory");
-                Ok::<_, String>(Factory { owner: sub_type_ref(v, "owner", &p)?, member: string(v, "member", &p)? })
+                Ok::<_, String>(Factory { owner: sub_type_ref(v, "owner", &p)?, member: opt_string(v, "member", &p)? })
             })
             .transpose()?,
         is_async: boolean(j, "async", path)?,
@@ -266,7 +267,7 @@ mod tests {
         assert_eq!(cache.service, t("main", "Cache"));
         assert_eq!(cache.impl_, None);
         assert_eq!(cache.key.as_deref(), Some("cache"));
-        assert_eq!(cache.factory, Some(Factory { owner: t("main", "Factories"), member: "_loadCache".into() }));
+        assert_eq!(cache.factory, Some(Factory { owner: t("main", "Factories"), member: Some("_loadCache".into()) }));
         assert!(cache.is_async);
         assert_eq!((cache.dispose, cache.dispose_optional, cache.at), (None, false, 794));
 

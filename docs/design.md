@@ -137,7 +137,7 @@ export class DataServices {}
 | `@Singleton(Impl)` / `@Singleton<IService>(Impl)` | One instance, in a `static` field shared by every instance and scope. |
 | `@Scoped(Impl)` | One instance per scope. |
 | `@Transient(Impl)` | A new instance on every resolution. |
-| `@Singleton("key", Owner.factory)` | A keyed service built by a public static method of another class. The key matches a parameter name before the type is tried. |
+| `@Singleton("key", Owner.factory)`, `@Singleton("key", factory)` | A keyed service built by a factory: a public static method of another class, or an exported function (local or imported). The key matches a parameter name before the type is tried. |
 | `@Import(OtherProvider)` | Uses another provider's services. The imported provider must be self-sufficient. |
 
 Constructor and factory parameters are resolved by key, then by type. A `?` or defaulted parameter gets `undefined` when nothing matches.
@@ -188,7 +188,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 ### Gotchas
 
 - The tsconfig `lib` needs `ESNext.Disposable` (for `Disposable` and `Symbol.dispose`).
-- A class cannot reference itself in its own decorators, so keyed factories must be public static methods of another class.
+- A class cannot reference itself in its own decorators, so a keyed factory is either a public static method of another class or an exported function. It must be exported because the generated code imports it.
 - A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
 - Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
 - `@Mount` must be in the entry module (`--entry`, default `main.ts`).

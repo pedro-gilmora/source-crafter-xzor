@@ -362,6 +362,33 @@ export class P {}
   ]);
 });
 
+test("function factories, local or imported", () => {
+  const main = `import { ServiceProvider, Singleton } from "@zor/runtime";
+import { loadPort as port, type Port } from "./ports";
+export function newId(): string { return ""; }
+export const later = async (id: string): Promise<number> => id.length;
+function hidden(): string { return ""; }
+@ServiceProvider()
+@Singleton("id", newId)
+@Singleton("len", later)
+@Singleton("port", port)
+@Singleton("h", hidden)
+export class P {}
+`;
+  const ports = `export interface Port { n: number }
+export function loadPort(): Port { return { n: 1 }; }
+`;
+  const out = analyzeTemp({ "main.ts": main, "ports.ts": ports });
+  expect(out.errors).toEqual([{ file: "main.ts", at: main.indexOf("hidden)"), message: "hidden must be exported to be used as a factory" }]);
+  const [id, len, p] = out.providers[0].registrations;
+  expect(id.factory).toEqual({ owner: { id: "main.ts#newId", text: "newId", module: "main", export: "newId" }, member: null });
+  expect([id.async, id.service.text]).toEqual([false, "string"]);
+  expect(len.factory.owner.export).toBe("later");
+  expect([len.async, len.service.text, len.params.map((x: { name: string }) => x.name)]).toEqual([true, "number", ["id"]]);
+  expect(p.factory).toEqual({ owner: { id: "ports.ts#loadPort", text: "loadPort", module: "ports", export: "loadPort" }, member: null });
+  expect(p.service.text).toBe("Port");
+});
+
 test("generic service types are errors", () => {
   const main = `import { ServiceProvider, Singleton } from "@zor/runtime";
 export class Repo<T> { item?: T }

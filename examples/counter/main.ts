@@ -6,19 +6,18 @@ import { type Settings } from "./services/settings";
 
 // A class cannot reference itself in its own decorators, so the factories live elsewhere.
 export class Factories {
-  static newRequestId(): string {
-    return crypto.randomUUID();
-  }
   static loadSettings(): Promise<Settings> {
     return new Promise((resolve) => setTimeout(() => resolve({ greeting: "Hello from async settings" }), 0));
   }
 }
-
+export function newRequestId(): string {
+  return crypto.randomUUID();
+}
 @Mount(App, "app")
 @Import(DataServices)
 @Singleton(AuthService)
 @Transient(Clock)
-@Singleton("requestId", Factories.newRequestId)
+@Singleton("requestId", newRequestId)
 @Singleton("settings", Factories.loadSettings)
 export class Application implements IApplication {}
 

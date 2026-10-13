@@ -604,7 +604,7 @@ mod tests {
     fn async_factory(service: &str) -> Registration {
         Registration {
             impl_: None,
-            factory: Some(Factory { owner: ty("Factories"), member: "load".into() }),
+            factory: Some(Factory { owner: ty("Factories"), member: Some("load".into()) }),
             is_async: true,
             ..single(service, service, vec![])
         }

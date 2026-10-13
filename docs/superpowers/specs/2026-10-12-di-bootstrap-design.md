@@ -62,7 +62,7 @@ export class Factories {
 | `@Singleton(Impl)` / `@Singleton<IService>(Impl)` | One instance per generated provider class, stored in a `static` field as in SourceCrafter. Every instance and scope shares it. The type argument is the service type. TypeScript checks that `Impl` is assignable to it, because the decorator is typed `Singleton<T>(impl: new (...a: any[]) => T)`. |
 | `@Scoped(...)` | One instance per scope, cached in the scope where it is resolved. |
 | `@Transient(...)` | A new instance on every resolution. A transient with no dependencies gets no generated member: it is inlined as `new Impl()` at each use site. A transient with dependencies gets a getter that builds a new instance on every access. |
-| `@Singleton("key", Owner.factory)` | Keyed service built by a static factory of another class. A class cannot reference itself in its own decorator arguments (TS2449). It is resolved by parameter name (`requestId: string`) before falling back to the type. Factory parameters are resolved like constructor parameters. A `Promise<T>` return makes the service async. |
+| `@Singleton("key", Owner.factory)`, `@Singleton("key", factory)` | Keyed service built by a static factory of another class, or by an exported function (local or imported; a callable `const` works too). A class cannot reference itself in its own decorator arguments (TS2449). It is resolved by parameter name (`requestId: string`) before falling back to the type. Factory parameters are resolved like constructor parameters. A `Promise<T>` return makes the service async. |
 
 Constructor selection: the class's single constructor. Parameters are resolved by key (the parameter name matches a registered key), then by type. A parameter with a default value or `?` is optional, and gets `undefined` when nothing is registered.
 
@@ -222,7 +222,7 @@ export default class Counter extends ComponentBase {
 - **Component dispatch:** `createComponent` receives the component class itself (the value `addComponent` already gets) and compares by identity.
 - **Singleton lifetime:** as in SourceCrafter, singletons are `static` fields of the generated provider, shared by every instance. Disposing any root releases them for all; collisions are the app developer's design concern.
 - Getter naming as described above. Getters are public, so the provider is usable from plain TypeScript (`DataServices$[SharedInstance].database`). Private members derive from the getter: `#x`, `#x$Promise` and `#x$create`.
-- Factories must be public static methods, and service types must not be generic. The analyzer reports both.
+- Factories must be public static methods or exported functions, and service types must not be generic. The analyzer reports both.
 - Component construction is centralized in `Application$.createComponent`. Components never import the application.
 - Language server, v1: `@inject` errors appear in `.tszor` files. Provider graph errors in `.ts` files appear in `zor build` output and on save, but not as live editor squiggles.
 

@@ -26,6 +26,7 @@ import {
   isCallExpression,
   isClassDeclaration,
   isDecorator,
+  isIdentifier,
   isImportDeclaration,
   isParameterDeclaration,
   isPropertyAccessExpression,
@@ -53,7 +54,7 @@ type Registration = {
   service: TypeRef;
   impl: TypeRef | null;
   key: string | null;
-  factory: { owner: TypeRef; member: string } | null;
+  factory: { owner: TypeRef; member: string | null } | null;
   async: boolean;
   params: Param[];
   dispose: Dispose;
@@ -160,7 +161,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     typeArg: Node | undefined;
     impl?: Lookup<Sym | undefined>;
     owner?: Lookup<Sym | undefined>;
-    member?: string;
+    member?: string | null;
     memberSym?: Lookup<Sym | undefined>;
     factory?: Lookup<Type | undefined>;
     loc: Loc;
@@ -205,8 +206,9 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         const [first, second] = args;
         const typeArg = deco.call.typeArguments?.[0];
         if (first && isStringLiteral(first)) {
-          if (!second || !isPropertyAccessExpression(second)) {
-            error(loc, `@${deco.kind}("${first.text}", ...) expects a static method reference like Owner.method`);
+          const fn = second && isIdentifier(second);
+          if (!second || (!fn && !isPropertyAccessExpression(second))) {
+            error(loc, `@${deco.kind}("${first.text}", ...) expects a function or a static method like Owner.method`);
             continue;
           }
           const factory = { node: second as Node };
@@ -215,9 +217,9 @@ function analyze(root: string, program: Program, checker: Checker, files: string
             deco,
             key: first.text,
             typeArg,
-            owner: sym(second.expression),
-            member: second.name.text,
-            memberSym: sym(second.name),
+            owner: sym(fn ? second : second.expression),
+            member: fn ? null : second.name.text,
+            memberSym: fn ? undefined : sym(second.name),
             factory,
             loc: { sf, node: second },
           });
@@ -338,6 +340,18 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     return ref;
   };
   const classRef = (s: Sym, loc: Loc): TypeRef => typeRef(checker.getDeclaredTypeOfSymbol(s), loc);
+  // A module-level function (or callable const) used as a factory: the generated code imports and calls it.
+  const functionRef = (s: Sym, loc: Loc): TypeRef | undefined => {
+    const decl = s.declarations?.[0];
+    const fileName = decl && fileOf(decl.path);
+    const name = fileName && exportName(s, fileName);
+    if (!fileName || name === undefined) {
+      error(loc, `${s.name} must be exported to be used as a factory`);
+      return undefined;
+    }
+    const file = rel(fileName).replace(/^\.zor\//, "");
+    return { id: `${file}#${name}`, text: name, module: file.replace(/\.(d\.)?[cm]?tsx?$/, ""), export: name };
+  };
 
   let wellKnown: { dispose?: string; asyncDispose?: string } | undefined;
   const memberName = (global: string) => {
@@ -424,17 +438,20 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         };
       } else {
         const owner = r.owner!.value;
-        const member = r.memberSym!.value?.valueDeclaration?.resolve();
-        if (r.member!.startsWith("#") || (member && member.modifierFlags & (ModifierFlags.Private | ModifierFlags.Protected))) {
+        const member = r.memberSym?.value?.valueDeclaration?.resolve();
+        if (r.member?.startsWith("#") || (member && member.modifierFlags & (ModifierFlags.Private | ModifierFlags.Protected))) {
           error(r.loc, `${owner?.name ?? r.owner!.node.getText(r.loc.sf)}.${r.member} must be public`);
           continue;
         }
         const sig = r.factory!.value && checker.getSignaturesOfType(r.factory!.value, SignatureKind.Call)[0];
         const ret = sig && checker.getReturnTypeOfSignature(sig);
-        if (!isClass(owner) || !ret) {
-          error(r.loc, `@${r.deco.kind}("${r.key}", ...) expects a static method of a class`);
+        const fn = r.member === null;
+        if (fn ? !owner || !(owner.flags & (SymbolFlags.Function | SymbolFlags.Variable)) || !ret : !isClass(owner) || !ret) {
+          error(r.loc, `@${r.deco.kind}("${r.key}", ...) expects a function or a static method of a class`);
           continue;
         }
+        const ownerRef = fn ? functionRef(owner!, r.loc) : classRef(owner!, { sf: r.loc.sf, node: r.owner!.node });
+        if (!ownerRef) continue;
         const awaited = unwrapPromise(ret);
         type = awaited ?? ret;
         const d = disposal(type);
@@ -443,7 +460,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           service: undefined!,
           impl: null,
           key: r.key,
-          factory: { owner: classRef(owner, { sf: r.loc.sf, node: r.owner!.node }), member: r.member! },
+          factory: { owner: ownerRef, member: r.member! },
           async: awaited !== undefined,
           params: paramsOf(sig),
           dispose: d.dispose,
