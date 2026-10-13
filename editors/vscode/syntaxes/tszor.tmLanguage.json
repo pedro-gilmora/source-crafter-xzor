@@ -57,6 +57,7 @@
             { "include": "#code-void-element" },
             { "include": "#code-element" },
             { "include": "#escape" },
+            { "include": "#cascade" },
             { "include": "#slot-definition-args" },
             { "include": "#slot-fill-params" },
             { "include": "#slot" },
@@ -83,6 +84,7 @@
         { "include": "#inject" },
         { "include": "#import" },
         { "include": "#escape" },
+        { "include": "#cascade" },
         { "include": "#slot-definition-args" },
         { "include": "#slot-fill-params" },
         { "include": "#slot" },
@@ -278,6 +280,36 @@
           "endCaptures": { "0": { "name": "punctuation.section.parens.end.tszor" } },
           "contentName": "meta.embedded.expression.typescript",
           "patterns": [{ "include": "source.ts#expression" }]
+        }
+      ]
+    },
+    "cascade": {
+      "comment": "@cascade:name(value[, fixed]) { body }: the value is a TypeScript expression.",
+      "begin": "(?<![[:alnum:]])(@)(cascade)(:)([_$[:alpha:]][_$[:alnum:]]*)[ \\t]*(?=\\()",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.tszor" },
+        "3": { "name": "punctuation.separator.cascade.tszor" },
+        "4": { "name": "variable.other.constant.cascade.tszor" }
+      },
+      "end": "(?<=\\))",
+      "patterns": [
+        {
+          "begin": "\\(",
+          "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.tszor" } },
+          "end": "\\)",
+          "endCaptures": { "0": { "name": "punctuation.section.parens.end.tszor" } },
+          "contentName": "meta.embedded.expression.typescript",
+          "patterns": [
+            {
+              "match": "(,)\\s*(fixed)\\b(?=\\s*\\))",
+              "captures": {
+                "1": { "name": "punctuation.separator.comma.ts" },
+                "2": { "name": "keyword.other.fixed.tszor" }
+              }
+            },
+            { "include": "source.ts#expression" }
+          ]
         }
       ]
     },

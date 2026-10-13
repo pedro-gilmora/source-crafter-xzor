@@ -150,6 +150,39 @@ else {
 <!--       ^ entity.name.tag.html
   @slot more text
 <!--    ^^^^ - entity.name.function.slot.tszor
+  @cascade:theme(currentTheme) {
+<!-- <~~- keyword.control.transition.tszor
+<!-- <~~~------- keyword.control.tszor
+<!--       ^^^^^ variable.other.constant.cascade.tszor
+<!--             ^^^^^^^^^^^^ variable.other.readwrite.ts
+    <Card/>
+<!-- ^^^^ support.class.component.tszor
+  }
+  @cascade:cfg(f(a, b), fixed) {
+<!--       ^^^ variable.other.constant.cascade.tszor
+<!--           ^ entity.name.function.ts
+<!--                    ^^^^^ keyword.other.fixed.tszor
+  }
+  @cascade:x(a ? b : c) { <i/> }
+<!--       ^ variable.other.constant.cascade.tszor
+<!--                       ^ entity.name.tag.html
+  @cascade:y (v) { <i/> }
+<!--       ^ variable.other.constant.cascade.tszor
+<!--          ^ variable.other.readwrite.ts
+  @cascade: on
+<!-- <~~~------- - keyword.control.tszor
+  @cascade x
+<!-- <~~~------- - keyword.control.tszor
+  @cascadeX
+<!-- <~~~-------- - keyword.control.tszor
+@code {
+  @Cascade theme!: string;
+<!-- <~~- meta.decorator.ts punctuation.decorator.ts
+<!-- <~~~------- meta.decorator.ts variable.other.readwrite.ts
+<!--       ^^^^^ variable.object.property.ts
+  @Cascade("theme") t!: string;
+<!--       ^^^^^^^ string.quoted.double.ts
+}
 @* a comment <b> *@
 <!-- <------------------- comment.block.tszor
 @{ const n = 1; }
