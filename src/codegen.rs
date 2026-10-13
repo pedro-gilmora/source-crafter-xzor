@@ -917,7 +917,7 @@ fn rewrite_tracked<'a>(src: &str, prefix: &dyn Fn(&str) -> Option<&'a str>, inse
                 out.push_str(p);
             }
             out.push_str(word);
-            prev = Some(word_prev(word));
+            prev = Some(word_prev(word, prev));
             continue;
         }
         if c.is_ascii_digit() {
@@ -1330,7 +1330,7 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
                 } else if word == "static" {
                     is_static = true;
                 }
-                prev = Some(word_prev(word));
+                prev = Some(word_prev(word, prev));
                 continue;
             }
             _ if is_ident_start(c) && (i == 0 || !is_ident_char(b[i - 1])) => {
@@ -1338,7 +1338,7 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
                 while i < b.len() && is_ident_char(b[i]) {
                     i += 1;
                 }
-                prev = Some(word_prev(&code[start..i]));
+                prev = Some(word_prev(&code[start..i], prev));
                 continue;
             }
             _ => {}
@@ -1351,10 +1351,11 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
     out
 }
 
-/// The `prev` to record after `word`: keywords that can precede an expression allow a regex.
-pub(crate) fn word_prev(word: &str) -> u8 {
+/// The `prev` to record after `word`, which `prev` precedes: keywords that can precede an expression
+/// allow a regex, but a property named after one (`bond.yield / x /`) does not.
+pub(crate) fn word_prev(word: &str, prev: Option<u8>) -> u8 {
     const KEYWORDS: &[&str] = &["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "yield", "await"];
-    if KEYWORDS.contains(&word) { b';' } else { b'a' }
+    if prev != Some(b'.') && KEYWORDS.contains(&word) { b';' } else { b'a' }
 }
 
 /// End of the string, template literal, comment or regex literal starting at `i`, if any.
@@ -1418,7 +1419,7 @@ pub(crate) fn skip_braces(b: &[u8], open: usize) -> usize {
             while i < b.len() && is_ident_char(b[i]) {
                 i += 1;
             }
-            prev = Some(word_prev(std::str::from_utf8(&b[start..i]).unwrap_or("")));
+            prev = Some(word_prev(std::str::from_utf8(&b[start..i]).unwrap_or(""), prev));
             continue;
         }
         match b[i] {
@@ -1561,6 +1562,13 @@ mod tests {
         assert_eq!(rewrite("i++ / b / c", &is), "this.i++ / this.b / this.c");
         assert_eq!(rewrite("i-- / b / c", &is), "this.i-- / this.b / this.c");
         assert_eq!(rewrite("i ++ / b / c", &is), "this.i ++ / this.b / this.c");
+    }
+
+    #[test]
+    fn division_after_a_keyword_named_property() {
+        let is = |w: &str| ["bond", "price", "years"].contains(&w);
+        assert_eq!(rewrite("bond.yield / price / years", &is), "this.bond.yield / this.price / this.years");
+        assert_eq!(rewrite("bond.return / price / years", &is), "this.bond.return / this.price / this.years");
     }
 
     #[test]

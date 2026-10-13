@@ -2,7 +2,7 @@
 
 pub use crate::analyzer::Analyzer;
 use crate::codegen::Generated;
-use crate::lsp::{offset_at, position_at, same_path};
+use crate::lsp::{offset_at, path_key, position_at, same_path};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::fs;
@@ -181,12 +181,12 @@ fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, 
 /// chain probed a changed file (`Generated::deps`). Excludes the changed ones themselves.
 pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
     let names: Vec<_> = changed.iter().filter_map(|c| c.file_name()).map(|n| n.to_string_lossy()).filter(|n| n.ends_with(".tszor")).collect();
-    let changed_norm: Vec<PathBuf> = changed.iter().map(|c| normalize(c)).collect();
+    let changed_keys: Vec<String> = changed.iter().map(|c| path_key(&normalize(c))).collect();
     units
         .iter()
         .filter(|u| {
             !changed.contains(&u.source.as_path())
-                && (names.iter().any(|n| u.text.contains(&**n)) || u.generated.deps.iter().any(|d| changed_norm.iter().any(|c| same_path(c, d))))
+                && (names.iter().any(|n| u.text.contains(&**n)) || u.generated.deps.iter().any(|d| changed_keys.contains(&path_key(d))))
         })
         .map(|u| u.source.clone())
         .collect()
@@ -197,7 +197,7 @@ pub fn changed_scripts(paths: &[String], root: &Path) -> Vec<PathBuf> {
     paths
         .iter()
         .map(|p| p.replace('\\', "/"))
-        .filter(|p| !watch_ignored(p) && (p.ends_with(".ts") || p.ends_with(".tsx")) && !p.ends_with(".d.ts"))
+        .filter(|p| !watch_ignored(p) && (p.ends_with(".ts") || p.ends_with(".tsx")))
         .map(|p| root.join(p.replace('/', std::path::MAIN_SEPARATOR_STR)))
         .collect()
 }
@@ -853,6 +853,13 @@ mod tests {
         assert_eq!(dependents(&units, &[root.join("base.d.ts").as_path()]), vec![root.join("App.tszor")]);
         assert!(dependents(&units, &[root.join("base.js").as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn changed_scripts_keep_declaration_files() {
+        let root = Path::new("/p");
+        let paths: Vec<String> = ["base.d.ts", "a.ts", "b.tsx", "C.tszor", "node_modules/x/i.d.ts", ".zor/C.tszor.ts"].iter().map(|p| p.to_string()).collect();
+        assert_eq!(changed_scripts(&paths, root), vec![root.join("base.d.ts"), root.join("a.ts"), root.join("b.tsx")]);
     }
 
     #[test]

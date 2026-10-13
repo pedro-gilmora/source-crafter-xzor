@@ -199,7 +199,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - Only `.tszor` files inside a tsconfig project are compiled. Each one produces `.zor/<rel>.tszor.ts` plus a v3 `.tszor.ts.map`, and files are only written when their content changes.
 - `tsc` errors are rewritten to point at `.tszor` positions.
 - The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.tszor` sources.
-- `zor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. zor recompiles only the changed `.tszor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.zor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer.
+- `zor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. zor recompiles only the changed `.tszor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.zor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer. `node_modules` is not watched, so an `@inherits` base in a package is only read again on such a full rebuild.
 - DI analysis runs in a persistent process (`di.ts --serve`). It keeps one TypeScript 7 session per project root, so warm requests take a few milliseconds. `--watch` and the language server reuse it. It is recycled after 500 requests.
 - After stale generated files are pruned, empty folders under `.zor/` are removed.
 

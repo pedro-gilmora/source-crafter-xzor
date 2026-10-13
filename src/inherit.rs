@@ -58,11 +58,10 @@ struct Source {
 type Link = (PathBuf, Rc<Source>, String);
 
 /// Where a class is declared, after following re-exports.
-struct Decl {
-    file: PathBuf,
-    src: Rc<Source>,
-    base: Option<String>,
-    body: std::ops::Range<usize>,
+enum Decl {
+    Class { file: PathBuf, src: Rc<Source>, base: Option<String>, body: std::ops::Range<usize> },
+    /// A re-exported `.tszor`, whose members come from its document rather than from a class body.
+    Component { file: PathBuf, src: Rc<Source> },
 }
 
 /// What one link of the chain led to.
@@ -85,6 +84,8 @@ impl Chain<'_> {
         if let Some((_, src)) = self.files.iter().find(|(p, _)| p == path) {
             return src.clone();
         }
+        // ponytail: each file is read once per compile, so a package barrel is re-read every compile;
+        // if that shows up, cache sources by path and mtime across compiles.
         let src = (self.read)(path).map(|text| Rc::new(Source { text, toks: OnceCell::new() }));
         self.files.push((path.to_path_buf(), src.clone()));
         src
@@ -169,6 +170,9 @@ impl Chain<'_> {
 
     /// The declaration of class `name` in `file`, or in the files `file` re-exports it from.
     fn find(&mut self, file: PathBuf, src: Rc<Source>, name: &str, visited: &mut Vec<(PathBuf, String)>) -> Option<Decl> {
+        if file.extension().is_some_and(|e| e == "tszor") {
+            return Some(Decl::Component { file, src });
+        }
         if visited.iter().any(|(f, n)| *f == file && n == name) {
             return None;
         }
@@ -179,7 +183,7 @@ impl Chain<'_> {
             find_class(text, toks, (name != "default").then_some(name)).map(|(b, body)| (b.map(str::to_string), body))
         };
         if let Some((base, body)) = declared {
-            return Some(Decl { file, src, base, body });
+            return Some(Decl::Class { file, src, base, body });
         }
         // Where else to look: the re-export naming it, then every `export *` target.
         let targets: Vec<(String, String)> = {
@@ -206,44 +210,51 @@ impl Chain<'_> {
     /// Adds the members of `class` in `file` to `out` and reports where the chain goes next.
     fn members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Step {
         if file.extension().is_some_and(|e| e == "tszor") {
-            let dir = file.parent().unwrap_or(Path::new("."));
-            let Ok((doc, _)) = crate::parser::parse(&src.text) else { return Step::Missing(class.to_string()) };
-            for code in &doc.code {
-                class_members(code, out);
-            }
-            out.extend(doc.injects.iter().map(|i| i.name.text.clone()));
-            let Some(inherits) = &doc.inherits else { return Step::Done };
-            let base = leading_ident(inherits);
-            if base == "ComponentBase" {
-                return Step::Done;
-            }
-            return match self.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), base) {
-                Some(link) => Step::Base(link),
-                None => Step::Missing(base.to_string()),
-            };
+            return self.component_members(file, src, class, out);
         }
-        let Some(decl) = self.find(file.to_path_buf(), src.clone(), class, &mut Vec::new()) else {
-            return Step::Missing(class.to_string());
+        let (file, src, base, body) = match self.find(file.to_path_buf(), src.clone(), class, &mut Vec::new()) {
+            Some(Decl::Class { file, src, base, body }) => (file, src, base, body),
+            Some(Decl::Component { file, src }) => return self.component_members(&file, &src, class, out),
+            None => return Step::Missing(class.to_string()),
         };
-        class_members(&decl.src.text[decl.body.clone()], out);
-        let Some(base) = decl.base else { return Step::Done };
+        class_members(&src.text[body], out);
+        let Some(base) = base else { return Step::Done };
         if base == "ComponentBase" {
             return Step::Done;
         }
         let from = {
-            let text = &decl.src.text;
-            let toks = decl.src.toks.get_or_init(|| tokens(text));
+            let text = &src.text;
+            let toks = src.toks.get_or_init(|| tokens(text));
             find_import(ts_imports(text, toks).into_iter(), &base).map(|(o, s)| (o, s.to_string()))
         };
         match from {
             Some((original, spec)) => {
-                let dir = decl.file.parent().unwrap_or(Path::new("."));
+                let dir = file.parent().unwrap_or(Path::new("."));
                 match self.module(dir, &spec) {
                     Some((file, src)) => Step::Base((file, src, original)),
                     None => Step::Missing(base),
                 }
             }
-            None => Step::Base((decl.file, decl.src, base)),
+            None => Step::Base((file, src, base)),
+        }
+    }
+
+    /// Adds the members a `.tszor` component declares to `out` and reports where its `@inherits` goes next.
+    fn component_members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Step {
+        let dir = file.parent().unwrap_or(Path::new("."));
+        let Ok((doc, _)) = crate::parser::parse(&src.text) else { return Step::Missing(class.to_string()) };
+        for code in &doc.code {
+            class_members(code, out);
+        }
+        out.extend(doc.injects.iter().map(|i| i.name.text.clone()));
+        let Some(inherits) = &doc.inherits else { return Step::Done };
+        let base = leading_ident(inherits);
+        if base == "ComponentBase" {
+            return Step::Done;
+        }
+        match self.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), base) {
+            Some(link) => Step::Base(link),
+            None => Step::Missing(base.to_string()),
         }
     }
 }
@@ -407,7 +418,7 @@ fn parameter_properties(ctor: &str, out: &mut HashSet<String>) {
             while i < b.len() && is_ident_char(b[i]) {
                 i += 1;
             }
-            prev = Some(word_prev(&ctor[start..i]));
+            prev = Some(word_prev(&ctor[start..i], prev));
             continue;
         }
         match b[i] {
@@ -482,7 +493,7 @@ fn tokens(text: &str) -> Vec<Tok> {
                 i += 1;
             }
             out.push(Tok { kind: Kind::Ident, start, end: i });
-            prev = Some(word_prev(&text[start..i]));
+            prev = Some(word_prev(&text[start..i], prev));
             continue;
         }
         if !c.is_ascii_whitespace() {
@@ -796,6 +807,18 @@ export class After { late = 1; }
             let code = compile(&files, &main);
             assert!(code.contains(&format!("this.{member}")), "{name}\n{code}");
         }
+    }
+
+    #[test]
+    fn a_barrel_reexporting_a_component_is_read_as_a_component() {
+        let files = [
+            ("lib/Card.tszor", "@code { card = 1; }\n<p/>\n"),
+            ("lib/index.ts", "export { default as Card } from \"./Card.tszor\";\n"),
+        ];
+        let main = "@import { Card } from \"./lib/index\"\n@inherits Card\n<p>@card</p>\n";
+        let code = compile(&files, main);
+        assert!(code.contains("this.card"), "{code}");
+        assert_eq!(unresolved_in(&files, main), None);
     }
 
     #[test]

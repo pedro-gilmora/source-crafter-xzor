@@ -45,7 +45,12 @@ if (process.platform !== "linux") {
       writeSync(2, `${(e as Error).message}\n`);
       process.exit(1);
     }
-    w.on("error", () => drop(dir));
+    w.on("error", (e) => {
+      // Losing the root watcher leaves nothing to report: end the script so zor says the watcher exited.
+      if (dir) return drop(dir);
+      writeSync(2, `${e.message}\n`);
+      process.exit(1);
+    });
     let ino = 0;
     try {
       ino = statSync(dir ? `${root}/${dir}` : root).ino;
