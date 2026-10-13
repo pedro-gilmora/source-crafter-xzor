@@ -54,5 +54,5 @@ test("a slot body that misuses the inferred type fails at the .tszor line", () =
   const r = build("bad", "@{ const n: number = x; }");
   expect(r.code).not.toBe(0);
   expect(r.out).toMatch(/Host\.tszor\(\d+,\d+\)/);
-  expect(r.out).toContain("string");
+  expect(r.out).toContain("Type 'string' is not assignable to type 'number'");
 });

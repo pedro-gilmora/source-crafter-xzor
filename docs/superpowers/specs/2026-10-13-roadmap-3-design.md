@@ -23,7 +23,12 @@ __b.addComponent(List<typeof __p0 extends Partial<List<infer T, infer U>> ? T : 
 - `__p<N>` is the object literal that was passed inline before, so there is no extra allocation. The emitted JS differs by one const binding; the type arguments are erased.
 - Slot fill parameters get the inferred type (`x: string`), and prop errors map back to the `.tszor` attribute.
 - Conflicting candidates infer a union, as TypeScript does: `items: string[]` with `selected: 1` gives `T = string | number`. This is not an error.
-- Hoisting loses contextual typing of props: a callback prop on a generic component must annotate its own parameters.
+- Hoisting loses contextual typing of props on generic components used without explicit type arguments:
+  - a callback prop must annotate its own parameters;
+  - `__b.callback` arguments become `unknown`.
+  Pass `T="..."` explicitly when this matters.
+- A type parameter that cannot be inferred becomes `unknown`, not its declared default.
+- A prop-type mismatch is reported at the component tag rather than at the attribute.
 - Pre-existing, unrelated to inference: a slot declared from a `for (const x of items)` argument (`this["items"][number]`) fails in the child with TS2526, with or without `T=`; declare slot arguments as `items[i] as T`.
 
 ## 2. Keyed dependency type check: ZDI12
