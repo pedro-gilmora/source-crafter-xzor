@@ -148,6 +148,44 @@ test("unexported type", () => {
   expect(facts.errors[0].file).toBe("services/hidden.ts");
 });
 
+test("--serve answers several requests with one process and sees overlays", async () => {
+  const proc = Bun.spawn(["bun", script, "--serve", root], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const request = async (body: object) => {
+    const start = performance.now();
+    proc.stdin.write(JSON.stringify(body) + "\n");
+    proc.stdin.flush();
+    while (!buffered.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`analyzer exited: ${await new Response(proc.stderr).text()}`);
+      buffered += decoder.decode(value, { stream: true });
+    }
+    const end = buffered.indexOf("\n");
+    const line = buffered.slice(0, end);
+    buffered = buffered.slice(end + 1);
+    return { facts: JSON.parse(line), ms: performance.now() - start };
+  };
+  const data = readFileSync(join(root, "services", "data.ts"), "utf8");
+  const overlay = data.replace("@Scoped(UnitOfWork)", "@Scoped(UnitOfWork)\n@Transient(ConsoleLogger)").replace("import { Scoped,", "import { Scoped, Transient,");
+  const lifetimes = (f: any) => f.providers.find((p: any) => p.class.text === "DataServices").registrations.map((r: any) => r.lifetime);
+  try {
+    const first = await request({ files: ["services/data.ts"], components: [], overlays: {} });
+    expect(lifetimes(first.facts)).toEqual(["singleton", "singleton", "scoped"]);
+    const second = await request({ files: ["services/data.ts"], components: [], overlays: { "services/data.ts": overlay } });
+    expect(lifetimes(second.facts)).toEqual(["singleton", "singleton", "scoped", "transient"]);
+    const third = await request({ files: ["services/data.ts"], components: [], overlays: {} });
+    expect(lifetimes(third.facts)).toEqual(["singleton", "singleton", "scoped"]);
+    expect(proc.exitCode).toBeNull();
+    console.log(`di --serve: first ${first.ms.toFixed(1)} ms, second ${second.ms.toFixed(1)} ms, third ${third.ms.toFixed(1)} ms (pid ${proc.pid})`);
+  } finally {
+    proc.stdin.end();
+    await proc.exited;
+  }
+  expect(proc.exitCode).toBe(0);
+});
+
 // Temp project copies; `paths: false` leaves @zor/runtime unresolvable.
 const temps: string[] = [];
 afterAll(() => temps.forEach((d) => rmSync(d, { recursive: true, force: true })));

@@ -1,3 +1,4 @@
+pub mod analyzer;
 pub mod ast;
 pub mod build;
 pub mod codegen;

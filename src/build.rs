@@ -1,5 +1,6 @@
 //! Project driver: `.tszor` -> `.zor/*.tszor.ts` (zor) -> type check -> `.js` bundle (bun).
 
+pub use crate::analyzer::Analyzer;
 use crate::codegen::Generated;
 use crate::lsp::{offset_at, position_at, same_path};
 use std::collections::HashMap;
@@ -91,7 +92,7 @@ pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
     if errors.is_empty() { Ok(compiled) } else { Err(errors.join("\n")) }
 }
 
-fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
     if fs::read_to_string(path).ok().as_deref() == Some(content) {
         return Ok(());
     }
@@ -199,12 +200,11 @@ pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result
     if output.status.success() { Ok(()) } else { Err(format!("type check failed ({})", output.status)) }
 }
 
-const DI_SCRIPT: &str = include_str!("di.ts");
-
 /// Compile-time DI: analyzes the project's providers, writes the generated providers into `.zor/`, and returns
 /// `.zor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
-pub fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
-    di_checked(root, entry, compiled, &provider_files(root)).map_err(|f| match f {
+/// `analyzer` belongs to `root` and may be reused across runs.
+pub fn di(root: &Path, entry: &str, compiled: &[Compiled], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, String> {
+    di_checked(root, entry, compiled, &provider_files(root), analyzer).map_err(|f| match f {
         DiFailure::Diags(d) => format_diags(root, &d, compiled, &std::env::current_dir().unwrap_or_default()),
         DiFailure::Other(e) => e,
     })
@@ -223,7 +223,7 @@ impl From<String> for DiFailure {
 }
 
 /// `di` with its diagnostics left structured; `files` are `provider_files(root)`.
-pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf]) -> Result<Option<PathBuf>, DiFailure> {
+pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, DiFailure> {
     let zor = root.join(".zor");
     if files.is_empty() {
         let diags = unmounted_injects(root, compiled);
@@ -233,17 +233,13 @@ pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[Path
         prune(&zor, &[])?;
         return Ok(None);
     }
-    // Under node_modules, `typescript` resolves from the project and the script stays out of tsconfig's `include`.
-    let script = root.join("node_modules").join(".cache").join("zor").join("di.ts");
-    write_if_changed(&script, DI_SCRIPT)?;
-    let mut cmd = Command::new("bun");
-    cmd.arg(&script).arg(root).args(files).arg("--");
+    let mut components = Vec::new();
     for unit in compiled.iter().filter(|u| !u.generated.injects.is_empty()) {
         let rel = unit.out.strip_prefix(root).map_err(|_| format!("{}: error: generated file is outside {}, cannot analyze its @inject", unit.source.display(), root.display()))?;
-        cmd.arg(rel);
+        components.push(rel.to_string_lossy().into_owned());
     }
-    let output = cmd.output().map_err(|e| format!("DI analysis: failed to run bun: {e}"))?;
-    let facts = analyzer_facts(output.status.success(), &output.status.to_string(), &output.stdout, &output.stderr)?;
+    let files: Vec<String> = files.iter().map(|f| f.to_string_lossy().into_owned()).collect();
+    let facts = analyzer.analyze(&files, &components, &[])?;
     let resolved = crate::di::graph::resolve(&facts).map_err(DiFailure::Diags)?;
 
     let entry = entry.replace('\\', "/");
@@ -287,15 +283,8 @@ fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph
     out
 }
 
-/// The analyzer's facts, or a clear error when it failed or printed something unparseable.
-fn analyzer_facts(ok: bool, status: &str, stdout: &[u8], stderr: &[u8]) -> Result<crate::di::model::Facts, String> {
-    if !ok {
-        return Err(format!("DI analysis failed ({status})\n{}", String::from_utf8_lossy(stderr)));
-    }
-    crate::di::model::Facts::from_json(&String::from_utf8_lossy(stdout)).map_err(|e| format!("DI analysis: {e}"))
-}
-
-/// Deletes DI-generated files (carrying the DI header) under `zor` that were not written in this run.
+/// Deletes DI-generated files (carrying the DI header) under `zor` that were not written in this run,
+/// then the empty directories below `zor`.
 fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
     if !zor.is_dir() {
         return Ok(());
@@ -310,7 +299,23 @@ fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
             fs::remove_file(file).map_err(|e| format!("{}: {e}", file.display()))?;
         }
     }
-    Ok(())
+    remove_empty_dirs(zor).map(|_| ())
+}
+
+/// Removes the empty directories below `dir`, bottom-up (never `dir`); returns whether `dir` is left empty.
+fn remove_empty_dirs(dir: &Path) -> Result<bool, String> {
+    let err = |e: io::Error| format!("{}: {e}", dir.display());
+    let mut empty = true;
+    for entry in fs::read_dir(dir).map_err(err)? {
+        let entry = entry.map_err(err)?;
+        let path = entry.path();
+        if entry.file_type().map_err(err)?.is_dir() && remove_empty_dirs(&path)? {
+            fs::remove_dir(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        } else {
+            empty = false;
+        }
+    }
+    Ok(empty)
 }
 
 /// Whether a `.ts` source declares `@ServiceProvider` or `@Mount`.
@@ -510,6 +515,11 @@ mod tests {
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/di").join(path)).unwrap()
     }
 
+    /// `build::di` with an analyzer of its own, stopped before returning (so `root` can be deleted).
+    fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
+        super::di(root, entry, compiled, &mut Analyzer::new(root))
+    }
+
     const COUNTER: &str = "@import { type IDatabase } from \"./services/data\"\n@inject IDatabase db\n<p>@db.name</p>\n";
 
     #[test]
@@ -635,20 +645,24 @@ mod tests {
         let units = compile_all(&root).unwrap();
         fs::create_dir_all(root.join(".zor")).unwrap();
         fs::write(root.join(".zor/keep.ts"), "export {};\n").unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        // One analyzer across the runs, as `--watch` and the LSP use it.
+        let mut analyzer = Analyzer::new(&root);
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         let (data_out, other_out) = (root.join(".zor/services/data.provider.ts"), root.join(".zor/services/other.provider.ts"));
         assert!(data_out.is_file() && other_out.is_file());
         assert!(fs::read_to_string(&other_out).unwrap().starts_with(crate::di::emit::HEADER));
 
         fs::remove_file(root.join("services/other.ts")).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         assert!(data_out.is_file() && !other_out.exists());
 
         // The early-return path (no providers left) prunes too; foreign files stay.
         fs::remove_file(root.join("services/data.ts")).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         assert!(!data_out.exists());
+        assert!(!root.join(".zor/services").exists());
         assert!(root.join(".zor/keep.ts").is_file());
+        drop(analyzer);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -662,17 +676,19 @@ mod tests {
         let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.tszor", app), ("Counter.tszor", COUNTER)];
         let root = di_project("unmount", &files);
         let units = compile_all(&root).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(Some(root.join(".zor").join("main.ts"))));
+        let mut analyzer = Analyzer::new(&root);
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(Some(root.join(".zor").join("main.ts"))));
         assert!(root.join(".zor/main.ts").is_file());
 
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
         // Without @Mount, @inject would be ZDI04.
         fs::write(root.join("Counter.tszor"), "<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         assert!(!root.join(".zor/main.ts").exists());
         assert!(root.join(".zor/services/data.provider.ts").is_file());
         assert!(root.join(".zor/App.tszor.ts").is_file());
+        drop(analyzer);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -687,11 +703,39 @@ mod tests {
     }
 
     #[test]
-    fn analyzer_failures_are_clear_errors() {
-        let failed = analyzer_facts(false, "exit code: 1", b"", b"boom").unwrap_err();
-        assert_eq!(failed, "DI analysis failed (exit code: 1)\nboom");
-        let garbled = analyzer_facts(true, "exit code: 0", b"not json", b"").unwrap_err();
-        assert!(garbled.starts_with("DI analysis: "), "{garbled}");
+    fn analyzer_restarts_after_kill() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let root = di_project("restart", &[("services/data.ts", &data)]);
+        let mut analyzer = Analyzer::new(&root);
+        let files = ["services/data.ts".to_string()];
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        let first = analyzer.pid().unwrap();
+        analyzer.kill();
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert_ne!(analyzer.pid(), Some(first));
+        drop(analyzer);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn prune_removes_empty_dirs() {
+        let root = temp("prunedirs");
+        let zor = root.join(".zor");
+        fs::create_dir_all(zor.join("a/b")).unwrap();
+        fs::create_dir_all(zor.join("c")).unwrap();
+        fs::create_dir_all(zor.join("d")).unwrap();
+        fs::write(zor.join("c/x.provider.ts"), format!("{}\nexport {{}};\n", crate::di::emit::HEADER)).unwrap();
+        fs::write(zor.join("d/keep.ts"), "export {};\n").unwrap();
+        prune(&zor, &[]).unwrap();
+        assert!(!zor.join("a").exists() && !zor.join("c").exists());
+        assert!(zor.join("d/keep.ts").is_file());
+        fs::remove_dir_all(zor.join("d")).unwrap();
+        prune(&zor, &[]).unwrap();
+        assert!(zor.is_dir());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

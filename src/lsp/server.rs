@@ -4,8 +4,8 @@
 use super::features::{self, Context, Symbol};
 use super::{offset_at, path_to_uri, position_at, read_message, same_path, uri_to_path, write_message};
 use crate::build::{
-    DiFailure, InjectDiag, compile_all, declares_provider, di_checked, find_sources, in_project, inject_diags, output_path, project_root,
-    provider_files,
+    Analyzer, DiFailure, InjectDiag, compile_all, declares_provider, di_checked, find_sources, in_project, inject_diags, output_path,
+    project_root, provider_files,
 };
 use crate::codegen::Generated;
 use crate::json::Json;
@@ -21,7 +21,7 @@ enum Event {
     ClientClosed,
     TsClosed,
     /// A DI run's result; `marks` is `None` when compiling or the analyzer failed.
-    Di { root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf> },
+    Di { root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf>, analyzer: Analyzer },
 }
 
 #[derive(Clone, Copy)]
@@ -64,6 +64,8 @@ struct DiRoot {
     generation: u64,
     /// Absolute provider `.ts` files seen by the last run.
     providers: Vec<PathBuf>,
+    /// The root's analyzer process, kept across runs; `None` while a run holds it.
+    analyzer: Option<Analyzer>,
 }
 
 struct Ts {
@@ -138,7 +140,7 @@ pub fn run() -> io::Result<()> {
                     }
                 }
             }
-            Event::Di { root, generation, marks, providers } => server.di_done(root, generation, marks, providers)?,
+            Event::Di { root, generation, marks, providers, analyzer } => server.di_done(root, generation, marks, providers, analyzer)?,
             Event::ClientClosed => break,
         }
     }
@@ -502,7 +504,7 @@ impl Server {
         let i = match self.di_roots.iter().position(|r| same_path(&r.root, root)) {
             Some(i) => i,
             None => {
-                self.di_roots.push(DiRoot { root: root.to_path_buf(), generation: 0, providers: Vec::new() });
+                self.di_roots.push(DiRoot { root: root.to_path_buf(), generation: 0, providers: Vec::new(), analyzer: None });
                 self.di_roots.len() - 1
             }
         };
@@ -521,28 +523,31 @@ impl Server {
 
     /// Compiles the project and runs the DI analysis on a worker thread.
     fn di_start(&mut self, root: PathBuf) {
-        let generation = self.di_state(&root).generation;
+        let state = self.di_state(&root);
+        let generation = state.generation;
+        let mut analyzer = state.analyzer.take().unwrap_or_else(|| Analyzer::new(&root));
         self.di_running = true;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let files = provider_files(&root);
-            let marks = compile_all(&root).ok().and_then(|units| match di_checked(&root, "main.ts", &units, &files) {
+            let marks = compile_all(&root).ok().and_then(|units| match di_checked(&root, "main.ts", &units, &files, &mut analyzer) {
                 // The entry check is irrelevant here: only component diagnostics are published.
                 Ok(_) => Some(Vec::new()),
                 Err(DiFailure::Diags(d)) => Some(inject_diags(&root, &d, &units)),
                 Err(DiFailure::Other(_)) => None,
             });
             let providers = files.iter().map(|f| root.join(f)).collect();
-            let _ = tx.send(Event::Di { root, generation, marks, providers });
+            let _ = tx.send(Event::Di { root, generation, marks, providers, analyzer });
         });
     }
 
     /// Publishes a finished analysis's `@inject` diagnostics (unless a newer request superseded it) and
     /// starts the next queued one. Provider graph errors in `.ts` files show in `zor build` only.
-    fn di_done(&mut self, root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf>) -> io::Result<()> {
+    fn di_done(&mut self, root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf>, analyzer: Analyzer) -> io::Result<()> {
         self.di_running = false;
         let state = self.di_state(&root);
         state.providers = providers;
+        state.analyzer = Some(analyzer);
         let current = state.generation == generation;
         if !self.di_queue.is_empty() {
             let next = self.di_queue.remove(0);

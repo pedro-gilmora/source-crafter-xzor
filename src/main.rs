@@ -45,7 +45,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     println!("{}", unit.out.display());
                 }
                 // `compile` has no entry option, so a @Mount outside main.ts is not an error here.
-                if let Err(e) = build::di(&path, "main.ts", &units) {
+                if let Err(e) = build::di(&path, "main.ts", &units, &mut build::Analyzer::new(&path)) {
                     let kept: Vec<&str> = e.lines().filter(|l| !l.contains("error ZDI07: @Mount must be declared in the entry module")).collect();
                     if !kept.is_empty() {
                         eprintln!("{}", kept.join("\n"));
@@ -74,10 +74,12 @@ fn run(args: &[String]) -> Result<(), String> {
                     a => dir = PathBuf::from(a),
                 }
             }
-            let build_once = || -> Result<(), String> {
+            // `--watch` keeps the analyzer (and its TypeScript project) alive between builds.
+            let mut analyzer = build::Analyzer::new(&dir);
+            let mut build_once = || -> Result<(), String> {
                 let units = build::compile_all(&dir)?;
                 println!("zor: compiled {} component(s)", units.len());
-                let di_entry = build::di(&dir, &entry, &units)?;
+                let di_entry = build::di(&dir, &entry, &units, &mut analyzer)?;
                 if check {
                     build::check(&dir, checker.as_deref(), &units)?;
                     println!("zor: type check passed");

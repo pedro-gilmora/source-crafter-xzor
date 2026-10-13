@@ -1,5 +1,6 @@
 // Extracts DI facts from decorated provider classes and generated components; prints one JSON document.
 // Usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...   (paths may be relative to <projectRoot>)
+//    or: bun di.ts --serve <projectRoot>, then one {"files","components","overlays"} JSON request per stdin line.
 //
 // TypeScript 7 sync API calls (proven by the Step 0 spike):
 // new API({ cwd }) spawns the bundled tsgo; api.updateSnapshot({ openProjects: [tsconfig] }).getProject(tsconfig) gives { program, checker }.
@@ -15,6 +16,10 @@
 // checker.getPropertiesOfType(t): `dispose`, or `__@dispose@N`/`__@asyncDispose@N` compared with the global Disposable/AsyncDisposable members; `?` sets SymbolFlags.Optional.
 // checker.isTypeAssignableTo(source, target) is not batched: it runs only for parameters named like a key.
 // symbol.getParent() is the module only for exported declarations; parent.getExports() keys are export names ("default" included).
+// --serve: new API({ cwd, fs: { readFile, fileExists } }) serves overlays (undefined falls back to disk). Later requests call
+// updateSnapshot({ fileChanges: { changed, created, deleted } }) for changed overlays and mtimes; new files need the tsconfig
+// listed as changed to rerun its include globs. The client's parsed-file cache survives such snapshots, so clearSourceFileCache() first.
+import { statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { CallExpression, ClassDeclaration, Node, SourceFile } from "typescript/unstable/ast";
 import {
@@ -26,7 +31,19 @@ import {
   isPropertyAccessExpression,
   isStringLiteral,
 } from "typescript/unstable/ast/is";
-import { API, ModifierFlags, SignatureKind, SymbolFlags, TypeFlags, type Checker, type Program, type Signature, type Symbol as Sym, type Type } from "typescript/unstable/sync";
+import {
+  API,
+  ModifierFlags,
+  SignatureKind,
+  SymbolFlags,
+  TypeFlags,
+  type Checker,
+  type Program,
+  type Signature,
+  type Snapshot,
+  type Symbol as Sym,
+  type Type,
+} from "typescript/unstable/sync";
 
 type TypeRef = { id: string; text: string; module: string | null; export: string | null };
 type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef; file: string; at: number; badKeys: string[] };
@@ -505,19 +522,113 @@ function analyze(root: string, program: Program, checker: Checker, files: string
   return facts;
 }
 
-const [rootArg, ...rest] = process.argv.slice(2);
-if (!rootArg) throw new Error("usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...");
-const root = slash(resolve(rootArg));
-const sep = rest.indexOf("--");
-const toPath = (f: string) => slash(resolve(root, f));
-const files = (sep < 0 ? rest : rest.slice(0, sep)).map(toPath);
-const components = sep < 0 ? [] : rest.slice(sep + 1).map(toPath);
-const config = `${root}/tsconfig.json`;
-const api = new API({ cwd: root });
-try {
-  const project = api.updateSnapshot({ openProjects: [config] }).getProject(config);
-  if (!project) throw new Error(`no TypeScript project for ${config}`);
-  process.stdout.write(JSON.stringify(analyze(root, project.program, project.checker, files, components)));
-} finally {
+const args = process.argv.slice(2);
+if (args[0] === "--serve") await serve(args[1]);
+else oneShot(args);
+
+function oneShot([rootArg, ...rest]: string[]) {
+  if (!rootArg) throw new Error("usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...  |  bun di.ts --serve <projectRoot>");
+  const root = slash(resolve(rootArg));
+  const sep = rest.indexOf("--");
+  const toPath = (f: string) => slash(resolve(root, f));
+  const files = (sep < 0 ? rest : rest.slice(0, sep)).map(toPath);
+  const components = sep < 0 ? [] : rest.slice(sep + 1).map(toPath);
+  const config = `${root}/tsconfig.json`;
+  const api = new API({ cwd: root });
+  try {
+    const project = api.updateSnapshot({ openProjects: [config] }).getProject(config);
+    if (!project) throw new Error(`no TypeScript project for ${config}`);
+    process.stdout.write(JSON.stringify(analyze(root, project.program, project.checker, files, components)));
+  } finally {
+    api.close();
+  }
+}
+
+// One JSON request per stdin line, one Facts JSON (or `{"fatal": message}`) per stdout line.
+async function serve(rootArg: string | undefined) {
+  if (!rootArg) throw new Error("usage: bun di.ts --serve <projectRoot>");
+  const root = slash(resolve(rootArg));
+  const config = `${root}/tsconfig.json`;
+  const toPath = (f: string) => slash(resolve(root, f));
+  // The server's paths keep their case but compare case-insensitively on Windows.
+  const key = process.platform === "win32" ? (p: string) => p.toLowerCase() : (p: string) => p;
+  const mtime = (p: string) => statSync(p, { throwIfNoEntry: false })?.mtimeMs;
+  type Overlay = { path: string; text: string };
+  let overlays = new Map<string, Overlay>();
+  // Non-node_modules program files (and the tsconfig) with their mtime at the last snapshot.
+  const tracked = new Map<string, { path: string; mtime: number | undefined }>();
+  const api = new API({
+    cwd: root,
+    fs: {
+      readFile: (f) => overlays.get(key(f))?.text,
+      fileExists: (f) => (overlays.has(key(f)) ? true : undefined),
+    },
+  });
+  let snapshot: Snapshot | undefined;
+  for await (const line of console) {
+    if (!line.trim()) continue;
+    try {
+      const request = JSON.parse(line) as { files?: string[]; components?: string[]; overlays?: Record<string, string> };
+      const files = (request.files ?? []).map(toPath);
+      const components = (request.components ?? []).map(toPath);
+      const next = new Map<string, Overlay>();
+      for (const [file, text] of Object.entries(request.overlays ?? {})) {
+        const path = toPath(file);
+        next.set(key(path), { path, text });
+      }
+      const changed: string[] = [];
+      const created: string[] = [];
+      const deleted: string[] = [];
+      for (const [k, o] of next) if (overlays.get(k)?.text !== o.text) changed.push(o.path);
+      for (const [k, o] of overlays) if (!next.has(k)) changed.push(o.path);
+      overlays = next;
+      let reglob = false;
+      if (snapshot) {
+        for (const [k, t] of tracked) {
+          const m = mtime(t.path);
+          if (m === undefined) {
+            deleted.push(t.path);
+            tracked.delete(k);
+            reglob = true;
+          } else if (m !== t.mtime) {
+            t.mtime = m;
+            if (t.path === config) reglob = true;
+            else changed.push(t.path);
+          }
+        }
+        // A requested file the program lacks was created since: the tsconfig's include globs must rerun.
+        for (const f of [...files, ...components]) {
+          if (!tracked.has(key(f))) {
+            created.push(f);
+            reglob = true;
+          }
+        }
+        if (reglob) changed.push(config);
+      }
+      if (!snapshot || changed.length || created.length || deleted.length) {
+        const first = !snapshot;
+        snapshot?.dispose();
+        // The client keeps parsed files across snapshots unless the server reports them changed, which it does not for these edits.
+        api.clearSourceFileCache();
+        snapshot = first ? api.updateSnapshot({ openProjects: [config] }) : api.updateSnapshot({ fileChanges: { changed, created, deleted } });
+        const names = snapshot.getProject(config)?.program.getSourceFileNames() ?? [];
+        const live = new Set<string>([key(config)]);
+        if (!tracked.has(key(config))) tracked.set(key(config), { path: config, mtime: mtime(config) });
+        for (const n of names) {
+          if (n.includes("/node_modules/")) continue;
+          const k = key(n);
+          live.add(k);
+          if (!tracked.has(k)) tracked.set(k, { path: n, mtime: mtime(n) });
+        }
+        for (const k of tracked.keys()) if (!live.has(k)) tracked.delete(k);
+      }
+      const project = snapshot.getProject(config);
+      if (!project) throw new Error(`no TypeScript project for ${config}`);
+      process.stdout.write(JSON.stringify(analyze(root, project.program, project.checker, files, components)) + "\n");
+    } catch (e) {
+      process.stdout.write(JSON.stringify({ fatal: e instanceof Error ? (e.stack ?? e.message) : String(e) }) + "\n");
+    }
+  }
+  snapshot?.dispose();
   api.close();
 }
