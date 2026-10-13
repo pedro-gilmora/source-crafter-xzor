@@ -1,11 +1,12 @@
 //! Instance members inherited through `@inherits`, read from the base classes' sources.
 
+use std::cell::OnceCell;
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 
 use crate::ast::Document;
-use crate::codegen::{is_comment, member_decls, skip_braces, skip_literal};
+use crate::codegen::{is_comment, member_decls, skip_braces, skip_literal, word_prev};
 use crate::{is_ident_char, is_ident_start};
 
 /// Bases followed from the component's own; deeper ones contribute nothing.
@@ -13,10 +14,11 @@ const MAX_DEPTH: usize = 8;
 
 type Read<'r> = &'r dyn Fn(&Path) -> Option<String>;
 
-/// Members of `doc`'s `@inherits` base chain. `read` returns a file's text (the LSP reads open documents first).
-pub fn base_members(doc: &Document, path: &Path, read: Read) -> HashSet<String> {
+/// Members of `doc`'s `@inherits` base chain, and every file probed on the way, found or not.
+/// `read` returns a file's text (the LSP reads open documents first).
+pub fn base_members(doc: &Document, path: &Path, read: Read) -> (HashSet<String>, Vec<PathBuf>) {
     let mut out = HashSet::new();
-    let Some(inherits) = &doc.inherits else { return out };
+    let Some(inherits) = &doc.inherits else { return (out, Vec::new()) };
     let mut chain = Chain { read, files: Vec::new() };
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut next = chain.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), leading_ident(inherits));
@@ -28,40 +30,35 @@ pub fn base_members(doc: &Document, path: &Path, read: Read) -> HashSet<String> 
         next = chain.members(&file, &text, &class, &mut out);
         seen.push((file, class));
     }
-    out
+    (out, chain.files.into_iter().map(|(p, _)| p).collect())
 }
 
-/// What a component inheriting from a class in `path` mentions in its imports: a `.tszor`'s file
-/// name, or a script's stem (its folder's name for `index.ts`).
-pub fn mention(path: &Path) -> Option<String> {
-    let name = path.file_name()?.to_str()?;
-    if name.ends_with(".tszor") {
-        return Some(name.to_string());
-    }
-    let stem = name.strip_suffix(".ts").or_else(|| name.strip_suffix(".tsx")).filter(|_| !name.ends_with(".d.ts"))?;
-    if stem == "index" { path.parent()?.file_name()?.to_str().map(str::to_string) } else { Some(stem.to_string()) }
+/// A file's text and, once a script needs them, its tokens.
+struct Source {
+    text: String,
+    toks: OnceCell<Vec<Tok>>,
 }
 
-/// A file on the chain, its text and the class name in it (`default` for a default export).
-type Link = (PathBuf, Rc<str>, String);
+/// A file on the chain, its source and the class name in it (`default` for a default export).
+type Link = (PathBuf, Rc<Source>, String);
 
 struct Chain<'r> {
     read: Read<'r>,
     /// Every file read so far, including misses, so each is read once.
-    files: Vec<(PathBuf, Option<Rc<str>>)>,
+    files: Vec<(PathBuf, Option<Rc<Source>>)>,
 }
 
 impl Chain<'_> {
-    fn load(&mut self, path: &Path) -> Option<Rc<str>> {
-        if let Some((_, text)) = self.files.iter().find(|(p, _)| p == path) {
-            return text.clone();
+    fn load(&mut self, path: &Path) -> Option<Rc<Source>> {
+        if let Some((_, src)) = self.files.iter().find(|(p, _)| p == path) {
+            return src.clone();
         }
-        let text: Option<Rc<str>> = (self.read)(path).map(Rc::from);
-        self.files.push((path.to_path_buf(), text.clone()));
-        text
+        let src = (self.read)(path).map(|text| Rc::new(Source { text, toks: OnceCell::new() }));
+        self.files.push((path.to_path_buf(), src.clone()));
+        src
     }
 
-    fn module(&mut self, dir: &Path, spec: &str) -> Option<(PathBuf, Rc<str>)> {
+    fn module(&mut self, dir: &Path, spec: &str) -> Option<(PathBuf, Rc<Source>)> {
         if !(spec.starts_with("./") || spec.starts_with("../")) {
             return None;
         }
@@ -69,21 +66,29 @@ impl Chain<'_> {
         let candidates = if spec.ends_with(".tszor") {
             vec![base]
         } else {
-            vec![base.clone(), with_suffix(&base, ".ts"), with_suffix(&base, ".tsx"), base.join("index.ts")]
+            let mut c = Vec::new();
+            // `./a.js` names `a.ts` (nodenext style).
+            if let Some(stem) = spec.strip_suffix(".js") {
+                let stem = normalize(&dir.join(stem));
+                c.extend([with_suffix(&stem, ".ts"), with_suffix(&stem, ".tsx")]);
+            }
+            c.extend([base.clone(), with_suffix(&base, ".ts"), with_suffix(&base, ".tsx"), base.join("index.ts")]);
+            c
         };
         candidates.into_iter().find_map(|p| self.load(&p).map(|t| (p, t)))
     }
 
     /// The class `name` imports, through `imports` (clause and specifier pairs) relative to `dir`.
-    fn imported<'a>(&mut self, dir: &Path, imports: impl Iterator<Item = (&'a str, &'a str)>, name: &str) -> Option<Link> {
+    fn imported<'a, C: AsRef<str>>(&mut self, dir: &Path, imports: impl Iterator<Item = (C, &'a str)>, name: &str) -> Option<Link> {
         let (original, spec) = find_import(imports, name)?;
         let (file, text) = self.module(dir, spec)?;
         Some((file, text, original))
     }
 
     /// Adds the members of `class` in `file` to `out` and returns its base.
-    fn members(&mut self, file: &Path, text: &Rc<str>, class: &str, out: &mut HashSet<String>) -> Option<Link> {
+    fn members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Option<Link> {
         let dir = file.parent().unwrap_or(Path::new("."));
+        let text = &src.text;
         if file.extension().is_some_and(|e| e == "tszor") {
             let (doc, _) = crate::parser::parse(text).ok()?;
             for code in &doc.code {
@@ -96,16 +101,16 @@ impl Chain<'_> {
             }
             return self.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), base);
         }
-        let toks = tokens(text);
-        let (base, body) = find_class(text, &toks, (class != "default").then_some(class))?;
+        let toks = src.toks.get_or_init(|| tokens(text));
+        let (base, body) = find_class(text, toks, (class != "default").then_some(class))?;
         class_members(&text[body], out);
         let base = base?;
         if base == "ComponentBase" {
             return None;
         }
-        match find_import(ts_imports(text, &toks).into_iter(), base) {
-            Some((original, spec)) => self.module(dir, spec).map(|(file, text)| (file, text, original)),
-            None => Some((file.to_path_buf(), text.clone(), base.to_string())),
+        match find_import(ts_imports(text, toks).into_iter(), base) {
+            Some((original, spec)) => self.module(dir, spec).map(|(file, src)| (file, src, original)),
+            None => Some((file.to_path_buf(), src.clone(), base.to_string())),
         }
     }
 }
@@ -143,8 +148,8 @@ fn split_import(s: &str) -> Option<(&str, &str)> {
 }
 
 /// The imported name bound to `name` (`default` for a default import) and its specifier.
-fn find_import<'a>(imports: impl Iterator<Item = (&'a str, &'a str)>, name: &str) -> Option<(String, &'a str)> {
-    imports.into_iter().find_map(|(clause, spec)| imported_as(clause, name).map(|o| (o, spec)))
+fn find_import<'a, C: AsRef<str>>(imports: impl Iterator<Item = (C, &'a str)>, name: &str) -> Option<(String, &'a str)> {
+    imports.into_iter().find_map(|(clause, spec)| imported_as(clause.as_ref(), name).map(|o| (o, spec)))
 }
 
 /// What `clause` (`D, { A, B as C, type E }`, `type { F }`) imports as `name`.
@@ -250,7 +255,7 @@ struct Tok {
 /// regex literals are skipped.
 fn tokens(text: &str) -> Vec<Tok> {
     let b = text.as_bytes();
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(text.len() / 4);
     let mut prev = None;
     let mut i = 0;
     while i < b.len() {
@@ -271,7 +276,7 @@ fn tokens(text: &str) -> Vec<Tok> {
                 i += 1;
             }
             out.push(Tok { kind: Kind::Ident, start, end: i });
-            prev = Some(b'a');
+            prev = Some(word_prev(&text[start..i]));
             continue;
         }
         if !c.is_ascii_whitespace() {
@@ -283,8 +288,9 @@ fn tokens(text: &str) -> Vec<Tok> {
     out
 }
 
-/// Top-level `import ... from "spec"` statements as clause and specifier pairs.
-fn ts_imports<'t>(text: &'t str, toks: &[Tok]) -> Vec<(&'t str, &'t str)> {
+/// Top-level `import ... from "spec"` statements as clause and specifier pairs; a clause is its
+/// tokens joined by spaces, so comments in it are gone.
+fn ts_imports<'t>(text: &'t str, toks: &[Tok]) -> Vec<(String, &'t str)> {
     let s = |t: &Tok| &text[t.start..t.end];
     let mut out = Vec::new();
     let mut depth = 0i32;
@@ -296,7 +302,8 @@ fn ts_imports<'t>(text: &'t str, toks: &[Tok]) -> Vec<(&'t str, &'t str)> {
                 let Some(at) = toks[i + 1..].iter().position(|n| n.kind == Kind::Str || s(n) == ";") else { continue };
                 let (from, spec) = (i + at, toks[i + 1 + at]);
                 if spec.kind == Kind::Str && at > 0 && s(&toks[from]) == "from" {
-                    out.push((&text[t.end..toks[from].start], &text[spec.start + 1..spec.end - 1]));
+                    let clause: Vec<&str> = toks[i + 1..from].iter().map(s).collect();
+                    out.push((clause.join(" "), &text[spec.start + 1..spec.end - 1]));
                 }
             }
             _ => {}
@@ -396,6 +403,48 @@ export class After { late = 1; }
         // A base in the same file.
         let code = compile(&[("a.ts", a), ("b.ts", b)], "@import { Local } from \"./b\"\n@inherits Local\n<p>@a @b @l</p>\n");
         assert!(code.contains("this.a") && code.contains("this.b") && code.contains("this.l"), "{code}");
+    }
+
+    #[test]
+    fn deps_list_every_probed_file_hits_and_misses() {
+        let root = Path::new("/p");
+        let a = "export class A { a = 1; }\n";
+        let b = "import { A } from \"./a\";\nexport class B extends A { b = 1; }\n";
+        let map: std::collections::HashMap<PathBuf, String> = [("a.ts", a), ("b.ts", b)].iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
+        let main = "@import { B } from \"./b\"\n@inherits B\n<p>@a</p>\n";
+        let g = crate::compile_mapped_with(main, &root.join("C.tszor"), &|p| map.get(p).cloned()).unwrap();
+        for f in ["a.ts", "b", "b.ts"] {
+            assert!(g.deps.contains(&root.join(f)), "{f} missing in {:?}", g.deps);
+        }
+        let main = "@import { Gone } from \"./gone\"\n@inherits Gone\n<p/>\n";
+        let g = crate::compile_mapped_with(main, &root.join("C.tszor"), &|_| None).unwrap();
+        assert!(g.deps.contains(&root.join("gone.ts")) && g.deps.contains(&root.join("gone").join("index.ts")), "{:?}", g.deps);
+    }
+
+    #[test]
+    fn comments_inside_an_import_clause_are_ignored() {
+        let a = "export class A { a = 1; }\n";
+        for imp in ["import { /* c */ A as AA } from './a';", "import {\n  // x\n  A as AA,\n} from './a';", "import /* d */ { A as AA /* e */ } from \"./a\" // f"] {
+            let b = format!("{imp}\nexport class B extends AA {{ b = 2; }}\n");
+            let code = compile(&[("a.ts", a), ("b.ts", &b)], "@import { B } from \"./b\"\n@inherits B\n<p>@a @b</p>\n");
+            assert!(code.contains("this.a") && code.contains("this.b"), "{imp}\n{code}");
+        }
+    }
+
+    #[test]
+    fn a_regex_after_a_keyword_does_not_end_the_class_early() {
+        let base = "export class R {\n  m() { return /}/.test(\"x\") }\n  n() { throw /}/ }\n  b7 = 2;\n}\n";
+        let code = compile(&[("r.ts", base)], "@import { R } from \"./r\"\n@inherits R\n<p>@b7</p>\n");
+        assert!(code.contains("this.b7"), "{code}");
+    }
+
+    #[test]
+    fn a_js_specifier_names_the_ts_file() {
+        let a = "export class A { a = 1; }\n";
+        let code = compile(&[("a.ts", a)], "@import { A } from \"./a.js\"\n@inherits A\n<p>@a</p>\n");
+        assert!(code.contains("this.a"), "{code}");
+        let code = compile(&[("lib/a.tsx", a)], "@import { A } from \"./lib/a.js\"\n@inherits A\n<p>@a</p>\n");
+        assert!(code.contains("this.a"), "{code}");
     }
 
     #[test]

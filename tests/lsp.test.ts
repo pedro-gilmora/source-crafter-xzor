@@ -410,16 +410,19 @@ test("feature requests on a .ts document return nothing", async () => {
   rmSync(diRoot, { recursive: true, force: true });
 }, 30000);
 
-test("an open .tszor refreshes when its open @inherits base .ts changes, without saving", async () => {
+test("an open .tszor refreshes when a base .ts anywhere in its @inherits chain changes, without saving", async () => {
   const dir = join(repo, "target", "tmp-lsp-inherits", String(process.pid));
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
   const base = (name: string) =>
     `import { ComponentBase } from "@zor/runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
-  const text = `@import { Titled } from "./base"\n@inherits Titled\n<p>@title</p>\n`;
-  const [basePath, comp] = [join(dir, "base.ts"), join(dir, "D.tszor")];
+  // D -> Mid (mid.ts) -> Titled (base.ts): D's text never mentions base.
+  const mid = `import { Titled } from "./base";\nexport abstract class Mid extends Titled {}\n`;
+  const text = `@import { Mid } from "./mid"\n@inherits Mid\n<p>@title</p>\n`;
+  const [basePath, midPath, comp] = [join(dir, "base.ts"), join(dir, "mid.ts"), join(dir, "D.tszor")];
   await Bun.write(basePath, base("title"));
+  await Bun.write(midPath, mid);
   await Bun.write(comp, text);
   const [baseUri, uri] = [uriOf(basePath), uriOf(comp)];
   notify("textDocument/didOpen", { textDocument: { uri: baseUri, languageId: "typescript", version: 1, text: base("title") } });

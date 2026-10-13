@@ -51,14 +51,11 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
         let (line, column) = line_col(source, offset);
         return Err(Diagnostic { message: codegen::ZDI08.into(), line, column, offset });
     }
-    let inherited = inherit::base_members(&doc, path, read);
-    codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &inherited)
-        .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })
-}
-
-/// Instance members `doc` inherits through `@inherits`, read from disk.
-pub fn base_members(doc: &ast::Document, path: &Path) -> std::collections::HashSet<String> {
-    inherit::base_members(doc, path, &|p| std::fs::read_to_string(p).ok())
+    let (inherited, deps) = inherit::base_members(&doc, path, read);
+    let mut generated = codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &inherited)
+        .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
+    generated.deps = deps;
+    Ok(generated)
 }
 
 /// Type parameters and prop kinds of each `.tszor` component imported by `doc`, read from disk.

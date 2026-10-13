@@ -499,7 +499,7 @@ impl Server {
                 self.di_schedule(&path, root.as_deref(), Some(text));
             }
             "textDocument/didSave" => {
-                if let Some(path) = uri_to_path(&uri) {
+                if let Some(path) = uri_to_path(&uri).filter(|_| !self.docs.contains_key(&uri)) {
                     self.refresh_inheritors(&path)?;
                 }
                 let root = match self.docs.get(&uri) {
@@ -603,13 +603,14 @@ impl Server {
         Ok(())
     }
 
-    /// Refreshes the open `.tszor` documents whose `@inherits` base may live in the changed `path`.
+    /// Refreshes the open `.tszor` documents whose `@inherits` chain probed the changed `path`.
     fn refresh_inheritors(&mut self, path: &Path) -> io::Result<()> {
-        let Some(mention) = crate::inherit::mention(path) else { return Ok(()) };
         let uris: Vec<String> = self
             .docs
             .iter()
-            .filter(|(_, d)| !d.ts_file && !same_path(&d.path, path) && d.text.contains("@inherits") && d.text.contains(&mention))
+            .filter(|(_, d)| {
+                !d.ts_file && !same_path(&d.path, path) && d.compiled.as_ref().is_some_and(|c| c.g.deps.iter().any(|p| same_path(p, path)))
+            })
             .map(|(u, _)| u.clone())
             .collect();
         for uri in uris {

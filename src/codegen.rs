@@ -19,6 +19,8 @@ pub struct Generated {
     pub mappings: Vec<Mapping>,
     /// `@inject` types and names, with their offsets in the `.tszor`.
     pub injects: Vec<Inject>,
+    /// Files probed while resolving the `@inherits` chain, found or not; a change to one invalidates this output.
+    pub deps: Vec<std::path::PathBuf>,
 }
 
 impl Generated {
@@ -236,6 +238,8 @@ pub fn generate_with(
         .chain(doc.injects.iter().map(|i| i.name.text.clone()))
         .chain(inherited.iter().cloned())
         .collect();
+    let statics: HashSet<String> =
+        doc.code.iter().flat_map(|c| member_decls(c)).filter(|m| m.is_static).map(|m| m.name).collect();
     if inject_constructor(doc).is_some() {
         return Err(ZDI08.into());
     }
@@ -243,6 +247,8 @@ pub fn generate_with(
         out: String::new(),
         mappings: Vec::new(),
         members,
+        statics,
+        static_prefix: format!("{class_name}."),
         locals: Vec::new(),
         depth: 0,
         components,
@@ -319,13 +325,17 @@ pub fn generate_with(
     g.depth = 0;
     g.line("}");
     let injects = doc.injects.clone();
-    Ok(Generated { code: g.out, mappings: g.mappings, injects })
+    Ok(Generated { code: g.out, mappings: g.mappings, injects, deps: Vec::new() })
 }
 
 struct Gen<'p> {
     out: String,
     mappings: Vec<Mapping>,
     members: HashSet<String>,
+    /// The component's own `static` members, which are reached through the class (`this` is the instance).
+    statics: HashSet<String>,
+    /// `ClassName.`, the prefix of those.
+    static_prefix: String,
     locals: Vec<String>,
     depth: usize,
     components: &'p HashMap<String, ComponentInfo>,
@@ -379,6 +389,8 @@ impl Gen<'_> {
             out: String::new(),
             mappings: Vec::new(),
             members: if rewrite { self.members.clone() } else { HashSet::new() },
+            statics: if rewrite { self.statics.clone() } else { HashSet::new() },
+            static_prefix: self.static_prefix.clone(),
             locals: self.locals.iter().chain(locals).cloned().collect(),
             depth: 0,
             components: self.components,
@@ -446,17 +458,23 @@ impl Gen<'_> {
         self.members.contains(word) && !self.locals.iter().any(|l| l == word)
     }
 
-    /// Rewritten expression, mapped piecewise around each inserted `this.`.
+    /// `this.` or `ClassName.` for a member name that isn't shadowed.
+    fn member_prefix(&self, word: &str) -> Option<&str> {
+        self.is_member(word).then(|| if self.statics.contains(word) { self.static_prefix.as_str() } else { "this." })
+    }
+
+    /// Rewritten expression, mapped piecewise around each inserted prefix.
     fn expr(&self, e: &Src) -> M {
         let mut inserts = Vec::new();
-        let text = rewrite_tracked(e, &|w| self.is_member(w), &mut inserts, 0);
+        let text = rewrite_tracked(e, &|w| self.member_prefix(w), &mut inserts, 0);
         let mut maps = Vec::new();
-        let mut start = 0;
-        for (k, end) in inserts.iter().copied().chain([e.len()]).enumerate() {
+        let (mut start, mut added) = (0, 0);
+        for (end, len) in inserts.iter().copied().chain([(e.len(), 0)]) {
             if end > start {
-                maps.push(Mapping { src: e.at + start, out: start + k * "this.".len(), len: end - start });
+                maps.push(Mapping { src: e.at + start, out: start + added, len: end - start });
             }
             start = end;
+            added += len;
         }
         M { text, maps }
     }
@@ -635,8 +653,8 @@ impl Gen<'_> {
 
     /// `this.m.bind(this)` for a bare member name, else the rewritten expression.
     fn handler(&self, e: &Src) -> M {
-        if is_identifier(e) && self.is_member(e) {
-            M::lit("this.").add(M::src(e, e.at)).lit_then(".bind(this)")
+        if let Some(prefix) = self.member_prefix(e).filter(|_| is_identifier(e)) {
+            M::lit(prefix).add(M::src(e, e.at)).lit_then(&format!(".bind({})", prefix.trim_end_matches('.')))
         } else {
             self.expr(e)
         }
@@ -647,7 +665,7 @@ impl Gen<'_> {
         match after {
             None => Ok(M::default()),
             Some(AttrValue::Expr(e)) if is_identifier(e) && self.is_member(e) => {
-                Ok(M::lit(" return this.").add(M::src(e, e.at)).lit_then("();"))
+                Ok(M::lit(" return ").lit_then(self.member_prefix(e).unwrap_or("this.")).add(M::src(e, e.at)).lit_then("();"))
             }
             Some(AttrValue::Expr(e)) => Ok(M::lit(" return (").add(self.expr(e)).lit_then(")();")),
             Some(_) => Err("@bind:after requires a handler".into()),
@@ -870,13 +888,13 @@ impl Gen<'_> {
 }
 
 pub fn rewrite(src: &str, is_member: &dyn Fn(&str) -> bool) -> String {
-    rewrite_tracked(src, is_member, &mut Vec::new(), 0)
+    rewrite_tracked(src, &|w| is_member(w).then_some("this."), &mut Vec::new(), 0)
 }
 
-/// Prefixes free identifiers that name `@code` members with `this.`, so templates
+/// Prefixes free identifiers that name `@code` members with what `prefix` returns (`this.`), so templates
 /// can write `@count` instead of `@this.count` (Razor gets this for free from C# scoping).
-/// Records the source offset (plus `base`) of every insertion in `inserts`.
-fn rewrite_tracked(src: &str, is_member: &dyn Fn(&str) -> bool, inserts: &mut Vec<usize>, base: usize) -> String {
+/// Records the source offset (plus `base`) and prefix length of every insertion in `inserts`.
+fn rewrite_tracked<'a>(src: &str, prefix: &dyn Fn(&str) -> Option<&'a str>, inserts: &mut Vec<(usize, usize)>, base: usize) -> String {
     let b = src.as_bytes();
     let mut out = String::with_capacity(src.len() + 16);
     let mut prev: Option<u8> = None;
@@ -892,9 +910,9 @@ fn rewrite_tracked(src: &str, is_member: &dyn Fn(&str) -> bool, inserts: &mut Ve
             let next = b[i..].iter().copied().find(|c| !c.is_ascii_whitespace());
             let is_property = prev == Some(b'.');
             let is_object_key = next == Some(b':') && matches!(prev, Some(b'{' | b','));
-            if !is_property && !is_object_key && is_member(word) {
-                inserts.push(base + start);
-                out.push_str("this.");
+            if let Some(p) = prefix(word).filter(|_| !is_property && !is_object_key) {
+                inserts.push((base + start, p.len()));
+                out.push_str(p);
             }
             out.push_str(word);
             prev = Some(b'a');
@@ -914,7 +932,7 @@ fn rewrite_tracked(src: &str, is_member: &dyn Fn(&str) -> bool, inserts: &mut Ve
             b'/' if b.get(i + 1) == Some(&b'/') => b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |p| i + p),
             b'/' if b.get(i + 1) == Some(&b'*') => src[i + 2..].find("*/").map_or(b.len(), |p| i + 2 + p + 2),
             b'`' => {
-                i = rewrite_template(src, i, &mut out, is_member, inserts, base);
+                i = rewrite_template(src, i, &mut out, prefix, inserts, base);
                 prev = Some(c);
                 continue;
             }
@@ -935,12 +953,12 @@ fn rewrite_tracked(src: &str, is_member: &dyn Fn(&str) -> bool, inserts: &mut Ve
     out
 }
 
-fn rewrite_template(
+fn rewrite_template<'a>(
     src: &str,
     start: usize,
     out: &mut String,
-    is_member: &dyn Fn(&str) -> bool,
-    inserts: &mut Vec<usize>,
+    prefix: &dyn Fn(&str) -> Option<&'a str>,
+    inserts: &mut Vec<(usize, usize)>,
     base: usize,
 ) -> usize {
     let b = src.as_bytes();
@@ -974,7 +992,7 @@ fn rewrite_template(
                     j += 1;
                 }
                 out.push_str("${");
-                out.push_str(&rewrite_tracked(&src[inner..j.min(b.len())], is_member, inserts, base + inner));
+                out.push_str(&rewrite_tracked(&src[inner..j.min(b.len())], prefix, inserts, base + inner));
                 out.push('}');
                 i = j + 1;
             }
@@ -1323,7 +1341,15 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
                 } else if word == "static" {
                     is_static = true;
                 }
-                prev = Some(b'a');
+                prev = Some(word_prev(word));
+                continue;
+            }
+            _ if is_ident_start(c) && (i == 0 || !is_ident_char(b[i - 1])) => {
+                let start = i;
+                while i < b.len() && is_ident_char(b[i]) {
+                    i += 1;
+                }
+                prev = Some(word_prev(&code[start..i]));
                 continue;
             }
             _ => {}
@@ -1334,6 +1360,12 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
         i += 1;
     }
     out
+}
+
+/// The `prev` to record after `word`: keywords that can precede an expression allow a regex.
+pub(crate) fn word_prev(word: &str) -> u8 {
+    const KEYWORDS: &[&str] = &["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "yield", "await"];
+    if KEYWORDS.contains(&word) { b';' } else { b'a' }
 }
 
 /// End of the string, template literal, comment or regex literal starting at `i`, if any.
@@ -1380,6 +1412,14 @@ pub(crate) fn skip_braces(b: &[u8], open: usize) -> usize {
                 prev = Some(b'"');
             }
             i = end;
+            continue;
+        }
+        if is_ident_start(b[i]) && (i == open || !is_ident_char(b[i - 1])) {
+            let start = i;
+            while i < b.len() && is_ident_char(b[i]) {
+                i += 1;
+            }
+            prev = Some(word_prev(std::str::from_utf8(&b[start..i]).unwrap_or("")));
             continue;
         }
         match b[i] {
@@ -1493,6 +1533,26 @@ mod tests {
         assert_eq!(rw("\"count\" + 'name'", &m), "\"count\" + 'name'");
         assert_eq!(rw("`n=${count} ${'x'}`", &m), "`n=${this.count} ${'x'}`");
         assert_eq!(rw("count /* name */", &m), "this.count /* name */");
+    }
+
+    #[test]
+    fn own_statics_go_through_the_class() {
+        let src = "@code { static s = 2; n = 1; static go() {} }\n<p title=\"@s\">@s @n @(`${s}`)</p>\n<button @onclick=\"go\" @onfocus=\"() => s++\">x</button>";
+        let (doc, _) = crate::parser::parse(src).unwrap();
+        let g = generate(&doc, "C", "C.tszor").unwrap();
+        for m in ["addContent(C.s)", "addContent(this.n)", "${C.s}", "C.go.bind(C)", "() => C.s++", "addAttribute(\"title\", C.s)"] {
+            assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
+        }
+        assert!(!g.code.contains("this.s") && !g.code.contains("this.go"), "{}", g.code);
+        for m in &g.mappings {
+            assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}");
+        }
+    }
+
+    #[test]
+    fn regex_after_a_keyword_does_not_hide_members() {
+        let code = "m() { return /}/.test(\"x\") } b7 = 2;\n n() { if (a) {} else /[}]/.exec(s); typeof /}/; } b8 = 3;";
+        assert_eq!(collect_members(code), ["m", "b7", "n", "b8"]);
     }
 
     #[test]

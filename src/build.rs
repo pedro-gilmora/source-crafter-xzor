@@ -169,22 +169,17 @@ fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, 
     (files, removed_dir)
 }
 
-/// Components whose text mentions a changed `.tszor` file name: codegen reads imported components'
-/// type parameters and prop kinds. For a changed script, those with `@inherits` that mention its
-/// [`crate::inherit::mention`]. Excludes the changed ones themselves.
+/// Components that read something that changed: those whose text mentions a changed `.tszor` file name
+/// (codegen reads imported components' type parameters and prop kinds), and those whose `@inherits`
+/// chain probed a changed file (`Generated::deps`). Excludes the changed ones themselves.
 pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
-    let names: Vec<(String, bool)> = changed
-        .iter()
-        .filter_map(|c| {
-            let name = c.file_name()?.to_string_lossy();
-            if name.ends_with(".tszor") { Some((name.into_owned(), false)) } else { crate::inherit::mention(c).map(|m| (m, true)) }
-        })
-        .collect();
+    let names: Vec<_> = changed.iter().filter_map(|c| c.file_name()).map(|n| n.to_string_lossy()).filter(|n| n.ends_with(".tszor")).collect();
+    let changed_norm: Vec<PathBuf> = changed.iter().map(|c| normalize(c)).collect();
     units
         .iter()
         .filter(|u| {
             !changed.contains(&u.source.as_path())
-                && names.iter().any(|(n, inherits)| (!inherits || u.text.contains("@inherits")) && u.text.contains(n.as_str()))
+                && (names.iter().any(|n| u.text.contains(&**n)) || u.generated.deps.iter().any(|d| changed_norm.iter().any(|c| same_path(c, d))))
         })
         .map(|u| u.source.clone())
         .collect()
@@ -849,6 +844,23 @@ mod tests {
         assert_eq!(dependents(&units, &[root.join("base.ts").as_path()]), vec![root.join("App.tszor")]);
         assert_eq!(dependents(&units, &[root.join("shared").join("index.ts").as_path()]), vec![root.join("Dir.tszor")]);
         assert!(dependents(&units, &[root.join("base.d.ts").as_path()]).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dependents_follow_the_whole_inherits_chain() {
+        let root = temp("dependents-chain");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("a.ts"), "export class A { a = 1; }\n").unwrap();
+        fs::write(root.join("b.ts"), "import { A } from \"./a\";\nexport class B extends A { b = 1; }\n").unwrap();
+        fs::write(root.join("C.tszor"), "@import { B } from \"./b\"\n@inherits B\n<p/>\n").unwrap();
+        // Mentions `a` and `@inherits` but never reaches a.ts.
+        fs::write(root.join("D.tszor"), "@import { Pkg } from \"pkg\"\n@inherits Pkg\n<p>a</p>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let c = vec![root.join("C.tszor")];
+        assert_eq!(dependents(&units, &[root.join("a.ts").as_path()]), c);
+        assert_eq!(dependents(&units, &[root.join("b.ts").as_path()]), c);
+        assert!(dependents(&units, &[root.join("zzz.ts").as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 
