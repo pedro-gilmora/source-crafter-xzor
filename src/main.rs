@@ -136,10 +136,22 @@ fn watch_loop(o: &Options) -> Result<(), String> {
     let mut errors: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut providers: HashSet<PathBuf> = build::provider_files(dir).into_iter().map(|p| dir.join(p)).collect();
     let sources = build::find_sources(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut plan = build::WatchPlan { recompile: sources.into_iter().filter(|s| build::in_project(s)).collect(), remove: vec![], di: true, rebuild: true };
+    let mut plan = build::WatchPlan { recompile: sources.into_iter().filter(|s| build::in_project(s)).collect(), di: true, rebuild: true, ..Default::default() };
     let (mut di_due, mut di_entry) = (false, None);
     let mut batch: Vec<String> = Vec::new();
     loop {
+        if plan.config {
+            println!("zor: project configuration changed, rebuilding everything");
+            // The analyzer's TypeScript session holds the old compiler options and file set.
+            analyzer = build::Analyzer::new(dir);
+            let sources: Vec<PathBuf> = build::find_sources(dir).map_err(|e| format!("{}: {e}", dir.display()))?.into_iter().filter(|s| build::in_project(s)).collect();
+            plan.remove = units.iter().map(|u| u.source.clone()).filter(|s| !sources.contains(s)).collect();
+            units.clear();
+            known.clear();
+            errors.clear();
+            providers = build::provider_files(dir).into_iter().map(|p| dir.join(p)).collect();
+            plan.recompile = sources;
+        }
         if plan.di && !batch.is_empty() {
             build::update_providers(&mut providers, &batch, &known, dir);
         }

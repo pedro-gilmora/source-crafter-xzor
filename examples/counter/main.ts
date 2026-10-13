@@ -7,7 +7,7 @@ import { type Settings } from "./services/settings";
 // A class cannot reference itself in its own decorators, so the factories live elsewhere.
 export class Factories {
   static loadSettings(): Promise<Settings> {
-    return new Promise((resolve) => setTimeout(() => resolve({ greeting: "Hello from async settings" }), 0));
+    return new Promise((resolve) => setTimeout(() => resolve({ greeting: "Hello from async injected settings" }), 0));
   }
 }
 export function newRequestId(): string {

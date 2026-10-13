@@ -51,7 +51,7 @@ test("the keyed requestId reaches AuthService and is stable across Counters", ()
 
 test("Greeting's place is empty until the async settings resolve, then filled", () => {
   expect(greetingBeforeSettings).toBeNull();
-  expect(document.querySelector("#app .greeting")?.textContent).toBe("Hello from async settings");
+  expect(document.querySelector("#app .greeting")?.textContent).toBe("Hello from async injected settings");
 });
 
 test("the emitted provider disposes scoped services per scope and singletons at the root", async () => {

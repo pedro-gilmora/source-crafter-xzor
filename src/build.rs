@@ -131,6 +131,8 @@ pub struct WatchPlan {
     pub remove: Vec<PathBuf>,
     pub di: bool,
     pub rebuild: bool,
+    /// A `tsconfig.json` or `package.json` changed: recompile everything with a fresh analyzer.
+    pub config: bool,
 }
 
 fn is_source(name: &str) -> bool {
@@ -178,6 +180,9 @@ pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
 /// compiled `.tszor` files (by source path) with their `inject_signature`; `provider_ts` the provider `.ts` files.
 pub fn watch_plan(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, provider_ts: &HashSet<PathBuf>, root: &Path) -> WatchPlan {
     let mut plan = WatchPlan::default();
+    if paths.iter().map(|p| p.replace('\\', "/")).any(|p| !watch_ignored(&p) && matches!(p.rsplit('/').next(), Some("tsconfig.json" | "package.json"))) {
+        return WatchPlan { config: true, di: true, rebuild: true, ..WatchPlan::default() };
+    }
     let (files, removed_dir) = watch_files(paths, known_injects, provider_ts, root);
     plan.rebuild = removed_dir;
     for path in files {
@@ -694,9 +699,9 @@ mod tests {
         let counter = root.join("Counter.tszor");
 
         fs::write(&counter, "@inject IDatabase db\n<p>b</p>\n").unwrap();
-        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: false, rebuild: true });
+        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: false, rebuild: true, config: false });
         fs::write(&counter, "@inject IDatabase other\n<p>b</p>\n").unwrap();
-        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: true, rebuild: true });
+        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: true, rebuild: true, config: false });
 
         assert_eq!(plan(&["services/data.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
         fs::write(root.join("util.ts"), "@Mount(App, \"app\")\nexport class M {}\n").unwrap();
@@ -713,15 +718,21 @@ mod tests {
         assert_eq!(plan(&[".zor\\Counter.tszor.ts", "node_modules\\x\\index.ts", "dist\\a.ts", "target\\a.ts"]), WatchPlan::default());
 
         fs::write(root.join("New.tszor"), "<p/>\n").unwrap();
-        assert_eq!(plan(&["New.tszor"]), WatchPlan { recompile: vec![root.join("New.tszor")], remove: vec![], di: true, rebuild: true });
+        assert_eq!(plan(&["New.tszor"]), WatchPlan { recompile: vec![root.join("New.tszor")], remove: vec![], di: true, rebuild: true, config: false });
         fs::remove_file(&counter).unwrap();
-        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![], remove: vec![counter.clone()], di: true, rebuild: true });
+        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![], remove: vec![counter.clone()], di: true, rebuild: true, config: false });
 
         // Our own outputs (and tooling folders) never trigger a rebuild, so `--watch` cannot loop.
         fs::create_dir_all(root.join(".zor")).unwrap();
         fs::write(root.join(".zor/Counter.tszor.ts"), "").unwrap();
         let ignored = [".zor/Counter.tszor.ts", ".zor/X.tszor", "dist/main.js", "dist/a.ts", "target/debug/a.ts", "node_modules/x/index.ts", ".git/HEAD", ".git/a.ts", ""];
         assert_eq!(plan(&ignored), WatchPlan::default());
+
+        // Project configuration changes start over: everything recompiles and DI reruns on a fresh analyzer.
+        for config in ["tsconfig.json", "package.json", "sub/tsconfig.json"] {
+            assert_eq!(plan(&[config]), WatchPlan { config: true, di: true, rebuild: true, ..Default::default() }, "{config}");
+        }
+        assert_eq!(plan(&["node_modules/x/package.json", "data.json"]), WatchPlan::default());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -745,11 +756,11 @@ mod tests {
         fs::create_dir_all(root.join("fresh/deep")).unwrap();
         fs::write(root.join("fresh/deep/New.tszor"), "<p/>\n").unwrap();
         let new = root.join("fresh/deep/New.tszor");
-        assert_eq!(plan(&["fresh"]), WatchPlan { recompile: vec![new], remove: vec![], di: true, rebuild: true });
+        assert_eq!(plan(&["fresh"]), WatchPlan { recompile: vec![new], remove: vec![], di: true, rebuild: true, config: false });
 
         // A removed directory maps to the known files under it; one with only untracked `.ts` files still rebuilds.
         fs::remove_dir_all(root.join("lib")).unwrap();
-        assert_eq!(plan(&["lib"]), WatchPlan { recompile: vec![], remove: vec![root.join("lib/Card.tszor")], di: true, rebuild: true });
+        assert_eq!(plan(&["lib"]), WatchPlan { recompile: vec![], remove: vec![root.join("lib/Card.tszor")], di: true, rebuild: true, config: false });
         let nothing_known = HashMap::new();
         let none = HashSet::new();
         let gone = vec!["scratch".to_string()];
@@ -768,7 +779,7 @@ mod tests {
         let known: HashMap<PathBuf, Vec<String>> = HashMap::from([(bad.clone(), Vec::new())]);
         let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &HashSet::new(), &root);
         fs::remove_file(&bad).unwrap();
-        assert_eq!(plan(&["Bad.tszor"]), WatchPlan { recompile: vec![], remove: vec![bad], di: true, rebuild: true });
+        assert_eq!(plan(&["Bad.tszor"]), WatchPlan { recompile: vec![], remove: vec![bad], di: true, rebuild: true, config: false });
         fs::remove_dir_all(&root).unwrap();
     }
 
