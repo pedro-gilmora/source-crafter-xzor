@@ -25,9 +25,10 @@ pub fn find_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
 /// Files under `dir` whose name passes `keep`, skipping dot-dirs, `node_modules`, `dist` and `target`.
 fn walk(dir: &Path, keep: &dyn Fn(&str) -> bool, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
+        let entry = entry?;
+        let path = entry.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if path.is_dir() {
+        if entry.file_type()?.is_dir() {
             if !name.starts_with('.') && !matches!(&*name, "node_modules" | "dist" | "target") {
                 walk(&path, keep, out)?;
             }
@@ -52,10 +53,19 @@ pub fn in_project(source: &Path) -> bool {
     source.parent().is_some_and(|d| d.ancestors().any(|a| a.join("tsconfig.json").is_file()))
 }
 
+/// The nearest ancestor directory holding a `tsconfig.json`, if any.
+pub fn tsconfig_root(source: &Path) -> Option<PathBuf> {
+    source.parent()?.ancestors().find(|d| d.join("tsconfig.json").is_file()).map(Path::to_path_buf)
+}
+
 /// `<root>/.zor/<relative source path>.ts`, the generated TypeScript (like Blazor's `obj/`).
 pub fn output_path(source: &Path) -> PathBuf {
-    let root = project_root(source);
-    let rel = source.strip_prefix(&root).unwrap_or(source);
+    output_path_in(&project_root(source), source)
+}
+
+/// `output_path` for a `source` whose project root is known.
+pub fn output_path_in(root: &Path, source: &Path) -> PathBuf {
+    let rel = source.strip_prefix(root).unwrap_or(source);
     let mut p = root.join(".zor").join(rel).into_os_string();
     p.push(".ts");
     p.into()
@@ -1058,9 +1068,9 @@ mod tests {
         assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
         assert!(analyzer.pid().is_some());
         let first = analyzer.pid();
-        // The second answer reaches the limit, so the child is stopped.
+        // The second answer reaches the limit; the child is stopped at the start of the next request.
         assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
-        assert_eq!(analyzer.pid(), None);
+        assert_eq!(analyzer.pid(), first);
         assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
         assert!(analyzer.pid().is_some() && analyzer.pid() != first);
         drop(analyzer);

@@ -13,8 +13,11 @@ const DI_SCRIPT: &str = include_str!("di.ts");
 /// tsgo leaks memory per request, so the child is replaced after this many.
 const RECYCLE_AFTER: u32 = 500;
 
-/// A child that answers nothing for this long is killed; the next request restarts it.
+/// A child that answers nothing for this long is killed and the request retried once on a new one.
 const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The first request after a spawn also waits for tsgo to start and load the program.
+const COLD_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct Analyzer {
     root: PathBuf,
@@ -22,6 +25,7 @@ pub struct Analyzer {
     served: u32,
     limit: u32,
     timeout: Duration,
+    cold_timeout: Duration,
 }
 
 struct Proc {
@@ -37,12 +41,16 @@ impl Analyzer {
     }
 
     pub(crate) fn with_limit(root: &Path, limit: u32) -> Self {
-        Analyzer { root: root.to_path_buf(), proc: None, served: 0, limit, timeout: TIMEOUT }
+        Analyzer { root: root.to_path_buf(), proc: None, served: 0, limit, timeout: TIMEOUT, cold_timeout: COLD_TIMEOUT }
     }
 
     /// Facts for provider `files` and generated `components` (paths relative to the root or absolute);
-    /// `overlays` are `(path, text)` pairs read instead of the disk. A dead analyzer is restarted once.
+    /// `overlays` are `(path, text)` pairs read instead of the disk. A dead or wedged analyzer is restarted once.
     pub fn analyze(&mut self, files: &[String], components: &[String], overlays: &[(PathBuf, String)]) -> Result<Facts, String> {
+        // Recycled here rather than after the answer, so that answer is not delayed by the shutdown.
+        if self.served >= self.limit {
+            self.stop();
+        }
         let strings = |list: &[String]| Json::Arr(list.iter().map(|s| Json::from(s.as_str())).collect());
         let overlays = Json::Obj(overlays.iter().map(|(p, t)| (p.to_string_lossy().into_owned(), Json::from(t.as_str()))).collect());
         let mut request = Json::obj([("files", strings(files)), ("components", strings(components)), ("overlays", overlays)]).to_string();
@@ -52,30 +60,26 @@ impl Analyzer {
             if self.proc.is_none() {
                 self.proc = Some(self.spawn()?);
             }
+            let wait = if self.served == 0 { self.cold_timeout } else { self.timeout };
             let proc = self.proc.as_mut().expect("spawned above");
             let answer = if proc.stdin.write_all(request.as_bytes()).and_then(|_| proc.stdin.flush()).is_ok() {
-                proc.lines.recv_timeout(self.timeout)
+                proc.lines.recv_timeout(wait)
             } else {
                 Err(RecvTimeoutError::Disconnected)
             };
-            match answer {
+            let error = match answer {
                 Ok(line) => {
                     self.served += 1;
-                    let result = facts(&line);
-                    if self.served >= self.limit {
-                        self.stop();
-                    }
-                    return result;
+                    return facts(&line);
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     self.kill_now();
-                    return Err(format!("DI analysis failed: the analyzer did not answer within {}s", self.timeout.as_secs_f32()));
+                    format!("DI analysis failed: the analyzer did not answer within {}s", wait.as_secs_f32())
                 }
-                Err(RecvTimeoutError::Disconnected) => {}
-            }
-            let status = self.stop();
+                Err(RecvTimeoutError::Disconnected) => format!("DI analysis failed: the analyzer exited ({})", self.stop()),
+            };
             if restarted {
-                return Err(format!("DI analysis failed: the analyzer exited ({status})"));
+                return Err(error);
             }
             restarted = true;
         }
@@ -142,6 +146,7 @@ impl Analyzer {
     #[cfg(test)]
     pub(crate) fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout;
+        self.cold_timeout = timeout;
     }
 
     #[cfg(test)]

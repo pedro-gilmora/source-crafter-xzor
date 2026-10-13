@@ -12,12 +12,13 @@ const uriOf = (p: string) =>
     ? `file:///${p[0]!.toLowerCase()}%3A${p.slice(2).replaceAll("\\", "/").replaceAll(" ", "%20")}`
     : `file://${p.replaceAll(" ", "%20")}`;
 
-type Msg = { id?: number; method?: string; params?: any; result?: any; error?: any };
+type Msg = { id?: number | string; method?: string; params?: any; result?: any; error?: any };
 let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "inherit">>;
 let nextId = 0;
-const pending = new Map<number, (m: Msg) => void>();
+const pending = new Map<number | string, (m: Msg) => void>();
 const diagnostics = new Map<string, any[]>();
 const publishes = new Map<string, number>();
+const registrations: any[] = [];
 
 function send(msg: object) {
   const body = JSON.stringify({ jsonrpc: "2.0", ...msg });
@@ -72,7 +73,10 @@ beforeAll(async () => {
         if (buf.length < sep + 4 + len) break;
         const msg: Msg = JSON.parse(buf.subarray(sep + 4, sep + 4 + len).toString());
         buf = buf.subarray(sep + 4 + len);
-        if (msg.id !== undefined && pending.has(msg.id)) {
+        if (msg.id !== undefined && msg.method) {
+          if (msg.method === "client/registerCapability") registrations.push(...msg.params.registrations);
+          send({ id: msg.id, result: null });
+        } else if (msg.id !== undefined && pending.has(msg.id)) {
           pending.get(msg.id)!(msg);
           pending.delete(msg.id);
         } else if (msg.method === "textDocument/publishDiagnostics") {
@@ -82,9 +86,25 @@ beforeAll(async () => {
       }
     }
   })();
-  init = await request("initialize", { processId: null, rootUri: uriOf(root), capabilities: {} });
-  expect(init.capabilities.hoverProvider).toBe(true);
+  const dynamic = { dynamicRegistration: true };
+  const textDocument = Object.fromEntries(
+    ["completion", "hover", "definition", "references", "rename", "semanticTokens"].map((k) => [k, dynamic]),
+  );
+  init = await request("initialize", { processId: null, rootUri: uriOf(root), capabilities: { textDocument } });
+  // Feature providers are registered for `.tszor` only, so they don't apply to the synced `.ts` documents.
+  expect(init.capabilities.hoverProvider).toBeUndefined();
+  expect(init.capabilities.renameProvider).toBeUndefined();
   notify("initialized", {});
+  await waitFor(() => (registrations.length ? true : undefined));
+  expect(registrations.map((r) => r.method).sort()).toEqual([
+    "textDocument/completion",
+    "textDocument/definition",
+    "textDocument/hover",
+    "textDocument/references",
+    "textDocument/rename",
+    "textDocument/semanticTokens",
+  ]);
+  expect(registrations.every((r) => JSON.stringify(r.registerOptions.documentSelector) === '[{"language":"tszor"}]')).toBe(true);
   for (const [path, text] of [[counter, counterText], [app, appText]] as const) {
     notify("textDocument/didOpen", { textDocument: { uri: uriOf(path), languageId: "tszor", version: 1, text } });
   }
@@ -180,7 +200,7 @@ test("completion offers components and members", async () => {
 }, 20000);
 
 test("semantic tokens color template references like their declarations", async () => {
-  const legend = init.capabilities.semanticTokensProvider.legend;
+  const legend = registrations.find((r) => r.method === "textDocument/semanticTokens").registerOptions.legend;
   const result = await request("textDocument/semanticTokens/full", { textDocument: { uri: uriOf(counter) } });
   const tokens: { line: number; character: number; type: string }[] = [];
   let line = 0;
@@ -343,9 +363,12 @@ test("an open provider .ts shows ZDI02 at the parameter without saving, and edit
   expect(error.message).toContain("Missing");
 
   const above = bad.replace("export class Repo {", "// a note\nexport class Repo {");
+  const sentAt = performance.now();
   const shifted = await nextPublish(uri, () =>
     notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: above }] }),
   );
+  // Well under the 300 ms debounce, so the range was shifted, not reanalyzed.
+  expect(performance.now() - sentAt).toBeLessThan(200);
   const moved = shifted.find((d) => d.code === "ZDI02");
   expect(moved.range.start).toEqual({ line: start.line + 1, character: start.character });
   expect(moved.range.end).toEqual({ line: start.line + 1, character: start.character + "missing".length });
