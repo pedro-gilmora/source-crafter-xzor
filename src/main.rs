@@ -44,6 +44,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 let path = PathBuf::from(p);
                 let units = build::compile_all(&path)?;
                 for unit in &units {
+                    build::print_warnings(unit);
                     println!("{}", unit.out.display());
                 }
                 // `compile` has no entry option, so a @Mount outside main.ts is not an error here.
@@ -81,6 +82,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 return watch_loop(&opts);
             }
             let units = build::compile_all(&opts.dir)?;
+            units.iter().for_each(build::print_warnings);
             println!("zor: compiled {} component(s)", units.len());
             let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
             finish(&opts, &units, di_entry.as_deref())?;
@@ -172,6 +174,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         for src in &recompile {
             match build::compile_one(src) {
                 Ok(unit) => {
+                    build::print_warnings(&unit);
                     errors.remove(src);
                     known.insert(src.clone(), build::inject_signature(&unit.generated.injects));
                     match units.iter_mut().find(|u| u.source == unit.source) {

@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use crate::ast::Document;
 use crate::codegen::{is_comment, member_decls, skip_braces, skip_literal, word_prev};
+use crate::json::Json;
 use crate::{is_ident_char, is_ident_start};
 
 /// Bases followed from the component's own; deeper ones contribute nothing.
@@ -14,23 +15,37 @@ const MAX_DEPTH: usize = 8;
 
 type Read<'r> = &'r dyn Fn(&Path) -> Option<String>;
 
-/// Members of `doc`'s `@inherits` base chain, and every file probed on the way, found or not.
-/// `read` returns a file's text (the LSP reads open documents first).
-pub fn base_members(doc: &Document, path: &Path, read: Read) -> (HashSet<String>, Vec<PathBuf>) {
-    let mut out = HashSet::new();
-    let Some(inherits) = &doc.inherits else { return (out, Vec::new()) };
+/// What a component inherits, plus what it took to find out.
+pub struct BaseMembers {
+    pub members: HashSet<String>,
+    /// Every file probed on the way, found or not.
+    pub deps: Vec<PathBuf>,
+    /// The first base class that could not be read, if any.
+    pub unresolved: Option<String>,
+}
+
+/// Members of `doc`'s `@inherits` base chain, read through `read` (the LSP reads open documents first).
+pub fn base_members(doc: &Document, path: &Path, read: Read) -> BaseMembers {
+    let mut members = HashSet::new();
+    let base = doc.inherits.as_deref().map(leading_ident).filter(|b| *b != "ComponentBase");
+    let Some(base) = base else { return BaseMembers { members, deps: Vec::new(), unresolved: None } };
     let mut chain = Chain { read, files: Vec::new() };
     let dir = path.parent().unwrap_or(Path::new("."));
-    let mut next = chain.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), leading_ident(inherits));
+    let mut next = chain.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), base);
+    let mut unresolved = next.is_none().then(|| base.to_string());
     let mut seen: Vec<(PathBuf, String)> = Vec::new();
     while let Some((file, text, class)) = next.take() {
         if seen.len() == MAX_DEPTH || seen.iter().any(|(f, c)| *f == file && *c == class) {
             break;
         }
-        next = chain.members(&file, &text, &class, &mut out);
+        match chain.members(&file, &text, &class, &mut members) {
+            Step::Base(link) => next = Some(link),
+            Step::Done => {}
+            Step::Missing(name) => unresolved = Some(name),
+        }
         seen.push((file, class));
     }
-    (out, chain.files.into_iter().map(|(p, _)| p).collect())
+    BaseMembers { members, deps: chain.files.into_iter().map(|(p, _)| p).collect(), unresolved }
 }
 
 /// A file's text and, once a script needs them, its tokens.
@@ -41,6 +56,22 @@ struct Source {
 
 /// A file on the chain, its source and the class name in it (`default` for a default export).
 type Link = (PathBuf, Rc<Source>, String);
+
+/// Where a class is declared, after following re-exports.
+enum Decl {
+    Class { file: PathBuf, src: Rc<Source>, base: Option<String>, body: std::ops::Range<usize> },
+    /// A re-exported `.tszor`, whose members come from its document rather than from a class body.
+    Component { file: PathBuf, src: Rc<Source> },
+}
+
+/// What one link of the chain led to.
+enum Step {
+    Base(Link),
+    /// The chain ended at `ComponentBase` or at a class with no base.
+    Done,
+    /// This class could not be read.
+    Missing(String),
+}
 
 struct Chain<'r> {
     read: Read<'r>,
@@ -53,6 +84,8 @@ impl Chain<'_> {
         if let Some((_, src)) = self.files.iter().find(|(p, _)| p == path) {
             return src.clone();
         }
+        // ponytail: each file is read once per compile, so a package barrel is re-read every compile;
+        // if that shows up, cache sources by path and mtime across compiles.
         let src = (self.read)(path).map(|text| Rc::new(Source { text, toks: OnceCell::new() }));
         self.files.push((path.to_path_buf(), src.clone()));
         src
@@ -60,7 +93,7 @@ impl Chain<'_> {
 
     fn module(&mut self, dir: &Path, spec: &str) -> Option<(PathBuf, Rc<Source>)> {
         if !(spec.starts_with("./") || spec.starts_with("../")) {
-            return None;
+            return self.package(dir, spec);
         }
         let base = normalize(&dir.join(spec));
         let candidates = if spec.ends_with(".tszor") {
@@ -70,12 +103,62 @@ impl Chain<'_> {
             // `./a.js` names `a.ts` (nodenext style).
             if let Some(stem) = spec.strip_suffix(".js") {
                 let stem = normalize(&dir.join(stem));
-                c.extend([with_suffix(&stem, ".ts"), with_suffix(&stem, ".tsx")]);
+                c.extend([with_suffix(&stem, ".ts"), with_suffix(&stem, ".tsx"), with_suffix(&stem, ".d.ts")]);
             }
-            c.extend([base.clone(), with_suffix(&base, ".ts"), with_suffix(&base, ".tsx"), base.join("index.ts")]);
+            c.extend([
+                base.clone(),
+                with_suffix(&base, ".ts"),
+                with_suffix(&base, ".tsx"),
+                with_suffix(&base, ".d.ts"),
+                base.join("index.ts"),
+                base.join("index.d.ts"),
+            ]);
             c
         };
         candidates.into_iter().find_map(|p| self.load(&p).map(|t| (p, t)))
+    }
+
+    /// A bare specifier's declarations, from the first `node_modules` at or above `dir` that has them.
+    fn package(&mut self, dir: &Path, spec: &str) -> Option<(PathBuf, Rc<Source>)> {
+        let (pkg, sub) = split_package(spec);
+        let types = match pkg.strip_prefix('@') {
+            Some(scoped) => format!("@types/{}", scoped.replace('/', "__")),
+            None => format!("@types/{pkg}"),
+        };
+        let mut at = Some(dir);
+        while let Some(d) = at {
+            let modules = d.join("node_modules");
+            for name in [pkg, types.as_str()] {
+                if let Some(found) = self.package_entry(&modules.join(name), sub) {
+                    return Some(found);
+                }
+            }
+            at = d.parent();
+        }
+        None
+    }
+
+    /// The declaration file package `root` exposes for `sub` (`None` for the package itself).
+    /// A directory with no manifest is not a package, so nothing further is probed in it.
+    fn package_entry(&mut self, root: &Path, sub: Option<&str>) -> Option<(PathBuf, Rc<Source>)> {
+        let manifest = self.load(&root.join("package.json"))?;
+        let json = Json::parse(&manifest.text).unwrap_or_default();
+        let mut candidates: Vec<String> = Vec::new();
+        match sub {
+            Some(sub) => {
+                candidates.extend(exports_types(&json["exports"], &format!("./{sub}")));
+                candidates.extend([format!("{sub}.d.ts"), format!("{sub}/index.d.ts")]);
+            }
+            None => {
+                candidates.extend(["types", "typings"].iter().filter_map(|f| json[*f].as_str().map(|t| declaration(t.to_string()))));
+                candidates.extend(exports_types(&json["exports"], "."));
+                candidates.push("index.d.ts".into());
+            }
+        }
+        candidates.into_iter().find_map(|c| {
+            let path = normalize(&root.join(c));
+            self.load(&path).map(|src| (path, src))
+        })
     }
 
     /// The class `name` imports, through `imports` (clause and specifier pairs) relative to `dir`.
@@ -85,33 +168,159 @@ impl Chain<'_> {
         Some((file, text, original))
     }
 
-    /// Adds the members of `class` in `file` to `out` and returns its base.
-    fn members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Option<Link> {
-        let dir = file.parent().unwrap_or(Path::new("."));
-        let text = &src.text;
+    /// The declaration of class `name` in `file`, or in the files `file` re-exports it from.
+    fn find(&mut self, file: PathBuf, src: Rc<Source>, name: &str, visited: &mut Vec<(PathBuf, String)>) -> Option<Decl> {
         if file.extension().is_some_and(|e| e == "tszor") {
-            let (doc, _) = crate::parser::parse(text).ok()?;
-            for code in &doc.code {
-                class_members(code, out);
-            }
-            out.extend(doc.injects.iter().map(|i| i.name.text.clone()));
-            let base = leading_ident(doc.inherits.as_ref()?);
-            if base == "ComponentBase" {
-                return None;
-            }
-            return self.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), base);
+            return Some(Decl::Component { file, src });
         }
-        let toks = src.toks.get_or_init(|| tokens(text));
-        let (base, body) = find_class(text, toks, (class != "default").then_some(class))?;
-        class_members(&text[body], out);
-        let base = base?;
-        if base == "ComponentBase" {
+        if visited.iter().any(|(f, n)| *f == file && n == name) {
             return None;
         }
-        match find_import(ts_imports(text, toks).into_iter(), base) {
-            Some((original, spec)) => self.module(dir, spec).map(|(file, src)| (file, src, original)),
-            None => Some((file.to_path_buf(), src.clone(), base.to_string())),
+        visited.push((file.clone(), name.to_string()));
+        let declared = {
+            let text = &src.text;
+            let toks = src.toks.get_or_init(|| tokens(text));
+            find_class(text, toks, (name != "default").then_some(name)).map(|(b, body)| (b.map(str::to_string), body))
+        };
+        if let Some((base, body)) = declared {
+            return Some(Decl::Class { file, src, base, body });
         }
+        // Where else to look: the re-export naming it, then every `export *` target.
+        let targets: Vec<(String, String)> = {
+            let text = &src.text;
+            let toks = src.toks.get_or_init(|| tokens(text));
+            let (named, stars) = ts_exports(text, toks);
+            let mut t = Vec::new();
+            match named.iter().find_map(|(clause, spec)| imported_as(clause, name).map(|o| (o, *spec))) {
+                Some((original, Some(spec))) => t.push((original, spec.to_string())),
+                // `export { A }` re-exports whatever an `import { A } from "./a"` bound.
+                Some((original, None)) => t.extend(find_import(ts_imports(text, toks).into_iter(), &original).map(|(o, s)| (o, s.to_string()))),
+                None => {}
+            }
+            t.extend(stars.iter().map(|s| (name.to_string(), s.to_string())));
+            t
+        };
+        let dir = file.parent().unwrap_or(Path::new("."));
+        targets.into_iter().find_map(|(name, spec)| {
+            let (file, src) = self.module(dir, &spec)?;
+            self.find(file, src, &name, visited)
+        })
+    }
+
+    /// Adds the members of `class` in `file` to `out` and reports where the chain goes next.
+    fn members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Step {
+        if file.extension().is_some_and(|e| e == "tszor") {
+            return self.component_members(file, src, class, out);
+        }
+        let (file, src, base, body) = match self.find(file.to_path_buf(), src.clone(), class, &mut Vec::new()) {
+            Some(Decl::Class { file, src, base, body }) => (file, src, base, body),
+            Some(Decl::Component { file, src }) => return self.component_members(&file, &src, class, out),
+            None => return Step::Missing(class.to_string()),
+        };
+        class_members(&src.text[body], out);
+        let Some(base) = base else { return Step::Done };
+        if base == "ComponentBase" {
+            return Step::Done;
+        }
+        let from = {
+            let text = &src.text;
+            let toks = src.toks.get_or_init(|| tokens(text));
+            find_import(ts_imports(text, toks).into_iter(), &base).map(|(o, s)| (o, s.to_string()))
+        };
+        match from {
+            Some((original, spec)) => {
+                let dir = file.parent().unwrap_or(Path::new("."));
+                match self.module(dir, &spec) {
+                    Some((file, src)) => Step::Base((file, src, original)),
+                    None => Step::Missing(base),
+                }
+            }
+            None => Step::Base((file, src, base)),
+        }
+    }
+
+    /// Adds the members a `.tszor` component declares to `out` and reports where its `@inherits` goes next.
+    fn component_members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Step {
+        let dir = file.parent().unwrap_or(Path::new("."));
+        let Ok((doc, _)) = crate::parser::parse(&src.text) else { return Step::Missing(class.to_string()) };
+        for code in &doc.code {
+            class_members(code, out);
+        }
+        out.extend(doc.injects.iter().map(|i| i.name.text.clone()));
+        let Some(inherits) = &doc.inherits else { return Step::Done };
+        let base = leading_ident(inherits);
+        if base == "ComponentBase" {
+            return Step::Done;
+        }
+        match self.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), base) {
+            Some(link) => Step::Base(link),
+            None => Step::Missing(base.to_string()),
+        }
+    }
+}
+
+/// A bare specifier's package name and subpath: `@scope/x/y` → `("@scope/x", Some("y"))`.
+fn split_package(spec: &str) -> (&str, Option<&str>) {
+    match spec.match_indices('/').nth(usize::from(spec.starts_with('@'))) {
+        Some((i, _)) => (&spec[..i], Some(&spec[i + 1..])),
+        None => (spec, None),
+    }
+}
+
+/// The declaration file `exports` gives for subpath `key`.
+fn exports_types(exports: &Json, key: &str) -> Option<String> {
+    // A map with no subpath keys is a condition map for "." rather than a list of subpaths.
+    let sugar = key == "." && matches!(exports, Json::Obj(o) if !o.iter().any(|(k, _)| k.starts_with('.')));
+    let target = match exports {
+        Json::Str(s) if key == "." => Some(s.clone()),
+        _ if sugar => condition_types(exports),
+        _ => match exports.get(key) {
+            Some(entry) => condition_types(entry),
+            None => pattern_types(exports, key),
+        },
+    }?;
+    Some(declaration(target))
+}
+
+/// The target of the single-`*` subpath pattern matching `key` with the longest prefix (as Node picks),
+/// with the matched text spliced in.
+fn pattern_types(exports: &Json, key: &str) -> Option<String> {
+    let Json::Obj(entries) = exports else { return None };
+    let (_, matched, v) = entries
+        .iter()
+        .filter_map(|(k, v)| {
+            let (prefix, suffix) = k.split_once('*')?;
+            if !prefix.starts_with("./") || suffix.contains('*') {
+                return None;
+            }
+            Some((prefix, key.strip_prefix(prefix)?.strip_suffix(suffix)?, v))
+        })
+        .max_by_key(|(prefix, _, _)| prefix.len())?;
+    let target = condition_types(v)?;
+    Some(match target.split_once('*') {
+        Some((head, tail)) => format!("{head}{matched}{tail}"),
+        None => target,
+    })
+}
+
+/// A `./x.js` target names the sibling `./x.d.ts`; a declaration target is kept as it is.
+fn declaration(target: String) -> String {
+    for (js, dts) in [(".js", ".d.ts"), (".mjs", ".d.mts"), (".cjs", ".d.cts")] {
+        if let Some(stem) = target.strip_suffix(js) {
+            return format!("{stem}{dts}");
+        }
+    }
+    target
+}
+
+/// The `"types"` target of an exports entry, searched through nested condition objects.
+fn condition_types(entry: &Json) -> Option<String> {
+    match entry {
+        Json::Str(s) => Some(s.clone()),
+        Json::Obj(conditions) => entry["types"].as_str().map(str::to_string).or_else(|| {
+            conditions.iter().filter(|(_, v)| matches!(v, Json::Obj(_))).find_map(|(_, v)| condition_types(v))
+        }),
+        _ => None,
     }
 }
 
@@ -204,6 +413,14 @@ fn parameter_properties(ctor: &str, out: &mut HashSet<String>) {
             i = end;
             continue;
         }
+        if is_ident_start(b[i]) && (i == 0 || !is_ident_char(b[i - 1])) {
+            let start = i;
+            while i < b.len() && is_ident_char(b[i]) {
+                i += 1;
+            }
+            prev = Some(word_prev(&ctor[start..i], prev));
+            continue;
+        }
         match b[i] {
             b'(' | b'[' | b'{' | b'<' => depth += 1,
             b'>' if prev == Some(b'=') => {}
@@ -276,7 +493,7 @@ fn tokens(text: &str) -> Vec<Tok> {
                 i += 1;
             }
             out.push(Tok { kind: Kind::Ident, start, end: i });
-            prev = Some(word_prev(&text[start..i]));
+            prev = Some(word_prev(&text[start..i], prev));
             continue;
         }
         if !c.is_ascii_whitespace() {
@@ -286,6 +503,11 @@ fn tokens(text: &str) -> Vec<Tok> {
         i += 1;
     }
     out
+}
+
+/// The contents of a quoted string token; an unterminated literal has no closing quote to strip.
+fn str_text<'t>(text: &'t str, t: &Tok) -> Option<&'t str> {
+    (t.kind == Kind::Str && t.end > t.start + 1).then(|| &text[t.start + 1..t.end - 1])
 }
 
 /// Top-level `import ... from "spec"` statements as clause and specifier pairs; a clause is its
@@ -301,15 +523,55 @@ fn ts_imports<'t>(text: &'t str, toks: &[Tok]) -> Vec<(String, &'t str)> {
             (Kind::Ident, "import") if depth == 0 && toks.get(i + 1).is_some_and(|n| !matches!(s(n), "(" | ".")) => {
                 let Some(at) = toks[i + 1..].iter().position(|n| n.kind == Kind::Str || s(n) == ";") else { continue };
                 let (from, spec) = (i + at, toks[i + 1 + at]);
-                if spec.kind == Kind::Str && at > 0 && s(&toks[from]) == "from" {
-                    let clause: Vec<&str> = toks[i + 1..from].iter().map(s).collect();
-                    out.push((clause.join(" "), &text[spec.start + 1..spec.end - 1]));
+                if at > 0 && s(&toks[from]) == "from" {
+                    if let Some(target) = str_text(text, &spec) {
+                        let clause: Vec<&str> = toks[i + 1..from].iter().map(s).collect();
+                        out.push((clause.join(" "), target));
+                    }
                 }
             }
             _ => {}
         }
     }
     out
+}
+
+/// Top-level `export { ... }` clauses with their specifier, and `export * from "spec"` targets.
+fn ts_exports<'t>(text: &'t str, toks: &[Tok]) -> (Vec<(String, Option<&'t str>)>, Vec<&'t str>) {
+    let s = |i: usize| toks.get(i).map_or("", |t: &Tok| &text[t.start..t.end]);
+    let spec_at = |i: usize| toks.get(i).and_then(|t| str_text(text, t));
+    let (mut named, mut stars) = (Vec::new(), Vec::new());
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < toks.len() {
+        match s(i) {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            _ => {}
+        }
+        if depth != 0 || s(i) != "export" {
+            i += 1;
+            continue;
+        }
+        let j = if s(i + 1) == "type" && matches!(s(i + 2), "{" | "*") { i + 2 } else { i + 1 };
+        if s(j) == "*" {
+            // `export * as ns from "m"` binds a namespace object, not a class.
+            if s(j + 1) == "from" {
+                stars.extend(spec_at(j + 2));
+            }
+            i = j + 3;
+            continue;
+        }
+        if s(j) != "{" {
+            i += 1;
+            continue;
+        }
+        let Some(close) = (j + 1..toks.len()).find(|&k| s(k) == "}") else { break };
+        let clause: Vec<&str> = toks[j..=close].iter().map(|t| &text[t.start..t.end]).collect();
+        named.push((clause.join(" "), (s(close + 1) == "from").then(|| spec_at(close + 2)).flatten()));
+        i = close + 1;
+    }
+    (named, stars)
 }
 
 /// The `extends` name and body range of class `name`, or of the default-exported class for `None`.
@@ -364,7 +626,21 @@ mod tests {
     }
 
     fn compile(files: &[(&str, &str)], main: &str) -> String {
-        compile_in(files, main).0
+        compile_at(files, main, "C.tszor")
+    }
+
+    /// Compiles `main` as if it sat at `at` under `/p`.
+    fn compile_at(files: &[(&str, &str)], main: &str, at: &str) -> String {
+        let root = Path::new("/p");
+        let map: HashMap<PathBuf, String> = files.iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
+        crate::compile_mapped_with(main, &root.join(at), &|p| map.get(p).cloned()).unwrap().code
+    }
+
+    fn unresolved_in(files: &[(&str, &str)], main: &str) -> Option<String> {
+        let root = Path::new("/p");
+        let map: HashMap<PathBuf, String> = files.iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
+        let (doc, _) = crate::parser::parse(main).unwrap();
+        base_members(&doc, &root.join("C.tszor"), &|p| map.get(p).cloned()).unresolved
     }
 
     const TITLED: &str = r#"import { ComponentBase } from "@zor/runtime";
@@ -439,6 +715,13 @@ export class After { late = 1; }
     }
 
     #[test]
+    fn constructor_regex_with_paren_keeps_later_properties() {
+        let base = "export class K {\n  constructor(public check = (s: string) => { return /[)]/.test(s); }, public n = 0) { super(); }\n}\n";
+        let code = compile(&[("k.ts", base)], "@import { K } from \"./k\"\n@inherits K\n<p>@check @n</p>\n");
+        assert!(code.contains("this.check") && code.contains("this.n"), "{code}");
+    }
+
+    #[test]
     fn a_js_specifier_names_the_ts_file() {
         let a = "export class A { a = 1; }\n";
         let code = compile(&[("a.ts", a)], "@import { A } from \"./a.js\"\n@inherits A\n<p>@a</p>\n");
@@ -499,5 +782,168 @@ export class After { late = 1; }
         let deep: String = (0..10).map(|i| format!("class C{i} extends C{} {{ m{i} = 1; }}\n", i + 1)).collect();
         let code = compile(&[("d.ts", &deep)], "@import { C0 } from \"./d\"\n@inherits C0\n<p>@m0 @m7 @m8</p>\n");
         assert!(code.contains("this.m0") && code.contains("this.m7") && !code.contains("this.m8"), "{code}");
+    }
+
+    #[test]
+    fn reads_declaration_files() {
+        let d = "export declare class Titled extends ComponentBase { title: string; describe(): string; static make(): Titled; }\n";
+        let code = compile(&[("base.d.ts", d)], "@import { Titled } from \"./base\"\n@inherits Titled\n<p>@title @describe() @make()</p>\n");
+        assert!(code.contains("this.title") && code.contains("this.describe()"), "{code}");
+        assert!(!code.contains("this.make"), "{code}");
+    }
+
+    #[test]
+    fn follows_reexports() {
+        let index = "export { Titled as Named } from \"./base\";\nexport * from \"./more\";\nexport { default as D } from \"./def\";\nimport { A } from \"./a\";\nexport { A };\n";
+        let files = [
+            ("base.ts", TITLED),
+            ("more.ts", "export class Other { o = 1 }\n"),
+            ("def.ts", "export default class { d = 1 }\n"),
+            ("a.ts", "export class A { a = 1 }\n"),
+            ("index.ts", index),
+        ];
+        for (name, member) in [("Named", "title"), ("Other", "o"), ("D", "d"), ("A", "a")] {
+            let main = format!("@import {{ {name} }} from \"./index\"\n@inherits {name}\n<p>@{member}</p>\n");
+            let code = compile(&files, &main);
+            assert!(code.contains(&format!("this.{member}")), "{name}\n{code}");
+        }
+    }
+
+    #[test]
+    fn a_barrel_reexporting_a_component_is_read_as_a_component() {
+        let files = [
+            ("lib/Card.tszor", "@code { card = 1; }\n<p/>\n"),
+            ("lib/index.ts", "export { default as Card } from \"./Card.tszor\";\n"),
+        ];
+        let main = "@import { Card } from \"./lib/index\"\n@inherits Card\n<p>@card</p>\n";
+        let code = compile(&files, main);
+        assert!(code.contains("this.card"), "{code}");
+        assert_eq!(unresolved_in(&files, main), None);
+    }
+
+    #[test]
+    fn star_export_cycles_terminate() {
+        let files = [("a.ts", "export * from \"./b\";\n"), ("b.ts", "export * from \"./a\";\n")];
+        let main = "@import { X } from \"./a\"\n@inherits X\n<p>@title</p>\n";
+        assert!(compile(&files, main).contains("addContent(title)"));
+        assert_eq!(unresolved_in(&files, main), Some("X".to_string()));
+    }
+
+    #[test]
+    fn resolves_packages() {
+        let files = [
+            ("node_modules/ui/package.json", r#"{"exports":{".":{"import":{"types":"./dist/index.d.ts"}},"./forms":{"types":"./dist/forms.d.ts"}}}"#),
+            ("node_modules/ui/dist/index.d.ts", "export declare class Panel { panel: number; }\n"),
+            ("node_modules/ui/dist/forms.d.ts", "export declare class Form { form: number; }\n"),
+            ("node_modules/@scope/kit/package.json", r#"{"types":"./k.d.ts"}"#),
+            ("node_modules/@scope/kit/k.d.ts", "export declare class Kit { kit: number; }\n"),
+            ("node_modules/@types/legacy/package.json", "{}"),
+            ("node_modules/@types/legacy/index.d.ts", "export declare class Legacy { legacy: number; }\n"),
+        ];
+        for (name, spec, member) in [("Panel", "ui", "panel"), ("Form", "ui/forms", "form"), ("Kit", "@scope/kit", "kit"), ("Legacy", "legacy", "legacy")] {
+            let main = format!("@import {{ {name} }} from \"{spec}\"\n@inherits {name}\n<p>@{member}</p>\n");
+            let code = compile_at(&files, &main, "src/C.tszor");
+            assert!(code.contains(&format!("this.{member}")), "{spec}\n{code}");
+        }
+    }
+
+    #[test]
+    fn a_bare_condition_map_is_the_root_export() {
+        let files = [
+            ("node_modules/sugar/package.json", r#"{"exports":{"types":"./dist/index.d.ts","import":"./dist/index.js"}}"#),
+            ("node_modules/sugar/dist/index.d.ts", "export declare class Sugar { sugar: number; }\n"),
+            // Subpath keys make this a subpath map, not a condition map for ".".
+            ("node_modules/subs/package.json", r#"{"exports":{"./forms":{"types":"./dist/forms.d.ts"}}}"#),
+            ("node_modules/subs/dist/forms.d.ts", "export declare class Wrong { wrong: number; }\n"),
+            ("node_modules/subs/index.d.ts", "export declare class Root { root: number; }\n"),
+        ];
+        for (name, spec, member) in [("Sugar", "sugar", "sugar"), ("Root", "subs", "root")] {
+            let main = format!("@import {{ {name} }} from \"{spec}\"\n@inherits {name}\n<p>@{member}</p>\n");
+            let code = compile_at(&files, &main, "src/C.tszor");
+            assert!(code.contains(&format!("this.{member}")), "{spec}\n{code}");
+        }
+    }
+
+    #[test]
+    fn a_javascript_target_names_its_declaration_sibling() {
+        let files = [
+            ("node_modules/cjs/package.json", r#"{"exports":"./index.js"}"#),
+            ("node_modules/cjs/index.d.ts", "export declare class Js { js: number; }\n"),
+            ("node_modules/esm/package.json", r#"{"exports":"./index.mjs"}"#),
+            ("node_modules/esm/index.d.mts", "export declare class Mjs { mjs: number; }\n"),
+            ("node_modules/node/package.json", r#"{"exports":{"./sub":"./sub.cjs"}}"#),
+            ("node_modules/node/sub.d.cts", "export declare class Cjs { cjs: number; }\n"),
+            // The sibling declaration is missing, so the `index.d.ts` fallback still applies.
+            ("node_modules/fall/package.json", r#"{"exports":"./lib/main.js"}"#),
+            ("node_modules/fall/index.d.ts", "export declare class Fall { fall: number; }\n"),
+        ];
+        for (name, spec, member) in [("Js", "cjs", "js"), ("Mjs", "esm", "mjs"), ("Cjs", "node/sub", "cjs"), ("Fall", "fall", "fall")] {
+            let main = format!("@import {{ {name} }} from \"{spec}\"\n@inherits {name}\n<p>@{member}</p>\n");
+            let code = compile_at(&files, &main, "src/C.tszor");
+            assert!(code.contains(&format!("this.{member}")), "{spec}\n{code}");
+        }
+    }
+
+    #[test]
+    fn exact_subpaths_win_over_patterns() {
+        let files = [
+            ("node_modules/pat/package.json", r#"{"exports":{"./forms":{"types":"./dist/real.d.ts"},"./*":{"types":"./dist/*.d.ts"}}}"#),
+            ("node_modules/pat/dist/real.d.ts", "export declare class Form { form: number; }\n"),
+            ("node_modules/pat/dist/forms.d.ts", "export declare class Form { wrong: number; }\n"),
+            ("node_modules/pat/dist/grid.d.ts", "export declare class Grid { grid: number; }\n"),
+        ];
+        let main = "@import { Grid } from \"pat/grid\"\n@inherits Grid\n<p>@grid</p>\n";
+        assert!(compile_at(&files, main, "src/C.tszor").contains("this.grid"));
+        let main = "@import { Form } from \"pat/forms\"\n@inherits Form\n<p>@form @wrong</p>\n";
+        let code = compile_at(&files, main, "src/C.tszor");
+        assert!(code.contains("this.form") && !code.contains("this.wrong"), "{code}");
+    }
+
+    #[test]
+    fn the_longest_pattern_prefix_wins() {
+        let files = [
+            ("node_modules/pat/package.json", r#"{"exports":{"./*":{"types":"./dist/*.d.ts"},"./ui/*":{"types":"./ui/*.d.ts"}}}"#),
+            ("node_modules/pat/dist/ui/grid.d.ts", "export declare class Grid { wrong: number; }\n"),
+            ("node_modules/pat/ui/grid.d.ts", "export declare class Grid { grid: number; }\n"),
+        ];
+        let main = "@import { Grid } from \"pat/ui/grid\"\n@inherits Grid\n<p>@grid @wrong</p>\n";
+        let code = compile_at(&files, main, "src/C.tszor");
+        assert!(code.contains("this.grid") && !code.contains("this.wrong"), "{code}");
+    }
+
+    #[test]
+    fn a_package_directory_without_a_manifest_is_not_probed() {
+        let root = Path::new("/p");
+        let main = "@import { Pkg } from \"ui/forms\"\n@inherits Pkg\n<p/>\n";
+        let g = crate::compile_mapped_with(main, &root.join("src/C.tszor"), &|_| None).unwrap();
+        assert!(g.deps.iter().all(|d| d.file_name().is_some_and(|n| n == "package.json")), "{:?}", g.deps);
+    }
+
+    #[test]
+    fn an_unterminated_string_literal_does_not_panic() {
+        let star = [("q.ts", "export * from \"")];
+        let main = "@import { X } from \"./q\"\n@inherits X\n<p>@title</p>\n";
+        assert!(compile(&star, main).contains("addContent(title)"));
+        let clause = [("q.ts", "export { A };\nimport { A } from \"")];
+        let main = "@import { A } from \"./q\"\n@inherits A\n<p>@title</p>\n";
+        assert!(compile(&clause, main).contains("addContent(title)"));
+    }
+
+    #[test]
+    fn without_inherits_nothing_is_read() {
+        let (_, reads) = compile_in(&[("base.ts", TITLED)], "<p>@title</p>\n");
+        assert!(reads.is_empty(), "{reads:?}");
+        let main = "@import { ComponentBase } from \"@zor/runtime\"\n@inherits ComponentBase\n<p>@title</p>\n";
+        let (_, reads) = compile_in(&[("base.ts", TITLED)], main);
+        assert!(reads.is_empty(), "{reads:?}");
+    }
+
+    #[test]
+    fn unresolved_reports_the_first_missing_class() {
+        assert_eq!(unresolved_in(&[], "@import { Gone } from \"./gone\"\n@inherits Gone\n<p/>\n"), Some("Gone".to_string()));
+        let m = "export class M extends mixin(A) { m = 1; }\n";
+        assert_eq!(unresolved_in(&[("m.ts", m)], "@import { M } from \"./m\"\n@inherits M\n<p/>\n"), Some("mixin".to_string()));
+        assert_eq!(unresolved_in(&[("base.ts", TITLED)], "@import { Titled } from \"./base\"\n@inherits Titled\n<p/>\n"), None);
+        assert_eq!(unresolved_in(&[("a.ts", "export class A { a = 1 }\n")], "@import { A } from \"./a\"\n@inherits A\n<p/>\n"), None);
     }
 }

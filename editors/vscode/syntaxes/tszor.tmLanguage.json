@@ -163,7 +163,7 @@
       }
     },
     "typeparam": {
-      "match": "(?<![[:alnum:]])(@)(typeparam)\\s+([_$[:alpha:]][_$[:alnum:]]*)((?:[^/@]|/(?!/))*)(//.*$)?",
+      "match": "(?<![[:alnum:]])(@)(typeparam)\\s+([_$[:alpha:]][_$[:alnum:]]*)((?:\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|[^/@]|/(?!/))*)(//.*$)?",
       "captures": {
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.directive.tszor" },

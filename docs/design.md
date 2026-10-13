@@ -25,7 +25,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@* comment *@` | A comment, removed at compile time |
 | `@{ const x = f(); <p>@x</p> @: text @x }` | Statements inside `buildRenderTree`. Variables declared there are usable later in the same scope. Markup at statement start and `@:` lines render in place, and markup used as a value becomes a `RenderFragment`. |
 | `<text>…</text>` | Renders its content only, with no wrapper element |
-| `@inherits Base<T>`, `@implements A, B`, `@attribute dec(args)` | `@dec(args)` then `export default class C extends Base<T> implements A, B`. The base must derive from `ComponentBase`. When the base resolves through a relative `@import` (a `.ts` class or a `.tszor`, following its own `extends` chain), its instance members are usable as bare names in the template, like `@code` members. |
+| `@inherits Base<T>`, `@implements A, B`, `@attribute dec(args)` | `@dec(args)` then `export default class C extends Base<T> implements A, B`. The base must derive from `ComponentBase`. When the base resolves through an `@import` (a `.ts`, `.d.ts` or `.tszor` file, following re-exports and its own `extends` chain; a bare specifier is found in `node_modules` through `types`, `typings`, `exports` (conditions, subpaths and `*` patterns; `.js` targets read as their `.d.ts`), `index.d.ts` or `@types/<pkg>`), its instance members are usable as bare names in the template, like `@code` members. When a base in the chain can't be read, compiling warns (`could not read base class 'Base'; use this.<member> for its members`, also an LSP warning) and its members need `this.`. tsconfig `paths`, `export =` and bases that are expressions (`extends mixin(A)`) are not followed. |
 | `@switch (v) { case a: case b: ... break; default: ... }` | Each case is block-scoped and always ends in `break` (no fall-through into a body). Stacked labels share one body. `break;` is optional. |
 | `@@`, `a@b.com` | Literal `@` |
 | `attr="text @expr"`, `attr="@expr"` | Interpolated and typed attribute values (`false`/`null` removes the attribute) |
@@ -192,13 +192,14 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
 - Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
 - `@Mount` must be in the entry module (`--entry`, default `main.ts`).
+- Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
 
 ## Build
 
 - Only `.tszor` files inside a tsconfig project are compiled. Each one produces `.zor/<rel>.tszor.ts` plus a v3 `.tszor.ts.map`, and files are only written when their content changes.
 - `tsc` errors are rewritten to point at `.tszor` positions.
 - The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.tszor` sources.
-- `zor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. zor recompiles only the changed `.tszor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.zor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer.
+- `zor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. zor recompiles only the changed `.tszor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.zor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer. `node_modules` is not watched, so an `@inherits` base in a package is only read again on such a full rebuild.
 - DI analysis runs in a persistent process (`di.ts --serve`). It keeps one TypeScript 7 session per project root, so warm requests take a few milliseconds. `--watch` and the language server reuse it. It is recycled after 500 requests.
 - After stale generated files are pruned, empty folders under `.zor/` are removed.
 

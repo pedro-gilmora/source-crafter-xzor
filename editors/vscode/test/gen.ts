@@ -79,6 +79,7 @@ const spec: [string, A[]][] = [
   ["@attribute sealed", [["attribute", "keyword.control.directive.tszor"]]],
   ["@inject A a // c", [["inject", "keyword.control.directive.tszor"], ["a", "variable.other.readwrite.tszor"], ["// c", "comment.line.double-slash.tszor"]]],
   ["@typeparam T @* c *@", [["T", "entity.name.type.parameter.tszor"], ["@* c *@", "comment.block.tszor"]]],
+  ['@typeparam T extends "a//b" | \'c@d\' // c', [['"a//b"', "string.quoted.double.ts"], ["'c@d'", "string.quoted.single.ts"], ["// c", "comment.line.double-slash.tszor"]]],
   ["@page \"/a\" // home", [["\"/a\"", "string.quoted.double.tszor"], ["// home", "comment.line.double-slash.tszor"]]],
   ["@import x from \"http://a\" // c", [["\"http://a\"", "string.quoted.double.ts"], ["// c", "comment.line.double-slash.tszor"]]],
   ["@inject IDatabase db", [["@", "keyword.control.transition.tszor"], ["inject", "keyword.control.directive.tszor"], ["IDatabase", "entity.name.type.ts"], ["db", "variable.other.readwrite.tszor"]]],

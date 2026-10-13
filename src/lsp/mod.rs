@@ -116,7 +116,8 @@ fn encode_into(out: &mut String, s: &str) {
 /// Paths compare case-insensitively on Windows.
 pub fn same_path(a: &Path, b: &Path) -> bool {
     if cfg!(windows) {
-        path_key(a) == path_key(b)
+        let (a, b) = (a.to_string_lossy(), b.to_string_lossy());
+        a.chars().flat_map(char::to_lowercase).eq(b.chars().flat_map(char::to_lowercase))
     } else {
         a == b
     }

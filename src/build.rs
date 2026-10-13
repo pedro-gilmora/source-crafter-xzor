@@ -94,6 +94,13 @@ pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
     if errors.is_empty() { Ok(compiled) } else { Err(errors.join("\n")) }
 }
 
+/// Prints a unit's compile warnings to stderr (the CLI's; the LSP publishes them instead).
+pub fn print_warnings(unit: &Compiled) {
+    for w in &unit.generated.warnings {
+        eprintln!("warning: {}:{}:{}: {}", unit.source.display(), w.line, w.column, w.message);
+    }
+}
+
 /// Compiles one `.tszor` into its project's `.zor/`, with its source map.
 pub fn compile_one(src: &Path) -> Result<Compiled, String> {
     let text = fs::read_to_string(src).map_err(|e| format!("{}: {e}", src.display()))?;
@@ -190,7 +197,7 @@ pub fn changed_scripts(paths: &[String], root: &Path) -> Vec<PathBuf> {
     paths
         .iter()
         .map(|p| p.replace('\\', "/"))
-        .filter(|p| !watch_ignored(p) && (p.ends_with(".ts") || p.ends_with(".tsx")) && !p.ends_with(".d.ts"))
+        .filter(|p| !watch_ignored(p) && (p.ends_with(".ts") || p.ends_with(".tsx")))
         .map(|p| root.join(p.replace('/', std::path::MAIN_SEPARATOR_STR)))
         .collect()
 }
@@ -843,8 +850,16 @@ mod tests {
         let units = compile_all(&root).unwrap();
         assert_eq!(dependents(&units, &[root.join("base.ts").as_path()]), vec![root.join("App.tszor")]);
         assert_eq!(dependents(&units, &[root.join("shared").join("index.ts").as_path()]), vec![root.join("Dir.tszor")]);
-        assert!(dependents(&units, &[root.join("base.d.ts").as_path()]).is_empty());
+        assert_eq!(dependents(&units, &[root.join("base.d.ts").as_path()]), vec![root.join("App.tszor")]);
+        assert!(dependents(&units, &[root.join("base.js").as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn changed_scripts_keep_declaration_files() {
+        let root = Path::new("/p");
+        let paths: Vec<String> = ["base.d.ts", "a.ts", "b.tsx", "C.tszor", "node_modules/x/i.d.ts", ".zor/C.tszor.ts"].iter().map(|p| p.to_string()).collect();
+        assert_eq!(changed_scripts(&paths, root), vec![root.join("base.d.ts"), root.join("a.ts"), root.join("b.tsx")]);
     }
 
     #[test]
