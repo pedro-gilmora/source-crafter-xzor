@@ -172,7 +172,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 
 | Id | Error |
 |---|---|
-| ZDI01 | Service registered twice in one provider. |
+| ZDI01 | Service registered twice in one provider, including a local registration of a service that an import already provides (shared dependencies are never overridden). |
 | ZDI02 | Unresolved dependency in a provider (includes self-sufficiency of imports). |
 | ZDI03 | Dependency cycle. |
 | ZDI04 | An `@inject` type is not provided by the application, or there is no `@Mount` application. |
