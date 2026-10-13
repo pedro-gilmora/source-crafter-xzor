@@ -10,6 +10,7 @@
   "main": "./out/extension.js",
   "activationEvents": ["onLanguage:tszor"],
   "contributes": {
+    "commands": [{ "command": "tszor.restartServer", "title": "Restart Server", "category": "TSZor" }],
     "configuration": {
       "title": "TSZor",
       "properties": {

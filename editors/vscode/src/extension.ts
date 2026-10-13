@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { type ExtensionContext, workspace } from "vscode";
+import { type ExtensionContext, type FileSystemWatcher, commands, window, workspace } from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
@@ -28,13 +28,11 @@ function stableCopy(context: ExtensionContext, server: string): string {
   return copy;
 }
 
-export async function activate(context: ExtensionContext): Promise<void> {
+function createClient(context: ExtensionContext, watcher: FileSystemWatcher): LanguageClient {
+  // A fresh copy each time, so a rebuilt target/ binary is picked up on restart.
   const command = stableCopy(context, findServer());
-  // Provider `.ts` changes rerun the DI analysis; the server ignores `.zor/` and `node_modules/`.
-  const watcher = workspace.createFileSystemWatcher("**/{*.ts,*.tszor}");
-  context.subscriptions.push(watcher);
   // `.ts` documents get only DI diagnostics from the server; VS Code's TypeScript serves everything else.
-  client = new LanguageClient(
+  return new LanguageClient(
     "tszor",
     "TSZor",
     { command, args: ["lsp"] },
@@ -46,6 +44,21 @@ export async function activate(context: ExtensionContext): Promise<void> {
       synchronize: { fileEvents: watcher },
     },
   );
+}
+
+export async function activate(context: ExtensionContext): Promise<void> {
+  // Provider `.ts` changes rerun the DI analysis; the server ignores `.zor/` and `node_modules/`.
+  const watcher = workspace.createFileSystemWatcher("**/{*.ts,*.tszor}");
+  context.subscriptions.push(watcher);
+  context.subscriptions.push(
+    commands.registerCommand("tszor.restartServer", async () => {
+      await client?.stop();
+      client = createClient(context, watcher);
+      await client.start();
+      window.setStatusBarMessage("TSZor: server restarted", 3000);
+    }),
+  );
+  client = createClient(context, watcher);
   await client.start();
 }
 
