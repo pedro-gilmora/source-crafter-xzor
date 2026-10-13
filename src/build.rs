@@ -2,7 +2,7 @@
 
 pub use crate::analyzer::Analyzer;
 use crate::codegen::Generated;
-use crate::lsp::{offset_at, path_key, position_at, same_path};
+use crate::lsp::{offset_at, position_at, same_path};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::fs;
@@ -181,12 +181,12 @@ fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, 
 /// chain probed a changed file (`Generated::deps`). Excludes the changed ones themselves.
 pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
     let names: Vec<_> = changed.iter().filter_map(|c| c.file_name()).map(|n| n.to_string_lossy()).filter(|n| n.ends_with(".tszor")).collect();
-    let changed_keys: Vec<String> = changed.iter().map(|c| path_key(&normalize(c))).collect();
+    let changed_norm: Vec<PathBuf> = changed.iter().map(|c| normalize(c)).collect();
     units
         .iter()
         .filter(|u| {
             !changed.contains(&u.source.as_path())
-                && (names.iter().any(|n| u.text.contains(&**n)) || u.generated.deps.iter().any(|d| changed_keys.contains(&path_key(d))))
+                && (names.iter().any(|n| u.text.contains(&**n)) || u.generated.deps.iter().any(|d| changed_norm.iter().any(|c| same_path(c, d))))
         })
         .map(|u| u.source.clone())
         .collect()
