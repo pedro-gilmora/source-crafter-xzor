@@ -8,6 +8,7 @@ pub mod inherit;
 pub mod json;
 pub mod lsp;
 pub mod parser;
+pub mod routes;
 
 use std::collections::HashMap;
 use std::fmt;

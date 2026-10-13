@@ -2,6 +2,7 @@
 //! way Razor lowers `.razor` into a C# class with `BuildRenderTree`.
 
 use crate::ast::*;
+use crate::routes::{ParamKind, RouteInfo};
 use crate::{is_ident_char, is_ident_start};
 use std::collections::{HashMap, HashSet};
 
@@ -19,6 +20,8 @@ pub struct Generated {
     pub mappings: Vec<Mapping>,
     /// `@inject` types and names, with their offsets in the `.tszor`.
     pub injects: Vec<Inject>,
+    /// `@page` routes, with their params typed from the props.
+    pub routes: Vec<RouteInfo>,
     /// Files probed while resolving the `@inherits` chain, found or not; a change to one invalidates this output.
     pub deps: Vec<std::path::PathBuf>,
     /// Problems that don't stop the build.
@@ -302,8 +305,8 @@ pub fn generate_with(
     }
     g.emit(header.lit_then(" {"));
     g.depth = 1;
-    if let Some(route) = &doc.page {
-        g.line(&format!("static readonly route = {};", js_string(route)));
+    if let Some(page) = doc.pages.first() {
+        g.line(&format!("static readonly route = {};", js_string(&page.pattern)));
     }
     if !slots.is_empty() {
         let fields: Vec<String> = slots
@@ -351,7 +354,39 @@ pub fn generate_with(
     g.depth = 0;
     g.line("}");
     let injects = doc.injects.clone();
-    Ok(Generated { code: g.out, mappings: g.mappings, injects, deps: Vec::new(), warnings: Vec::new() })
+    let routes = page_routes(doc, &decls);
+    Ok(Generated { code: g.out, mappings: g.mappings, injects, routes, deps: Vec::new(), warnings: Vec::new() })
+}
+
+/// The `@page` routes of a document, with params typed from the props.
+fn page_routes(doc: &Document, decls: &[Vec<MemberDecl>]) -> Vec<RouteInfo> {
+    doc.pages
+        .iter()
+        .map(|page| {
+            let (tag, tag_at) = match &page.tag {
+                Some(t) => (Some(t.text.clone()), t.at),
+                None => (None, page.pattern.at),
+            };
+            let params = crate::routes::param_names(&page.pattern)
+                .into_iter()
+                .map(|p| (p.to_string(), declared_param_kind(doc, decls, p)))
+                .collect();
+            RouteInfo { tag, tag_at, pattern: page.pattern.text.clone(), pattern_at: page.pattern.at, params }
+        })
+        .collect()
+}
+
+/// Conversion for a route param, from the member of the same name; anything not declared here
+/// (inherited or absent, like an undeclared `rest`) stays a string.
+fn declared_param_kind(doc: &Document, decls: &[Vec<MemberDecl>], param: &str) -> ParamKind {
+    for (code, decls) in doc.code.iter().zip(decls) {
+        if let Some(m) = decls.iter().find(|m| !m.is_method && m.name == param) {
+            let rest = &code[m.offset..];
+            let end = rest.find(['\n', ';']).unwrap_or(rest.len());
+            return crate::routes::param_kind(&rest[..end]);
+        }
+    }
+    ParamKind::String
 }
 
 struct Gen<'p> {
@@ -1861,6 +1896,30 @@ mod tests {
             assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}\n{}", g.code);
         }
         g
+    }
+
+    #[test]
+    fn routes_are_recorded_with_param_kinds() {
+        use crate::routes::ParamKind;
+        let src = "@page \"/p/:id/:on/:tab/:slug/*\" as p\n@page \"/u/:id\"\n@code {\n  id = 0;\n  on: boolean = false;\n  tab: \"a\" | \"b\" = \"a\";\n  slug = \"\";\n}\n<p/>";
+        let (doc, _) = crate::parser::parse(src).unwrap();
+        let g = generate_with(&doc, "UserProfile", "UserProfile.tszor", &HashMap::new(), &HashSet::new()).unwrap();
+        assert!(g.code.contains("static readonly route = \"/p/:id/:on/:tab/:slug/*\";"), "{}", g.code);
+        let tags: Vec<Option<&str>> = g.routes.iter().map(|r| r.tag.as_deref()).collect();
+        assert_eq!(tags, [Some("p"), None]);
+        assert_eq!((g.routes[0].pattern_at, g.routes[0].tag_at), (7, 35));
+        assert_eq!(
+            g.routes[0].params,
+            [
+                ("id".to_string(), ParamKind::Number),
+                ("on".to_string(), ParamKind::Boolean),
+                ("tab".to_string(), ParamKind::Union(vec!["a".into(), "b".into()])),
+                ("slug".to_string(), ParamKind::String),
+                ("rest".to_string(), ParamKind::String),
+            ]
+        );
+        assert_eq!(g.routes[1].pattern_at, 44);
+        assert_eq!(g.routes[1].params, [("id".to_string(), ParamKind::Number)]);
     }
 
     #[test]

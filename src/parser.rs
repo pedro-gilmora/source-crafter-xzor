@@ -192,6 +192,30 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// Consumes an optional `as <tag>` after a `@page` pattern.
+    fn route_tag(&mut self) -> PResult<Option<Src>> {
+        let before = self.pos;
+        while matches!(self.peek(), Some(b' ' | b'\t')) {
+            self.pos += 1;
+        }
+        let kw = self.pos;
+        if !self.starts_with("as") || matches!(self.peek_at(2), Some(c) if is_ident_char(c)) {
+            self.pos = before;
+            return Ok(None);
+        }
+        self.pos += 2;
+        self.mark(TokenKind::Keyword, kw, self.pos);
+        while matches!(self.peek(), Some(b' ' | b'\t')) {
+            self.pos += 1;
+        }
+        let start = self.pos;
+        if self.ident().is_empty() {
+            return self.err("expected a route tag after \"as\"");
+        }
+        self.mark(TokenKind::Code, start, self.pos);
+        Ok(Some(self.span(start, self.pos)))
+    }
+
     fn ident(&mut self) -> &'a str {
         let src = self.src;
         let start = self.pos;
@@ -386,7 +410,15 @@ impl<'a> Parser<'a> {
                 }
                 self.string_lit()?;
                 self.mark(TokenKind::AttrValue, s, self.pos);
-                self.doc.page = Some(self.src[s + 1..self.pos - 1].to_string());
+                let pattern = self.span(s + 1, self.pos - 1);
+                if let Err(reason) = crate::routes::validate_pattern(&pattern) {
+                    return Err(ParseError {
+                        message: format!("invalid route pattern {:?}: {reason}", &*pattern),
+                        offset: pattern.at,
+                    });
+                }
+                let tag = self.route_tag()?;
+                self.doc.pages.push(PageRoute { pattern, tag });
                 self.trailing_comment()?;
                 Ok(Transition::Nothing)
             }
@@ -1305,7 +1337,7 @@ mod tests {
     fn code_page_and_import() {
         let src = "@page \"/x\"\n@import A from \"./A.tszor\";\n@code {\n  n = \"}\";\n}\n";
         let doc = parse(src).unwrap().0;
-        assert_eq!(doc.page.as_deref(), Some("/x"));
+        assert_eq!(doc.pages[0].pattern, "/x");
         assert_eq!(doc.imports, vec!["A from \"./A.tszor\""]);
         assert_eq!(doc.code, vec!["\n  n = \"}\";\n"]);
         assert!(doc.nodes.is_empty());
@@ -1541,11 +1573,34 @@ after"#;
     fn page_comment() {
         let src = "@page \"/a\" // home\n<p/>";
         let (doc, tokens) = parse(src).unwrap();
-        assert_eq!(doc.page.as_deref(), Some("/a"));
+        assert_eq!(doc.pages[0].pattern, "/a");
         assert_eq!(comments(&tokens), vec![(11, 18)]);
         let (doc, tokens) = parse("@page \"/a\" @* home *@").unwrap();
-        assert_eq!(doc.page.as_deref(), Some("/a"));
+        assert_eq!(doc.pages[0].pattern, "/a");
         assert_eq!(comments(&tokens).len(), 1);
+    }
+
+    #[test]
+    fn parses_several_pages_with_tags() {
+        let src = "@page \"/users/:id\" as user\n@page \"/a/*\" // c\n<p/>";
+        let (doc, tokens) = parse(src).unwrap();
+        assert_eq!(doc.pages.len(), 2);
+        assert_eq!(doc.pages[0].pattern, "/users/:id");
+        assert_eq!(doc.pages[0].pattern.at, 7);
+        assert_eq!(doc.pages[0].tag.as_ref().map(|t| (&*t.text, t.at)), Some(("user", 22)));
+        assert_eq!(doc.pages[1].pattern, "/a/*");
+        assert_eq!(doc.pages[1].tag, None);
+        assert_eq!(comments(&tokens), vec![(40, 44)]);
+
+        let doc = parse("@page \"/a\"\n@page \"/b\"\n<p/>").unwrap().0;
+        assert_eq!(doc.pages.len(), 2);
+        let e = parse("@page \"users\"\n<p/>").unwrap_err();
+        assert_eq!(e.message, "invalid route pattern \"users\": must start with '/'");
+        assert_eq!(e.offset, 7);
+        let e = parse("@page \"/a/*/b\"\n<p/>").unwrap_err();
+        assert_eq!(e.message, "invalid route pattern \"/a/*/b\": '*' must be the last segment");
+        let e = parse("@page \"/:1x\"\n<p/>").unwrap_err();
+        assert_eq!(e.message, "invalid route pattern \"/:1x\": invalid parameter name \"1x\"");
     }
 
     #[test]

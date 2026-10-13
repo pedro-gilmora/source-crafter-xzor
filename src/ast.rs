@@ -60,9 +60,16 @@ pub struct Inject {
     pub name: Src,
 }
 
+/// A `@page "pattern"` line, optionally tagged with `as <tag>`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PageRoute {
+    pub pattern: Src,
+    pub tag: Option<Src>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Document {
-    pub page: Option<String>,
+    pub pages: Vec<PageRoute>,
     /// `@typeparam` declarations, e.g. `T extends object`.
     pub type_params: Vec<Src>,
     /// `@inherits Base<T>`: the base class instead of `ComponentBase`.
