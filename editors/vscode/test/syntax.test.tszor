@@ -172,6 +172,10 @@ else {
 @typeparam T @* c *@
 <!--       ^ entity.name.type.parameter.tszor
 <!--         ^^^^^^^ comment.block.tszor
+@typeparam T extends "a//b" | 'c@d' // c
+<!--                 ^^^^^^ string.quoted.double.ts
+<!--                          ^^^^^ string.quoted.single.ts
+<!--                                ^^^^ comment.line.double-slash.tszor
 @page "/a" // home
 <!--  ^^^^ string.quoted.double.tszor
 <!--       ^^^^^^^ comment.line.double-slash.tszor
