@@ -721,6 +721,27 @@ mod tests {
     }
 
     #[test]
+    fn analyzer_is_recycled_after_the_limit() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let root = di_project("recycle", &[("services/data.ts", &data)]);
+        let mut analyzer = Analyzer::with_limit(&root, 2);
+        let files = ["services/data.ts".to_string()];
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert!(analyzer.pid().is_some());
+        let first = analyzer.pid();
+        // The second answer reaches the limit, so the child is stopped.
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert_eq!(analyzer.pid(), None);
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert!(analyzer.pid().is_some() && analyzer.pid() != first);
+        drop(analyzer);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn prune_removes_empty_dirs() {
         let root = temp("prunedirs");
         let zor = root.join(".zor");

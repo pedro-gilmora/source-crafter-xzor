@@ -557,6 +557,8 @@ async function serve(rootArg: string | undefined) {
   let overlays = new Map<string, Overlay>();
   // Non-node_modules program files (and the tsconfig) with their mtime at the last snapshot.
   const tracked = new Map<string, { path: string; mtime: number | undefined }>();
+  // Requested files outside the program at the last snapshot, with their mtime then.
+  const missing = new Map<string, number | undefined>();
   const api = new API({
     cwd: root,
     fs: {
@@ -598,14 +600,15 @@ async function serve(rootArg: string | undefined) {
         }
         // A requested file the program lacks was created since: the tsconfig's include globs must rerun.
         for (const f of [...files, ...components]) {
-          if (!tracked.has(key(f))) {
-            created.push(f);
-            reglob = true;
-          }
+          const k = key(f);
+          if (tracked.has(k) || (missing.has(k) && missing.get(k) === mtime(f))) continue;
+          created.push(f);
+          reglob = true;
         }
         if (reglob) changed.push(config);
       }
-      if (!snapshot || changed.length || created.length || deleted.length) {
+      const rebuilt = !snapshot || changed.length > 0 || created.length > 0 || deleted.length > 0;
+      if (rebuilt) {
         const first = !snapshot;
         snapshot?.dispose();
         // The client keeps parsed files across snapshots unless the server reports them changed, which it does not for these edits.
@@ -621,10 +624,13 @@ async function serve(rootArg: string | undefined) {
           if (!tracked.has(k)) tracked.set(k, { path: n, mtime: mtime(n) });
         }
         for (const k of tracked.keys()) if (!live.has(k)) tracked.delete(k);
+        missing.clear();
+        for (const f of [...files, ...components]) if (!tracked.has(key(f))) missing.set(key(f), mtime(f));
       }
       const project = snapshot.getProject(config);
       if (!project) throw new Error(`no TypeScript project for ${config}`);
-      process.stdout.write(JSON.stringify(analyze(root, project.program, project.checker, files, components)) + "\n");
+      // `rebuilt` is a debug signal; the Rust side ignores it.
+      process.stdout.write(JSON.stringify({ ...analyze(root, project.program, project.checker, files, components), rebuilt }) + "\n");
     } catch (e) {
       process.stdout.write(JSON.stringify({ fatal: e instanceof Error ? (e.stack ?? e.message) : String(e) }) + "\n");
     }

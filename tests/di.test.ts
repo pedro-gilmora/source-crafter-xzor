@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -148,14 +148,15 @@ test("unexported type", () => {
   expect(facts.errors[0].file).toBe("services/hidden.ts");
 });
 
-test("--serve answers several requests with one process and sees overlays", async () => {
-  const proc = Bun.spawn(["bun", script, "--serve", root], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+// A `--serve` child on `dir`; `request` takes an object (or raw line) and returns the parsed response line.
+function startServe(dir: string) {
+  const proc = Bun.spawn(["bun", script, "--serve", dir], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
-  const request = async (body: object) => {
+  const request = async (body: object | string) => {
     const start = performance.now();
-    proc.stdin.write(JSON.stringify(body) + "\n");
+    proc.stdin.write((typeof body === "string" ? body : JSON.stringify(body)) + "\n");
     proc.stdin.flush();
     while (!buffered.includes("\n")) {
       const { value, done } = await reader.read();
@@ -167,6 +168,15 @@ test("--serve answers several requests with one process and sees overlays", asyn
     buffered = buffered.slice(end + 1);
     return { facts: JSON.parse(line), ms: performance.now() - start };
   };
+  const stop = async () => {
+    proc.stdin.end();
+    await proc.exited;
+  };
+  return { proc, request, stop };
+}
+
+test("--serve answers several requests with one process and sees overlays", async () => {
+  const { proc, request, stop } = startServe(root);
   const data = readFileSync(join(root, "services", "data.ts"), "utf8");
   const overlay = data.replace("@Scoped(UnitOfWork)", "@Scoped(UnitOfWork)\n@Transient(ConsoleLogger)").replace("import { Scoped,", "import { Scoped, Transient,");
   const lifetimes = (f: any) => f.providers.find((p: any) => p.class.text === "DataServices").registrations.map((r: any) => r.lifetime);
@@ -180,10 +190,72 @@ test("--serve answers several requests with one process and sees overlays", asyn
     expect(proc.exitCode).toBeNull();
     console.log(`di --serve: first ${first.ms.toFixed(1)} ms, second ${second.ms.toFixed(1)} ms, third ${third.ms.toFixed(1)} ms (pid ${proc.pid})`);
   } finally {
-    proc.stdin.end();
-    await proc.exited;
+    await stop();
   }
   expect(proc.exitCode).toBe(0);
+});
+
+// A copy of the fixture under target/ (the tsconfig's `../../../runtime` path keeps resolving at this depth).
+function fixtureCopy(name: string) {
+  const dir = join(import.meta.dir, "..", "target", "tmp-serve", `${name}-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  cpSync(root, dir, { recursive: true });
+  temps.push(dir);
+  return dir;
+}
+
+test("--serve does not rebuild for a requested file outside the program", async () => {
+  const dir = fixtureCopy("outside");
+  const outside = join(dir, "..", `outside-${process.pid}.ts`);
+  writeFileSync(outside, "export class Out {}\n");
+  temps.push(outside);
+  const body = { files: ["services/data.ts", outside], components: [], overlays: {} };
+  const { request, stop } = startServe(dir);
+  try {
+    expect((await request(body)).facts.rebuilt).toBe(true);
+    expect((await request(body)).facts.rebuilt).toBe(false);
+    expect((await request(body)).facts.rebuilt).toBe(false);
+    // Touching the file counts as a creation again.
+    const later = new Date(Date.now() + 5000);
+    utimesSync(outside, later, later);
+    expect((await request(body)).facts.rebuilt).toBe(true);
+    expect((await request(body)).facts.rebuilt).toBe(false);
+  } finally {
+    await stop();
+  }
+});
+
+test("--serve survives a malformed line", async () => {
+  const { request, stop } = startServe(root);
+  const body = { files: ["services/data.ts"], components: [], overlays: {} };
+  try {
+    expect((await request(body)).facts.providers).toHaveLength(1);
+    const bad = await request("{not json");
+    expect(typeof bad.facts.fatal).toBe("string");
+    expect((await request(body)).facts.providers).toHaveLength(1);
+  } finally {
+    await stop();
+  }
+});
+
+test("--serve picks up a disk edit between requests", async () => {
+  const dir = fixtureCopy("disk");
+  const file = join(dir, "services", "data.ts");
+  const data = readFileSync(file, "utf8");
+  const edited = data.replace("@Scoped(UnitOfWork)", "@Scoped(UnitOfWork)\n@Transient(ConsoleLogger)").replace("import { Scoped,", "import { Scoped, Transient,");
+  const lifetimes = (f: any) => f.providers.find((p: any) => p.class.text === "DataServices").registrations.map((r: any) => r.lifetime);
+  const body = { files: ["services/data.ts"], components: [], overlays: {} };
+  const { request, stop } = startServe(dir);
+  try {
+    expect(lifetimes((await request(body)).facts)).toEqual(["singleton", "singleton", "scoped"]);
+    writeFileSync(file, edited);
+    // Make the mtime differ even on coarse clocks.
+    const later = new Date(Date.now() + 5000);
+    utimesSync(file, later, later);
+    expect(lifetimes((await request(body)).facts)).toEqual(["singleton", "singleton", "scoped", "transient"]);
+  } finally {
+    await stop();
+  }
 });
 
 // Temp project copies; `paths: false` leaves @zor/runtime unresolvable.

@@ -166,17 +166,27 @@ impl fmt::Display for Json {
 
 fn write_str(f: &mut fmt::Formatter<'_>, s: &str) -> fmt::Result {
     f.write_char('"')?;
-    for c in s.chars() {
-        match c {
-            '"' => f.write_str("\\\"")?,
-            '\\' => f.write_str("\\\\")?,
-            '\n' => f.write_str("\\n")?,
-            '\r' => f.write_str("\\r")?,
-            '\t' => f.write_str("\\t")?,
-            c if (c as u32) < 0x20 => write!(f, "\\u{:04x}", c as u32)?,
-            c => f.write_char(c)?,
-        }
+    let mut run = 0;
+    for (i, c) in s.char_indices() {
+        let escape = match c {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            c if (c as u32) < 0x20 => {
+                f.write_str(&s[run..i])?;
+                write!(f, "\\u{:04x}", c as u32)?;
+                run = i + 1;
+                continue;
+            }
+            _ => continue,
+        };
+        f.write_str(&s[run..i])?;
+        f.write_str(escape)?;
+        run = i + c.len_utf8();
     }
+    f.write_str(&s[run..])?;
     f.write_char('"')
 }
 

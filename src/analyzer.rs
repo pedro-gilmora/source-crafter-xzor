@@ -8,9 +8,14 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 const DI_SCRIPT: &str = include_str!("di.ts");
 
+/// tsgo leaks memory per request, so the child is replaced after this many.
+const RECYCLE_AFTER: u32 = 500;
+
 pub struct Analyzer {
     root: PathBuf,
     proc: Option<Proc>,
+    served: u32,
+    limit: u32,
 }
 
 struct Proc {
@@ -21,14 +26,18 @@ struct Proc {
 
 impl Analyzer {
     pub fn new(root: &Path) -> Self {
-        Analyzer { root: root.to_path_buf(), proc: None }
+        Self::with_limit(root, RECYCLE_AFTER)
+    }
+
+    pub(crate) fn with_limit(root: &Path, limit: u32) -> Self {
+        Analyzer { root: root.to_path_buf(), proc: None, served: 0, limit }
     }
 
     /// Facts for provider `files` and generated `components` (paths relative to the root or absolute);
     /// `overlays` are `(path, text)` pairs read instead of the disk. A dead analyzer is restarted once.
-    pub fn analyze(&mut self, files: &[String], components: &[String], overlays: &[(String, String)]) -> Result<Facts, String> {
+    pub fn analyze(&mut self, files: &[String], components: &[String], overlays: &[(PathBuf, String)]) -> Result<Facts, String> {
         let strings = |list: &[String]| Json::Arr(list.iter().map(|s| Json::from(s.as_str())).collect());
-        let overlays = Json::Obj(overlays.iter().map(|(p, t)| (p.clone(), Json::from(t.as_str()))).collect());
+        let overlays = Json::Obj(overlays.iter().map(|(p, t)| (p.to_string_lossy().into_owned(), Json::from(t.as_str()))).collect());
         let mut request = Json::obj([("files", strings(files)), ("components", strings(components)), ("overlays", overlays)]).to_string();
         request.push('\n');
         let mut line = String::new();
@@ -42,7 +51,12 @@ impl Analyzer {
             let answered = proc.stdin.write_all(request.as_bytes()).and_then(|_| proc.stdin.flush()).is_ok()
                 && proc.stdout.read_line(&mut line).is_ok_and(|n| n > 0);
             if answered {
-                return facts(&line);
+                self.served += 1;
+                let result = facts(&line);
+                if self.served >= self.limit {
+                    self.stop();
+                }
+                return result;
             }
             let status = self.stop();
             if restarted {
@@ -73,6 +87,7 @@ impl Analyzer {
     /// Ends the child: closing stdin lets it shut TypeScript down; it is killed if it lingers.
     fn stop(&mut self) -> String {
         let Some(Proc { mut child, stdin, stdout }) = self.proc.take() else { return String::new() };
+        self.served = 0;
         drop(stdin);
         drop(stdout);
         for _ in 0..50 {
