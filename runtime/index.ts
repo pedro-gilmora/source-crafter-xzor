@@ -50,6 +50,8 @@ export type VComponent = {
   ref?: (c: ComponentBase) => void;
   instance?: ComponentBase;
   mounted?: Mounted;
+  // `@catch`: set on a routed page, it takes the failures the page itself causes instead of `rethrow`.
+  onError?: (err: unknown) => void;
 };
 
 export type VNode = VText | VElement | VRegion | VComponent;
@@ -67,21 +69,28 @@ export type RouteTable = readonly RouteEntry[];
 
 /** The state of the current navigation, published to the routes block and as the cascading value `route`. */
 export class Route<P = Record<string, unknown>> {
+  readonly #nav: Navigation | undefined;
+
   constructor(
     readonly path: string,
     readonly tag: string | undefined,
     readonly params: P,
     readonly query: URLSearchParams,
     readonly match: Record<string, string>,
-  ) {}
+    nav?: Navigation,
+  ) {
+    this.#nav = nav;
+  }
 
   /** Narrows `params` to the routes carrying `tag`. */
   is(tag: string): boolean {
     return this.tag === tag;
   }
 
-  navigate(url: string, _opts?: { replace?: boolean }): void {
-    location.href = url;
+  /** History navigation under `@ClientRoutes`; `@ServerRoutes` loads the url. */
+  navigate(url: string, opts?: { replace?: boolean }): void {
+    if (this.#nav) this.#nav.navigate(url, opts?.replace === true);
+    else location.href = url;
   }
 }
 
@@ -98,6 +107,158 @@ export type RouteSection =
   | { kind: "notFound"; render: (route: Route) => RenderFragment }
   | { kind: "catch"; render: (route: Route, error: unknown) => RenderFragment }
   | { kind: "default"; render: (route: Route, page: RenderFragment) => RenderFragment };
+
+/** How `@ClientRoutes` reaches the browser's history; `setNavigationForTests` swaps it. */
+export type Navigation = {
+  current(): URL;
+  navigate(url: string, replace: boolean): void;
+  subscribe(fn: () => void): () => void;
+};
+
+// One set for the whole page: the listeners below exist only while a routes block is mounted.
+const navigated = new Set<() => void>();
+const EXTERNAL = /(^|\s)external(\s|$)/;
+const QUERY = /[?#]/;
+
+function notifyNavigated(): void {
+  for (const fn of [...navigated]) fn();
+}
+
+const onPopState = (): void => notifyNavigated();
+
+function onLinkClick(e: MouseEvent): void {
+  if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  const anchor = (e.target as Element | null)?.closest?.("a");
+  const href = anchor?.getAttribute("href");
+  if (!anchor || href == null) return;
+  const frame = anchor.getAttribute("target");
+  if ((frame !== null && frame !== "_self") || anchor.hasAttribute("download")) return;
+  const rel = anchor.getAttribute("rel");
+  if (rel !== null && EXTERNAL.test(rel)) return;
+  const url = new URL(href, location.href);
+  if (url.origin !== location.origin) return;
+  e.preventDefault();
+  browserNavigation.navigate(url.href, false);
+}
+
+const browserNavigation: Navigation = {
+  current: () => new URL(location.href),
+  navigate(url, replace) {
+    const href = new URL(url, location.href).href;
+    if (replace) history.replaceState(null, "", href);
+    else history.pushState(null, "", href);
+    notifyNavigated();
+  },
+  subscribe(fn) {
+    navigated.add(fn);
+    if (navigated.size === 1) {
+      window.addEventListener("popstate", onPopState);
+      document.addEventListener("click", onLinkClick);
+    }
+    return () => {
+      navigated.delete(fn);
+      if (navigated.size === 0) {
+        window.removeEventListener("popstate", onPopState);
+        document.removeEventListener("click", onLinkClick);
+      }
+    };
+  },
+};
+
+let testNavigation: Navigation | undefined;
+
+/** @internal Swaps in a memory navigation; set it before mounting the routes block. */
+export function setNavigationForTests(nav: Navigation | undefined): void {
+  testNavigation = nav;
+}
+
+const navigationOf = (): Navigation => testNavigation ?? browserNavigation;
+
+/** What one mounted routes block keeps between renders. */
+type Router = {
+  // Set under `@ClientRoutes` only: it is also what `route.navigate` uses.
+  nav: Navigation | undefined;
+  off: (() => void) | undefined;
+  onError: ((err: unknown) => void) | undefined;
+  href: string;
+  route: Route | undefined;
+  // Index into the sections of the current render, or -1.
+  section: number;
+  page: RouteEntry | undefined;
+  params: Record<string, unknown>;
+  error: unknown;
+  failed: boolean;
+};
+
+const ROUTER: unique symbol = Symbol("zor.router");
+type Routed = { [ROUTER]?: Router };
+
+function segmentsOf(pathname: string): string[] {
+  const rest = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+  return rest === "" ? [] : rest.split("/");
+}
+
+/** The section's named groups, or null; `lastIndex` is reset in case the regex carries `g` or `y`. */
+function groupsOf(re: RegExp, pathname: string): Record<string, string> | null {
+  re.lastIndex = 0;
+  const m = re.exec(pathname);
+  return m ? (m.groups ?? {}) : null;
+}
+
+/** Spec order: a page route picks among the `(page)` sections, otherwise the page-less ones decide. */
+function resolveRoute(router: Router, table: RouteTable, sections: readonly RouteSection[], url: URL): void {
+  const segments = segmentsOf(url.pathname);
+  let page: RouteEntry | undefined;
+  let params: Record<string, unknown> | null = null;
+  for (const entry of table) {
+    params = entry.match(segments);
+    if (params) {
+      page = entry;
+      break;
+    }
+  }
+  let section = -1;
+  let match: Record<string, string> = {};
+  for (let i = 0; i < sections.length && section < 0; i++) {
+    const s = sections[i]!;
+    if (page) {
+      if (s.kind === "tag") {
+        if (s.tag === page.tag) section = i;
+      } else if (s.kind === "regex" && s.page) {
+        const groups = groupsOf(s.re, url.pathname);
+        if (groups) {
+          section = i;
+          match = groups;
+        }
+      } else if (s.kind === "pattern" && s.page) {
+        const own = s.match(segments);
+        if (own) {
+          section = i;
+          // The body is typed from the pattern, so its params win over the page's.
+          params = { ...params, ...own };
+        }
+      }
+    } else if (s.kind === "regex" && !s.page) {
+      const groups = groupsOf(s.re, url.pathname);
+      if (groups) {
+        section = i;
+        match = groups;
+      }
+    } else if (s.kind === "pattern" && !s.page) {
+      const own = s.match(segments);
+      if (own) {
+        section = i;
+        params = own;
+      }
+    }
+  }
+  if (section < 0) section = sections.findIndex((s) => s.kind === (page ? "default" : "notFound"));
+  router.href = url.href;
+  router.page = page;
+  router.params = params ?? {};
+  router.section = section;
+  router.route = new Route(url.pathname, page?.tag, router.params, url.searchParams, match, router.nav);
+}
 
 type Ctor<C extends ComponentBase> = new (...args: any[]) => C;
 // `latest` is the current vnode of a component still waiting for its instance; cleared on arrival or removal.
@@ -282,8 +443,67 @@ export class RenderTreeBuilder {
   }
 
   /** `@ClientRoutes`/`@ServerRoutes`: renders the section that matches the current navigation. */
-  addRoutes(_engine: "client" | "server", _table: RouteTable, _sections: readonly RouteSection[]): void {
-    throw new Error("zor: routes block not implemented yet");
+  addRoutes(engine: "client" | "server", table: RouteTable, sections: readonly RouteSection[]): void {
+    const owner = this.owner as ComponentBase & Routed;
+    const nav = navigationOf();
+    let router = owner[ROUTER];
+    if (!router) {
+      router = owner[ROUTER] = {
+        nav: engine === "client" ? nav : undefined,
+        off: undefined,
+        onError: undefined,
+        href: "",
+        route: undefined,
+        section: -1,
+        page: undefined,
+        params: {},
+        error: undefined,
+        failed: false,
+      };
+      const failing = router;
+      if (sections.some((s) => s.kind === "catch")) {
+        // The page's own failures reach this one handler; the re-render waits for the current one to finish.
+        router.onError = (err) => {
+          failing.error = err;
+          failing.failed = true;
+          queueMicrotask(() => update(owner));
+        };
+      }
+      // `@ServerRoutes` matches once on load: no listeners, no re-render.
+      if (router.nav) router.off = router.nav.subscribe(() => update(owner));
+    }
+    const url = nav.current();
+    if (url.href !== router.href || !router.route) {
+      // A navigation clears the error the last page raised.
+      router.failed = false;
+      router.error = undefined;
+      resolveRoute(router, table, sections, url);
+    }
+    const route = router.route!;
+    const section = sections[router.section];
+    const page = router.page;
+    this.openCascade("route", route);
+    if (router.failed) {
+      (sections.find((s) => s.kind === "catch") as Extract<RouteSection, { kind: "catch" }>).render(
+        route,
+        router.error,
+      )(this);
+    } else if (page) {
+      const entry = page;
+      const props = router.params;
+      const onError = router.onError;
+      const fragment = ComponentBase.fragment((b) => b.#addPage(entry, props, onError));
+      if (section) (section.render as (r: Route, p: RenderFragment) => RenderFragment)(route, fragment)(this);
+      else fragment(this);
+    } else if (section) {
+      (section.render as (r: Route) => RenderFragment)(route)(this);
+    }
+    this.closeRegion();
+  }
+
+  // Keyed by pattern: a navigation that only changes params keeps the page instance.
+  #addPage(entry: RouteEntry, props: Record<string, unknown>, onError: ((err: unknown) => void) | undefined): void {
+    this.#append({ kind: "component", type: entry.component as Ctor<ComponentBase>, props, key: entry.pattern, onError });
   }
 
   addAttribute(name: string, value: unknown): void {
@@ -399,8 +619,8 @@ function batch(fn: () => void): void {
   }
 }
 
-function settle(component: ComponentBase, result: Promise<void> | void): void {
-  if (result instanceof Promise) void result.then(() => update(component));
+function settle(component: ComponentBase, result: Promise<void> | void, onError?: (err: unknown) => void): void {
+  if (result instanceof Promise) void result.then(() => update(component), onError);
 }
 
 function parametersSet(component: ComponentBase): void {
@@ -490,9 +710,10 @@ function mountComponent(
   app: IApplication | undefined,
   scope: CascadeRecord | undefined,
   into?: Mounted,
+  onError?: (err: unknown) => void,
 ): { nodes: Node[]; mounted: Mounted } {
   hooks(component).onInitialized();
-  settle(component, hooks(component).onInitializedAsync());
+  settle(component, hooks(component).onInitializedAsync(), onError);
   parametersSet(component);
   const tree = render(component);
   const mounted = into ?? { tree, anchor: document.createComment(""), app, scope, latest: undefined, pass };
@@ -527,12 +748,12 @@ function arrive(mounted: Mounted, instance: ComponentBase): void {
       applyProps(instance, v);
       resolveCascades(instance, v.type, mounted.scope);
       v.ref?.(instance);
-      for (const node of mountComponent(instance, mounted.app, mounted.scope, mounted).nodes)
+      for (const node of mountComponent(instance, mounted.app, mounted.scope, mounted, v.onError).nodes)
         parent.insertBefore(node, mounted.anchor);
       v.instance = instance;
     });
   } catch (err) {
-    rethrow(err);
+    (v.onError ?? rethrow)(err);
     if (!v.instance) {
       mountedComponents.delete(instance);
       unsubscribeCascades(instance, v.type, mounted.scope);
@@ -608,34 +829,62 @@ function create(v: VNode, owner: ComponentBase, app: IApplication | undefined, s
       return [...v.children.flatMap((c) => create(c, owner, app, inner)), v.anchor];
     }
     case "component": {
-      const made = construct(v.type, app);
-      if (made instanceof Promise) {
-        const mounted: Mounted = (v.mounted = {
-          tree: [],
-          anchor: document.createComment(""),
-          app,
-          scope,
-          latest: v,
-          pass,
-        });
-        made.then(
-          (instance) => arrive(mounted, instance),
-          (err) => {
-            mounted.latest = undefined;
-            rethrow(err);
-          },
-        );
-        return [mounted.anchor];
+      if (!v.onError) return createComponent(v, app, scope);
+      try {
+        return createComponent(v, app, scope);
+      } catch (err) {
+        return failedComponent(v, err, app, scope);
       }
-      v.instance = made;
-      applyProps(made, v);
-      resolveCascades(made, v.type, scope);
-      v.ref?.(made);
-      const { nodes, mounted } = mountComponent(made, app, scope);
-      v.mounted = mounted;
-      return nodes;
     }
   }
+}
+
+function createComponent(v: VComponent, app: IApplication | undefined, scope: CascadeRecord | undefined): Node[] {
+  const made = construct(v.type, app);
+  if (made instanceof Promise) {
+    const mounted: Mounted = (v.mounted = {
+      tree: [],
+      anchor: document.createComment(""),
+      app,
+      scope,
+      latest: v,
+      pass,
+    });
+    made.then(
+      (instance) => arrive(mounted, instance),
+      (err) => {
+        const latest = mounted.latest;
+        mounted.latest = undefined;
+        (latest?.onError ?? rethrow)(err);
+      },
+    );
+    return [mounted.anchor];
+  }
+  v.instance = made;
+  applyProps(made, v);
+  resolveCascades(made, v.type, scope);
+  v.ref?.(made);
+  const { nodes, mounted } = mountComponent(made, app, scope, undefined, v.onError);
+  v.mounted = mounted;
+  return nodes;
+}
+
+// `@catch`: the page's nodes never reached the DOM, so only an anchor stays until the block re-renders.
+function failedComponent(
+  v: VComponent,
+  err: unknown,
+  app: IApplication | undefined,
+  scope: CascadeRecord | undefined,
+): Node[] {
+  const instance = v.instance;
+  v.instance = undefined;
+  if (instance) {
+    mountedComponents.delete(instance);
+    unsubscribeCascades(instance, v.type, scope);
+  }
+  v.mounted = { tree: [], anchor: document.createComment(""), app, scope, latest: undefined, pass };
+  v.onError!(err);
+  return [v.mounted.anchor];
 }
 
 function nodesOf(v: VNode): Node[] {
@@ -683,6 +932,7 @@ function dispose(v: VNode): void {
 }
 
 function disposeInstance(c: ComponentBase): void {
+  (c as Routed)[ROUTER]?.off?.();
   hooks(c).dispose();
   const d = c as unknown as Record<symbol, (() => unknown) | undefined>;
   d[wellKnown.dispose]?.();
@@ -857,4 +1107,34 @@ export function mount<C extends ComponentBase>(type: Ctor<C>, target: string | E
   batch(() => host.replaceChildren(...mountComponent(root, app, undefined).nodes));
   surface(app?.onStarted?.());
   return root as C;
+}
+
+/** An `<a>` that carries `activeClass` while the cascaded `route` is on its `href`. */
+export class NavLink extends ComponentBase {
+  static readonly cascades = [["route", "route"]] as const;
+
+  href = "";
+  activeClass = "active";
+  match: "prefix" | "exact" = "prefix";
+  route: Route | undefined = undefined;
+
+  declare slots: { default?: () => RenderFragment };
+
+  #active(): boolean {
+    const path = this.route?.path;
+    if (path === undefined) return false;
+    const cut = this.href.search(QUERY);
+    const target = cut < 0 ? this.href : this.href.slice(0, cut);
+    // The root is every path's prefix, so it only ever matches exactly.
+    if (this.match === "exact" || target === "/") return path === target;
+    return path === target || path.startsWith(target.endsWith("/") ? target : `${target}/`);
+  }
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("a");
+    b.addAttribute("href", this.href);
+    if (this.#active()) b.addAttribute("class", this.activeClass);
+    b.addContent(this.slots.default?.() ?? null);
+    b.closeElement();
+  }
 }
