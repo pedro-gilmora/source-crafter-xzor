@@ -4,8 +4,8 @@
 use super::features::{self, Context, Symbol};
 use super::{offset_at, path_to_uri, position_at, read_message, same_path, uri_to_path, write_message};
 use crate::build::{
-    Analyzer, DiFailure, InjectDiag, compile_all, declares_provider, di_checked, find_sources, in_project, inject_diags, output_path,
-    project_root, provider_files,
+    self, Analyzer, DiFailure, LocatedDiag, compile_all, compile_one, declares_provider, di_run, find_sources, in_project, located_diags, output_path,
+    project_root, project_sources,
 };
 use crate::codegen::Generated;
 use crate::json::Json;
@@ -13,7 +13,11 @@ use std::collections::HashMap;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::time::{Duration, Instant, SystemTime};
+
+/// Quiet time after the last edit before the DI analysis reruns with the unsaved text.
+const DI_DEBOUNCE: Duration = Duration::from_millis(300);
 
 enum Event {
     Client(Json),
@@ -21,7 +25,7 @@ enum Event {
     ClientClosed,
     TsClosed,
     /// A DI run's result; `marks` is `None` when compiling or the analyzer failed.
-    Di { root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf>, analyzer: Analyzer },
+    Di { root: PathBuf, generation: u64, marks: Option<Vec<LocatedDiag>>, providers: Vec<PathBuf>, worker: Box<DiWorker> },
 }
 
 #[derive(Clone, Copy)]
@@ -46,6 +50,8 @@ enum Pending {
 struct Doc {
     text: String,
     path: PathBuf,
+    /// A `.ts` document: only its text is kept, for DI diagnostics and analysis overlays.
+    ts_file: bool,
     gen_uri: String,
     compiled: Option<Compiled>,
     version: i64,
@@ -64,8 +70,19 @@ struct DiRoot {
     generation: u64,
     /// Absolute provider `.ts` files seen by the last run.
     providers: Vec<PathBuf>,
-    /// The root's analyzer process, kept across runs; `None` while a run holds it.
-    analyzer: Option<Analyzer>,
+    /// Kept across runs; `None` while a run holds it.
+    worker: Option<Box<DiWorker>>,
+    /// Whether the next run writes the generated providers (a save or file event, not a live edit).
+    write: bool,
+}
+
+/// What DI runs of one root keep: the analyzer process, and per-file results keyed by modification time.
+struct DiWorker {
+    analyzer: Analyzer,
+    /// `.ts` files on disk: whether they declare a provider.
+    providers: HashMap<PathBuf, (SystemTime, bool)>,
+    /// `.tszor` files compiled from disk.
+    units: HashMap<PathBuf, (SystemTime, build::Compiled)>,
 }
 
 struct Ts {
@@ -85,8 +102,11 @@ struct Server {
     /// Roots to analyze once the running analysis finishes.
     di_queue: Vec<PathBuf>,
     di_roots: Vec<DiRoot>,
-    /// Last DI diagnostics per `.tszor` source, open or not.
-    di_marks: Vec<(PathBuf, Vec<Json>)>,
+    /// Last DI diagnostics per (root, source), open or not.
+    di_marks: Vec<(PathBuf, PathBuf, Vec<Json>)>,
+    /// Roots to analyze live once `di_deadline` passes.
+    di_due: Vec<PathBuf>,
+    di_deadline: Option<Instant>,
 }
 
 pub fn run() -> io::Result<()> {
@@ -121,8 +141,27 @@ pub fn run() -> io::Result<()> {
         di_queue: Vec::new(),
         di_roots: Vec::new(),
         di_marks: Vec::new(),
+        di_due: Vec::new(),
+        di_deadline: None,
     };
-    for event in rx {
+    loop {
+        let event = match server.di_deadline {
+            Some(deadline) => match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(event) => event,
+                Err(RecvTimeoutError::Timeout) => {
+                    server.di_deadline = None;
+                    for root in std::mem::take(&mut server.di_due) {
+                        server.di_request(root, false);
+                    }
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            },
+            None => match rx.recv() {
+                Ok(event) => event,
+                Err(_) => break,
+            },
+        };
         match event {
             Event::Client(msg) => {
                 if !server.client(msg)? {
@@ -140,7 +179,7 @@ pub fn run() -> io::Result<()> {
                     }
                 }
             }
-            Event::Di { root, generation, marks, providers, analyzer } => server.di_done(root, generation, marks, providers, analyzer)?,
+            Event::Di { root, generation, marks, providers, worker } => server.di_done(root, generation, marks, providers, worker)?,
             Event::ClientClosed => break,
         }
     }
@@ -334,6 +373,16 @@ impl Server {
     }
 
     fn request(&mut self, method: &str, id: Json, params: &Json) -> io::Result<()> {
+        // VS Code's own TypeScript support serves `.ts` documents; they only get DI diagnostics here.
+        // Null (not empty) results let the editor fall through to that provider where it picks just one.
+        if params["textDocument"]["uri"].as_str().is_some_and(|u| u.ends_with(".ts")) {
+            let empty = match method {
+                "textDocument/completion" => Json::obj([("isIncomplete", false.into()), ("items", Json::Arr(vec![]))]),
+                "textDocument/references" => Json::Arr(vec![]),
+                _ => Json::Null,
+            };
+            return self.respond(id, empty);
+        }
         match method {
             "initialize" => {
                 let root_uri = params["rootUri"].as_str().or(params["workspaceFolders"][0]["uri"].as_str());
@@ -389,21 +438,45 @@ impl Server {
             "textDocument/didOpen" => {
                 let Some(path) = uri_to_path(&uri) else { return Ok(true) };
                 let text = params["textDocument"]["text"].as_str().unwrap_or_default().to_string();
-                let gen_uri = path_to_uri(&output_path(&path));
-                let di = self.di_marks.iter().find(|(p, _)| same_path(p, &path)).map(|(_, d)| d.clone()).unwrap_or_default();
-                self.docs.insert(uri.clone(), Doc { text, path, gen_uri, compiled: None, version: 0, ts_open: false, error: None, ts: Vec::new(), di });
-                self.refresh(&uri)?;
+                let ts_file = path.extension().is_some_and(|e| e == "ts");
+                let gen_uri = if ts_file { String::new() } else { path_to_uri(&output_path(&path)) };
+                let di = self.di_of(&path);
+                let shown = !di.is_empty();
+                self.di_schedule(&path, Some(&text));
+                let doc = Doc { text, path, ts_file, gen_uri, compiled: None, version: 0, ts_open: false, error: None, ts: Vec::new(), di };
+                self.docs.insert(uri.clone(), doc);
+                if !ts_file {
+                    self.refresh(&uri)?;
+                } else if shown {
+                    self.emit(&uri)?;
+                }
             }
             "textDocument/didChange" => {
                 let changes = params["contentChanges"].as_array().cloned().unwrap_or_default();
-                if let (Some(doc), Some(text)) = (self.docs.get_mut(&uri), changes.last().and_then(|c| c["text"].as_str())) {
-                    doc.text = text.to_string();
+                let Some(text) = changes.last().and_then(|c| c["text"].as_str()) else { return Ok(true) };
+                let Some(doc) = self.docs.get_mut(&uri) else { return Ok(true) };
+                let old = std::mem::replace(&mut doc.text, text.to_string());
+                let (path, ts_file) = (doc.path.clone(), doc.ts_file);
+                // Published DI ranges follow the edit at once; the analysis reruns after `DI_DEBOUNCE`.
+                if !doc.di.is_empty() {
+                    for (_, _, list) in self.di_marks.iter_mut().filter(|(_, p, _)| same_path(p, &path)) {
+                        *list = shift_diags(&old, text, list);
+                    }
+                    let di = self.di_of(&path);
+                    self.docs.get_mut(&uri).expect("checked above").di = di;
+                    self.emit(&uri)?;
+                }
+                if !ts_file {
                     self.refresh(&uri)?;
                 }
+                self.di_schedule(&path, Some(text));
             }
             "textDocument/didSave" => {
-                if let Some(root) = uri_to_path(&uri).and_then(|p| self.di_root_of(&p)) {
-                    self.di_request(root);
+                if let Some(path) = uri_to_path(&uri) {
+                    let text = self.docs.get(&uri).map(|d| d.text.clone());
+                    if let Some(root) = self.di_root_of(&path, text.as_deref()) {
+                        self.di_request(root, true);
+                    }
                 }
             }
             "workspace/didChangeWatchedFiles" => {
@@ -419,12 +492,12 @@ impl Server {
                     if self.docs.values().any(|d| same_path(&d.path, &path)) {
                         continue;
                     }
-                    if let Some(root) = self.di_root_of(&path).filter(|r| !roots.iter().any(|x| same_path(x, r))) {
+                    if let Some(root) = self.di_root_of(&path, None).filter(|r| !roots.iter().any(|x| same_path(x, r))) {
                         roots.push(root);
                     }
                 }
                 for root in roots {
-                    self.di_request(root);
+                    self.di_request(root, true);
                 }
             }
             "textDocument/didClose" => {
@@ -433,6 +506,8 @@ impl Server {
                         self.ts_notify("textDocument/didClose", Json::obj([("textDocument", Json::obj([("uri", doc.gen_uri.into())]))]));
                     }
                     self.notify("textDocument/publishDiagnostics", Json::obj([("uri", uri.into()), ("diagnostics", Json::Arr(vec![]))]))?;
+                    // Its unsaved text no longer overlays the disk.
+                    self.di_schedule(&doc.path, None);
                 }
             }
             _ => {}
@@ -486,34 +561,50 @@ impl Server {
         Ok(())
     }
 
-    /// The project root to analyze when `path` changes: a `.tszor`, or a `.ts` that declares
-    /// (or, at the last run, declared) a provider, inside a tsconfig project.
-    fn di_root_of(&self, path: &Path) -> Option<PathBuf> {
-        let relevant = match path.extension().and_then(|e| e.to_str()) {
-            Some("tszor") => true,
-            Some("ts") => {
-                self.di_roots.iter().any(|r| r.providers.iter().any(|p| same_path(p, path)))
-                    || std::fs::read_to_string(path).is_ok_and(|t| declares_provider(&t))
-            }
-            _ => false,
-        };
-        (relevant && in_project(path)).then(|| project_root(path))
+    /// The project root to analyze when `path` changes: a `.tszor` in a tsconfig project, or a `.ts` there
+    /// when the project has providers (they import other `.ts` files) or it declares one. `text` is the
+    /// document's text when open.
+    fn di_root_of(&self, path: &Path, text: Option<&str>) -> Option<PathBuf> {
+        let name = path.file_name()?.to_string_lossy();
+        if !(name.ends_with(".tszor") || (name.ends_with(".ts") && !name.ends_with(".d.ts"))) || !in_project(path) {
+            return None;
+        }
+        let root = project_root(path);
+        let relevant = name.ends_with(".tszor")
+            || self.di_roots.iter().any(|r| same_path(&r.root, &root) && !r.providers.is_empty())
+            || match text {
+                Some(t) => declares_provider(t),
+                None => std::fs::read_to_string(path).is_ok_and(|t| declares_provider(&t)),
+            };
+        relevant.then_some(root)
     }
 
     fn di_state(&mut self, root: &Path) -> &mut DiRoot {
         let i = match self.di_roots.iter().position(|r| same_path(&r.root, root)) {
             Some(i) => i,
             None => {
-                self.di_roots.push(DiRoot { root: root.to_path_buf(), generation: 0, providers: Vec::new(), analyzer: None });
+                self.di_roots.push(DiRoot { root: root.to_path_buf(), generation: 0, providers: Vec::new(), worker: None, write: false });
                 self.di_roots.len() - 1
             }
         };
         &mut self.di_roots[i]
     }
 
-    /// Requests a DI analysis of `root`; while one runs, the root is queued once.
-    fn di_request(&mut self, root: PathBuf) {
+    /// Schedules a live analysis of `path`'s project after `DI_DEBOUNCE`; results of runs started before are dropped.
+    fn di_schedule(&mut self, path: &Path, text: Option<&str>) {
+        let Some(root) = self.di_root_of(path, text) else { return };
         self.di_state(&root).generation += 1;
+        if !self.di_due.iter().any(|r| same_path(r, &root)) {
+            self.di_due.push(root);
+        }
+        self.di_deadline = Some(Instant::now() + DI_DEBOUNCE);
+    }
+
+    /// Requests a DI analysis of `root`; while one runs, the root is queued once. `write` writes the generated providers.
+    fn di_request(&mut self, root: PathBuf, write: bool) {
+        let state = self.di_state(&root);
+        state.generation += 1;
+        state.write |= write;
         if !self.di_running {
             self.di_start(root);
         } else if !self.di_queue.iter().any(|r| same_path(r, &root)) {
@@ -521,40 +612,49 @@ impl Server {
         }
     }
 
-    /// Compiles the project and runs the DI analysis on a worker thread.
+    /// Runs the DI analysis on a worker thread, with the open documents of `root` as overlays.
     fn di_start(&mut self, root: PathBuf) {
+        let mut overlays = Vec::new();
+        let mut open = Vec::new();
+        let mut skip = Vec::new();
+        for d in self.docs.values().filter(|d| same_path(&project_root(&d.path), &root)) {
+            if d.ts_file {
+                overlays.push((d.path.clone(), d.text.clone()));
+                continue;
+            }
+            skip.push(d.path.clone());
+            if let Some(c) = &d.compiled {
+                open.push(build::Compiled { source: d.path.clone(), out: output_path(&d.path), text: c.text.clone(), generated: c.g.clone() });
+            }
+        }
         let state = self.di_state(&root);
         let generation = state.generation;
-        let mut analyzer = state.analyzer.take().unwrap_or_else(|| Analyzer::new(&root));
+        let write = std::mem::take(&mut state.write);
+        let mut worker = state.worker.take().unwrap_or_else(|| {
+            Box::new(DiWorker { analyzer: Analyzer::new(&root), providers: HashMap::new(), units: HashMap::new() })
+        });
         self.di_running = true;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let files = provider_files(&root);
-            let marks = compile_all(&root).ok().and_then(|units| match di_checked(&root, "main.ts", &units, &files, &mut analyzer) {
-                // The entry check is irrelevant here: only component diagnostics are published.
-                Ok(_) => Some(Vec::new()),
-                Err(DiFailure::Diags(d)) => Some(inject_diags(&root, &d, &units)),
-                Err(DiFailure::Other(_)) => None,
-            });
-            let providers = files.iter().map(|f| root.join(f)).collect();
-            let _ = tx.send(Event::Di { root, generation, marks, providers, analyzer });
+            let (marks, providers) = worker.run(&root, overlays, open, &skip, write);
+            let _ = tx.send(Event::Di { root, generation, marks, providers, worker });
         });
     }
 
-    /// Publishes a finished analysis's `@inject` diagnostics (unless a newer request superseded it) and
-    /// starts the next queued one. Provider graph errors in `.ts` files show in `zor build` only.
-    fn di_done(&mut self, root: PathBuf, generation: u64, marks: Option<Vec<InjectDiag>>, providers: Vec<PathBuf>, analyzer: Analyzer) -> io::Result<()> {
+    /// Publishes a finished analysis's diagnostics to the open documents they target (unless a newer request
+    /// superseded it), clears the others, and starts the next queued run.
+    fn di_done(&mut self, root: PathBuf, generation: u64, marks: Option<Vec<LocatedDiag>>, providers: Vec<PathBuf>, worker: Box<DiWorker>) -> io::Result<()> {
         self.di_running = false;
         let state = self.di_state(&root);
         state.providers = providers;
-        state.analyzer = Some(analyzer);
+        state.worker = Some(worker);
         let current = state.generation == generation;
         if !self.di_queue.is_empty() {
             let next = self.di_queue.remove(0);
             self.di_start(next);
         }
         let Some(marks) = marks.filter(|_| current) else { return Ok(()) };
-        self.di_marks.retain(|(p, _)| !p.starts_with(&root));
+        self.di_marks.retain(|(r, _, _)| !same_path(r, &root));
         for m in marks {
             let d = Json::obj([
                 ("range", Json::obj([("start", lsp_pos(m.start)), ("end", lsp_pos(m.end))])),
@@ -563,21 +663,26 @@ impl Server {
                 ("code", m.code.into()),
                 ("message", m.message.into()),
             ]);
-            match self.di_marks.iter_mut().find(|(p, _)| *p == m.source) {
-                Some((_, list)) => list.push(d),
-                None => self.di_marks.push((m.source, vec![d])),
+            match self.di_marks.iter_mut().find(|(r, p, _)| same_path(r, &root) && same_path(p, &m.source)) {
+                Some((_, _, list)) => list.push(d),
+                None => self.di_marks.push((root.clone(), m.source, vec![d])),
             }
         }
-        let uris: Vec<String> = self.docs.iter().filter(|(_, d)| same_path(&project_root(&d.path), &root)).map(|(u, _)| u.clone()).collect();
+        let uris: Vec<String> = self.docs.keys().cloned().collect();
         for uri in uris {
+            let di = self.di_of(&self.docs[&uri].path);
             let doc = self.docs.get_mut(&uri).expect("key from docs");
-            let di = self.di_marks.iter().find(|(p, _)| same_path(p, &doc.path)).map(|(_, d)| d.clone()).unwrap_or_default();
             if doc.di != di {
                 doc.di = di;
                 self.emit(&uri)?;
             }
         }
         Ok(())
+    }
+
+    /// The DI diagnostics last published for `path`.
+    fn di_of(&self, path: &Path) -> Vec<Json> {
+        self.di_marks.iter().filter(|(_, p, _)| same_path(p, path)).flat_map(|(_, _, d)| d.iter().cloned()).collect()
     }
 
     fn publish(&mut self, uri: &str, ts_diagnostics: Vec<Json>) -> io::Result<()> {
@@ -936,6 +1041,113 @@ impl Server {
 
 }
 
+impl DiWorker {
+    /// Analyzes `root`: `overlays` are open `.ts` documents, `open` the in-memory compiles of open `.tszor`
+    /// documents, `skip` every open `.tszor` (compiled or not). Other files come from the caches when unchanged.
+    /// Returns the located diagnostics (`None` on failure) and the absolute provider files.
+    fn run(
+        &mut self,
+        root: &Path,
+        mut overlays: Vec<(PathBuf, String)>,
+        mut units: Vec<build::Compiled>,
+        skip: &[PathBuf],
+        write: bool,
+    ) -> (Option<Vec<LocatedDiag>>, Vec<PathBuf>) {
+        let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let mut old_providers = std::mem::take(&mut self.providers);
+        let mut old_units = std::mem::take(&mut self.units);
+        let mut files = Vec::new();
+        let mut disk = Vec::new();
+        let mut failed = false;
+        for path in project_sources(root) {
+            if path.extension().is_some_and(|e| e == "tszor") {
+                if skip.iter().any(|s| same_path(s, &path)) {
+                    if let Some(entry) = old_units.remove(&path) {
+                        self.units.insert(path, entry);
+                    }
+                    continue;
+                }
+                let m = mtime(&path);
+                let unit = match old_units.remove(&path) {
+                    Some((om, u)) if Some(om) == m => u,
+                    _ => match compile_one(&path) {
+                        Ok(u) => u,
+                        Err(_) => {
+                            failed = true;
+                            continue;
+                        }
+                    },
+                };
+                disk.push(m);
+                units.push(unit);
+                continue;
+            }
+            let declares = match overlays.iter().find(|(p, _)| same_path(p, &path)) {
+                Some((_, t)) => declares_provider(t),
+                None => {
+                    let m = mtime(&path);
+                    let d = match old_providers.remove(&path) {
+                        Some((om, d)) if Some(om) == m => d,
+                        _ => std::fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t)),
+                    };
+                    if let Some(m) = m {
+                        self.providers.insert(path.clone(), (m, d));
+                    }
+                    d
+                }
+            };
+            if declares {
+                files.push(path.strip_prefix(root).map_or_else(|_| path.clone(), Path::to_path_buf));
+            }
+        }
+        let providers = files.iter().map(|f| root.join(f)).collect();
+        let open = units.len() - disk.len();
+        let marks = if failed {
+            None
+        } else {
+            overlays.extend(units[..open].iter().map(|u| (u.out.clone(), u.generated.code.clone())));
+            match di_run(root, "main.ts", &units, &files, &mut self.analyzer, &overlays, write) {
+                // The entry check is irrelevant here: only diagnostics are published.
+                Ok(_) => Some(Vec::new()),
+                Err(DiFailure::Diags(d)) => Some(located_diags(root, &d, &units, &overlays)),
+                Err(DiFailure::Other(_)) => None,
+            }
+        };
+        for (unit, m) in units.drain(open..).zip(disk) {
+            if let Some(m) = m {
+                self.units.insert(unit.source.clone(), (m, unit));
+            }
+        }
+        (marks, providers)
+    }
+}
+
+/// Moves DI diagnostics from `old` to `new` (one full-text change): those after the edited span shift,
+/// those touching it are dropped until the next analysis.
+fn shift_diags(old: &str, new: &str, diags: &[Json]) -> Vec<Json> {
+    let (a, b) = (old.as_bytes(), new.as_bytes());
+    let prefix = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let room = a.len().min(b.len()) - prefix;
+    let suffix = a.iter().rev().zip(b.iter().rev()).take(room).take_while(|(x, y)| x == y).count();
+    let (old_end, new_end) = (a.len() - suffix, b.len() - suffix);
+    diags
+        .iter()
+        .filter_map(|d| {
+            let (s, e) = (offset_of(old, &d["range"]["start"]), offset_of(old, &d["range"]["end"]));
+            let (s, e) = if s >= old_end {
+                (s - old_end + new_end, e - old_end + new_end)
+            } else if e <= prefix {
+                (s, e)
+            } else {
+                return None;
+            };
+            let mut d = d.clone();
+            d.set("range", range_json(new, s, e));
+            Some(d)
+        })
+        .collect()
+}
+
 fn map_diagnostic(text: &str, c: &Compiled, d: &Json) -> Option<Json> {
     let gen_start = offset_of(&c.g.code, &d["range"]["start"]);
     let gen_end = offset_of(&c.g.code, &d["range"]["end"]);
@@ -1046,4 +1258,38 @@ fn strip_edits(mut item: Json) -> Json {
         o.retain(|(k, _)| k != "additionalTextEdits" && k != "command");
     }
     item
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn diag(text: &str, needle: &str) -> Json {
+        let at = text.find(needle).unwrap();
+        Json::obj([("range", range_json(text, at, at + needle.len())), ("code", "ZDI02".into())])
+    }
+
+    fn start(d: &Json) -> (usize, usize) {
+        (d["range"]["start"]["line"].as_usize().unwrap(), d["range"]["start"]["character"].as_usize().unwrap())
+    }
+
+    #[test]
+    fn di_ranges_follow_edits_and_drop_when_touched() {
+        let old = "class A {\n  constructor(x: X) {}\n}\n";
+        let d = [diag(old, "x"), diag(old, "A")];
+        let above = old.replace("class A", "// a\nclass A");
+        let moved = shift_diags(old, &above, &d[..1]);
+        assert_eq!(start(&moved[0]), (2, 14));
+        // Indentation shared with the inserted line still shifts the range below it.
+        let indented = old.replace("  constructor", "  y = 1;\n  constructor");
+        assert_eq!(start(&shift_diags(old, &indented, &d[..1])[0]), (2, 14));
+        // Deleting the line drops its range and keeps the one before.
+        let gone = old.replace("  constructor(x: X) {}\n", "");
+        let left = shift_diags(old, &gone, &d);
+        assert_eq!(left.len(), 1);
+        assert_eq!(start(&left[0]), (0, 6));
+        // Editing inside the range drops it; editing after it keeps it.
+        assert!(shift_diags(old, &old.replace("(x:", "(z:"), &d[..1]).is_empty());
+        assert_eq!(start(&shift_diags(old, &old.replace("{}", "{ }"), &d[..1])[0]), (1, 14));
+    }
 }

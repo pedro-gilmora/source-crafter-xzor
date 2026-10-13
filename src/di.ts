@@ -16,10 +16,10 @@
 // checker.getPropertiesOfType(t): `dispose`, or `__@dispose@N`/`__@asyncDispose@N` compared with the global Disposable/AsyncDisposable members; `?` sets SymbolFlags.Optional.
 // checker.isTypeAssignableTo(source, target) is not batched: it runs only for parameters named like a key.
 // symbol.getParent() is the module only for exported declarations; parent.getExports() keys are export names ("default" included).
-// --serve: new API({ cwd, fs: { readFile, fileExists } }) serves overlays (undefined falls back to disk). Later requests call
+// --serve: new API({ cwd, fs: { readFile, fileExists, directoryExists, getAccessibleEntries } }) serves overlays (undefined falls back to disk). Later requests call
 // updateSnapshot({ fileChanges: { changed, created, deleted } }) for changed overlays and mtimes; new files need the tsconfig
 // listed as changed to rerun its include globs. The client's parsed-file cache survives such snapshots, so clearSourceFileCache() first.
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { CallExpression, ClassDeclaration, Node, SourceFile } from "typescript/unstable/ast";
 import {
@@ -559,11 +559,31 @@ async function serve(rootArg: string | undefined) {
   const tracked = new Map<string, { path: string; mtime: number | undefined }>();
   // Requested files outside the program at the last snapshot, with their mtime then.
   const missing = new Map<string, number | undefined>();
+  // Overlays absent from disk (an unsaved component's generated file): directory listings must show them for the include globs.
+  let virtual: Overlay[] = [];
+  const entries = (dir: string) => {
+    const d = key(slash(dir)).replace(/\/$/, "");
+    let extra: { files: string[]; directories: string[] } | undefined;
+    for (const o of virtual) {
+      if (!key(o.path).startsWith(`${d}/`)) continue;
+      const rest = o.path.slice(d.length + 1);
+      const sep = rest.indexOf("/");
+      extra ??= { files: [], directories: [] };
+      (sep < 0 ? extra.files : extra.directories).push(sep < 0 ? rest : rest.slice(0, sep));
+    }
+    if (!extra) return undefined;
+    try {
+      for (const e of readdirSync(dir, { withFileTypes: true })) (e.isDirectory() ? extra.directories : extra.files).push(e.name);
+    } catch {}
+    return { files: [...new Set(extra.files)], directories: [...new Set(extra.directories)] };
+  };
   const api = new API({
     cwd: root,
     fs: {
       readFile: (f) => overlays.get(key(f))?.text,
       fileExists: (f) => (overlays.has(key(f)) ? true : undefined),
+      directoryExists: (d) => (virtual.some((o) => key(o.path).startsWith(`${key(slash(d)).replace(/\/$/, "")}/`)) ? true : undefined),
+      getAccessibleEntries: entries,
     },
   });
   let snapshot: Snapshot | undefined;
@@ -584,11 +604,12 @@ async function serve(rootArg: string | undefined) {
       for (const [k, o] of next) if (overlays.get(k)?.text !== o.text) changed.push(o.path);
       for (const [k, o] of overlays) if (!next.has(k)) changed.push(o.path);
       overlays = next;
+      virtual = [...next.values()].filter((o) => mtime(o.path) === undefined);
       let reglob = false;
       if (snapshot) {
         for (const [k, t] of tracked) {
           const m = mtime(t.path);
-          if (m === undefined) {
+          if (m === undefined && !overlays.has(k)) {
             deleted.push(t.path);
             tracked.delete(k);
             reglob = true;

@@ -372,13 +372,28 @@ impl From<String> for DiFailure {
 
 /// `di` with its diagnostics left structured; `files` are `provider_files(root)`.
 pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, DiFailure> {
+    di_run(root, entry, compiled, files, analyzer, &[], true)
+}
+
+/// `di_checked` reading `overlays` (path, text) instead of the disk; without `write` nothing is written or pruned.
+pub fn di_run(
+    root: &Path,
+    entry: &str,
+    compiled: &[Compiled],
+    files: &[PathBuf],
+    analyzer: &mut Analyzer,
+    overlays: &[(PathBuf, String)],
+    write: bool,
+) -> Result<Option<PathBuf>, DiFailure> {
     let zor = root.join(".zor");
     if files.is_empty() {
         let diags = unmounted_injects(root, compiled);
         if !diags.is_empty() {
             return Err(DiFailure::Diags(diags));
         }
-        prune(&zor, &[])?;
+        if write {
+            prune(&zor, &[])?;
+        }
         return Ok(None);
     }
     let mut components = Vec::new();
@@ -387,7 +402,7 @@ pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[Path
         components.push(rel.to_string_lossy().into_owned());
     }
     let files: Vec<String> = files.iter().map(|f| f.to_string_lossy().into_owned()).collect();
-    let facts = analyzer.analyze(&files, &components, &[])?;
+    let facts = analyzer.analyze(&files, &components, overlays)?;
     let resolved = crate::di::graph::resolve(&facts).map_err(DiFailure::Diags)?;
 
     let entry = entry.replace('\\', "/");
@@ -397,6 +412,9 @@ pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[Path
         let message = format!("@Mount must be declared in the entry module {entry}");
         let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None, param_at: None };
         return Err(DiFailure::Diags(vec![d]));
+    }
+    if !write {
+        return Ok(mount.map(|_| zor.join(entry)));
     }
     let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
     let mut written = Vec::with_capacity(resolved.len());
@@ -482,8 +500,17 @@ pub fn provider_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// A DI diagnostic on a component's `@inject` type: LSP positions (0-based line, UTF-16 column).
-pub struct InjectDiag {
+/// Project `.ts` (not `.d.ts`) and `.tszor` files under `root`, skipping outputs and dependencies.
+pub fn project_sources(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if root.is_dir() {
+        let _ = walk(root, &|n| is_source(n) && !n.ends_with(".d.ts"), &mut files);
+    }
+    files
+}
+
+/// A DI diagnostic located in a source: LSP positions (0-based line, UTF-16 column).
+pub struct LocatedDiag {
     pub source: PathBuf,
     pub start: (usize, usize),
     pub end: (usize, usize),
@@ -491,16 +518,40 @@ pub struct InjectDiag {
     pub message: String,
 }
 
-/// The component diagnostics among `diags` (ZDI04/ZDI05), located at the `@inject` type.
-pub fn inject_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled]) -> Vec<InjectDiag> {
-    let mut out = Vec::new();
+/// Locates `diags`: component diagnostics at the `@inject` type, the rest at their parameter (`param_at`)
+/// or registration (`file`/`at`) over the word there. `overlays` (path, text) are read instead of the disk.
+pub fn located_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled], overlays: &[(PathBuf, String)]) -> Vec<LocatedDiag> {
+    let mut out = Vec::with_capacity(diags.len());
+    let mut read: Vec<(PathBuf, String)> = Vec::new();
     for d in diags {
-        let Some(name) = &d.inject else { continue };
-        let path = normalize(&root.join(&d.file));
-        let Some(unit) = compiled.iter().find(|u| same_path(&normalize(&u.source), &path)) else { continue };
-        let Some(i) = unit.generated.injects.iter().find(|i| i.name.text == *name).filter(|i| i.ty.at != crate::ast::Src::UNMAPPED) else { continue };
-        let (start, end) = (position_at(&unit.text, i.ty.at), position_at(&unit.text, i.ty.at + i.ty.text.len()));
-        out.push(InjectDiag { source: unit.source.clone(), start, end, code: d.code, message: d.message.clone() });
+        if let Some(name) = &d.inject {
+            let path = normalize(&root.join(&d.file));
+            let Some(unit) = compiled.iter().find(|u| same_path(&normalize(&u.source), &path)) else { continue };
+            let Some(i) = unit.generated.injects.iter().find(|i| i.name.text == *name).filter(|i| i.ty.at != crate::ast::Src::UNMAPPED) else { continue };
+            let (start, end) = (position_at(&unit.text, i.ty.at), position_at(&unit.text, i.ty.at + i.ty.text.len()));
+            out.push(LocatedDiag { source: unit.source.clone(), start, end, code: d.code, message: d.message.clone() });
+            continue;
+        }
+        let (file, at) = d.param_at.as_ref().map_or((&d.file, d.at), |(f, a)| (f, *a));
+        let path = normalize(&root.join(file));
+        let text = match overlays.iter().find(|(p, _)| same_path(p, &path)) {
+            Some((_, t)) => t.as_str(),
+            None => {
+                let i = match read.iter().position(|(p, _)| *p == path) {
+                    Some(i) => i,
+                    None => {
+                        let Ok(t) = fs::read_to_string(&path) else { continue };
+                        read.push((path.clone(), t));
+                        read.len() - 1
+                    }
+                };
+                read[i].1.as_str()
+            }
+        };
+        let start = utf16_to_byte(text, at);
+        let word = text[start..].char_indices().find(|&(i, c)| !(c.is_alphanumeric() || c == '_' || c == '$' || (i == 0 && c == '@'))).map_or(text.len() - start, |(i, _)| i);
+        let end = if word > 0 { start + word } else { text[start..].chars().next().map_or(start, |c| start + c.len_utf8()) };
+        out.push(LocatedDiag { source: path, start: position_at(text, start), end: position_at(text, end), code: d.code, message: d.message.clone() });
     }
     out
 }
@@ -972,6 +1023,25 @@ mod tests {
         analyzer.kill();
         assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
         assert_ne!(analyzer.pid(), Some(first));
+        drop(analyzer);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn analyzer_that_does_not_answer_in_time_is_killed_and_restarted() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let root = di_project("timeout", &[("services/data.ts", &data)]);
+        let mut analyzer = Analyzer::new(&root);
+        let files = ["services/data.ts".to_string()];
+        analyzer.set_timeout(std::time::Duration::from_millis(1));
+        let err = analyzer.analyze(&files, &[], &[]).unwrap_err();
+        assert!(err.contains("did not answer"), "{err}");
+        assert_eq!(analyzer.pid(), None);
+        analyzer.set_timeout(std::time::Duration::from_secs(30));
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
         drop(analyzer);
         fs::remove_dir_all(&root).unwrap();
     }

@@ -17,6 +17,7 @@ let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "inherit">>;
 let nextId = 0;
 const pending = new Map<number, (m: Msg) => void>();
 const diagnostics = new Map<string, any[]>();
+const publishes = new Map<string, number>();
 
 function send(msg: object) {
   const body = JSON.stringify({ jsonrpc: "2.0", ...msg });
@@ -76,6 +77,7 @@ beforeAll(async () => {
           pending.delete(msg.id);
         } else if (msg.method === "textDocument/publishDiagnostics") {
           diagnostics.set(msg.params.uri, msg.params.diagnostics);
+          publishes.set(msg.params.uri, (publishes.get(msg.params.uri) ?? 0) + 1);
         }
       }
     }
@@ -315,5 +317,72 @@ test("a watched provider .ts change reruns the DI analysis", async () => {
   changed();
   await waitFor(() => (!zdi(uri) ? true : undefined), 30000);
   notify("textDocument/didClose", { textDocument: { uri } });
-  rmSync(diRoot, { recursive: true, force: true });
 }, 60000);
+
+const code = (uri: string, c: string) => diagnostics.get(uri)?.find((d) => d.code === c);
+/** Waits for the next publish to `uri` after `act` and returns its diagnostics. */
+async function nextPublish(uri: string, act: () => void) {
+  const before = publishes.get(uri) ?? 0;
+  act();
+  await waitFor(() => ((publishes.get(uri) ?? 0) > before ? true : undefined), 5000);
+  return diagnostics.get(uri)!;
+}
+
+test("an open provider .ts shows ZDI02 at the parameter without saving, and edits shift or drop it", async () => {
+  const uri = uriOf(diMain);
+  const main = await Bun.file(diMain).text();
+  const ctor = "  constructor(readonly missing: Missing) {}\n";
+  const bad = main
+    .replace('import { Database } from "./services";', 'import { Database, Missing } from "./services";\n\nexport class Repo {\n' + ctor + "}")
+    .replace("@Singleton(Database)", "@Singleton(Database)\n@Singleton(Repo)");
+  expect(bad).toContain(ctor);
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text: bad } });
+  const error = await waitFor(() => code(uri, "ZDI02"), 10000);
+  const start = pos(bad, "missing: Missing");
+  expect(error.range).toEqual({ start, end: { line: start.line, character: start.character + "missing".length } });
+  expect(error.message).toContain("Missing");
+
+  const above = bad.replace("export class Repo {", "// a note\nexport class Repo {");
+  const shifted = await nextPublish(uri, () =>
+    notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: above }] }),
+  );
+  const moved = shifted.find((d) => d.code === "ZDI02");
+  expect(moved.range.start).toEqual({ line: start.line + 1, character: start.character });
+  expect(moved.range.end).toEqual({ line: start.line + 1, character: start.character + "missing".length });
+
+  const fixed = above.replace(ctor, "");
+  const dropped = await nextPublish(uri, () =>
+    notify("textDocument/didChange", { textDocument: { uri, version: 3 }, contentChanges: [{ text: fixed }] }),
+  );
+  expect(dropped.find((d) => d.code === "ZDI02")).toBeUndefined();
+  await Bun.sleep(1500);
+  expect(code(uri, "ZDI02")).toBeUndefined();
+}, 30000);
+
+test("an unsaved @inject edit in a .tszor shows ZDI04", async () => {
+  const uri = uriOf(diCounter);
+  const good = await Bun.file(diCounter).text();
+  const bad = good.replace("@inject Database db", "@inject Missing m");
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: good } });
+  notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: bad }] });
+  const error = await waitFor(() => zdi(uri), 10000);
+  expect(error.range.start).toEqual(pos(bad, "@inject Missing", 8));
+  expect(await Bun.file(diCounter).text()).toBe(good);
+  notify("textDocument/didChange", { textDocument: { uri, version: 3 }, contentChanges: [{ text: good }] });
+  await waitFor(() => (!zdi(uri) ? true : undefined), 10000);
+}, 30000);
+
+test("feature requests on a .ts document return nothing", async () => {
+  const uri = uriOf(diMain);
+  const text = await Bun.file(diMain).text();
+  const position = pos(text, "Database");
+  expect(await request("textDocument/hover", { textDocument: { uri }, position })).toBeNull();
+  const items = await request("textDocument/completion", { textDocument: { uri }, position });
+  expect(items === null || (items.items ?? items).length === 0).toBe(true);
+  expect(await request("textDocument/definition", { textDocument: { uri }, position })).toBeNull();
+  const tokens = await request("textDocument/semanticTokens/full", { textDocument: { uri } });
+  expect(tokens === null || tokens.data.length === 0).toBe(true);
+  notify("textDocument/didClose", { textDocument: { uri } });
+  notify("textDocument/didClose", { textDocument: { uri: uriOf(diCounter) } });
+  rmSync(diRoot, { recursive: true, force: true });
+}, 30000);
