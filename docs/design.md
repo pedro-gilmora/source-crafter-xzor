@@ -115,6 +115,82 @@ The rules:
 - Component identity comes from the diff, as in Blazor: a child keeps its instance and state while it stays at the same position with the same type and `@key`. Otherwise it is disposed and a new instance is created.
 - Lists with `@key` use a keyed diff: matched nodes are patched and moved, and unmatched ones are removed or created.
 
+## Dependency injection
+
+zor resolves services at compile time and emits plain TypeScript: no reflection and no runtime container. Full design: [the DI spec](superpowers/specs/2026-10-12-di-bootstrap-design.md).
+
+### Providers and registrations
+
+The decorators come from `@zor/runtime` and do nothing at runtime. `@ServiceProvider()` marks a reusable provider class in any `.ts` file; zor generates `.zor/<rel>.provider.ts` with a subclass `<Name>$` that has one public getter per service.
+
+```ts
+@ServiceProvider()
+@Singleton<ILogger>(ConsoleLogger)
+@Singleton<IDatabase>(Database)   // Database(log: ILogger)
+@Scoped(UnitOfWork)
+export class DataServices {}
+```
+
+| Form | Meaning |
+|---|---|
+| `@Singleton(Impl)` / `@Singleton<IService>(Impl)` | One instance, in a `static` field shared by every instance and scope. |
+| `@Scoped(Impl)` | One instance per scope. |
+| `@Transient(Impl)` | A new instance on every resolution. |
+| `@Singleton("key", Owner.factory)` | A keyed service built by a public static method of another class. The key matches a parameter name before the type is tried. |
+| `@Import(OtherProvider)` | Uses another provider's services. The imported provider must be self-sufficient. |
+
+Constructor and factory parameters are resolved by key, then by type. A `?` or defaulted parameter gets `undefined` when nothing matches.
+
+### Components: `@inject`
+
+`@inject IDatabase db` in a `.tszor` adds a constructor parameter and a `readonly db` field. The application builds such components in its generated `createComponent`. A component with `@inject` cannot declare its own `constructor` (ZDI08).
+
+### The application: `@Mount`
+
+The entry module declares one class with `@Mount(App, "app")` plus registrations and imports. zor writes `.zor/<entry>` with the generated subclass and the `mount(App, "app", new Application$())` call, and bundles that instead of the entry. Do not call `mount()` yourself.
+
+```ts
+@Mount(App, "app")
+@Import(DataServices)
+@Singleton(AuthService)
+@Singleton("requestId", Factories.newRequestId)
+export class Application implements IApplication {}
+```
+
+### Scopes and disposal
+
+- Every provider instance is a scope. `createScope()` returns a new scope sharing the root's singletons with an empty scoped cache.
+- Singletons are `static`, so disposing any root releases them for every instance.
+- A provider with disposable services gets `dispose()` and `[Symbol.dispose]` (or `disposeAsync()` and `[Symbol.asyncDispose]`). The root releases the singletons first, then its scoped services. A scope releases only its scoped services. Transients are never tracked.
+- When a component leaves the tree, the runtime calls its `dispose()` and its `[Symbol.dispose]()` or `[Symbol.asyncDispose]()`.
+
+### Async services
+
+A factory returning `Promise<T>` makes the service async, and that spreads to everything that takes it as `T`. Async services are read through `getXAsync()`. A parameter typed `Promise<T>` receives the promise unawaited and stays synchronous. A component that injects an async service as `T` is resolved asynchronously: its place stays empty until the services are ready.
+
+### Diagnostics
+
+| Id | Error |
+|---|---|
+| ZDI01 | Service registered twice in one provider, including a local registration of a service that an import already provides (shared dependencies are never overridden). |
+| ZDI02 | Unresolved dependency in a provider (includes self-sufficiency of imports). |
+| ZDI03 | Dependency cycle. |
+| ZDI04 | An `@inject` type is not provided by the application, or there is no `@Mount` application. |
+| ZDI05 | Ambiguous: two registrations satisfy one unkeyed parameter. |
+| ZDI06 | Registration without an implementation or factory. |
+| ZDI07 | `@Mount` on more than one class, or outside the entry module. |
+| ZDI08 | A user constructor in a component with `@inject`. |
+| ZDI10 | Reserved. Captive dependencies are allowed: a singleton keeps the scoped instance of the scope that first resolved it. |
+| ZDI11 | Invalid registration found by the analyzer (unexported type, generic type, non-public factory, decorator misuse). |
+
+### Gotchas
+
+- The tsconfig `lib` needs `ESNext.Disposable` (for `Disposable` and `Symbol.dispose`).
+- A class cannot reference itself in its own decorators, so keyed factories must be public static methods of another class.
+- A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
+- Optional members such as `dispose?()` are not detected as disposal.
+- `@Mount` must be in the entry module (`--entry`, default `main.ts`).
+
 ## Build
 
 - Only `.tszor` files inside a tsconfig project are compiled. Each one produces `.zor/<rel>.tszor.ts` plus a v3 `.tszor.ts.map`, and files are only written when their content changes.

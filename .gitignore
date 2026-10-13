@@ -5,3 +5,4 @@ dist/
 *.vsix
 .zor/
 editors/vscode/out/
+.superpowers/

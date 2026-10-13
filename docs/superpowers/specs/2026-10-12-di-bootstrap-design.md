@@ -40,9 +40,11 @@ export class DataServices {}
 @Import(DataServices)
 @Singleton(AuthService)                    // AuthService(db: IDatabase)
 @Transient(Clock)
-@Singleton("requestId", Application._newRequestId)
-export class Application implements IApplication {
-  static _newRequestId(): string { return crypto.randomUUID(); }
+@Singleton("requestId", Factories.newRequestId)
+export class Application implements IApplication {}
+
+export class Factories {
+  static newRequestId(): string { return crypto.randomUUID(); }
 }
 ```
 
@@ -60,7 +62,7 @@ export class Application implements IApplication {
 | `@Singleton(Impl)` / `@Singleton<IService>(Impl)` | One instance per generated provider class, stored in a `static` field as in SourceCrafter. Every instance and scope shares it. The type argument is the service type. TypeScript checks that `Impl` is assignable to it, because the decorator is typed `Singleton<T>(impl: new (...a: any[]) => T)`. |
 | `@Scoped(...)` | One instance per scope, cached in the scope where it is resolved. |
 | `@Transient(...)` | A new instance on every resolution. A transient with no dependencies gets no generated member: it is inlined as `new Impl()` at each use site. A transient with dependencies gets a getter that builds a new instance on every access. |
-| `@Singleton("key", Owner._factory)` | Keyed service built by a static factory. It is resolved by parameter name (`requestId: string`) before falling back to the type. Factory parameters are resolved like constructor parameters. A `Promise<T>` return makes the service async. |
+| `@Singleton("key", Owner.factory)` | Keyed service built by a static factory of another class. A class cannot reference itself in its own decorator arguments (TS2449). It is resolved by parameter name (`requestId: string`) before falling back to the type. Factory parameters are resolved like constructor parameters. A `Promise<T>` return makes the service async. |
 
 Constructor selection: the class's single constructor. Parameters are resolved by key (the parameter name matches a registered key), then by type. A parameter with a default value or `?` is optional, and gets `undefined` when nothing is registered.
 
@@ -74,9 +76,9 @@ getAuthServiceAsync(): Promise<AuthService> {
   const v0 = this.tryGetDatabase();
   return (this.#authService$Promise = v0 !== undefined
     ? Promise.resolve((this.#authService = new AuthService(this.clock, v0)))
-    : this.#createAuthService());
+    : this.#authService$create());
 }
-async #createAuthService(): Promise<AuthService> {
+async #authService$create(): Promise<AuthService> {
   const p0 = this.getDatabaseAsync();
   return (this.#authService = new AuthService(this.clock, await p0));
 }
@@ -97,6 +99,7 @@ async #createAuthService(): Promise<AuthService> {
   - creates transients on every resolution, as everywhere.
 - A scoped service is cached in the scope that resolves it. An application that imports a provider is itself the scope for that provider's scoped services: it caches them in its own fields and builds them with the imported provider's singletons (taken from `SharedInstance`) and its scoped services (resolved in the same application scope).
 - A singleton of an imported provider is read through `DataServices[SharedInstance]`. Because it is `static`, it is shared by every application and every `DataServices$` instance in the bundle.
+- Captive dependencies are allowed, as in SourceCrafter: a singleton that depends on a scoped service keeps the instance of the scope where it was first resolved. A scoped service is therefore never considered resolved because a singleton that depends on it is: each scope awaits its own.
 
 ## Generated code
 
@@ -179,7 +182,7 @@ export default class Counter extends ComponentBase {
 ## Runtime changes (`@zor/runtime`)
 
 - The decorators listed above, as typed no-op functions. Also `SharedInstance` (a `unique symbol`), and `IApplication` with optional hooks (`onStarted?(): void | Promise<void>`).
-- `mount(type, target, app?)`. `target` is an element id, or a CSS selector if it contains `#`, `.` or `[`. When the runtime creates a child component, it calls `app.createComponent(type) ?? new type()`. The result may be a `Promise`, as described in the async section. The application travels down the tree with each mounted component. A component with `@inject` mounted without an application throws an error naming the missing services.
+- `mount(type, target, app?)`. `target` is an element id, or a CSS selector if it contains `#`, `.` or `[`. When the runtime creates a component whose class has a non-empty `static inject`, it calls `app.createComponent(type)`; other components are built with `new type()`. The result may be a `Promise`, as described in the async section. The application travels down the tree with each mounted component. A component with `@inject` mounted without an application throws an error naming the missing services.
 - When a component leaves the tree, the runtime calls its `dispose()` hook, then `[Symbol.dispose]()` or `[Symbol.asyncDispose]()` when the component implements `Disposable` or `AsyncDisposable`.
 - The application is stored on each component's existing mount record, and a pending component promise is stored on its existing `VComponent`. No new maps or wrapper objects.
 
@@ -205,8 +208,10 @@ export default class Counter extends ComponentBase {
 | ZDI04 | A `@inject` type in a component is not provided by the application. |
 | ZDI05 | Ambiguous: two registrations satisfy one unkeyed parameter. |
 | ZDI06 | Interface-only registration without an implementation or factory. |
-| ZDI07 | `@Mount` on more than one class in a bundle entry, or on a class not implementing `IApplication`. |
+| ZDI07 | `@Mount` on more than one class, or outside the build's entry module. |
 | ZDI08 | A user constructor in a `@code` block that also uses `@inject`. |
+| ZDI10 | Reserved (captive dependencies are allowed; see Scopes). |
+| ZDI11 | Invalid registration found by the analyzer: an unexported or non-importable type, a generic project type, a non-public factory, a decorator misuse, or an unresolvable `@zor/runtime`. |
 
 ## My calls (review these)
 
@@ -215,7 +220,8 @@ export default class Counter extends ComponentBase {
 - **`@inject` resolution:** same rules as constructor parameters. A key equal to the field name wins (`@inject string requestId`), then the type.
 - **Component dispatch:** `createComponent` receives the component class itself (the value `addComponent` already gets) and compares by identity.
 - **Singleton lifetime:** as in SourceCrafter, singletons are `static` fields of the generated provider, shared by every instance. Disposing any root releases them for all; collisions are the app developer's design concern.
-- Getter naming as described above. Getters are public, so the provider is usable from plain TypeScript (`DataServices$[SharedInstance].database`).
+- Getter naming as described above. Getters are public, so the provider is usable from plain TypeScript (`DataServices$[SharedInstance].database`). Private members derive from the getter: `#x`, `#x$Promise` and `#x$create`.
+- Factories must be public static methods, and service types must not be generic. The analyzer reports both.
 - Component construction is centralized in `Application$.createComponent`. Components never import the application.
 - Language server, v1: `@inject` errors appear in `.tszor` files. Provider graph errors in `.ts` files appear in `zor build` output and on save, but not as live editor squiggles.
 

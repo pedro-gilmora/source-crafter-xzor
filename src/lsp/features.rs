@@ -256,6 +256,7 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("while", "while ($1) {\n\t$0\n}", "Repeated markup while a condition holds"),
     ("inherits", "inherits $1", "Base class instead of ComponentBase"),
     ("implements", "implements $1", "Interfaces this component implements"),
+    ("inject", "inject $1 $2", "Inject a service from the application"),
     ("attribute", "attribute $1", "Decorator on the component class"),
     ("slot", "slot", "Where slot content renders"),
 ];
@@ -496,7 +497,16 @@ mod tests {
 
         let doc = "\n@i";
         let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]).into_iter().map(|i| i.label).collect();
-        assert_eq!(labels, ["if", "import", "inherits", "implements"]);
+        assert_eq!(labels, ["if", "import", "inherits", "implements", "inject"]);
+    }
+
+    #[test]
+    fn directive_completions_include_inject() {
+        let doc = "\n@inj";
+        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "inject");
+        assert_eq!(items[0].insert, "inject $1 $2");
     }
 
     #[test]

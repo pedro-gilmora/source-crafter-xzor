@@ -55,6 +55,12 @@ impl From<&str> for Src {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
+pub struct Inject {
+    pub ty: Src,
+    pub name: Src,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Document {
     pub page: Option<String>,
     /// `@typeparam` declarations, e.g. `T extends object`.
@@ -65,6 +71,8 @@ pub struct Document {
     pub implements: Vec<Src>,
     /// `@attribute dec(args)`: class decorators.
     pub attributes: Vec<Src>,
+    /// `@inject Type name`: services passed to the constructor.
+    pub injects: Vec<Inject>,
     /// What follows `@import`, without a trailing `;`.
     pub imports: Vec<Src>,
     /// Raw bodies of `@code { ... }` blocks; they become class members.

@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "rootDirs": [".", ".zor"],
+    "paths": {
+      "@zor/runtime": ["../../../runtime/index.ts"]
+    }
+  },
+  "include": ["**/*.ts", ".zor/**/*.ts"]
+}

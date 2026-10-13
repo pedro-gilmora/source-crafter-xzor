@@ -298,7 +298,7 @@ impl<'a> Parser<'a> {
         let word = self.ident();
         let is_keyword = matches!(
             word,
-            "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "inherits" | "implements" | "attribute"
+            "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "inherits" | "implements" | "attribute" | "inject"
         );
         self.mark(TokenKind::Transition, at, at + 1);
         if is_keyword {
@@ -352,6 +352,21 @@ impl<'a> Parser<'a> {
                     "implements" => self.doc.implements.push(value),
                     _ => self.doc.attributes.push(value),
                 }
+                Ok(Transition::Nothing)
+            }
+            "inject" => {
+                let s = self.pos;
+                self.skip_line();
+                self.mark(TokenKind::Code, s, self.pos);
+                let value = self.span(s, self.pos);
+                let split = value.rfind(|c: char| c.is_ascii_whitespace());
+                let name = split.map(|i| &value[i + 1..]).filter(|n| n.bytes().next().is_some_and(is_ident_start) && n.bytes().all(is_ident_char));
+                let (Some(split), Some(name)) = (split, name) else {
+                    return self.err("expected a type and a name after @inject");
+                };
+                let ty = self.span(value.at, value.at + split);
+                let name = Src::new(name, value.at + split + 1);
+                self.doc.injects.push(Inject { ty, name });
                 Ok(Transition::Nothing)
             }
             "while" => {
@@ -1322,6 +1337,30 @@ after"#;
                 el("br", vec![], vec![]),
             ]
         );
+    }
+
+    #[test]
+    fn inject_directive() {
+        let src = "@inject IDatabase db\n<p/>";
+        let (doc, tokens) = parse(src).unwrap();
+        assert_eq!(doc.injects.len(), 1);
+        assert_eq!((&*doc.injects[0].ty, doc.injects[0].ty.at), ("IDatabase", 8));
+        assert_eq!((&*doc.injects[0].name, doc.injects[0].name.at), ("db", 18));
+        assert!(tokens.contains(&Token { kind: TokenKind::Keyword, start: 1, end: 7 }));
+        assert!(tokens.contains(&Token { kind: TokenKind::Code, start: 7, end: 20 }));
+    }
+
+    #[test]
+    fn inject_generic_type() {
+        let (doc, _) = parse("@inject Promise<Map<string, number>> cache").unwrap();
+        assert_eq!(&*doc.injects[0].ty, "Promise<Map<string, number>>");
+        assert_eq!(&*doc.injects[0].name, "cache");
+    }
+
+    #[test]
+    fn inject_needs_type_and_name() {
+        assert_eq!(parse("@inject db").unwrap_err().message, "expected a type and a name after @inject");
+        assert_eq!(parse("@inject").unwrap_err().message, "expected a type and a name after @inject");
     }
 
     #[test]

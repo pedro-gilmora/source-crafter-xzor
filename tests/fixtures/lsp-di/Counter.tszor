@@ -1,0 +1,4 @@
+@import { type Database, type Missing } from "./services"
+@inject Database db
+
+<p>@db.name</p>

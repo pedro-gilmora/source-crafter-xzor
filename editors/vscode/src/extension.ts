@@ -30,11 +30,14 @@ function stableCopy(context: ExtensionContext, server: string): string {
 
 export async function activate(context: ExtensionContext): Promise<void> {
   const command = stableCopy(context, findServer());
+  // Provider `.ts` changes rerun the DI analysis; the server ignores `.zor/` and `node_modules/`.
+  const watcher = workspace.createFileSystemWatcher("**/{*.ts,*.tszor}");
+  context.subscriptions.push(watcher);
   client = new LanguageClient(
     "tszor",
     "TSZor",
     { command, args: ["lsp"] },
-    { documentSelector: [{ scheme: "file", language: "tszor" }] },
+    { documentSelector: [{ scheme: "file", language: "tszor" }], synchronize: { fileEvents: watcher } },
   );
   await client.start();
 }

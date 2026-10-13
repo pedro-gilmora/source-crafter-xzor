@@ -13,7 +13,7 @@ USAGE:
                              (default: bun x tsc --noEmit -p {dir})
       --no-check             Skip type checking
       --no-bundle            Skip bundling
-      --watch                Rebuild when .tszor files change
+      --watch                Rebuild when .tszor or .ts files change
   zor highlight <FILE>       Print a .tszor file with syntax colors
   zor lsp                    Run the language server on stdio
 ";
@@ -37,10 +37,24 @@ fn run(args: &[String]) -> Result<(), String> {
     match command.as_str() {
         "compile" => {
             let paths = if rest.is_empty() { vec![".".to_string()] } else { rest.to_vec() };
+            let mut failed = false;
             for p in paths {
-                for unit in build::compile_all(&PathBuf::from(p))? {
+                let path = PathBuf::from(p);
+                let units = build::compile_all(&path)?;
+                for unit in &units {
                     println!("{}", unit.out.display());
                 }
+                // `compile` has no entry option, so a @Mount outside main.ts is not an error here.
+                if let Err(e) = build::di(&path, "main.ts", &units) {
+                    let kept: Vec<&str> = e.lines().filter(|l| !l.contains("error ZDI07: @Mount must be declared in the entry module")).collect();
+                    if !kept.is_empty() {
+                        eprintln!("{}", kept.join("\n"));
+                        failed = true;
+                    }
+                }
+            }
+            if failed {
+                return Err("zor: DI analysis failed".to_string());
             }
         }
         "build" => {
@@ -63,12 +77,16 @@ fn run(args: &[String]) -> Result<(), String> {
             let build_once = || -> Result<(), String> {
                 let units = build::compile_all(&dir)?;
                 println!("zor: compiled {} component(s)", units.len());
+                let di_entry = build::di(&dir, &entry, &units)?;
                 if check {
                     build::check(&dir, checker.as_deref(), &units)?;
                     println!("zor: type check passed");
                 }
                 if bundle {
-                    build::bundle(&dir, &entry)?;
+                    match di_entry.as_deref().and_then(|p| p.strip_prefix(&dir).ok()) {
+                        Some(generated) => build::bundle(&dir, &generated.to_string_lossy())?,
+                        None => build::bundle(&dir, &entry)?,
+                    }
                 }
                 Ok(())
             };

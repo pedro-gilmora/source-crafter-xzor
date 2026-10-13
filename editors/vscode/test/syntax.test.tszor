@@ -165,6 +165,15 @@ else {
 <!-- <~---------- keyword.control.directive.tszor
 @attribute sealed
 <!-- <~--------- keyword.control.directive.tszor
+@inject IDatabase db
+<!-- <- keyword.control.transition.tszor
+<!-- <~------ keyword.control.directive.tszor
+<!--    ^^^^^^^^^ entity.name.type.ts
+<!--              ^^ variable.other.readwrite.tszor
+@inject Promise<Map<string, number>> cache
+<!-- <~------ keyword.control.directive.tszor
+<!--    ^^^^^^^ entity.name.type.ts
+<!--                                 ^^^^^ variable.other.readwrite.tszor
 <p>@: Count</p>
 <!-- <~~~-- keyword.control.transition.tszor
 <a @onclick:preventDefault>x</a>

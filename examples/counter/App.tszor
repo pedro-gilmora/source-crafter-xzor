@@ -2,6 +2,7 @@
 @import Counter from "./Counter.tszor"
 @import Card from "./Card.tszor"
 @import List from "./List.tszor"
+@import Greeting from "./Greeting.tszor"
 @import { type RenderFragment } from "@zor/runtime"
 
 @code {
@@ -41,6 +42,7 @@
 
 <main>
   <h1>@title</h1>
+  <Greeting />
   <Counter label="Clicks" onChange="(n) => total = n" @ref="clicks" />
   <Counter label="Fives" step="5" />
   <Card title="Binding">

@@ -77,6 +77,8 @@ const spec: [string, A[]][] = [
   ["@inherits Base<T>", [["inherits", "keyword.control.directive.tszor"]]],
   ["@implements Named", [["implements", "keyword.control.directive.tszor"]]],
   ["@attribute sealed", [["attribute", "keyword.control.directive.tszor"]]],
+  ["@inject IDatabase db", [["@", "keyword.control.transition.tszor"], ["inject", "keyword.control.directive.tszor"], ["IDatabase", "entity.name.type.ts"], ["db", "variable.other.readwrite.tszor"]]],
+  ["@inject Promise<Map<string, number>> cache", [["inject", "keyword.control.directive.tszor"], ["Promise", "entity.name.type.ts"], ["cache", "variable.other.readwrite.tszor"]]],
   ["<p>@: Count</p>", [["@:", "keyword.control.transition.tszor"]]],
   ["<a @onclick:preventDefault>x</a>", [["@onclick:preventDefault", "entity.other.attribute-name.html"]]],
 ];
