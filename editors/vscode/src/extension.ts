@@ -33,11 +33,18 @@ export async function activate(context: ExtensionContext): Promise<void> {
   // Provider `.ts` changes rerun the DI analysis; the server ignores `.zor/` and `node_modules/`.
   const watcher = workspace.createFileSystemWatcher("**/{*.ts,*.tszor}");
   context.subscriptions.push(watcher);
+  // `.ts` documents get only DI diagnostics from the server; VS Code's TypeScript serves everything else.
   client = new LanguageClient(
     "tszor",
     "TSZor",
     { command, args: ["lsp"] },
-    { documentSelector: [{ scheme: "file", language: "tszor" }], synchronize: { fileEvents: watcher } },
+    {
+      documentSelector: [
+        { scheme: "file", language: "tszor" },
+        { scheme: "file", language: "typescript" },
+      ],
+      synchronize: { fileEvents: watcher },
+    },
   );
   await client.start();
 }

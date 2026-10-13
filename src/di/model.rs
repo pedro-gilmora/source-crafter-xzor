@@ -19,6 +19,12 @@ pub struct Param {
     /// Typed `Promise<T>`: receives the unawaited promise.
     pub promise: bool,
     pub ty: TypeRef,
+    /// Project-relative file declaring the parameter (keeps `.zor/`).
+    pub file: String,
+    /// UTF-16 code-unit offset of the parameter name in `file`.
+    pub at: usize,
+    /// `<provider class id>:<registration index>` of keyed registrations named like this parameter whose type does not fit it.
+    pub bad_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +57,8 @@ pub struct Registration {
     pub is_async: bool,
     pub params: Vec<Param>,
     pub dispose: Option<Dispose>,
+    /// The disposer member is optional (`dispose?()`).
+    pub dispose_optional: bool,
     /// UTF-16 code-unit offset of the `@` in `file`.
     pub at: usize,
 }
@@ -167,6 +175,9 @@ fn param(j: &Json, path: &str) -> Result<Param, String> {
         optional: boolean(j, "optional", path)?,
         promise: boolean(j, "promise", path)?,
         ty: sub_type_ref(j, "type", path)?,
+        file: string(j, "file", path)?,
+        at: number(j, "at", path)?,
+        bad_keys: list(j, "badKeys", path, |k, p| k.as_str().map(str::to_string).ok_or_else(|| format!("di facts: missing {p}")))?,
     })
 }
 
@@ -202,6 +213,7 @@ fn registration(j: &Json, path: &str) -> Result<Registration, String> {
         is_async: boolean(j, "async", path)?,
         params: list(j, "params", path, param)?,
         dispose,
+        dispose_optional: boolean(j, "disposeOptional", path)?,
         at: number(j, "at", path)?,
     })
 }
@@ -231,7 +243,7 @@ fn component(j: &Json, path: &str) -> Result<Component, String> {
 mod tests {
     use super::*;
 
-    const FACTS: &str = r##"{"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","at":727}],"mount":{"component":{"id":"App.tszor.ts#default","text":"App","module":"App.tszor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.tszor.ts#default","text":"Counter","module":"Counter.tszor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
+    const FACTS: &str = r##"{"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.tszor.ts#default","text":"App","module":"App.tszor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.tszor.ts#default","text":"Counter","module":"Counter.tszor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".zor/Counter.tszor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
 
     fn t(module: &str, name: &str) -> TypeRef {
         TypeRef { id: format!("{module}.ts#{name}"), text: name.into(), module: Some(module.into()), export: Some(name.into()) }
@@ -256,7 +268,7 @@ mod tests {
         assert_eq!(cache.key.as_deref(), Some("cache"));
         assert_eq!(cache.factory, Some(Factory { owner: t("main", "Factories"), member: "_loadCache".into() }));
         assert!(cache.is_async);
-        assert_eq!((cache.dispose, cache.at), (None, 794));
+        assert_eq!((cache.dispose, cache.dispose_optional, cache.at), (None, false, 794));
 
         let report = &p.registrations[1];
         assert_eq!(report.lifetime, Lifetime::Transient);
@@ -264,17 +276,35 @@ mod tests {
         assert_eq!(report.key, None);
         assert!(!report.is_async);
         assert_eq!(report.dispose, Some(Dispose::AsyncSymbol));
+        assert!(report.dispose_optional);
         assert_eq!(
             report.params,
             vec![
-                Param { name: "cache".into(), optional: false, promise: true, ty: t("main", "Cache") },
-                Param { name: "requestId".into(), optional: true, promise: false, ty: TypeRef { id: "string".into(), text: "string".into(), module: None, export: None } },
+                Param {
+                    name: "cache".into(),
+                    optional: false,
+                    promise: true,
+                    ty: t("main", "Cache"),
+                    file: "main.ts".into(),
+                    at: 300,
+                    bad_keys: vec!["main.ts#Application:0".into()],
+                },
+                Param {
+                    name: "requestId".into(),
+                    optional: true,
+                    promise: false,
+                    ty: TypeRef { id: "string".into(), text: "string".into(), module: None, export: None },
+                    file: "main.ts".into(),
+                    at: 330,
+                    bad_keys: vec![],
+                },
             ]
         );
 
         let c = &facts.components[0];
         assert_eq!(c.class.text, "Counter");
-        assert_eq!(c.injects, vec![Param { name: "db".into(), optional: false, promise: false, ty: t("services/data", "IDatabase") }]);
+        let db = Param { name: "db".into(), optional: false, promise: false, ty: t("services/data", "IDatabase"), file: ".zor/Counter.tszor.ts".into(), at: 250, bad_keys: vec![] };
+        assert_eq!(c.injects, vec![db]);
 
         assert_eq!(facts.errors, vec![FactError { file: "services/hidden.ts".into(), at: 112, message: "Hidden must be exported to be injected".into() }]);
     }

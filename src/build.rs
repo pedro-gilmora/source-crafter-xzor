@@ -1,14 +1,15 @@
 //! Project driver: `.tszor` -> `.zor/*.tszor.ts` (zor) -> type check -> `.js` bundle (bun).
 
+pub use crate::analyzer::Analyzer;
 use crate::codegen::Generated;
 use crate::lsp::{offset_at, position_at, same_path};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::SystemTime;
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 
 pub fn find_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
@@ -24,9 +25,10 @@ pub fn find_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
 /// Files under `dir` whose name passes `keep`, skipping dot-dirs, `node_modules`, `dist` and `target`.
 fn walk(dir: &Path, keep: &dyn Fn(&str) -> bool, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
+        let entry = entry?;
+        let path = entry.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if path.is_dir() {
+        if entry.file_type()?.is_dir() {
             if !name.starts_with('.') && !matches!(&*name, "node_modules" | "dist" | "target") {
                 walk(&path, keep, out)?;
             }
@@ -51,10 +53,19 @@ pub fn in_project(source: &Path) -> bool {
     source.parent().is_some_and(|d| d.ancestors().any(|a| a.join("tsconfig.json").is_file()))
 }
 
+/// The nearest ancestor directory holding a `tsconfig.json`, if any.
+pub fn tsconfig_root(source: &Path) -> Option<PathBuf> {
+    source.parent()?.ancestors().find(|d| d.join("tsconfig.json").is_file()).map(Path::to_path_buf)
+}
+
 /// `<root>/.zor/<relative source path>.ts`, the generated TypeScript (like Blazor's `obj/`).
 pub fn output_path(source: &Path) -> PathBuf {
-    let root = project_root(source);
-    let rel = source.strip_prefix(&root).unwrap_or(source);
+    output_path_in(&project_root(source), source)
+}
+
+/// `output_path` for a `source` whose project root is known.
+pub fn output_path_in(root: &Path, source: &Path) -> PathBuf {
+    let rel = source.strip_prefix(root).unwrap_or(source);
     let mut p = root.join(".zor").join(rel).into_os_string();
     p.push(".ts");
     p.into()
@@ -75,23 +86,187 @@ pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
     let mut errors = Vec::new();
     let mut compiled = Vec::new();
     for src in sources.into_iter().filter(|s| in_project(s)) {
-        let text = fs::read_to_string(&src).map_err(|e| format!("{}: {e}", src.display()))?;
-        match crate::compile_mapped(&text, &src) {
-            Ok(generated) => {
-                let out = output_path(&src);
-                let name = src.file_name().unwrap_or_default().to_string_lossy();
-                let map = generated.source_map(&text, &relative_from(out.parent().unwrap_or(Path::new(".")), &src, &name));
-                write_if_changed(&out, &generated.code)?;
-                write_if_changed(&PathBuf::from(format!("{}.map", out.display())), &map)?;
-                compiled.push(Compiled { source: src, out, text, generated });
-            }
-            Err(d) => errors.push(format!("{}:{d}", src.display())),
+        match compile_one(&src) {
+            Ok(unit) => compiled.push(unit),
+            Err(e) => errors.push(e),
         }
     }
     if errors.is_empty() { Ok(compiled) } else { Err(errors.join("\n")) }
 }
 
-fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
+/// Compiles one `.tszor` into its project's `.zor/`, with its source map.
+pub fn compile_one(src: &Path) -> Result<Compiled, String> {
+    let text = fs::read_to_string(src).map_err(|e| format!("{}: {e}", src.display()))?;
+    let generated = crate::compile_mapped(&text, src).map_err(|d| format!("{}:{d}", src.display()))?;
+    let out = output_path(src);
+    let name = src.file_name().unwrap_or_default().to_string_lossy();
+    let map = generated.source_map(&text, &relative_from(out.parent().unwrap_or(Path::new(".")), src, &name));
+    write_if_changed(&out, &generated.code)?;
+    write_if_changed(&map_path(&out), &map)?;
+    Ok(Compiled { source: src.to_path_buf(), out, text, generated })
+}
+
+fn map_path(out: &Path) -> PathBuf {
+    let mut p = out.as_os_str().to_owned();
+    p.push(".map");
+    p.into()
+}
+
+/// Deletes the generated `.zor/*.tszor.ts` and `.map` of a removed `.tszor`.
+pub fn remove_outputs(src: &Path) {
+    let out = output_path(src);
+    let _ = fs::remove_file(map_path(&out));
+    let _ = fs::remove_file(out);
+}
+
+/// `"<type> <name>"` per `@inject`, to tell whether a component's DI inputs changed.
+pub fn inject_signature(injects: &[crate::ast::Inject]) -> Vec<String> {
+    injects.iter().map(|i| format!("{} {}", i.ty.text, i.name.text)).collect()
+}
+
+/// What one batch of watched changes requires.
+#[derive(Debug, Default, PartialEq)]
+pub struct WatchPlan {
+    pub recompile: Vec<PathBuf>,
+    pub remove: Vec<PathBuf>,
+    pub di: bool,
+    pub rebuild: bool,
+}
+
+fn is_source(name: &str) -> bool {
+    name.ends_with(".tszor") || name.ends_with(".ts")
+}
+
+/// Whether a watched path (relative, `/`-separated) is outside the sources: our outputs, dependencies, dot-dirs.
+fn watch_ignored(rel: &str) -> bool {
+    rel.is_empty() || rel.split('/').any(|s| s.starts_with('.') || matches!(s, "dist" | "node_modules" | "target"))
+}
+
+/// The sources behind a batch of watched `paths` (relative to `root`): files, files under added
+/// directories, and known files under removed ones. The flag is set when a directory-like path was
+/// removed (its untracked `.ts` files may have gone too).
+fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, provider_ts: &HashSet<PathBuf>, root: &Path) -> (Vec<PathBuf>, bool) {
+    let mut files = Vec::new();
+    let mut removed_dir = false;
+    for rel in paths.iter().map(|p| p.replace('\\', "/")).filter(|p| !watch_ignored(p)) {
+        let path = root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        if path.is_dir() {
+            // A directory with known files reports their changes itself; only a new one needs walking.
+            if !known_injects.keys().chain(provider_ts).any(|k| k.starts_with(&path)) {
+                let _ = walk(&path, &is_source, &mut files);
+            }
+        } else if is_source(&rel) {
+            files.push(path);
+        } else if !path.exists() {
+            files.extend(known_injects.keys().chain(provider_ts).filter(|k| k.starts_with(&path)).cloned());
+            removed_dir |= !rel.rsplit('/').next().is_some_and(|s| s.contains('.'));
+        }
+    }
+    files.sort();
+    files.dedup();
+    (files, removed_dir)
+}
+
+/// Components whose text mentions a changed `.tszor` file name: codegen reads imported components'
+/// type parameters and prop kinds. Excludes the changed ones themselves.
+pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
+    let names: Vec<_> = changed.iter().map(|c| c.file_name().unwrap_or_default().to_string_lossy()).collect();
+    units.iter().filter(|u| !changed.contains(&u.source.as_path()) && names.iter().any(|n| u.text.contains(&**n))).map(|u| u.source.clone()).collect()
+}
+
+/// Decides what a batch of watched `paths` (relative to `root`) requires. `known_injects` holds the
+/// compiled `.tszor` files (by source path) with their `inject_signature`; `provider_ts` the provider `.ts` files.
+pub fn watch_plan(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, provider_ts: &HashSet<PathBuf>, root: &Path) -> WatchPlan {
+    let mut plan = WatchPlan::default();
+    let (files, removed_dir) = watch_files(paths, known_injects, provider_ts, root);
+    plan.rebuild = removed_dir;
+    for path in files {
+        let name = path.to_string_lossy();
+        if !name.ends_with(".tszor") {
+            plan.rebuild = true;
+            // Providers import other `.ts` files, so any of them may change the generated providers.
+            plan.di |= provider_ts.contains(&path)
+                || (!name.ends_with(".d.ts") && (!provider_ts.is_empty() || fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t))));
+            continue;
+        }
+        let known = known_injects.get(&path);
+        match fs::read_to_string(&path) {
+            Ok(text) => {
+                if known.is_none() && !in_project(&path) {
+                    continue;
+                }
+                plan.di |= match known {
+                    None => true,
+                    Some(k) => crate::parser::parse(&text).is_ok_and(|(doc, _)| *k != inject_signature(&doc.injects)),
+                };
+                plan.recompile.push(path);
+            }
+            Err(_) if known.is_some() => {
+                plan.di = true;
+                plan.remove.push(path);
+            }
+            Err(_) => continue,
+        }
+        plan.rebuild = true;
+    }
+    plan
+}
+
+/// Brings `provider_ts` up to date with a batch of watched `paths`.
+pub fn update_providers(provider_ts: &mut HashSet<PathBuf>, paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, root: &Path) {
+    for path in watch_files(paths, known_injects, provider_ts, root).0 {
+        let name = path.to_string_lossy();
+        if name.ends_with(".ts") && !name.ends_with(".d.ts") && fs::read_to_string(&path).is_ok_and(|t| declares_provider(&t)) {
+            provider_ts.insert(path);
+        } else {
+            provider_ts.remove(&path);
+        }
+    }
+}
+
+const WATCH_SCRIPT: &str = include_str!("watch.ts");
+
+/// The `bun watch.ts` child; killed on drop.
+pub struct Watcher(Child);
+
+impl Drop for Watcher {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Starts watching `root`: the receiver yields each changed path, relative to `root` with `/` separators.
+/// Returns once the watch is active.
+pub fn watch(root: &Path) -> Result<(Watcher, mpsc::Receiver<String>), String> {
+    let script = root.join("node_modules").join(".cache").join("zor").join("watch.ts");
+    write_if_changed(&script, WATCH_SCRIPT)?;
+    // stdin stays open: the watcher exits when it closes, even if zor is killed.
+    let mut child = Command::new("bun")
+        .arg(&script)
+        .arg(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("watch: failed to run bun: {e}"))?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let watcher = Watcher(child);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in io::BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    // The first line is the empty "ready" line.
+    rx.recv().map_err(|_| "watch: the file watcher exited".to_string())?;
+    Ok((watcher, rx))
+}
+
+pub(crate) fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
     if fs::read_to_string(path).ok().as_deref() == Some(content) {
         return Ok(());
     }
@@ -143,27 +318,6 @@ fn normalize(p: &Path) -> PathBuf {
     p.components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect()
 }
 
-/// Modification times of every `.tszor` and `.ts` source under `root` (`.ts` covers providers and the entry).
-pub fn snapshot(root: &Path) -> HashMap<PathBuf, SystemTime> {
-    let mut files = Vec::new();
-    if root.is_dir() {
-        let _ = walk(root, &|n| n.ends_with(".tszor") || (n.ends_with(".ts") && !n.ends_with(".d.ts")), &mut files);
-    } else {
-        files.push(root.to_path_buf());
-    }
-    files
-        .into_iter()
-        .filter_map(|p| Some((p.clone(), fs::metadata(&p).ok()?.modified().ok()?)))
-        .collect()
-}
-
-/// Sources that are new or modified since `before`.
-pub fn changed(before: &HashMap<PathBuf, SystemTime>, now: &HashMap<PathBuf, SystemTime>) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = now.iter().filter(|(p, t)| before.get(*p) != Some(t)).map(|(p, _)| p.clone()).collect();
-    out.sort();
-    out
-}
-
 /// Runs the type checker and prints its output with positions mapped back to `.tszor`
 /// files. `checker` may contain `{dir}`. The default is TypeScript 7's
 /// `tsc --noEmit -p <dir>`, launched through `bun x` when Bun is installed, else `npx`.
@@ -199,12 +353,16 @@ pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result
     if output.status.success() { Ok(()) } else { Err(format!("type check failed ({})", output.status)) }
 }
 
-const DI_SCRIPT: &str = include_str!("di.ts");
-
 /// Compile-time DI: analyzes the project's providers, writes the generated providers into `.zor/`, and returns
 /// `.zor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
-pub fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
-    di_checked(root, entry, compiled, &provider_files(root)).map_err(|f| match f {
+/// `analyzer` belongs to `root` and may be reused across runs.
+pub fn di(root: &Path, entry: &str, compiled: &[Compiled], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, String> {
+    di_with(root, entry, compiled, &provider_files(root), analyzer)
+}
+
+/// `di` with the provider `files` (relative to `root`) already known.
+pub fn di_with(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, String> {
+    di_checked(root, entry, compiled, files, analyzer).map_err(|f| match f {
         DiFailure::Diags(d) => format_diags(root, &d, compiled, &std::env::current_dir().unwrap_or_default()),
         DiFailure::Other(e) => e,
     })
@@ -223,27 +381,38 @@ impl From<String> for DiFailure {
 }
 
 /// `di` with its diagnostics left structured; `files` are `provider_files(root)`.
-pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf]) -> Result<Option<PathBuf>, DiFailure> {
+pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, DiFailure> {
+    di_run(root, entry, compiled, files, analyzer, &[], true)
+}
+
+/// `di_checked` reading `overlays` (path, text) instead of the disk; without `write` nothing is written or pruned.
+pub fn di_run(
+    root: &Path,
+    entry: &str,
+    compiled: &[Compiled],
+    files: &[PathBuf],
+    analyzer: &mut Analyzer,
+    overlays: &[(PathBuf, String)],
+    write: bool,
+) -> Result<Option<PathBuf>, DiFailure> {
     let zor = root.join(".zor");
     if files.is_empty() {
         let diags = unmounted_injects(root, compiled);
         if !diags.is_empty() {
             return Err(DiFailure::Diags(diags));
         }
-        prune(&zor, &[])?;
+        if write {
+            prune(&zor, &[])?;
+        }
         return Ok(None);
     }
-    // Under node_modules, `typescript` resolves from the project and the script stays out of tsconfig's `include`.
-    let script = root.join("node_modules").join(".cache").join("zor").join("di.ts");
-    write_if_changed(&script, DI_SCRIPT)?;
-    let mut cmd = Command::new("bun");
-    cmd.arg(&script).arg(root).args(files).arg("--");
+    let mut components = Vec::new();
     for unit in compiled.iter().filter(|u| !u.generated.injects.is_empty()) {
         let rel = unit.out.strip_prefix(root).map_err(|_| format!("{}: error: generated file is outside {}, cannot analyze its @inject", unit.source.display(), root.display()))?;
-        cmd.arg(rel);
+        components.push(rel.to_string_lossy().into_owned());
     }
-    let output = cmd.output().map_err(|e| format!("DI analysis: failed to run bun: {e}"))?;
-    let facts = analyzer_facts(output.status.success(), &output.status.to_string(), &output.stdout, &output.stderr)?;
+    let files: Vec<String> = files.iter().map(|f| f.to_string_lossy().into_owned()).collect();
+    let facts = analyzer.analyze(&files, &components, overlays)?;
     let resolved = crate::di::graph::resolve(&facts).map_err(DiFailure::Diags)?;
 
     let entry = entry.replace('\\', "/");
@@ -251,8 +420,11 @@ pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[Path
     let mount = resolved.iter().find_map(|r| Some((&r.provider.file, r.provider.mount.as_ref()?)));
     if let Some((file, m)) = mount.filter(|(file, _)| *file != entry) {
         let message = format!("@Mount must be declared in the entry module {entry}");
-        let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None };
+        let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None, param_at: None };
         return Err(DiFailure::Diags(vec![d]));
+    }
+    if !write {
+        return Ok(mount.map(|_| zor.join(entry)));
     }
     let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
     let mut written = Vec::with_capacity(resolved.len());
@@ -281,21 +453,14 @@ fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph
         let class = crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name));
         for i in &unit.generated.injects {
             let message = format!("{} (injected as {} in {class}) is not provided: no @Mount application", i.ty.text, i.name.text);
-            out.push(crate::di::graph::Diag { file: file.clone(), at: 0, code: "ZDI04", message, inject: Some(i.name.text.clone()) });
+            out.push(crate::di::graph::Diag { file: file.clone(), at: 0, code: "ZDI04", message, inject: Some(i.name.text.clone()), param_at: None });
         }
     }
     out
 }
 
-/// The analyzer's facts, or a clear error when it failed or printed something unparseable.
-fn analyzer_facts(ok: bool, status: &str, stdout: &[u8], stderr: &[u8]) -> Result<crate::di::model::Facts, String> {
-    if !ok {
-        return Err(format!("DI analysis failed ({status})\n{}", String::from_utf8_lossy(stderr)));
-    }
-    crate::di::model::Facts::from_json(&String::from_utf8_lossy(stdout)).map_err(|e| format!("DI analysis: {e}"))
-}
-
-/// Deletes DI-generated files (carrying the DI header) under `zor` that were not written in this run.
+/// Deletes DI-generated files (carrying the DI header) under `zor` that were not written in this run,
+/// then the empty directories below `zor`.
 fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
     if !zor.is_dir() {
         return Ok(());
@@ -310,7 +475,23 @@ fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
             fs::remove_file(file).map_err(|e| format!("{}: {e}", file.display()))?;
         }
     }
-    Ok(())
+    remove_empty_dirs(zor).map(|_| ())
+}
+
+/// Removes the empty directories below `dir`, bottom-up (never `dir`); returns whether `dir` is left empty.
+fn remove_empty_dirs(dir: &Path) -> Result<bool, String> {
+    let err = |e: io::Error| format!("{}: {e}", dir.display());
+    let mut empty = true;
+    for entry in fs::read_dir(dir).map_err(err)? {
+        let entry = entry.map_err(err)?;
+        let path = entry.path();
+        if entry.file_type().map_err(err)?.is_dir() && remove_empty_dirs(&path)? {
+            fs::remove_dir(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        } else {
+            empty = false;
+        }
+    }
+    Ok(empty)
 }
 
 /// Whether a `.ts` source declares `@ServiceProvider` or `@Mount`.
@@ -329,8 +510,17 @@ pub fn provider_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// A DI diagnostic on a component's `@inject` type: LSP positions (0-based line, UTF-16 column).
-pub struct InjectDiag {
+/// Project `.ts` (not `.d.ts`) and `.tszor` files under `root`, skipping outputs and dependencies.
+pub fn project_sources(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if root.is_dir() {
+        let _ = walk(root, &|n| is_source(n) && !n.ends_with(".d.ts"), &mut files);
+    }
+    files
+}
+
+/// A DI diagnostic located in a source: LSP positions (0-based line, UTF-16 column).
+pub struct LocatedDiag {
     pub source: PathBuf,
     pub start: (usize, usize),
     pub end: (usize, usize),
@@ -338,16 +528,40 @@ pub struct InjectDiag {
     pub message: String,
 }
 
-/// The component diagnostics among `diags` (ZDI04/ZDI05), located at the `@inject` type.
-pub fn inject_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled]) -> Vec<InjectDiag> {
-    let mut out = Vec::new();
+/// Locates `diags`: component diagnostics at the `@inject` type, the rest at their parameter (`param_at`)
+/// or registration (`file`/`at`) over the word there. `overlays` (path, text) are read instead of the disk.
+pub fn located_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled], overlays: &[(PathBuf, String)]) -> Vec<LocatedDiag> {
+    let mut out = Vec::with_capacity(diags.len());
+    let mut read: Vec<(PathBuf, String)> = Vec::new();
     for d in diags {
-        let Some(name) = &d.inject else { continue };
-        let path = normalize(&root.join(&d.file));
-        let Some(unit) = compiled.iter().find(|u| same_path(&normalize(&u.source), &path)) else { continue };
-        let Some(i) = unit.generated.injects.iter().find(|i| i.name.text == *name).filter(|i| i.ty.at != crate::ast::Src::UNMAPPED) else { continue };
-        let (start, end) = (position_at(&unit.text, i.ty.at), position_at(&unit.text, i.ty.at + i.ty.text.len()));
-        out.push(InjectDiag { source: unit.source.clone(), start, end, code: d.code, message: d.message.clone() });
+        if let Some(name) = &d.inject {
+            let path = normalize(&root.join(&d.file));
+            let Some(unit) = compiled.iter().find(|u| same_path(&normalize(&u.source), &path)) else { continue };
+            let Some(i) = unit.generated.injects.iter().find(|i| i.name.text == *name).filter(|i| i.ty.at != crate::ast::Src::UNMAPPED) else { continue };
+            let (start, end) = (position_at(&unit.text, i.ty.at), position_at(&unit.text, i.ty.at + i.ty.text.len()));
+            out.push(LocatedDiag { source: unit.source.clone(), start, end, code: d.code, message: d.message.clone() });
+            continue;
+        }
+        let (file, at) = d.param_at.as_ref().map_or((&d.file, d.at), |(f, a)| (f, *a));
+        let path = normalize(&root.join(file));
+        let text = match overlays.iter().find(|(p, _)| same_path(p, &path)) {
+            Some((_, t)) => t.as_str(),
+            None => {
+                let i = match read.iter().position(|(p, _)| *p == path) {
+                    Some(i) => i,
+                    None => {
+                        let Ok(t) = fs::read_to_string(&path) else { continue };
+                        read.push((path.clone(), t));
+                        read.len() - 1
+                    }
+                };
+                read[i].1.as_str()
+            }
+        };
+        let start = utf16_to_byte(text, at);
+        let word = text[start..].char_indices().find(|&(i, c)| !(c.is_alphanumeric() || c == '_' || c == '$' || (i == 0 && c == '@'))).map_or(text.len() - start, |(i, _)| i);
+        let end = if word > 0 { start + word } else { text[start..].chars().next().map_or(start, |c| start + c.len_utf8()) };
+        out.push(LocatedDiag { source: path, start: position_at(text, start), end: position_at(text, end), code: d.code, message: d.message.clone() });
     }
     out
 }
@@ -356,14 +570,15 @@ pub fn inject_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[C
 fn format_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled], cwd: &Path) -> String {
     let mut out = String::new();
     for d in diags {
-        let path = normalize(&root.join(&d.file));
+        let (file, at) = d.param_at.as_ref().map_or((&d.file, d.at), |(f, a)| (f, *a));
+        let path = normalize(&root.join(file));
         let unit = compiled.iter().find(|u| same_path(&normalize(&u.source), &path));
-        let (line, col) = match (&d.inject, unit) {
-            (Some(name), Some(u)) => position_at(&u.text, u.generated.injects.iter().find(|i| i.name.text == *name).map_or(0, |i| i.name.at)),
-            (Some(_), None) => (0, 0),
-            (None, _) => {
+        let (line, col) = match (&d.param_at, &d.inject, unit) {
+            (None, Some(name), Some(u)) => position_at(&u.text, u.generated.injects.iter().find(|i| i.name.text == *name).map_or(0, |i| i.name.at)),
+            (None, Some(_), None) => (0, 0),
+            _ => {
                 let text = fs::read_to_string(&path).unwrap_or_default();
-                position_at(&text, utf16_to_byte(&text, d.at))
+                position_at(&text, utf16_to_byte(&text, at))
             }
         };
         let shown = path.strip_prefix(cwd).unwrap_or(&path).display().to_string().replace('\\', "/");
@@ -465,18 +680,126 @@ mod tests {
     }
 
     #[test]
-    fn watch_snapshots_detect_changed_sources() {
-        let root = temp("watch");
+    fn watch_batch_plan() {
+        let root = temp("watchplan");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        let file = root.join("A.tszor");
-        fs::write(&file, "<p/>").unwrap();
-        let before = snapshot(&root);
-        assert!(changed(&before, &snapshot(&root)).is_empty());
-        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        fs::File::options().write(true).open(&file).unwrap().set_modified(later).unwrap();
-        assert_eq!(changed(&before, &snapshot(&root)), [file.clone()]);
+        fs::create_dir_all(root.join("services")).unwrap();
+        fs::write(root.join("services/data.ts"), "@ServiceProvider()\nexport class S {}\n").unwrap();
+        fs::write(root.join("util.ts"), "export const x = 1;\n").unwrap();
+        fs::write(root.join("Counter.tszor"), "@inject IDatabase db\n<p>a</p>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let known: HashMap<PathBuf, Vec<String>> = units.iter().map(|u| (u.source.clone(), inject_signature(&u.generated.injects))).collect();
+        let providers: HashSet<PathBuf> = provider_files(&root).into_iter().map(|p| root.join(p)).collect();
+        let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &providers, &root);
+        let counter = root.join("Counter.tszor");
+
+        fs::write(&counter, "@inject IDatabase db\n<p>b</p>\n").unwrap();
+        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: false, rebuild: true });
+        fs::write(&counter, "@inject IDatabase other\n<p>b</p>\n").unwrap();
+        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: true, rebuild: true });
+
+        assert_eq!(plan(&["services/data.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
+        fs::write(root.join("util.ts"), "@Mount(App, \"app\")\nexport class M {}\n").unwrap();
+        assert_eq!(plan(&["util.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
+        fs::write(root.join("util.ts"), "export const x = 2;\n").unwrap();
+        // Providers import other `.ts` files, so with providers any `.ts` change reruns DI; without, only the rebuild.
+        assert_eq!(plan(&["util.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
+        let no_providers = HashSet::new();
+        let plan_without = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &no_providers, &root);
+        assert_eq!(plan_without(&["util.ts"]), WatchPlan { rebuild: true, ..Default::default() });
+
+        // Windows separators, as `fs.watch` reports them, behave like `/`.
+        assert_eq!(plan(&["services\\data.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
+        assert_eq!(plan(&[".zor\\Counter.tszor.ts", "node_modules\\x\\index.ts", "dist\\a.ts", "target\\a.ts"]), WatchPlan::default());
+
+        fs::write(root.join("New.tszor"), "<p/>\n").unwrap();
+        assert_eq!(plan(&["New.tszor"]), WatchPlan { recompile: vec![root.join("New.tszor")], remove: vec![], di: true, rebuild: true });
+        fs::remove_file(&counter).unwrap();
+        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![], remove: vec![counter.clone()], di: true, rebuild: true });
+
+        // Our own outputs (and tooling folders) never trigger a rebuild, so `--watch` cannot loop.
+        fs::create_dir_all(root.join(".zor")).unwrap();
+        fs::write(root.join(".zor/Counter.tszor.ts"), "").unwrap();
+        let ignored = [".zor/Counter.tszor.ts", ".zor/X.tszor", "dist/main.js", "dist/a.ts", "target/debug/a.ts", "node_modules/x/index.ts", ".git/HEAD", ".git/a.ts", ""];
+        assert_eq!(plan(&ignored), WatchPlan::default());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn watch_directory_events() {
+        let root = temp("watchdirs");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::create_dir_all(root.join("services")).unwrap();
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::write(root.join("services/data.ts"), "@ServiceProvider()\nexport class S {}\n").unwrap();
+        fs::write(root.join("lib/Card.tszor"), "<p/>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let known: HashMap<PathBuf, Vec<String>> = units.iter().map(|u| (u.source.clone(), inject_signature(&u.generated.injects))).collect();
+        let providers: HashSet<PathBuf> = provider_files(&root).into_iter().map(|p| root.join(p)).collect();
+        let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &providers, &root);
+
+        // Directories holding known files report their children themselves.
+        assert_eq!(plan(&["lib", "services"]), WatchPlan::default());
+
+        // A newly added directory is walked.
+        fs::create_dir_all(root.join("fresh/deep")).unwrap();
+        fs::write(root.join("fresh/deep/New.tszor"), "<p/>\n").unwrap();
+        let new = root.join("fresh/deep/New.tszor");
+        assert_eq!(plan(&["fresh"]), WatchPlan { recompile: vec![new], remove: vec![], di: true, rebuild: true });
+
+        // A removed directory maps to the known files under it; one with only untracked `.ts` files still rebuilds.
+        fs::remove_dir_all(root.join("lib")).unwrap();
+        assert_eq!(plan(&["lib"]), WatchPlan { recompile: vec![], remove: vec![root.join("lib/Card.tszor")], di: true, rebuild: true });
+        let nothing_known = HashMap::new();
+        let none = HashSet::new();
+        let gone = vec!["scratch".to_string()];
+        assert_eq!(watch_plan(&gone, &nothing_known, &none, &root), WatchPlan { rebuild: true, ..Default::default() });
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn watch_deleting_a_never_compiled_component_clears_it() {
+        let root = temp("watchstale");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        let bad = root.join("Bad.tszor");
+        fs::write(&bad, "<p>\n").unwrap();
+        assert!(compile_one(&bad).is_err());
+        // watch_loop records `known.entry(src).or_default()` on failure.
+        let known: HashMap<PathBuf, Vec<String>> = HashMap::from([(bad.clone(), Vec::new())]);
+        let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &HashSet::new(), &root);
+        fs::remove_file(&bad).unwrap();
+        assert_eq!(plan(&["Bad.tszor"]), WatchPlan { recompile: vec![], remove: vec![bad], di: true, rebuild: true });
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dependents_mention_a_changed_component() {
+        let root = temp("dependents");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("Card.tszor"), "<p/>\n").unwrap();
+        fs::write(root.join("App.tszor"), "@import Card from \"./Card.tszor\"\n<Card/>\n").unwrap();
+        fs::write(root.join("Other.tszor"), "<p/>\n").unwrap();
+        let units = compile_all(&root).unwrap();
+        let (card, other) = (root.join("Card.tszor"), root.join("Other.tszor"));
+        assert_eq!(dependents(&units, &[card.as_path()]), vec![root.join("App.tszor")]);
+        // Two changes mentioned by the same unit list it once; changed units are excluded.
+        assert_eq!(dependents(&units, &[card.as_path(), other.as_path()]), vec![root.join("App.tszor")]);
+        assert!(dependents(&units, &[other.as_path()]).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn compile_one_writes_only_its_outputs() {
+        let root = temp("compileone");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("A.tszor"), "<p/>").unwrap();
         fs::write(root.join("B.tszor"), "<p/>").unwrap();
-        assert_eq!(changed(&before, &snapshot(&root)).len(), 2);
+        let unit = compile_one(&root.join("A.tszor")).unwrap();
+        assert_eq!(unit.out, root.join(".zor").join("A.tszor.ts"));
+        assert!(root.join(".zor/A.tszor.ts").is_file() && root.join(".zor/A.tszor.ts.map").is_file());
+        assert!(!root.join(".zor/B.tszor.ts").exists() && !root.join(".zor/B.tszor.ts.map").exists());
+        remove_outputs(&root.join("A.tszor"));
+        assert!(!root.join(".zor/A.tszor.ts").exists() && !root.join(".zor/A.tszor.ts.map").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -507,6 +830,11 @@ mod tests {
 
     fn fixture(path: &str) -> String {
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/di").join(path)).unwrap()
+    }
+
+    /// `build::di` with an analyzer of its own, stopped before returning (so `root` can be deleted).
+    fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
+        super::di(root, entry, compiled, &mut Analyzer::new(root))
     }
 
     const COUNTER: &str = "@import { type IDatabase } from \"./services/data\"\n@inject IDatabase db\n<p>@db.name</p>\n";
@@ -580,14 +908,15 @@ mod tests {
     }
 
     #[test]
-    fn di_errors_are_mapped() {
+    fn zdi02_points_at_the_constructor_parameter() {
         if !has_bun() {
             return;
         }
-        let data = "import { ServiceProvider, Singleton } from \"@zor/runtime\";\nexport class Log {} export class Db { constructor(readonly log: Log) {} }\n@ServiceProvider() // ünï 🙂\n@Singleton(Db)\nexport class DataServices {}\n";
-        let root = di_project("errors", &[("services/data.ts", data)]);
+        let db = "export class Log {}\nexport class Db {\n  /* ünï 🙂 */ constructor(readonly log: Log) {}\n}\n";
+        let data = "import { ServiceProvider, Singleton } from \"@zor/runtime\";\nimport { Db } from \"./db\";\n@ServiceProvider()\n@Singleton(Db)\nexport class DataServices {}\n";
+        let root = di_project("errors", &[("services/db.ts", db), ("services/data.ts", data)]);
         let err = di(&root, "main.ts", &[]).unwrap_err();
-        let expected = "services/data.ts(4,1): error ZDI02: Log (needed by Db in provider DataServices) is not registered or imported";
+        let expected = "services/db.ts(3,37): error ZDI02: Log (needed by Db in provider DataServices) is not registered or imported";
         assert!(err.lines().any(|l| l.ends_with(expected) && !l.contains('\\')), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
@@ -633,20 +962,24 @@ mod tests {
         let units = compile_all(&root).unwrap();
         fs::create_dir_all(root.join(".zor")).unwrap();
         fs::write(root.join(".zor/keep.ts"), "export {};\n").unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        // One analyzer across the runs, as `--watch` and the LSP use it.
+        let mut analyzer = Analyzer::new(&root);
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         let (data_out, other_out) = (root.join(".zor/services/data.provider.ts"), root.join(".zor/services/other.provider.ts"));
         assert!(data_out.is_file() && other_out.is_file());
         assert!(fs::read_to_string(&other_out).unwrap().starts_with(crate::di::emit::HEADER));
 
         fs::remove_file(root.join("services/other.ts")).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         assert!(data_out.is_file() && !other_out.exists());
 
         // The early-return path (no providers left) prunes too; foreign files stay.
         fs::remove_file(root.join("services/data.ts")).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         assert!(!data_out.exists());
+        assert!(!root.join(".zor/services").exists());
         assert!(root.join(".zor/keep.ts").is_file());
+        drop(analyzer);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -660,17 +993,19 @@ mod tests {
         let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.tszor", app), ("Counter.tszor", COUNTER)];
         let root = di_project("unmount", &files);
         let units = compile_all(&root).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(Some(root.join(".zor").join("main.ts"))));
+        let mut analyzer = Analyzer::new(&root);
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(Some(root.join(".zor").join("main.ts"))));
         assert!(root.join(".zor/main.ts").is_file());
 
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
         // Without @Mount, @inject would be ZDI04.
         fs::write(root.join("Counter.tszor"), "<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(None));
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         assert!(!root.join(".zor/main.ts").exists());
         assert!(root.join(".zor/services/data.provider.ts").is_file());
         assert!(root.join(".zor/App.tszor.ts").is_file());
+        drop(analyzer);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -685,17 +1020,85 @@ mod tests {
     }
 
     #[test]
-    fn analyzer_failures_are_clear_errors() {
-        let failed = analyzer_facts(false, "exit code: 1", b"", b"boom").unwrap_err();
-        assert_eq!(failed, "DI analysis failed (exit code: 1)\nboom");
-        let garbled = analyzer_facts(true, "exit code: 0", b"not json", b"").unwrap_err();
-        assert!(garbled.starts_with("DI analysis: "), "{garbled}");
+    fn analyzer_restarts_after_kill() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let root = di_project("restart", &[("services/data.ts", &data)]);
+        let mut analyzer = Analyzer::new(&root);
+        let files = ["services/data.ts".to_string()];
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        let first = analyzer.pid().unwrap();
+        analyzer.kill();
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert_ne!(analyzer.pid(), Some(first));
+        drop(analyzer);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn analyzer_that_does_not_answer_in_time_is_killed_and_restarted() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let root = di_project("timeout", &[("services/data.ts", &data)]);
+        let mut analyzer = Analyzer::new(&root);
+        let files = ["services/data.ts".to_string()];
+        analyzer.set_timeout(std::time::Duration::from_millis(1));
+        let err = analyzer.analyze(&files, &[], &[]).unwrap_err();
+        assert!(err.contains("did not answer"), "{err}");
+        assert_eq!(analyzer.pid(), None);
+        analyzer.set_timeout(std::time::Duration::from_secs(30));
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        drop(analyzer);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn analyzer_is_recycled_after_the_limit() {
+        if !has_bun() {
+            return;
+        }
+        let data = fixture("services/data.ts");
+        let root = di_project("recycle", &[("services/data.ts", &data)]);
+        let mut analyzer = Analyzer::with_limit(&root, 2);
+        let files = ["services/data.ts".to_string()];
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert!(analyzer.pid().is_some());
+        let first = analyzer.pid();
+        // The second answer reaches the limit; the child is stopped at the start of the next request.
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert_eq!(analyzer.pid(), first);
+        assert_eq!(analyzer.analyze(&files, &[], &[]).unwrap().providers.len(), 1);
+        assert!(analyzer.pid().is_some() && analyzer.pid() != first);
+        drop(analyzer);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn prune_removes_empty_dirs() {
+        let root = temp("prunedirs");
+        let zor = root.join(".zor");
+        fs::create_dir_all(zor.join("a/b")).unwrap();
+        fs::create_dir_all(zor.join("c")).unwrap();
+        fs::create_dir_all(zor.join("d")).unwrap();
+        fs::write(zor.join("c/x.provider.ts"), format!("{}\nexport {{}};\n", crate::di::emit::HEADER)).unwrap();
+        fs::write(zor.join("d/keep.ts"), "export {};\n").unwrap();
+        prune(&zor, &[]).unwrap();
+        assert!(!zor.join("a").exists() && !zor.join("c").exists());
+        assert!(zor.join("d/keep.ts").is_file());
+        fs::remove_dir_all(zor.join("d")).unwrap();
+        prune(&zor, &[]).unwrap();
+        assert!(zor.is_dir());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn component_without_a_unit_falls_back_to_the_start() {
         let root = temp("fallback");
-        let diag = |inject: Option<&str>| crate::di::graph::Diag { file: "Missing.tszor".into(), at: 0, code: "ZDI04", message: "nope".into(), inject: inject.map(String::from) };
+        let diag = |inject: Option<&str>| crate::di::graph::Diag { file: "Missing.tszor".into(), at: 0, code: "ZDI04", message: "nope".into(), inject: inject.map(String::from), param_at: None };
         let out = format_diags(&root, &[diag(Some("db"))], &[], &root);
         assert_eq!(out, "Missing.tszor(1,1): error ZDI04: nope");
         fs::remove_dir_all(&root).unwrap();
@@ -713,19 +1116,5 @@ mod tests {
         assert!(err.contains("C.tszor") && err.contains("outside"), "{err}");
         fs::remove_dir_all(&root).unwrap();
         fs::remove_dir_all(&other).unwrap();
-    }
-
-    #[test]
-    fn watch_sees_provider_ts() {
-        let root = temp("watchdi");
-        fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::create_dir_all(root.join("services")).unwrap();
-        let file = root.join("services").join("data.ts");
-        fs::write(&file, "@ServiceProvider()\nexport class S {}\n").unwrap();
-        let before = snapshot(&root);
-        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
-        fs::File::options().write(true).open(&file).unwrap().set_modified(later).unwrap();
-        assert_eq!(changed(&before, &snapshot(&root)), [file.clone()]);
-        fs::remove_dir_all(&root).unwrap();
     }
 }

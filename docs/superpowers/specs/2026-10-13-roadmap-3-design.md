@@ -12,6 +12,25 @@ The task starts with a spike of two options:
 
 Either must be erased at compile time or cost nothing at runtime. Choose the one TypeScript 7 handles, and record the choice in this spec. Explicit type arguments (`<Grid T="User">`, if the syntax exists) keep working.
 
+**Chosen (spike result):** neither (a) nor (b). A plain `addComponent(List, props)` infers `C = ComponentBase`, so a runtime signature cannot see `T`. What TypeScript 7 handles is hoisting the props into a const and instantiating the component with one conditional `infer` per type parameter:
+
+```ts
+const __p0 = { items: this.xs, selected: "a" };
+__b.addComponent(List<typeof __p0 extends Partial<List<infer T, infer U>> ? T : unknown, typeof __p0 extends Partial<List<infer T, infer U>> ? U : unknown>, __p0, { item: (x) => ... });
+```
+
+- Applies to a component with `@typeparam`s used without type-argument attributes. `<List T="string">` keeps the `List<string>` form, with no hoisting; non-generic components are unchanged.
+- `__p<N>` is the object literal that was passed inline before, so there is no extra allocation. The emitted JS differs by one const binding; the type arguments are erased.
+- Slot fill parameters get the inferred type (`x: string`), and prop errors map back to the `.tszor` attribute.
+- Conflicting candidates infer a union, as TypeScript does: `items: string[]` with `selected: 1` gives `T = string | number`. This is not an error.
+- Hoisting loses contextual typing of props on generic components used without explicit type arguments:
+  - a callback prop must annotate its own parameters;
+  - `__b.callback` arguments become `unknown`.
+  Pass `T="..."` explicitly when this matters.
+- A type parameter that cannot be inferred becomes `unknown`, not its declared default.
+- A prop-type mismatch is reported at the component tag rather than at the attribute.
+- Pre-existing, unrelated to inference: a slot declared from a `for (const x of items)` argument (`this["items"][number]`) fails in the child with TS2526, with or without `T=`; declare slot arguments as `items[i] as T`.
+
 ## 2. Keyed dependency type check: ZDI12
 
 When a parameter or `@inject` resolves by key (its name equals a registered key), the keyed service type must be assignable to the parameter type. The analyzer checks this with the checker's `isTypeAssignableTo`. A mismatch is **ZDI12**: `<param>: key "<key>" provides <Service>, which is not assignable to <ParamType>`. It is reported at the parameter (or the `@inject`).
@@ -47,7 +66,7 @@ Every directive line (`@inject`, `@inherits`, `@implements`, `@typeparam`, `@att
 - **Batching:** Rust batches events for 50 ms and ignores `.zor/`, `dist/`, `node_modules/` and dot-dirs. That covers external and internal edits without looping on our own writes.
 - **Per batch:**
   - only the changed `.tszor` files recompile;
-  - DI reruns only if a provider `.ts` changed, a `.tszor`'s `@inject` set changed, or a `.tszor` was added or removed;
+  - DI reruns when any project `.ts` changed in a project that has providers (ruling: a service constructor change in a non-provider file makes the generated code stale; a warm analyzer request costs a few ms), when a `.tszor`'s `@inject` set changed, or when a `.tszor` was added or removed;
   - the type check and the bundle always run.
 
 ## 8. `.zor` cleanup

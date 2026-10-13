@@ -116,10 +116,16 @@ fn encode_into(out: &mut String, s: &str) {
 /// Paths compare case-insensitively on Windows.
 pub fn same_path(a: &Path, b: &Path) -> bool {
     if cfg!(windows) {
-        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+        path_key(a) == path_key(b)
     } else {
         a == b
     }
+}
+
+/// A path as a hash key that matches like `same_path`.
+pub fn path_key(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    if cfg!(windows) { s.to_lowercase() } else { s.into_owned() }
 }
 
 #[cfg(test)]

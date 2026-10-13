@@ -1,5 +1,6 @@
 // Extracts DI facts from decorated provider classes and generated components; prints one JSON document.
 // Usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...   (paths may be relative to <projectRoot>)
+//    or: bun di.ts --serve <projectRoot>, then one {"files","components","overlays"} JSON request per stdin line.
 //
 // TypeScript 7 sync API calls (proven by the Step 0 spike):
 // new API({ cwd }) spawns the bundled tsgo; api.updateSnapshot({ openProjects: [tsconfig] }).getProject(tsconfig) gives { program, checker }.
@@ -12,8 +13,13 @@
 // checker.getTypeOfSymbol(parameters[]) is batched; optional ones use getTypeFromTypeNode(annotation) (drops only the implicit undefined); valueDeclaration.resolve() gives `?`/initializer.
 // symbol.declarations[0].path + program.getSourceFileMetadataByPath(path).isDefaultLibrary detect lib types without fetching the AST; program.getSourceFileNames() maps the lowercased path back to the real file name.
 // checker.resolveName("Promise", SymbolFlags.Type, undefined, false) plus getTypeArguments(reference) unwraps Promise<T>.
-// checker.getPropertiesOfType(t): `dispose`, or `__@dispose@N`/`__@asyncDispose@N` compared with the global Disposable/AsyncDisposable members.
+// checker.getPropertiesOfType(t): `dispose`, or `__@dispose@N`/`__@asyncDispose@N` compared with the global Disposable/AsyncDisposable members; `?` sets SymbolFlags.Optional.
+// checker.isTypeAssignableTo(source, target) is not batched: it runs only for parameters named like a key.
 // symbol.getParent() is the module only for exported declarations; parent.getExports() keys are export names ("default" included).
+// --serve: new API({ cwd, fs: { readFile, fileExists, directoryExists, getAccessibleEntries } }) serves overlays (undefined falls back to disk). Later requests call
+// updateSnapshot({ fileChanges: { changed, created, deleted } }) for changed overlays and mtimes; new files need the tsconfig
+// listed as changed to rerun its include globs. The client's parsed-file cache survives such snapshots, so clearSourceFileCache() first.
+import { readdirSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { CallExpression, ClassDeclaration, Node, SourceFile } from "typescript/unstable/ast";
 import {
@@ -25,10 +31,22 @@ import {
   isPropertyAccessExpression,
   isStringLiteral,
 } from "typescript/unstable/ast/is";
-import { API, ModifierFlags, SignatureKind, SymbolFlags, TypeFlags, type Checker, type Program, type Signature, type Symbol as Sym, type Type } from "typescript/unstable/sync";
+import {
+  API,
+  ModifierFlags,
+  SignatureKind,
+  SymbolFlags,
+  TypeFlags,
+  type Checker,
+  type Program,
+  type Signature,
+  type Snapshot,
+  type Symbol as Sym,
+  type Type,
+} from "typescript/unstable/sync";
 
 type TypeRef = { id: string; text: string; module: string | null; export: string | null };
-type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef };
+type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef; file: string; at: number; badKeys: string[] };
 type Dispose = null | "dispose" | "Symbol.dispose" | "Symbol.asyncDispose";
 type Registration = {
   lifetime: "singleton" | "scoped" | "transient";
@@ -39,6 +57,7 @@ type Registration = {
   async: boolean;
   params: Param[];
   dispose: Dispose;
+  disposeOptional: boolean;
   at: number;
 };
 type Provider = {
@@ -60,6 +79,10 @@ const PRIMITIVE = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | Type
 const RUNTIME = "@zor/runtime";
 
 type Loc = { sf: SourceFile; node: Node };
+type Disposal = { dispose: Dispose; optional: boolean };
+const NOT_DISPOSABLE: Disposal = { dispose: null, optional: false };
+// Shared by every parameter without a bad key; never mutated.
+const NO_KEYS: string[] = [];
 // Symbol and type lookups are queued, then answered by one batched request each.
 type Lookup<T> = { node: Node; value?: T };
 
@@ -321,33 +344,39 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     const g = checker.resolveName(global, SymbolFlags.Type, undefined, false);
     return g && (checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(g))[0]?.escapedName as string | undefined);
   };
-  const disposeCache = new Map<number, Dispose>();
-  const disposal = (t: Type): Dispose => {
+  const disposeCache = new Map<number, Disposal>();
+  const disposal = (t: Type): Disposal => {
     let d = disposeCache.get(t.id);
-    if (d !== undefined) return d;
-    let sync = false;
-    let symbolDispose = false;
-    d = null;
+    if (d) return d;
+    let sync: Sym | undefined;
+    let symbolDispose: Sym | undefined;
+    let asyncDispose: Sym | undefined;
     const callable = (p: Sym) => {
-      const pt = checker.getTypeOfSymbol(p);
+      let pt = checker.getTypeOfSymbol(p);
+      // `dispose?()` is typed `(() => void) | undefined`.
+      if (pt && p.flags & SymbolFlags.Optional) pt = checker.getNonNullableType(pt);
       return !!pt && checker.getSignaturesOfType(pt, SignatureKind.Call).length > 0;
     };
     for (const p of checker.getPropertiesOfType(t)) {
-      if (p.name === "dispose") sync ||= callable(p);
-      else if (p.name.startsWith("__@")) {
+      if (p.name === "dispose") {
+        if (!sync && callable(p)) sync = p;
+      } else if (p.name.startsWith("__@")) {
         wellKnown ??= { dispose: memberName("Disposable"), asyncDispose: memberName("AsyncDisposable") };
         if (p.escapedName === wellKnown.asyncDispose) {
-          if (callable(p)) d = "Symbol.asyncDispose";
-        } else if (p.escapedName === wellKnown.dispose) symbolDispose ||= callable(p);
+          if (callable(p)) asyncDispose = p;
+        } else if (p.escapedName === wellKnown.dispose && !symbolDispose && callable(p)) symbolDispose = p;
       }
     }
-    d ??= sync ? "dispose" : symbolDispose ? "Symbol.dispose" : null;
+    const member = asyncDispose ?? sync ?? symbolDispose;
+    d = member
+      ? { dispose: asyncDispose ? "Symbol.asyncDispose" : sync ? "dispose" : "Symbol.dispose", optional: !!(member.flags & SymbolFlags.Optional) }
+      : NOT_DISPOSABLE;
     disposeCache.set(t.id, d);
     return d;
   };
 
   // --- build ---
-  type Pending = { reg: Registration; type: Type | undefined; serviceLoc: Loc; typeArg: Node | undefined; sf: SourceFile };
+  type Pending = { reg: Registration; type: Type | undefined; serviceLoc: Loc; typeArg: Node | undefined; sf: SourceFile; id: string };
   const pendings: Pending[] = [];
   for (const p of plans) {
     const self = p.self.value;
@@ -380,6 +409,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           continue;
         }
         type = checker.getDeclaredTypeOfSymbol(impl);
+        const d = disposal(type);
         reg = {
           lifetime,
           service: undefined!,
@@ -388,7 +418,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           factory: null,
           async: false,
           params: paramsOf(ctors.get(impl.id)),
-          dispose: disposal(type),
+          dispose: d.dispose,
+          disposeOptional: d.optional,
           at: r.deco.at,
         };
       } else {
@@ -406,6 +437,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         }
         const awaited = unwrapPromise(ret);
         type = awaited ?? ret;
+        const d = disposal(type);
         reg = {
           lifetime,
           service: undefined!,
@@ -414,15 +446,18 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           factory: { owner: classRef(owner, { sf: r.loc.sf, node: r.owner!.node }), member: r.member! },
           async: awaited !== undefined,
           params: paramsOf(sig),
-          dispose: disposal(type),
+          dispose: d.dispose,
+          disposeOptional: d.optional,
           at: r.deco.at,
         };
       }
-      pendings.push({ reg, type, serviceLoc: r.loc, typeArg: r.typeArg, sf: p.sf });
+      pendings.push({ reg, type, serviceLoc: r.loc, typeArg: r.typeArg, sf: p.sf, id: `${provider.class.id}:${provider.registrations.length}` });
       provider.registrations.push(reg);
     }
     facts.providers.push(provider);
   }
+  // Keyed registrations by key: their `badKeys` id and service type.
+  const keyed = new Map<string, { id: string; type: Type }[]>();
   for (const pending of pendings) {
     const declared = pending.typeArg && checker.getTypeFromTypeNode(pending.typeArg as never);
     const loc = declared ? { sf: pending.sf, node: pending.typeArg! } : pending.serviceLoc;
@@ -432,6 +467,12 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       error(pending.serviceLoc, `generic service types are not supported: ${checker.typeToString(pending.type)}`);
     }
     pending.reg.service = typeRef(service, loc);
+    const key = pending.reg.key;
+    if (key !== null) {
+      const list = keyed.get(key);
+      if (list) list.push({ id: pending.id, type: service });
+      else keyed.set(key, [{ id: pending.id, type: service }]);
+    }
   }
   for (const c of componentPlans) {
     const self = c.self.value;
@@ -456,26 +497,165 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         // The annotation excludes the implicit `undefined` of `x?: T` without dropping a written `null`.
         if (optional && isParameterDeclaration(decl) && decl.type) t = checker.getTypeFromTypeNode(decl.type as never) ?? t;
         const awaited = unwrapPromise(t);
-        out.push({ name: param.name, optional, promise: awaited !== undefined, type: typeRef(awaited ?? t, { sf, node: decl }) });
+        let badKeys = NO_KEYS;
+        const candidates = keyed.get(param.name);
+        if (candidates) {
+          let target = awaited ?? t;
+          if (optional) target = checker.getNonNullableType(target) ?? target;
+          for (const c of candidates) {
+            if (!checker.isTypeAssignableTo(c.type, target)) (badKeys === NO_KEYS ? (badKeys = []) : badKeys).push(c.id);
+          }
+        }
+        const name = isParameterDeclaration(decl) ? decl.name : decl;
+        out.push({
+          name: param.name,
+          optional,
+          promise: awaited !== undefined,
+          type: typeRef(awaited ?? t, { sf, node: decl }),
+          file: rel(sf.fileName),
+          at: name.getStart(sf),
+          badKeys,
+        });
       }
     }
   }
   return facts;
 }
 
-const [rootArg, ...rest] = process.argv.slice(2);
-if (!rootArg) throw new Error("usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...");
-const root = slash(resolve(rootArg));
-const sep = rest.indexOf("--");
-const toPath = (f: string) => slash(resolve(root, f));
-const files = (sep < 0 ? rest : rest.slice(0, sep)).map(toPath);
-const components = sep < 0 ? [] : rest.slice(sep + 1).map(toPath);
-const config = `${root}/tsconfig.json`;
-const api = new API({ cwd: root });
-try {
-  const project = api.updateSnapshot({ openProjects: [config] }).getProject(config);
-  if (!project) throw new Error(`no TypeScript project for ${config}`);
-  process.stdout.write(JSON.stringify(analyze(root, project.program, project.checker, files, components)));
-} finally {
+const args = process.argv.slice(2);
+if (args[0] === "--serve") await serve(args[1]);
+else oneShot(args);
+
+function oneShot([rootArg, ...rest]: string[]) {
+  if (!rootArg) throw new Error("usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...  |  bun di.ts --serve <projectRoot>");
+  const root = slash(resolve(rootArg));
+  const sep = rest.indexOf("--");
+  const toPath = (f: string) => slash(resolve(root, f));
+  const files = (sep < 0 ? rest : rest.slice(0, sep)).map(toPath);
+  const components = sep < 0 ? [] : rest.slice(sep + 1).map(toPath);
+  const config = `${root}/tsconfig.json`;
+  const api = new API({ cwd: root });
+  try {
+    const project = api.updateSnapshot({ openProjects: [config] }).getProject(config);
+    if (!project) throw new Error(`no TypeScript project for ${config}`);
+    process.stdout.write(JSON.stringify(analyze(root, project.program, project.checker, files, components)));
+  } finally {
+    api.close();
+  }
+}
+
+// One JSON request per stdin line, one Facts JSON (or `{"fatal": message}`) per stdout line.
+async function serve(rootArg: string | undefined) {
+  if (!rootArg) throw new Error("usage: bun di.ts --serve <projectRoot>");
+  const root = slash(resolve(rootArg));
+  const config = `${root}/tsconfig.json`;
+  const toPath = (f: string) => slash(resolve(root, f));
+  // The server's paths keep their case but compare case-insensitively on Windows.
+  const key = process.platform === "win32" ? (p: string) => p.toLowerCase() : (p: string) => p;
+  const mtime = (p: string) => statSync(p, { throwIfNoEntry: false })?.mtimeMs;
+  type Overlay = { path: string; text: string };
+  let overlays = new Map<string, Overlay>();
+  // Non-node_modules program files (and the tsconfig) with their mtime at the last snapshot.
+  const tracked = new Map<string, { path: string; mtime: number | undefined }>();
+  // Requested files outside the program at the last snapshot, with their mtime then.
+  const missing = new Map<string, number | undefined>();
+  // Overlays absent from disk (an unsaved component's generated file): directory listings must show them for the include globs.
+  let virtual: Overlay[] = [];
+  const entries = (dir: string) => {
+    const d = key(slash(dir)).replace(/\/$/, "");
+    let extra: { files: string[]; directories: string[] } | undefined;
+    for (const o of virtual) {
+      if (!key(o.path).startsWith(`${d}/`)) continue;
+      const rest = o.path.slice(d.length + 1);
+      const sep = rest.indexOf("/");
+      extra ??= { files: [], directories: [] };
+      (sep < 0 ? extra.files : extra.directories).push(sep < 0 ? rest : rest.slice(0, sep));
+    }
+    if (!extra) return undefined;
+    try {
+      for (const e of readdirSync(dir, { withFileTypes: true })) (e.isDirectory() ? extra.directories : extra.files).push(e.name);
+    } catch {}
+    return { files: [...new Set(extra.files)], directories: [...new Set(extra.directories)] };
+  };
+  const api = new API({
+    cwd: root,
+    fs: {
+      readFile: (f) => overlays.get(key(f))?.text,
+      fileExists: (f) => (overlays.has(key(f)) ? true : undefined),
+      directoryExists: (d) => (virtual.some((o) => key(o.path).startsWith(`${key(slash(d)).replace(/\/$/, "")}/`)) ? true : undefined),
+      getAccessibleEntries: entries,
+    },
+  });
+  let snapshot: Snapshot | undefined;
+  for await (const line of console) {
+    if (!line.trim()) continue;
+    try {
+      const request = JSON.parse(line) as { files?: string[]; components?: string[]; overlays?: Record<string, string> };
+      const files = (request.files ?? []).map(toPath);
+      const components = (request.components ?? []).map(toPath);
+      const next = new Map<string, Overlay>();
+      for (const [file, text] of Object.entries(request.overlays ?? {})) {
+        const path = toPath(file);
+        next.set(key(path), { path, text });
+      }
+      const changed: string[] = [];
+      const created: string[] = [];
+      const deleted: string[] = [];
+      for (const [k, o] of next) if (overlays.get(k)?.text !== o.text) changed.push(o.path);
+      for (const [k, o] of overlays) if (!next.has(k)) changed.push(o.path);
+      overlays = next;
+      virtual = [...next.values()].filter((o) => mtime(o.path) === undefined);
+      let reglob = false;
+      if (snapshot) {
+        for (const [k, t] of tracked) {
+          const m = mtime(t.path);
+          if (m === undefined && !overlays.has(k)) {
+            deleted.push(t.path);
+            tracked.delete(k);
+            reglob = true;
+          } else if (m !== t.mtime) {
+            t.mtime = m;
+            if (t.path === config) reglob = true;
+            else changed.push(t.path);
+          }
+        }
+        // A requested file the program lacks was created since: the tsconfig's include globs must rerun.
+        for (const f of [...files, ...components]) {
+          const k = key(f);
+          if (tracked.has(k) || (missing.has(k) && missing.get(k) === mtime(f))) continue;
+          created.push(f);
+          reglob = true;
+        }
+        if (reglob) changed.push(config);
+      }
+      const rebuilt = !snapshot || changed.length > 0 || created.length > 0 || deleted.length > 0;
+      if (rebuilt) {
+        const first = !snapshot;
+        snapshot?.dispose();
+        // The client keeps parsed files across snapshots unless the server reports them changed, which it does not for these edits.
+        api.clearSourceFileCache();
+        snapshot = first ? api.updateSnapshot({ openProjects: [config] }) : api.updateSnapshot({ fileChanges: { changed, created, deleted } });
+        const names = snapshot.getProject(config)?.program.getSourceFileNames() ?? [];
+        const live = new Set<string>([key(config)]);
+        if (!tracked.has(key(config))) tracked.set(key(config), { path: config, mtime: mtime(config) });
+        for (const n of names) {
+          if (n.includes("/node_modules/")) continue;
+          const k = key(n);
+          live.add(k);
+          if (!tracked.has(k)) tracked.set(k, { path: n, mtime: mtime(n) });
+        }
+        for (const k of tracked.keys()) if (!live.has(k)) tracked.delete(k);
+        missing.clear();
+        for (const f of [...files, ...components]) if (!tracked.has(key(f))) missing.set(key(f), mtime(f));
+      }
+      const project = snapshot.getProject(config);
+      if (!project) throw new Error(`no TypeScript project for ${config}`);
+      // `rebuilt` is a debug signal; the Rust side ignores it.
+      process.stdout.write(JSON.stringify({ ...analyze(root, project.program, project.checker, files, components), rebuilt }) + "\n");
+    } catch (e) {
+      process.stdout.write(JSON.stringify({ fatal: e instanceof Error ? (e.stack ?? e.message) : String(e) }) + "\n");
+    }
+  }
+  snapshot?.dispose();
   api.close();
 }

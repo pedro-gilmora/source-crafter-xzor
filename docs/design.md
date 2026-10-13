@@ -33,7 +33,8 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@onclick:preventDefault`, `@onclick:stopPropagation="cond"` | Event modifiers. They work without a handler, and take an optional boolean expression. |
 | `@attributes="dict"` | Attribute splatting on elements, where later attributes override it. On components, props are spread: `{ ...dict, title: "t" }`. |
 | `<Child prop="x" n="5" />` | Component (capitalized tag); props are type-checked as `Partial<Child>`. As in Blazor, a prop declared with a non-string type (`n: number`, `on: () => void`, or inferred from a non-string initializer) takes its value as a TypeScript expression. String props take text. |
-| `@typeparam T extends X` | Generic component class `C<T extends X>`. Callers pass the argument as an attribute: `<List T="string" …>` compiles to `List<string>`. |
+| `@typeparam T extends X` | Generic component class `C<T extends X>`. Callers can pass the argument as an attribute (`<List T="string" …>` compiles to `List<string>`) or leave it out: `T` is then inferred from the props. Without `T=`, callback props must annotate their own parameters, a type parameter that cannot be inferred becomes `unknown` (not its default), and a prop mismatch is reported at the tag. |
+| `@inject IDatabase db // why` | Directive lines (`@inject`, `@inherits`, `@implements`, `@typeparam`, `@attribute`, `@import`, `@page`) accept a trailing `// …` or `@* … *@` comment. |
 | `onChange?: EventCallback<T>` | A prop the parent sets with `onChange="handler"`. Calling it re-renders the parent. |
 | `@bind="x"`, `@bind:event="oninput"`, `@bind:after="save"` | Two-way binding on inputs. Checkboxes and radios bind `checked`, and numbers stay numbers. |
 | `@bind-value="x"` | Two-way binding on a component: passes `value` and a `valueChanged` callback. |
@@ -182,13 +183,14 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 | ZDI08 | A user constructor in a component with `@inject`. |
 | ZDI10 | Reserved. Captive dependencies are allowed: a singleton keeps the scoped instance of the scope that first resolved it. |
 | ZDI11 | Invalid registration found by the analyzer (unexported type, generic type, non-public factory, decorator misuse). |
+| ZDI12 | A key matched by parameter name provides a type that is not assignable to the parameter. |
 
 ### Gotchas
 
 - The tsconfig `lib` needs `ESNext.Disposable` (for `Disposable` and `Symbol.dispose`).
 - A class cannot reference itself in its own decorators, so keyed factories must be public static methods of another class.
 - A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
-- Optional members such as `dispose?()` are not detected as disposal.
+- Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
 - `@Mount` must be in the entry module (`--entry`, default `main.ts`).
 
 ## Build
@@ -196,11 +198,18 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - Only `.tszor` files inside a tsconfig project are compiled. Each one produces `.zor/<rel>.tszor.ts` plus a v3 `.tszor.ts.map`, and files are only written when their content changes.
 - `tsc` errors are rewritten to point at `.tszor` positions.
 - The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.tszor` sources.
-- `zor build --watch` polls the project and rebuilds on change.
+- `zor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. zor recompiles only the changed `.tszor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.zor/`, `dist/`) are ignored. `tsconfig.json` and `package.json` changes need a restart.
+- DI analysis runs in a persistent process (`di.ts --serve`). It keeps one TypeScript 7 session per project root, so warm requests take a few milliseconds. `--watch` and the language server reuse it. It is recycled after 500 requests.
+- After stale generated files are pruned, empty folders under `.zor/` are removed.
+
+## Editor
+
+- DI diagnostics appear where the problem is defined or referenced: registration decorators and constructor and factory parameters in `.ts` files, and `@inject` lines in `.tszor` files.
+- They update live. Ranges shift as you type. 300 ms after the last change, the analysis reruns with the unsaved text of open documents. Nothing is written to disk until you save.
+- The language server opens `.ts` files only for these diagnostics. Every other `.ts` feature stays with VS Code's TypeScript.
 
 ## Roadmap
 
 1. Rename and find references, through the same mappings.
 2. Keep TypeScript features working while the template has syntax errors.
 3. Color markup inside `@code` as markup.
-4. Infer `@typeparam` type arguments from props.

@@ -101,6 +101,12 @@
       "begin": "@\\*",
       "end": "\\*@"
     },
+    "directive-comment": {
+      "patterns": [
+        { "name": "comment.line.double-slash.tszor", "match": "//.*$" },
+        { "include": "#razor-comment" }
+      ]
+    },
     "statements": {
       "comment": "@{ ... }: TypeScript statements inside the template.",
       "begin": "(@)(?=\\{)",
@@ -117,7 +123,7 @@
       },
       "end": "$",
       "contentName": "meta.embedded.line.typescript",
-      "patterns": [{ "include": "source.ts#expression" }]
+      "patterns": [{ "include": "#directive-comment" }, { "include": "source.ts#expression" }]
     },
     "line-text": {
       "match": "(@:)",
@@ -148,29 +154,32 @@
       "patterns": [{ "include": "source.ts#class-or-interface-body" }]
     },
     "page": {
-      "match": "(?<![[:alnum:]])(@)(page)\\s+(\"[^\"]*\")",
+      "match": "(?<![[:alnum:]])(@)(page)\\s+(\"[^\"]*\")[ \\t]*(//.*$)?",
       "captures": {
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.directive.tszor" },
-        "3": { "name": "string.quoted.double.tszor" }
+        "3": { "name": "string.quoted.double.tszor" },
+        "4": { "name": "comment.line.double-slash.tszor" }
       }
     },
     "typeparam": {
-      "match": "(?<![[:alnum:]])(@)(typeparam)\\s+([_$[:alpha:]][_$[:alnum:]]*)(.*)$",
+      "match": "(?<![[:alnum:]])(@)(typeparam)\\s+([_$[:alpha:]][_$[:alnum:]]*)((?:[^/@]|/(?!/))*)(//.*$)?",
       "captures": {
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.directive.tszor" },
         "3": { "name": "entity.name.type.parameter.tszor" },
-        "4": { "patterns": [{ "include": "source.ts#type" }] }
+        "4": { "patterns": [{ "include": "source.ts#type" }] },
+        "5": { "name": "comment.line.double-slash.tszor" }
       }
     },
     "inject": {
-      "match": "(?<![[:alnum:]])(@)(inject)\\s+(.+?)\\s+([_$[:alpha:]][_$[:alnum:]]*)\\s*$",
+      "match": "(?<![[:alnum:]])(@)(inject)\\s+(.+?)\\s+([_$[:alpha:]][_$[:alnum:]]*)[ \\t]*(?:(//.*)$|(?=@\\*)|$)",
       "captures": {
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.directive.tszor" },
         "3": { "patterns": [{ "include": "source.ts#type" }] },
-        "4": { "name": "variable.other.readwrite.tszor" }
+        "4": { "name": "variable.other.readwrite.tszor" },
+        "5": { "name": "comment.line.double-slash.tszor" }
       }
     },
     "import": {
@@ -178,7 +187,18 @@
       "beginCaptures": { "1": { "name": "keyword.control.transition.tszor" } },
       "end": "$",
       "contentName": "meta.embedded.line.typescript",
-      "patterns": [{ "include": "source.ts" }]
+      "patterns": [
+        { "include": "#directive-comment" },
+        {
+          "comment": "Not source.ts#import-declaration: it swallows the line ending after a `//` comment and never ends.",
+          "match": "\\bimport\\b(?:\\s+(type)(?!\\s+from))?",
+          "name": "keyword.control.import.ts",
+          "captures": { "1": { "name": "keyword.control.type.ts" } }
+        },
+        { "match": "\\bfrom\\b", "name": "keyword.control.from.ts" },
+        { "include": "source.ts#string" },
+        { "include": "source.ts#import-export-declaration" }
+      ]
     },
     "explicit": {
       "begin": "(?<![[:alnum:]])(@)(\\()",

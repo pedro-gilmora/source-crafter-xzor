@@ -165,6 +165,19 @@ else {
 <!-- <~---------- keyword.control.directive.tszor
 @attribute sealed
 <!-- <~--------- keyword.control.directive.tszor
+@inject A a // c
+<!-- <~------ keyword.control.directive.tszor
+<!--      ^ variable.other.readwrite.tszor
+<!--        ^^^^ comment.line.double-slash.tszor
+@typeparam T @* c *@
+<!--       ^ entity.name.type.parameter.tszor
+<!--         ^^^^^^^ comment.block.tszor
+@page "/a" // home
+<!--  ^^^^ string.quoted.double.tszor
+<!--       ^^^^^^^ comment.line.double-slash.tszor
+@import x from "http://a" // c
+<!--           ^^^^^^^^^^ string.quoted.double.ts
+<!--                      ^^^^ comment.line.double-slash.tszor
 @inject IDatabase db
 <!-- <- keyword.control.transition.tszor
 <!-- <~------ keyword.control.directive.tszor

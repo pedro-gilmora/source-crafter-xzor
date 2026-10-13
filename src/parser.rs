@@ -135,6 +135,62 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Scans a directive value up to a `//` or `@*` outside strings, then consumes the trailing
+    /// comment. Returns the end of the value (trailing whitespace excluded).
+    fn directive_value(&mut self) -> PResult<usize> {
+        let b = self.b;
+        let mut i = self.pos;
+        let mut quote = 0u8;
+        while let Some(&c) = b.get(i) {
+            if c == b'\n' {
+                break;
+            }
+            if quote != 0 {
+                if c == b'\\' && b.get(i + 1).is_some_and(|&n| n != b'\n') {
+                    i += 1;
+                } else if c == quote {
+                    quote = 0;
+                }
+            } else if matches!(c, b'\'' | b'"' | b'`') {
+                quote = c;
+            } else if (c == b'/' && b.get(i + 1) == Some(&b'/')) || (c == b'@' && b.get(i + 1) == Some(&b'*')) {
+                break;
+            }
+            i += 1;
+        }
+        let i = i.min(b.len());
+        let mut end = i;
+        while end > self.pos && b[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        self.pos = i;
+        self.trailing_comment()?;
+        Ok(end)
+    }
+
+    /// Consumes an optional `// …` or `@* … *@` after a directive and marks it as a comment.
+    fn trailing_comment(&mut self) -> PResult<()> {
+        while matches!(self.peek(), Some(b' ' | b'\t')) {
+            self.pos += 1;
+        }
+        let start = self.pos;
+        if self.starts_with("//") {
+            self.skip_line();
+            let mut end = self.pos;
+            if end > start && self.b[end - 1] == b'\r' {
+                end -= 1;
+            }
+            self.mark(TokenKind::Comment, start, end);
+        } else if self.starts_with("@*") {
+            let Some(len) = self.src[start + 2..].find("*@") else {
+                return Err(ParseError { message: "unterminated @* comment".into(), offset: start });
+            };
+            self.pos = start + 2 + len + 2;
+            self.mark(TokenKind::Comment, start, self.pos);
+        }
+        Ok(())
+    }
+
     fn ident(&mut self) -> &'a str {
         let src = self.src;
         let start = self.pos;
@@ -327,22 +383,23 @@ impl<'a> Parser<'a> {
                 self.string_lit()?;
                 self.mark(TokenKind::AttrValue, s, self.pos);
                 self.doc.page = Some(self.src[s + 1..self.pos - 1].to_string());
+                self.trailing_comment()?;
                 Ok(Transition::Nothing)
             }
             "import" => {
                 let s = self.pos;
-                self.skip_line();
-                self.mark(TokenKind::Code, s, self.pos);
-                let mut stmt = self.span(s, self.pos);
+                let end = self.directive_value()?;
+                self.mark(TokenKind::Code, s, end);
+                let mut stmt = self.span(s, end);
                 stmt.text = stmt.text.trim_end_matches(';').trim_end().to_string();
                 self.doc.imports.push(stmt);
                 Ok(Transition::Nothing)
             }
             "typeparam" | "inherits" | "implements" | "attribute" => {
                 let s = self.pos;
-                self.skip_line();
-                self.mark(TokenKind::Code, s, self.pos);
-                let value = self.span(s, self.pos);
+                let end = self.directive_value()?;
+                self.mark(TokenKind::Code, s, end);
+                let value = self.span(s, end);
                 if value.is_empty() {
                     return self.err(format!("expected a value after @{word}"));
                 }
@@ -356,9 +413,9 @@ impl<'a> Parser<'a> {
             }
             "inject" => {
                 let s = self.pos;
-                self.skip_line();
-                self.mark(TokenKind::Code, s, self.pos);
-                let value = self.span(s, self.pos);
+                let end = self.directive_value()?;
+                self.mark(TokenKind::Code, s, end);
+                let value = self.span(s, end);
                 let split = value.rfind(|c: char| c.is_ascii_whitespace());
                 let name = split.map(|i| &value[i + 1..]).filter(|n| n.bytes().next().is_some_and(is_ident_start) && n.bytes().all(is_ident_char));
                 let (Some(split), Some(name)) = (split, name) else {
@@ -1361,6 +1418,54 @@ after"#;
     fn inject_needs_type_and_name() {
         assert_eq!(parse("@inject db").unwrap_err().message, "expected a type and a name after @inject");
         assert_eq!(parse("@inject").unwrap_err().message, "expected a type and a name after @inject");
+    }
+
+    fn comments(tokens: &[Token]) -> Vec<(usize, usize)> {
+        tokens.iter().filter(|t| t.kind == TokenKind::Comment).map(|t| (t.start, t.end)).collect()
+    }
+
+    #[test]
+    fn directive_line_comment() {
+        let src = "@inject IDatabase db // the store\n<p/>";
+        let (doc, tokens) = parse(src).unwrap();
+        assert_eq!((&*doc.injects[0].ty, &*doc.injects[0].name), ("IDatabase", "db"));
+        assert_eq!(comments(&tokens), vec![(21, 33)]);
+        assert!(tokens.contains(&Token { kind: TokenKind::Code, start: 7, end: 20 }));
+    }
+
+    #[test]
+    fn directive_razor_comment() {
+        let src = "@inherits Base<T> @* why *@\n<p/>";
+        let (doc, tokens) = parse(src).unwrap();
+        assert_eq!(&*doc.inherits.unwrap(), "Base<T>");
+        assert_eq!(comments(&tokens), vec![(18, 27)]);
+    }
+
+    #[test]
+    fn directive_razor_comment_multiline() {
+        let (doc, tokens) = parse("@typeparam T @* a\nb *@\n<p/>").unwrap();
+        assert_eq!(&*doc.type_params[0], "T");
+        assert_eq!(comments(&tokens).len(), 1);
+        assert_eq!(doc.nodes.len(), 1);
+    }
+
+    #[test]
+    fn import_comment_ignores_strings() {
+        let src = "@import x from \"http://a\" // c\n<p/>";
+        let (doc, tokens) = parse(src).unwrap();
+        assert_eq!(&*doc.imports[0], "x from \"http://a\"");
+        assert_eq!(comments(&tokens), vec![(26, 30)]);
+    }
+
+    #[test]
+    fn page_comment() {
+        let src = "@page \"/a\" // home\n<p/>";
+        let (doc, tokens) = parse(src).unwrap();
+        assert_eq!(doc.page.as_deref(), Some("/a"));
+        assert_eq!(comments(&tokens), vec![(11, 18)]);
+        let (doc, tokens) = parse("@page \"/a\" @* home *@").unwrap();
+        assert_eq!(doc.page.as_deref(), Some("/a"));
+        assert_eq!(comments(&tokens).len(), 1);
     }
 
     #[test]

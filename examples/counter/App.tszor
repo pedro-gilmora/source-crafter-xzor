@@ -52,7 +52,7 @@
   <Card>
     @slot header { <em>Steps as a templated list</em> }
     @slot {
-      <List T="string" items="@steps">
+      <List items="@steps">
         @slot item(step, index) { <code>@(index + 1). @step.toUpperCase()</code> }
       </List>
     }
