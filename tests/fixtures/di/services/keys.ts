@@ -8,6 +8,9 @@ export class SystemClock implements IClock {
   now(): number {
     return Date.now();
   }
+  monotonic(): boolean {
+    return true;
+  }
 }
 
 export class KeyFactories {
@@ -19,6 +22,12 @@ export class KeyFactories {
   }
 }
 
+export class LabelFactories {
+  static label(port: number): string {
+    return `port-${port}`;
+  }
+}
+
 export class Server {
   constructor(readonly port: string, readonly clock: IClock) {}
 }
@@ -26,5 +35,6 @@ export class Server {
 @ServiceProvider()
 @Singleton("port", KeyFactories.port)
 @Singleton("clock", KeyFactories.clock)
+@Singleton("label", LabelFactories.label)
 @Singleton(Server)
 export class KeyServices {}

@@ -80,6 +80,13 @@ test("parameter positions", () => {
   expect([db.file, db.at]).toEqual([".zor/Counter.tszor.ts", generated["Counter.tszor.ts"]!.indexOf("db: IDatabase,")]);
 });
 
+test("factory parameter positions", () => {
+  const keys = readFileSync(join(root, "services", "keys.ts"), "utf8");
+  const label = reg("KeyServices", (r) => r.key === "label");
+  expect(label.params).toHaveLength(1);
+  expect([label.params[0].file, label.params[0].at]).toEqual(["services/keys.ts", keys.indexOf("port: number")]);
+});
+
 test("bad keys", () => {
   const [port, clock] = reg("KeyServices", (r) => r.impl?.text === "Server").params;
   expect(port.badKeys).toEqual(["services/keys.ts#KeyServices:0"]);
