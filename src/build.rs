@@ -843,7 +843,8 @@ mod tests {
         let units = compile_all(&root).unwrap();
         assert_eq!(dependents(&units, &[root.join("base.ts").as_path()]), vec![root.join("App.tszor")]);
         assert_eq!(dependents(&units, &[root.join("shared").join("index.ts").as_path()]), vec![root.join("Dir.tszor")]);
-        assert!(dependents(&units, &[root.join("base.d.ts").as_path()]).is_empty());
+        assert_eq!(dependents(&units, &[root.join("base.d.ts").as_path()]), vec![root.join("App.tszor")]);
+        assert!(dependents(&units, &[root.join("base.js").as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 

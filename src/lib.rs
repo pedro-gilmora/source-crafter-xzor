@@ -51,10 +51,10 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
         let (line, column) = line_col(source, offset);
         return Err(Diagnostic { message: codegen::ZDI08.into(), line, column, offset });
     }
-    let (inherited, deps) = inherit::base_members(&doc, path, read);
-    let mut generated = codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &inherited)
+    let base = inherit::base_members(&doc, path, read);
+    let mut generated = codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &base.members)
         .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
-    generated.deps = deps;
+    generated.deps = base.deps;
     Ok(generated)
 }
 
