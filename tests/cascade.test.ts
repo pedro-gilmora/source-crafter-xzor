@@ -9,23 +9,36 @@ const app = `@import Badge from "./Badge.tszor"
 
 @code {
   theme = "dark";
+  role = "admin";
 
   toggle() {
     this.theme = this.theme === "dark" ? "light" : "dark";
+    this.role = "guest";
   }
 }
 
 @cascade:theme(theme) {
-  <Badge />
+  @cascade:role(role, fixed) {
+    <Badge />
+  }
 }
 <button @onclick="toggle">toggle</button>
 `;
 
-const badge = `@code {
+const base = `@code {
   @Cascade theme!: string;
+}
+`;
+
+const badge = `@import Base from "./Base.tszor"
+@inherits Base
+
+@code {
+  @Cascade role!: string;
 }
 
 <span class="badge">@theme</span>
+<span class="role">@role</span>
 `;
 
 const main = `import { mount } from "@zor/runtime";
@@ -41,19 +54,22 @@ test("a @Cascade member follows the value of its @cascade provider", async () =>
   tsconfig.compilerOptions.paths = { "@zor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "App.tszor"), app);
+  writeFileSync(join(dir, "Base.tszor"), base);
   writeFileSync(join(dir, "Badge.tszor"), badge);
   writeFileSync(join(dir, "main.ts"), main);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
   const out = run.stdout.toString() + run.stderr.toString();
   expect(run.exitCode, out).toBe(0);
   expect(readFileSync(join(dir, ".zor", "Badge.tszor.ts"), "utf8")).toContain(
-    'static readonly cascades = [["theme", "theme"]] as const;',
+    'static readonly cascades: readonly (readonly [string, string])[] = [...((Base as { cascades?: readonly (readonly [string, string])[] }).cascades ?? []), ["role", "role"]] as const;',
   );
 
   document.body.innerHTML = `<div id="app"></div>`;
   await import(join(dir, "dist", "main.js"));
-  const badgeText = () => document.querySelector("#app .badge")?.textContent;
-  expect(badgeText()).toBe("dark");
+  const text = (sel: string) => document.querySelector(`#app ${sel}`)?.textContent;
+  expect(text(".badge")).toBe("dark");
+  expect(text(".role")).toBe("admin");
   (document.querySelector("#app button") as HTMLElement).click();
-  expect(badgeText()).toBe("light");
+  expect(text(".badge")).toBe("light");
+  expect(text(".role")).toBe("admin");
 }, 120_000);

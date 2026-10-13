@@ -194,6 +194,11 @@ impl M {
 
 pub const ZDI08: &str = "ZDI08: a component with @inject cannot declare a constructor";
 
+const CASCADE_FIELD_ONLY: &str = "@Cascade applies to instance fields only";
+const CASCADE_ONE_NAME: &str = "@Cascade takes one string literal name";
+/// Type of `static cascades`, written out so a derived class can widen the base's list.
+const CASCADE_LIST: &str = "readonly (readonly [string, string])[]";
+
 /// The source offset of a user `constructor` in a component that also uses `@inject` (ZDI08).
 pub fn inject_constructor(doc: &Document) -> Option<usize> {
     if doc.injects.is_empty() {
@@ -233,28 +238,22 @@ pub fn generate_with(
     components: &HashMap<String, ComponentInfo>,
     inherited: &HashSet<String>,
 ) -> Result<Generated, String> {
-    let members: HashSet<String> = doc
-        .code
-        .iter()
-        .flat_map(|c| collect_members(c))
-        .chain(doc.injects.iter().map(|i| i.name.text.clone()))
-        .chain(inherited.iter().cloned())
-        .collect();
-    let statics: HashSet<String> =
-        doc.code.iter().flat_map(|c| member_decls(c)).filter(|m| m.is_static).map(|m| m.name).collect();
+    let decls: Vec<Vec<MemberDecl>> = doc.code.iter().map(|c| member_decls(c)).collect();
+    let mut members: HashSet<String> =
+        doc.injects.iter().map(|i| i.name.text.clone()).chain(inherited.iter().cloned()).collect();
+    let mut statics: HashSet<String> = HashSet::new();
     if inject_constructor(doc).is_some() {
         return Err(ZDI08.into());
     }
     let mut cascades: Vec<(String, String)> = Vec::new();
     let mut blanks: Vec<(usize, usize)> = Vec::new();
-    for code in &doc.code {
-        for m in member_decls(code) {
-            for &(s, e) in &m.decorators {
-                if let Some(name) = cascade_name(&code[s..e], &m.name)? {
-                    cascades.push((m.name.clone(), name));
-                    blanks.push((code.at + s, code.at + e));
-                }
+    for (code, decls) in doc.code.iter().zip(&decls) {
+        cascade_members(code, decls, &mut cascades, &mut blanks).map_err(|(message, _)| message)?;
+        for m in decls {
+            if m.is_static {
+                statics.insert(m.name.clone());
             }
+            members.insert(m.name.clone());
         }
     }
     let mut g = Gen {
@@ -328,7 +327,16 @@ pub fn generate_with(
     }
     if !cascades.is_empty() {
         let pairs: Vec<String> = cascades.iter().map(|(prop, name)| format!("[{}, {}]", js_string(prop), js_string(name))).collect();
-        g.line(&format!("static readonly cascades = [{}] as const;", pairs.join(", ")));
+        let pairs = pairs.join(", ");
+        // This static shadows the base's, so a derived component repeats the base's entries.
+        let list = match &doc.inherits {
+            Some(b) => {
+                let base = b.text.split('<').next().unwrap_or(&b.text).trim_end();
+                format!("[...(({base} as {{ cascades?: {CASCADE_LIST} }}).cascades ?? []), {pairs}]")
+            }
+            None => format!("[{pairs}]"),
+        };
+        g.line(&format!("static readonly cascades: {CASCADE_LIST} = {list} as const;"));
     }
     for parts in &doc.code_parts {
         let block = g.code_block(parts, &blanks)?;
@@ -592,7 +600,14 @@ impl Gen<'_> {
             }
             Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
             Node::Cascade { name, value, fixed, body } => {
-                let open = M::lit("__b.openCascade(\"").add(M::src(name, name.at)).lit_then("\", ").add(self.expr(value));
+                let quoted = js_string(name);
+                // The mapping stays on the name only while the literal is a straight copy of it.
+                let literal = if quoted[1..quoted.len() - 1] == *name.text {
+                    M::lit("\"").add(M::src(name, name.at)).lit_then("\"")
+                } else {
+                    M::lit(&quoted)
+                };
+                let open = M::lit("__b.openCascade(").add(literal).lit_then(", ").add(self.expr(value));
                 self.emit(open.lit_then(if *fixed { ", true);" } else { ");" }));
                 self.block(body)?;
                 self.line("__b.closeRegion();");
@@ -1047,10 +1062,41 @@ fn cascade_name(decorator: &str, prop: &str) -> Result<Option<String>, String> {
         return Ok(Some(prop.to_string()));
     }
     let Some(arg) = rest.strip_prefix('(').and_then(|a| a.strip_suffix(')')).map(str::trim) else { return Ok(None) };
-    match arg.strip_prefix(['"', '\'']).and_then(|a| a.strip_suffix(['"', '\''])) {
-        Some(name) => Ok(Some(name.to_string())),
-        None => Err(format!("@Cascade({arg}) needs a quoted name")),
+    let b = arg.as_bytes();
+    match b.first().copied() {
+        Some(q @ (b'"' | b'\'')) if b.len() >= 2 && b[b.len() - 1] == q && !b[1..b.len() - 1].contains(&q) => {
+            Ok(Some(arg[1..arg.len() - 1].to_string()))
+        }
+        _ => Err(CASCADE_ONE_NAME.into()),
     }
+}
+
+/// The `@Cascade` members of one `@code` block, appended to `cascades` as `(property, cascade name)`
+/// pairs, with the decorator spans to blank out appended to `blanks`.
+/// `Err` is the message and the offset of the offending decorator.
+fn cascade_members(
+    code: &Src,
+    decls: &[MemberDecl],
+    cascades: &mut Vec<(String, String)>,
+    blanks: &mut Vec<(usize, usize)>,
+) -> Result<(), (String, usize)> {
+    for m in decls {
+        for &(s, e) in &m.decorators {
+            let at = code.at + s;
+            let Some(name) = cascade_name(&code[s..e], &m.name).map_err(|message| (message, at))? else { continue };
+            if m.is_method || m.is_static {
+                return Err((CASCADE_FIELD_ONLY.into(), at));
+            }
+            cascades.push((m.name.clone(), name));
+            blanks.push((at, code.at + e));
+        }
+    }
+    Ok(())
+}
+
+/// The first `@Cascade` error in `doc`, with its source offset.
+pub fn cascade_error(doc: &Document) -> Option<(String, usize)> {
+    doc.code.iter().find_map(|code| cascade_members(code, &member_decls(code), &mut Vec::new(), &mut Vec::new()).err())
 }
 
 /// Source text with the spans in `blanks` replaced by spaces, mapped around them.
@@ -1976,21 +2022,63 @@ mod tests {
         has("    __b.openCascade(\"cfg\", 1, true);");
         let at = src.find("(theme)").unwrap() + 1;
         assert!(g.mappings.iter().any(|m| m.src == at && m.len == "theme".len()), "the value is mapped\n{:?}", g.mappings);
+        let at = src.find("@cascade:theme").unwrap() + "@cascade:".len();
+        assert!(g.mappings.iter().any(|m| m.src == at && m.len == "theme".len()), "the name is mapped\n{:?}", g.mappings);
     }
 
     #[test]
     fn cascade_decorators_become_a_static_list() {
-        let src = "@code {\n  @Cascade theme!: string;\n  @Cascade(\"route\") r?: unknown;\n  note = \"@Cascade x\";\n}\n<p>@theme</p>";
+        let src = "@code {\n  @Cascade theme!: string;\n  @Cascade(\"route\") r?: unknown;\n  note = \"@Cascade x\";\n  // @Cascade y\n  /* @Cascade z */\n}\n<p>@theme</p>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "missing {s:?} in\n{}", g.code);
-        has("  static readonly cascades = [[\"theme\", \"theme\"], [\"r\", \"route\"]] as const;\n");
+        has("  static readonly cascades: readonly (readonly [string, string])[] = [[\"theme\", \"theme\"], [\"r\", \"route\"]] as const;\n");
         has(" theme!: string;\n");
         has(" r?: unknown;\n");
         has("  note = \"@Cascade x\";\n");
+        has("  // @Cascade y\n");
+        has("  /* @Cascade z */\n");
         has("__b.addContent(this.theme);");
-        assert_eq!(g.code.matches("@Cascade").count(), 1, "{}", g.code);
+        assert_eq!(g.code.matches("@Cascade").count(), 3, "{}", g.code);
         assert_eq!(collect_members("@Cascade theme!: string;\n@Cascade(\"route\") r?: unknown;"), ["theme", "r"]);
-        assert!(gen_err("@code { @Cascade(name) r?: unknown; }", &[]).contains("@Cascade"));
+    }
+
+    #[test]
+    fn inherited_cascades_extend_the_base_list() {
+        let g = gen_with("@inherits Base<T>\n@code { @Cascade role!: string; }\n<p/>", &[]);
+        assert!(
+            g.code.contains(
+                "  static readonly cascades: readonly (readonly [string, string])[] = [...((Base as { cascades?: readonly (readonly [string, string])[] }).cascades ?? []), [\"role\", \"role\"]] as const;\n"
+            ),
+            "{}",
+            g.code
+        );
+        let plain = gen_with("@inherits Base\n@code { n = 1; }\n<p/>", &[]);
+        assert!(!plain.code.contains("cascades"), "{}", plain.code);
+    }
+
+    #[test]
+    fn cascade_decorator_errors_point_at_the_decorator() {
+        let err = |member: &str| {
+            let src = format!("@code {{\n  {member}\n}}\n<p/>");
+            let (doc, _) = crate::parser::parse(&src).unwrap();
+            let (message, offset) = cascade_error(&doc).unwrap_or_else(|| panic!("no error for {member}"));
+            assert_eq!(offset, src.find("@Cascade").unwrap(), "{member}");
+            assert_eq!(gen_err(&src, &[]), message, "{member}");
+            message
+        };
+        let field_only = "@Cascade applies to instance fields only";
+        assert_eq!(err("@Cascade get theme(): string { return \"\"; }"), field_only);
+        assert_eq!(err("@Cascade set theme(v: string) {}"), field_only);
+        assert_eq!(err("@Cascade theme(): string { return \"\"; }"), field_only);
+        assert_eq!(err("@Cascade static route = \"r\";"), field_only);
+        let one_name = "@Cascade takes one string literal name";
+        assert_eq!(err("@Cascade(\"a\", \"b\") r?: unknown;"), one_name);
+        assert_eq!(err("@Cascade(\"a\" + \"b\") r?: unknown;"), one_name);
+        assert_eq!(err("@Cascade(name) r?: unknown;"), one_name);
+        assert_eq!(err("@Cascade() r?: unknown;"), one_name);
+        let (doc, _) = crate::parser::parse("@code { @Cascade('route') r?: unknown; }\n<p/>").unwrap();
+        assert_eq!(cascade_error(&doc), None);
+        assert!(generate(&doc, "C", "C.tszor").unwrap().code.contains("[[\"r\", \"route\"]]"));
     }
 
     #[test]

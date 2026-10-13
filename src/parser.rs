@@ -353,10 +353,13 @@ impl<'a> Parser<'a> {
 
         let word_start = self.pos;
         let word = self.ident();
-        let is_keyword = matches!(
-            word,
-            "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "cascade" | "inherits" | "implements" | "attribute" | "inject"
-        );
+        // `@cascade` is only a block when a name follows; otherwise it is a member reference.
+        let cascade = word == "cascade" && self.peek() == Some(b':');
+        let is_keyword = cascade
+            || matches!(
+                word,
+                "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "inherits" | "implements" | "attribute" | "inject"
+            );
         self.mark(TokenKind::Transition, at, at + 1);
         if is_keyword {
             self.mark(TokenKind::Keyword, word_start, self.pos);
@@ -440,7 +443,7 @@ impl<'a> Parser<'a> {
             }
             "switch" => self.switch_block().map(Transition::Node),
             "slot" => self.slot().map(Transition::Node),
-            "cascade" => self.cascade_block().map(Transition::Node),
+            "cascade" if cascade => self.cascade_block().map(Transition::Node),
             _ => {
                 loop {
                     match (self.peek(), self.peek_at(1)) {
@@ -731,10 +734,8 @@ impl<'a> Parser<'a> {
     }
 
     /// `@cascade:name(value) { body }`, with an optional second argument `fixed`.
+    /// Called with the parser on the `:`.
     fn cascade_block(&mut self) -> PResult<Node> {
-        if self.peek() != Some(b':') {
-            return self.err("expected a name after @cascade:");
-        }
         self.pos += 1;
         let start = self.pos;
         let name = self.ident();
@@ -1584,9 +1585,20 @@ after"#;
         assert_eq!(&src[value.at..value.at + value.len()], "theme");
 
         let err = |src: &str| parse(src).unwrap_err().message;
-        assert_eq!(err("@cascade(x) {}"), "expected a name after @cascade:");
+        assert_eq!(err("@cascade: {}"), "expected a name after @cascade:");
         assert_eq!(err("@cascade:x(a, b) {}"), "the second @cascade argument must be fixed");
         assert_eq!(err("@cascade:x(a)"), "expected { after @cascade:x(...)");
+    }
+
+    #[test]
+    fn cascade_is_a_keyword_only_before_a_colon() {
+        assert_eq!(nodes("<p>@cascade</p>"), vec![el("p", vec![], vec![Node::Expr("cascade".into())])]);
+        assert_eq!(nodes("<p>@cascade.name</p>"), vec![el("p", vec![], vec![Node::Expr("cascade.name".into())])]);
+        assert_eq!(nodes("@cascade(x)"), vec![Node::Expr("cascade(x)".into())]);
+        let (_, tokens) = parse("<p>@cascade</p>").unwrap();
+        assert!(!tokens.iter().any(|t| t.kind == TokenKind::Keyword), "{tokens:?}");
+        let (_, tokens) = parse("@cascade:x(v) { <A/> }").unwrap();
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Keyword), "{tokens:?}");
     }
 
     #[test]
