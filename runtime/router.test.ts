@@ -257,7 +257,7 @@ test("a regex section with a page exposes its named groups as route.match", () =
   expect(r.html()).toBe("<b>7</b>");
 });
 
-test("a pattern section with a page adds its own params", () => {
+test("a pattern section with a page exposes its own segments as route.match", () => {
   nav("/docs/a/b");
   const r = routed([
     {
@@ -267,13 +267,33 @@ test("a pattern section with a page adds its own params", () => {
       render: (route: Route, page: RenderFragment) =>
         frag((b) => {
           b.openElement("i");
-          b.addContent((route.params as { area: string }).area);
+          b.addContent(route.match.area);
           b.addContent(page);
           b.closeElement();
         }),
     },
   ]);
   expect(r.html()).toBe("<i>a<d>a/b</d></i>");
+});
+
+test("a pattern section never overwrites the page's converted params", () => {
+  nav("/users/7");
+  let captured: Route | undefined;
+  const r = routed([
+    {
+      kind: "pattern",
+      match: (s) => (s[0] === "users" ? { id: s[1] ?? "" } : null),
+      page: true,
+      render: (route: Route, page: RenderFragment) => {
+        captured = route;
+        return wrap("i")(route, page);
+      },
+    },
+  ]);
+  expect(r.html()).toBe("<i><u>7</u></i>");
+  expect(lastUser!.id).toBe(7);
+  expect(captured!.params).toEqual({ id: 7 });
+  expect(captured!.match).toEqual({ id: "7" });
 });
 
 test("a page with no matching section falls back to @default, then to the bare page", () => {
@@ -336,6 +356,18 @@ test("param-only navigation keeps the page instance and sets its parameters agai
   expect(page.id).toBe(2);
   expect(page.paramsSet).toBe(2);
   expect(page.renders).toBe(2);
+});
+
+test("a query-only navigation sets the page's parameters again", () => {
+  const memory = nav("/users/1?q=a");
+  const r = routed([{ kind: "default", render: wrap("aside") }]);
+  const page = lastUser!;
+
+  memory.go("/users/1?q=b");
+  expect(lastUser).toBe(page);
+  expect(page.paramsSet).toBe(2);
+  expect(page.renders).toBe(2);
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
 });
 
 test("navigating to another route pattern builds a new page", () => {
@@ -476,6 +508,30 @@ test("modified clicks and opted-out links are left to the browser", () => {
   expect(r.html()).toContain("<u>1</u>");
 });
 
+const hashLinks = (_route: Route, page: RenderFragment): RenderFragment =>
+  frag((b) => {
+    b.addContent(page);
+    for (const href of ["#part2", "/users/1#part2", "/users/2#part2"]) {
+      b.openElement("a");
+      b.addAttribute("href", href);
+      b.addText(href);
+      b.closeElement();
+    }
+  });
+
+test("a link that only moves to a fragment of this page is left to the browser", () => {
+  history.replaceState(null, "", "/users/1");
+  const r = routed([{ kind: "default", render: hashLinks }]);
+  const anchor = (index: number) => r.host.querySelectorAll("a")[index]!;
+
+  expect(r.click(anchor(0))).toBe(false);
+  expect(r.click(anchor(1))).toBe(false);
+  expect(location.pathname).toBe("/users/1");
+
+  expect(r.click(anchor(2))).toBe(true);
+  expect(location.pathname).toBe("/users/2");
+});
+
 test("the navigation listeners go away with the routes block", () => {
   history.replaceState(null, "", "/users/1");
   const r = routed([{ kind: "default", render: wrap("aside") }]);
@@ -598,6 +654,91 @@ test("@catch is cleared by the next navigation", async () => {
   expect(r.html()).toBe("<em>Error: render</em>");
 
   memory.go("/users/1");
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+});
+
+let failSlow: ((err: unknown) => void) | undefined;
+
+class SlowPage extends ComponentBase {
+  protected override onInitializedAsync(): Promise<void> {
+    return new Promise<void>((_resolve, reject) => {
+      failSlow = reject;
+    });
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addText("slow");
+  }
+}
+
+test("a failure from the page we navigated away from is not shown on the new route", async () => {
+  const memory = nav("/boom");
+  const r = routed(caught, { table: breaking(SlowPage) });
+  expect(r.html()).toBe("<aside>slow</aside>");
+
+  memory.go("/users/1");
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+
+  failSlow!(new Error("late"));
+  await tick();
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+});
+
+let tracked: Tracked | undefined;
+
+class Tracked extends ComponentBase {
+  static readonly cascades = [["route", "route"]] as const;
+  route: Route | undefined;
+  paramsSet = 0;
+  disposed = 0;
+  protected override onParametersSet(): void {
+    this.paramsSet++;
+  }
+  protected override dispose(): void {
+    this.disposed++;
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addText("ok");
+  }
+}
+
+class PartlyMounted extends ComponentBase {
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addComponent(Tracked, {}, undefined, { ref: (c) => (tracked = c) });
+    b.addComponent(ThrowingCtor, {});
+  }
+}
+
+test("@catch disposes the children the failed page had already mounted", async () => {
+  const memory = nav("/boom");
+  const r = routed(caught, { table: breaking(PartlyMounted) });
+  await tick();
+  expect(r.html()).toBe("<em>Error: ctor</em>");
+  const child = tracked!;
+  expect(child.disposed).toBe(1);
+  expect(child.paramsSet).toBe(1);
+
+  memory.go("/users/1");
+  memory.go("/users/2");
+  expect(child.paramsSet).toBe(1);
+});
+
+class RedirectPage extends ComponentBase {
+  static readonly cascades = [["route", "route"]] as const;
+  route: Route | undefined;
+  protected override onInitialized(): void {
+    this.route!.navigate("/users/1", { replace: true });
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addText("redirect");
+  }
+}
+
+test("a navigation started during the first render is applied once it finishes", async () => {
+  const memory = nav("/boom");
+  const r = routed([{ kind: "default", render: wrap("aside") }], { table: breaking(RedirectPage) });
+
+  expect(memory.calls).toEqual([["/users/1", true]]);
+  await tick();
   expect(r.html()).toBe("<aside><u>1</u></aside>");
 });
 
