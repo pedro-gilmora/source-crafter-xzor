@@ -245,6 +245,18 @@ pub fn generate_with(
     if inject_constructor(doc).is_some() {
         return Err(ZDI08.into());
     }
+    let mut cascades: Vec<(String, String)> = Vec::new();
+    let mut blanks: Vec<(usize, usize)> = Vec::new();
+    for code in &doc.code {
+        for m in member_decls(code) {
+            for &(s, e) in &m.decorators {
+                if let Some(name) = cascade_name(&code[s..e], &m.name)? {
+                    cascades.push((m.name.clone(), name));
+                    blanks.push((code.at + s, code.at + e));
+                }
+            }
+        }
+    }
     let mut g = Gen {
         out: String::new(),
         mappings: Vec::new(),
@@ -314,8 +326,12 @@ pub fn generate_with(
         let assigns: String = doc.injects.iter().map(|i| format!(" this.{0} = {0};", i.name)).collect();
         g.line(&format!("constructor({}) {{ super();{assigns} }}", params.join(", ")));
     }
+    if !cascades.is_empty() {
+        let pairs: Vec<String> = cascades.iter().map(|(prop, name)| format!("[{}, {}]", js_string(prop), js_string(name))).collect();
+        g.line(&format!("static readonly cascades = [{}] as const;", pairs.join(", ")));
+    }
     for parts in &doc.code_parts {
-        let block = g.code_block(parts)?;
+        let block = g.code_block(parts, &blanks)?;
         g.emit_block(block);
         g.line("");
     }
@@ -360,12 +376,13 @@ impl Gen<'_> {
         self.out.push(if self.inline { ' ' } else { '\n' });
     }
 
-    /// A `@code` block with its markup values compiled to `RenderFragment`s.
-    fn code_block(&self, parts: &[CodePart]) -> Result<M, String> {
+    /// A `@code` block with its markup values compiled to `RenderFragment`s and its `@Cascade`
+    /// decorators (`blanks`) blanked out.
+    fn code_block(&self, parts: &[CodePart], blanks: &[(usize, usize)]) -> Result<M, String> {
         let mut out = M::default();
         for part in parts {
             out = match part {
-                CodePart::Ts(s) => out.add(M::src(s, s.at)),
+                CodePart::Ts(s) => out.add(blanked(s, blanks)),
                 CodePart::Markup(el) => out.add(self.fragment(el)?),
                 CodePart::Render(_) => return Err("markup statements and `@:` lines belong in `@{ }`, not `@code`".into()),
             };
@@ -574,6 +591,12 @@ impl Gen<'_> {
                 self.emit(line.lit_then(") ?? ").add(fallback).lit_then(");"));
             }
             Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
+            Node::Cascade { name, value, fixed, body } => {
+                let open = M::lit("__b.openCascade(\"").add(M::src(name, name.at)).lit_then("\", ").add(self.expr(value));
+                self.emit(open.lit_then(if *fixed { ", true);" } else { ");" }));
+                self.block(body)?;
+                self.line("__b.closeRegion();");
+            }
             Node::Element(el) if el.is_component() => self.component(el)?,
             Node::Element(el) => {
                 self.line(&format!("__b.openElement({});", js_string(&el.name)));
@@ -1017,6 +1040,31 @@ pub fn collect_members(code: &str) -> Vec<String> {
     member_decls(code).into_iter().map(|m| m.name).collect()
 }
 
+/// The cascade name of a `@Cascade` or `@Cascade("name")` decorator on `prop`; `None` for others.
+fn cascade_name(decorator: &str, prop: &str) -> Result<Option<String>, String> {
+    let Some(rest) = decorator.strip_prefix("@Cascade").map(str::trim_start) else { return Ok(None) };
+    if rest.is_empty() {
+        return Ok(Some(prop.to_string()));
+    }
+    let Some(arg) = rest.strip_prefix('(').and_then(|a| a.strip_suffix(')')).map(str::trim) else { return Ok(None) };
+    match arg.strip_prefix(['"', '\'']).and_then(|a| a.strip_suffix(['"', '\''])) {
+        Some(name) => Ok(Some(name.to_string())),
+        None => Err(format!("@Cascade({arg}) needs a quoted name")),
+    }
+}
+
+/// Source text with the spans in `blanks` replaced by spaces, mapped around them.
+fn blanked(s: &Src, blanks: &[(usize, usize)]) -> M {
+    let (start, end) = (s.at, s.at + s.len());
+    let mut out = M::default();
+    let mut at = start;
+    for &(bs, be) in blanks.iter().filter(|&&(bs, be)| bs >= start && be <= end) {
+        out = out.add(M::src(&s[at - start..bs - start], at)).lit_then(&s[bs - start..be - start].replace(|c: char| c != '\n', " "));
+        at = be;
+    }
+    out.add(M::src(&s[at - start..], at))
+}
+
 /// Each slot the template defines, in order, with its parameters' names and inferred types.
 type SlotDecl = (String, Vec<(String, String)>);
 
@@ -1061,6 +1109,7 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
                 }
             }
             Node::SlotFill(fill) => collect_slots(&fill.body, members, loops, out)?,
+            Node::Cascade { body, .. } => collect_slots(body, members, loops, out)?,
             Node::While { body, .. } => collect_slots(body, members, loops, out)?,
             Node::Code(parts) => {
                 for part in parts {
@@ -1273,6 +1322,8 @@ pub struct MemberDecl {
     pub offset: usize,
     pub is_method: bool,
     pub is_static: bool,
+    /// Spans of the decorators written before the member, in order.
+    pub decorators: Vec<(usize, usize)>,
 }
 
 pub fn member_decls(code: &str) -> Vec<MemberDecl> {
@@ -1285,6 +1336,7 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
     let mut depth = 0i32;
     let mut at_decl = true;
     let mut is_static = false;
+    let mut decorators: Vec<(usize, usize)> = Vec::new();
     let mut prev = None;
     let mut i = 0;
     while i < b.len() {
@@ -1303,13 +1355,33 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
                 if depth == 0 && c == b'}' {
                     at_decl = true;
                     is_static = false;
+                    decorators.clear();
                 }
             }
             b';' if depth == 0 => {
                 at_decl = true;
                 is_static = false;
+                decorators.clear();
             }
             b'\n' if depth == 0 => at_decl = true,
+            // A decorator (`@name` or `@name(args)`) belongs to the member declared after it.
+            b'@' if depth == 0 && at_decl && b.get(i + 1).is_some_and(|&c| is_ident_start(c)) => {
+                let start = i;
+                i += 1;
+                while i < b.len() && is_ident_char(b[i]) {
+                    i += 1;
+                }
+                let mut args = i;
+                while args < b.len() && b[args].is_ascii_whitespace() {
+                    args += 1;
+                }
+                if b.get(args) == Some(&b'(') {
+                    i = skip_pair(b, args, b'(', b')');
+                }
+                decorators.push((start, i));
+                prev = Some(b')');
+                continue;
+            }
             _ if depth == 0 && at_decl && is_ident_start(c) => {
                 let start = i;
                 while i < b.len() && is_ident_char(b[i]) {
@@ -1324,6 +1396,7 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
                         offset: start,
                         is_method: matches!(next, Some(b'(' | b'<')),
                         is_static,
+                        decorators: std::mem::take(&mut decorators),
                     });
                     at_decl = false;
                     is_static = false;
@@ -1403,9 +1476,14 @@ fn skip_template(b: &[u8], start: usize) -> usize {
 
 /// Index just past the `}` that closes the `{` at `open`.
 pub(crate) fn skip_braces(b: &[u8], open: usize) -> usize {
+    skip_pair(b, open, b'{', b'}')
+}
+
+/// Index just past the `close` matching the `open` delimiter at `at`.
+pub(crate) fn skip_pair(b: &[u8], at: usize, open: u8, close: u8) -> usize {
     let mut depth = 0usize;
     let mut prev = None;
-    let mut i = open;
+    let mut i = at;
     while i < b.len() {
         if let Some(end) = skip_literal(b, i, prev) {
             if !is_comment(b, i) {
@@ -1414,7 +1492,7 @@ pub(crate) fn skip_braces(b: &[u8], open: usize) -> usize {
             i = end;
             continue;
         }
-        if is_ident_start(b[i]) && (i == open || !is_ident_char(b[i - 1])) {
+        if is_ident_start(b[i]) && (i == at || !is_ident_char(b[i - 1])) {
             let start = i;
             while i < b.len() && is_ident_char(b[i]) {
                 i += 1;
@@ -1422,15 +1500,13 @@ pub(crate) fn skip_braces(b: &[u8], open: usize) -> usize {
             prev = Some(word_prev(std::str::from_utf8(&b[start..i]).unwrap_or(""), prev));
             continue;
         }
-        match b[i] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return i + 1;
-                }
+        if b[i] == open {
+            depth += 1;
+        } else if b[i] == close {
+            depth -= 1;
+            if depth == 0 {
+                return i + 1;
             }
-            _ => {}
         }
         if !b[i].is_ascii_whitespace() {
             prev = Some(b[i]);
@@ -1889,6 +1965,32 @@ mod tests {
         assert_eq!(lookup("n = 1;", 0), Some((1, 2)));
         assert_eq!(lookup("this.n);", 5), Some((3, 4)));
         assert_eq!(lookup("__b.openElement", 0), None);
+    }
+
+    #[test]
+    fn cascade_blocks_open_a_cascade_region() {
+        let src = "@code { theme = \"dark\"; }\n@cascade:theme(theme) { <b/> }\n@cascade:cfg(1, fixed) { <i/> }";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "missing {s:?} in\n{}", g.code);
+        has("    __b.openCascade(\"theme\", this.theme);\n      __b.openElement(\"b\");\n      __b.closeElement();\n    __b.closeRegion();");
+        has("    __b.openCascade(\"cfg\", 1, true);");
+        let at = src.find("(theme)").unwrap() + 1;
+        assert!(g.mappings.iter().any(|m| m.src == at && m.len == "theme".len()), "the value is mapped\n{:?}", g.mappings);
+    }
+
+    #[test]
+    fn cascade_decorators_become_a_static_list() {
+        let src = "@code {\n  @Cascade theme!: string;\n  @Cascade(\"route\") r?: unknown;\n  note = \"@Cascade x\";\n}\n<p>@theme</p>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "missing {s:?} in\n{}", g.code);
+        has("  static readonly cascades = [[\"theme\", \"theme\"], [\"r\", \"route\"]] as const;\n");
+        has(" theme!: string;\n");
+        has(" r?: unknown;\n");
+        has("  note = \"@Cascade x\";\n");
+        has("__b.addContent(this.theme);");
+        assert_eq!(g.code.matches("@Cascade").count(), 1, "{}", g.code);
+        assert_eq!(collect_members("@Cascade theme!: string;\n@Cascade(\"route\") r?: unknown;"), ["theme", "r"]);
+        assert!(gen_err("@code { @Cascade(name) r?: unknown; }", &[]).contains("@Cascade"));
     }
 
     #[test]

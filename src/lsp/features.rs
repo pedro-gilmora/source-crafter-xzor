@@ -73,6 +73,7 @@ fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
             }
             Node::Switch { cases, .. } => cases.iter().for_each(|c| collect_slot_names(&c.body, out)),
             Node::SlotFill(f) => collect_slot_names(&f.body, out),
+            Node::Cascade { body, .. } => collect_slot_names(body, out),
             Node::Text(_) | Node::Expr(_) => {}
         }
     }

@@ -4,6 +4,7 @@
 //! (and later LSP semantic tokens).
 
 use crate::ast::*;
+use crate::codegen::{is_comment, skip_literal, word_prev};
 use crate::{is_ident_char, is_ident_start};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,7 +355,7 @@ impl<'a> Parser<'a> {
         let word = self.ident();
         let is_keyword = matches!(
             word,
-            "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "inherits" | "implements" | "attribute" | "inject"
+            "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "cascade" | "inherits" | "implements" | "attribute" | "inject"
         );
         self.mark(TokenKind::Transition, at, at + 1);
         if is_keyword {
@@ -439,6 +440,7 @@ impl<'a> Parser<'a> {
             }
             "switch" => self.switch_block().map(Transition::Node),
             "slot" => self.slot().map(Transition::Node),
+            "cascade" => self.cascade_block().map(Transition::Node),
             _ => {
                 loop {
                     match (self.peek(), self.peek_at(1)) {
@@ -726,6 +728,52 @@ impl<'a> Parser<'a> {
         let nodes = self.nodes(Until::Brace);
         self.in_component = saved;
         nodes.map(trim_edges)
+    }
+
+    /// `@cascade:name(value) { body }`, with an optional second argument `fixed`.
+    fn cascade_block(&mut self) -> PResult<Node> {
+        if self.peek() != Some(b':') {
+            return self.err("expected a name after @cascade:");
+        }
+        self.pos += 1;
+        let start = self.pos;
+        let name = self.ident();
+        if name.is_empty() {
+            return self.err("expected a name after @cascade:");
+        }
+        self.mark(TokenKind::Code, start, self.pos);
+        let name = Src::new(name, start);
+        self.skip_ws();
+        if self.peek() != Some(b'(') {
+            return self.err(format!("expected ( after @cascade:{name}"));
+        }
+        let (s, e) = self.balanced(b'(', b')')?;
+        self.mark(TokenKind::Code, s, e);
+        let args = self.span(s + 1, e - 1);
+        let (value, fixed) = match top_level_comma(&args) {
+            Some(i) => {
+                if args[i + 1..].trim() != "fixed" {
+                    return Err(ParseError {
+                        message: "the second @cascade argument must be fixed".into(),
+                        offset: args.at + i + 1,
+                    });
+                }
+                (self.span(args.at, args.at + i), true)
+            }
+            None => (args, false),
+        };
+        if value.is_empty() {
+            return Err(ParseError { message: format!("expected a value in @cascade:{name}(...)"), offset: s });
+        }
+        let (save, tokens) = (self.pos, self.tokens.len());
+        self.skip_ws();
+        if self.peek() != Some(b'{') {
+            self.pos = save;
+            self.tokens.truncate(tokens);
+            return self.err(format!("expected {{ after @cascade:{name}(...)"));
+        }
+        let body = self.block()?;
+        Ok(Node::Cascade { name, value, fixed, body })
     }
 
     /// After `@slot`: `:name` defines a named slot; inside a component tag, ` name` fills one.
@@ -1136,6 +1184,40 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Offset of the comma separating `@cascade` arguments: outside brackets, strings and comments.
+fn top_level_comma(text: &str) -> Option<usize> {
+    let b = text.as_bytes();
+    let (mut i, mut depth, mut prev) = (0usize, 0i32, None);
+    while i < b.len() {
+        if let Some(end) = skip_literal(b, i, prev) {
+            if !is_comment(b, i) {
+                prev = Some(b'"');
+            }
+            i = end;
+            continue;
+        }
+        if is_ident_start(b[i]) && (i == 0 || !is_ident_char(b[i - 1])) {
+            let start = i;
+            while i < b.len() && is_ident_char(b[i]) {
+                i += 1;
+            }
+            prev = Some(word_prev(&text[start..i], prev));
+            continue;
+        }
+        match b[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+        if !b[i].is_ascii_whitespace() {
+            prev = Some(b[i]);
+        }
+        i += 1;
+    }
+    None
+}
+
 fn tag_kind(name: &str) -> TokenKind {
     if name.starts_with(|c: char| c.is_ascii_uppercase()) {
         TokenKind::ComponentName
@@ -1466,6 +1548,45 @@ after"#;
         let (doc, tokens) = parse("@page \"/a\" @* home *@").unwrap();
         assert_eq!(doc.page.as_deref(), Some("/a"));
         assert_eq!(comments(&tokens).len(), 1);
+    }
+
+    #[test]
+    fn parses_cascade_blocks() {
+        assert_eq!(
+            nodes("@cascade:theme(currentTheme) { <A/> }"),
+            vec![Node::Cascade {
+                name: "theme".into(),
+                value: "currentTheme".into(),
+                fixed: false,
+                body: vec![el("A", vec![], vec![])],
+            }]
+        );
+        assert_eq!(
+            nodes("@cascade:cfg(f(a, b), fixed) { <A/> }"),
+            vec![Node::Cascade {
+                name: "cfg".into(),
+                value: "f(a, b)".into(),
+                fixed: true,
+                body: vec![el("A", vec![], vec![])],
+            }]
+        );
+        let Node::Cascade { value, .. } = &nodes("@cascade:x(a ? b : c) { <A/> }")[0] else { panic!() };
+        assert_eq!(value, &Src::from("a ? b : c"));
+        let Node::Cascade { value, fixed, .. } = &nodes("@cascade:x(a ? b : c, fixed) { <A/> }")[0] else { panic!() };
+        assert_eq!((value, *fixed), (&Src::from("a ? b : c"), true));
+        let Node::Cascade { value, fixed, .. } = &nodes("@cascade:x({ a, b }, fixed) { <A/> }")[0] else { panic!() };
+        assert_eq!((value, *fixed), (&Src::from("{ a, b }"), true));
+        let Node::Cascade { value, fixed, .. } = &nodes("@cascade:x(\"a, b\" + `${f(1, 2)}`) { <A/> }")[0] else { panic!() };
+        assert_eq!((value, *fixed), (&Src::from("\"a, b\" + `${f(1, 2)}`"), false));
+        let src = "@cascade:x(theme) { <A/> }";
+        let Node::Cascade { name, value, .. } = &nodes(src)[0] else { panic!() };
+        assert_eq!(&src[name.at..name.at + name.len()], "x");
+        assert_eq!(&src[value.at..value.at + value.len()], "theme");
+
+        let err = |src: &str| parse(src).unwrap_err().message;
+        assert_eq!(err("@cascade(x) {}"), "expected a name after @cascade:");
+        assert_eq!(err("@cascade:x(a, b) {}"), "the second @cascade argument must be fixed");
+        assert_eq!(err("@cascade:x(a)"), "expected { after @cascade:x(...)");
     }
 
     #[test]

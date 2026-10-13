@@ -113,6 +113,13 @@ pub enum Node {
         subject: Src,
         cases: Vec<Case>,
     },
+    /// `@cascade:name(value)` or `@cascade:name(value, fixed)`: a region providing `value`.
+    Cascade {
+        name: Src,
+        value: Src,
+        fixed: bool,
+        body: Vec<Node>,
+    },
     /// `@slot`, `@slot:name(args) { fallback }` in a component's own template.
     Slot(Slot),
     /// `@slot name(params) { body }` as a direct child of a component tag.
