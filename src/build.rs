@@ -311,7 +311,7 @@ fn map_tsc_line(line: &str, compiled: &[Compiled], cwd: &Path) -> Option<String>
     let (l, c): (usize, usize) = (l.trim().parse().ok()?, c.trim().parse().ok()?);
     let path = Path::new(line[..open].trim());
     let path = if path.is_absolute() { path.to_path_buf() } else { cwd.join(path) };
-    let unit = compiled.iter().find(|u| same_path(&normalize(&u.out), &normalize(&path)))?;
+    let unit = compiled.iter().find(|u| same_path(&normalize(&cwd.join(&u.out)), &normalize(&path)))?;
     let src = unit.generated.to_src_nearest(offset_at(&unit.generated.code, l - 1, c - 1));
     let (sl, sc) = position_at(&unit.text, src);
     let shown = unit.source.strip_prefix(cwd).map_or_else(|_| unit.source.display().to_string(), |p| p.display().to_string());
@@ -681,6 +681,21 @@ mod tests {
         let output = format!("{absolute}\n{relative}\nFound 2 errors.\n");
         let expected = format!("App.tszor(2,7): {message}\nApp.tszor(2,7): {message}\nFound 2 errors.\n");
         assert_eq!(map_tsc_output(&output, &compiled, &root), expected);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn maps_tsc_output_for_relative_out() {
+        let root = temp("tscrelative");
+        let source = root.join("x").join("A.tszor");
+        let text = "@code { n: number = 1; }\n<p>@n.foo</p>\n".to_string();
+        let generated = crate::compile_mapped(&text, &source).unwrap();
+        let at = generated.code.find(".foo").unwrap() + 1;
+        let (line, col) = crate::lsp::position_at(&generated.code, at);
+        let out = PathBuf::from("x").join(".zor").join("A.tszor.ts");
+        let compiled = vec![Compiled { source, out: out.clone(), text, generated }];
+        let tsc = format!("{}({},{}): error TS1: m\n", root.join(&out).display(), line + 1, col + 1);
+        assert_eq!(map_tsc_output(&tsc, &compiled, &root), "x/A.tszor(2,7): error TS1: m\n");
         fs::remove_dir_all(&root).unwrap();
     }
 
