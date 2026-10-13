@@ -662,7 +662,11 @@ impl Gen<'_> {
             }
             RouteSectionKind::Pattern { pattern, page } => {
                 let params = crate::routes::param_names(pattern);
-                let narrowed = (!params.is_empty()).then(|| format!("Route<{{ {} }}>", fields(&params)));
+                // With a page, `params` are the page's; the section's own captures are on `match`.
+                let narrowed = (!params.is_empty()).then(|| match page {
+                    Some(_) => format!("Route & {{ match: {{ {} }} }}", fields(&params)),
+                    None => format!("Route<{{ {} }}>", fields(&params)),
+                });
                 let head = format!("{{ kind: \"pattern\", match: {}__m{i}, page: {}, render: ", self.static_prefix, page.is_some());
                 (M::lit(&head), narrowed)
             }
@@ -2264,6 +2268,8 @@ mod tests {
         // The names inside text are not uses.
         let text = gen_with("@ClientRoutes(route) { @a(page) { <p>the page route</p> } @notFound { <p>route not found</p> } }", &[]);
         assert!(!text.code.contains("const route") && !text.code.contains(" page:"), "{}", text.code);
+        let paged = gen_with("@ClientRoutes(route) { @\"/x/:id\"(page) { <p>@route.match.id @page</p> } }", &[]);
+        assert!(paged.code.contains("const route = __route as Route & { match: { id: string } };"), "{}", paged.code);
         let used = gen_with("@ClientRoutes(route) { @a(page) { <p>@route.params.x</p> } }", &[]);
         assert!(used.code.contains("render: (__route: Route) => { const route = __route as Route<__RouteParams[\"a\"]>; return "), "{}", used.code);
         assert!(used.code.contains("import { routes as __routes, type RouteParams as __RouteParams } from \"./routes\";"), "{}", used.code);
