@@ -419,7 +419,7 @@ fn matcher_body(r: &RouteInfo) -> String {
                 }
             };
         } else {
-            let _ = writeln!(out, "      if (s[{i}] !== {segment:?}) return null;");
+            let _ = writeln!(out, "      if (s[{i}] !== {:?}) return null;", encode_literal(segment));
         }
     }
     let fields = route_params(r).iter().map(|n| format!("{n}: _{n}")).collect::<Vec<_>>().join(", ");
@@ -427,6 +427,22 @@ fn matcher_body(r: &RouteInfo) -> String {
         true => writeln!(out, "      return {{}};"),
         false => writeln!(out, "      return {{ {fields} }};"),
     };
+    out
+}
+
+/// A literal segment as a url path carries it: the bytes a `URL` escapes in `pathname` become `%XX`,
+/// everything else is left alone. Both the matchers and `href` use this, so `/café` and `/a b` match
+/// the `/caf%C3%A9` and `/a%20b` the browser reports, at no runtime cost.
+fn encode_literal(segment: &str) -> String {
+    let mut out = String::with_capacity(segment.len());
+    for b in segment.bytes() {
+        match b {
+            b' ' | b'"' | b'#' | b'<' | b'>' | b'?' | b'`' | b'{' | b'}' | 0..=0x1F | 0x7F..=0xFF => {
+                let _ = write!(out, "%{b:02X}");
+            }
+            _ => out.push(b as char),
+        }
+    }
     out
 }
 
@@ -480,7 +496,7 @@ fn href_expr(r: &RouteInfo) -> String {
             literal.clear();
             parts.push(format!("encodeURIComponent(String(p[{name:?}]))"));
         } else {
-            literal.push_str(segment);
+            literal.push_str(&encode_literal(segment));
         }
     }
     if !literal.is_empty() {
@@ -669,6 +685,24 @@ mod table_tests {
         assert!(!ts.contains("p.rest"), "{ts}");
     }
 
+    /// `location.pathname` is percent-encoded, so the literal a matcher compares has to be too.
+    #[test]
+    fn literal_segments_are_compared_and_built_encoded() {
+        let pages = [page(
+            "Cafe.tszor",
+            "Cafe",
+            vec![route(None, "/café/:q", &[("q", ParamKind::String)]), route(None, "/a b", &[])],
+        )];
+        let (ts, diags) = generate(&pages);
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(ts.contains("if (s[0] !== \"caf%C3%A9\") return null;"), "{ts}");
+        assert!(ts.contains("if (s[0] !== \"a%20b\") return null;"), "{ts}");
+        assert!(ts.contains("return \"/caf%C3%A9/\" + encodeURIComponent(String(p[\"q\"]));"), "{ts}");
+        assert!(ts.contains("return \"/a%20b\";"), "{ts}");
+        // `@`, `:` and the other sub-delimiters stay in a pathname, so they stay in the literal.
+        assert!(section_matcher("/a@b,c").contains("if (s[0] !== \"a@b,c\") return null;"));
+    }
+
     #[test]
     fn an_empty_project_gets_an_empty_table() {
         let (ts, diags) = generate(&[page("A.tszor", "A", Vec::new())]);
@@ -797,6 +831,12 @@ mod table_tests {
             ),
             page_in(&dir, "Root.tszor", "Root", vec![route(None, "/", &[]), route(None, "/*", &[])]),
             page_in(&dir, "Docs.tszor", "Docs", vec![route(None, "/docs/*", &[])]),
+            page_in(
+                &dir,
+                "Cafe.tszor",
+                "Cafe",
+                vec![route(None, "/café/:q", &[("q", ParamKind::String)]), route(None, "/a b", &[])],
+            ),
         ];
         let (ts, diags) = table(&dir, &units(&pages));
         assert!(diags.is_empty(), "{diags:?}");
@@ -811,6 +851,7 @@ mod table_tests {
         .unwrap();
         std::fs::write(dir.join("Root.tszor.ts"), "export default class Root {}\n").unwrap();
         std::fs::write(dir.join("Docs.tszor.ts"), "export default class Docs {}\n").unwrap();
+        std::fs::write(dir.join("Cafe.tszor.ts"), "export default class Cafe {\n  q = \"\";\n}\n").unwrap();
     }
 }
 

@@ -21,6 +21,8 @@ const entry = (pattern: string) => routes.find((r) => r.pattern === pattern)!;
 test("entries are sorted by precedence", () => {
   expect(routes.map((r) => r.pattern)).toEqual([
     "/",
+    "/a b",
+    "/café/:q",
     "/docs/*",
     "/f/:on/:tab",
     "/p/:id",
@@ -95,6 +97,22 @@ test("href encodes values and picks the route by parameter names", () => {
   expect(href.UserPage({ rest: "x/y" })).toBe("/users/x/y");
   expect(href.Flags({ on: true, tab: "a" })).toBe("/f/true/a");
   expect(() => href.P({})).toThrow("no route of P matches these parameters");
+});
+
+test("literal segments match the percent-encoded path a browser reports", () => {
+  const path = (url: string) => new URL(url, "http://x").pathname;
+  const segments = (p: string) => p.slice(1).split("/");
+
+  const accented = href.Cafe({ q: "a b" });
+  expect(accented).toBe("/caf%C3%A9/a%20b");
+  expect(path(accented)).toBe(accented);
+  expect(entry("/café/:q").match(segments(path(accented)))).toEqual({ q: "a b" });
+  // The same path written with the raw characters, as the browser encodes it.
+  expect(entry("/café/:q").match(segments(path("/café/a b")))).toEqual({ q: "a b" });
+
+  const spaced = href.Cafe({});
+  expect(spaced).toBe("/a%20b");
+  expect(entry("/a b").match(segments(path(spaced)))).toEqual({});
 });
 
 test("href ignores keys whose value is undefined", () => {
