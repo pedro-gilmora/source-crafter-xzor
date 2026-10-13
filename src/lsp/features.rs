@@ -13,6 +13,8 @@ pub struct Component {
     pub props: Vec<Prop>,
     /// Named slots it defines (`@slot:name`), with the byte offset of each name.
     pub slots: Vec<(String, usize)>,
+    /// Route tags of its `@page ... as tag` lines.
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,7 +31,9 @@ pub fn component_from_source(path: &Path, text: &str) -> Component {
     let name = class_name(file.strip_suffix(".tszor").unwrap_or(&file));
     let mut props = Vec::new();
     let mut slots = Vec::new();
+    let mut tags = Vec::new();
     if let Ok((doc, _)) = parser::parse(text) {
+        tags.extend(doc.pages.iter().filter_map(|p| p.tag.as_ref().map(|t| t.to_string())));
         for code in &doc.code {
             for m in member_decls(code).into_iter().filter(|m| !m.is_method && m.name != "constructor") {
                 let offset = code.at + m.offset;
@@ -41,7 +45,7 @@ pub fn component_from_source(path: &Path, text: &str) -> Component {
         }
         collect_slot_names(&doc.nodes, &mut slots);
     }
-    Component { name, path: path.to_path_buf(), props, slots }
+    Component { name, path: path.to_path_buf(), props, slots, tags }
 }
 
 fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
@@ -131,6 +135,8 @@ pub enum Context {
     Directive { prefix: String, start: usize },
     /// After `@slot ` inside a component tag: one of its slot names.
     SlotName { component: String, prefix: String, start: usize },
+    /// After `@` directly inside a routes block: a section keyword or route tag.
+    Route { prefix: String, start: usize },
     Other,
 }
 
@@ -189,9 +195,30 @@ pub fn context(text: &str, offset: usize) -> Context {
         return Context::Other;
     }
     if prev == Some(b'@') && !text[..start - 1].bytes().last().is_some_and(|c| c.is_ascii_alphanumeric()) {
+        if directly_in_routes_block(&text[..start - 1]) {
+            return Context::Route { prefix, start };
+        }
         return Context::Directive { prefix, start };
     }
     Context::Other
+}
+
+/// Whether `before` ends directly inside the braces of an open `@ClientRoutes(..) {`/`@ServerRoutes(..) {` block.
+fn directly_in_routes_block(before: &str) -> bool {
+    let Some(at) = ["@ClientRoutes", "@ServerRoutes"].iter().filter_map(|k| before.rfind(k)).max() else { return false };
+    let mut depth = 0i32;
+    let mut opened = false;
+    for c in before[at..].chars() {
+        match c {
+            '{' => {
+                depth += 1;
+                opened = true;
+            }
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    opened && depth == 1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,6 +289,14 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("attribute", "attribute $1", "Decorator on the component class"),
     ("slot", "slot", "Where slot content renders"),
     ("cascade", "cascade:$1($2) {\n\t$0\n}", "Cascading value for the components inside"),
+    ("ClientRoutes", "ClientRoutes(${1:route}) {\n\t$0\n}", "Routes block for a browser SPA"),
+    ("ServerRoutes", "ServerRoutes(${1:route}) {\n\t$0\n}", "Routes block for one page per route"),
+];
+
+const ROUTE_SECTIONS: &[(&str, &str, &str)] = &[
+    ("notFound", "notFound {\n\t$0\n}", "Renders when no route matches"),
+    ("catch", "catch(${1:e}) {\n\t$0\n}", "Renders when the page fails"),
+    ("default", "default(${1:page}) {\n\t$0\n}", "Wraps pages no other section matched (last section)"),
 ];
 
 const BIND_ATTRS: &[(&str, &str)] = &[
@@ -405,6 +440,24 @@ pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Com
                 extra_edit: None,
             })
             .collect(),
+        Context::Route { prefix, .. } => {
+            let mut tags: Vec<&str> = components.iter().flat_map(|c| &c.tags).map(String::as_str).collect();
+            tags.sort_unstable();
+            tags.dedup();
+            tags.into_iter()
+                .map(|t| (t, format!("{t}(${{1:page}}) {{\n\t$0\n}}"), "Section for the pages tagged with it"))
+                .chain(ROUTE_SECTIONS.iter().map(|(k, snippet, detail)| (*k, snippet.to_string(), *detail)))
+                .filter(|(label, _, _)| matches_prefix(label, &prefix))
+                .map(|(label, insert, detail)| Completion {
+                    label: label.into(),
+                    kind: KIND_KEYWORD,
+                    detail: detail.into(),
+                    insert,
+                    snippet: true,
+                    extra_edit: None,
+                })
+                .collect()
+        }
         Context::Other => Vec::new(),
     }
 }
@@ -520,6 +573,39 @@ mod tests {
         assert_eq!(items[0].label, "cascade");
         assert_eq!(items[0].insert, "cascade:$1($2) {\n\t$0\n}");
         assert_eq!(items[0].detail, "Cascading value for the components inside");
+    }
+
+    #[test]
+    fn routes_block_directives_complete() {
+        let doc = "\n@ClientR";
+        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "ClientRoutes");
+        assert_eq!(items[0].insert, "ClientRoutes(${1:route}) {\n\t$0\n}");
+        let doc = "\n@ServerR";
+        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        assert_eq!(items[0].insert, "ServerRoutes(${1:route}) {\n\t$0\n}");
+    }
+
+    #[test]
+    fn route_sections_and_tags_complete_inside_the_block() {
+        let admin = component_from_source(Path::new("/app/Users.tszor"), "@page \"/a\" as admin\n@page \"/b\" as admin\n@page \"/c\" as user\n@page \"/d\"");
+        assert_eq!(admin.tags, ["admin", "admin", "user"]);
+        let labels = |doc: &str| -> Vec<String> {
+            completions(doc, doc.len(), Path::new("/app/A.tszor"), std::slice::from_ref(&admin)).into_iter().map(|c| c.label).collect()
+        };
+        assert_eq!(labels("@ClientRoutes(route) {\n  @"), ["admin", "user", "notFound", "catch", "default"]);
+        assert_eq!(labels("@ServerRoutes(route)\n{\n  @a"), ["admin"]);
+        assert_eq!(labels("@ClientRoutes(route) {\n  @d"), ["default"]);
+        assert_eq!(labels("@ClientRoutes(route) {\n  @n"), ["notFound"]);
+        // Inside a section body and after the block they are ordinary directives.
+        assert_eq!(labels("@ClientRoutes(route) {\n  @notFound {\n    @cas"), ["cascade"]);
+        assert_eq!(labels("@ClientRoutes(route) {\n}\n@cas"), ["cascade"]);
+
+        let doc = "@ClientRoutes(route) {\n  @catch(e) { <b/> }\n  @de";
+        assert_eq!(context(doc, doc.len()), Context::Route { prefix: "de".into(), start: doc.len() - 2 });
+        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        assert_eq!(items[0].insert, "default(${1:page}) {\n\t$0\n}");
     }
 
     #[test]

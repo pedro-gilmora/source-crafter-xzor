@@ -1103,7 +1103,7 @@ impl Server {
         let ctx = features::context(&doc.text, off);
         let mapped = doc.compiled.as_ref().and_then(|c| c.to_gen(&doc.text, off));
         match (&ctx, mapped) {
-            (Context::Tag { .. } | Context::Attr { .. } | Context::SlotName { .. }, _) | (_, None) => {
+            (Context::Tag { .. } | Context::Attr { .. } | Context::SlotName { .. } | Context::Route { .. }, _) | (_, None) => {
                 let items = self.local_completions(&uri, off);
                 self.respond(id, Json::obj([("isIncomplete", false.into()), ("items", Json::Arr(items))]))
             }
@@ -1120,7 +1120,8 @@ impl Server {
             Context::Tag { start, .. }
             | Context::Attr { start, .. }
             | Context::Directive { start, .. }
-            | Context::SlotName { start, .. } => start,
+            | Context::SlotName { start, .. }
+            | Context::Route { start, .. } => start,
             Context::Other => off,
         };
         let comps = self.components(&doc.path);

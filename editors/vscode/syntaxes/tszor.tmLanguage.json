@@ -79,6 +79,7 @@
         { "include": "#statements" },
         { "include": "#class-directives" },
         { "include": "#line-text" },
+        { "include": "#routes-block" },
         { "include": "#page" },
         { "include": "#typeparam" },
         { "include": "#inject" },
@@ -156,13 +157,65 @@
       "patterns": [{ "include": "source.ts#class-or-interface-body" }]
     },
     "page": {
-      "match": "(?<![[:alnum:]])(@)(page)\\s+(\"[^\"]*\")[ \\t]*(//.*$)?",
+      "match": "(?<![[:alnum:]])(@)(page)\\s+(\"[^\"]*\")(?:[ \\t]+(as)[ \\t]+([_$[:alpha:]][_$[:alnum:]]*))?[ \\t]*(//.*$)?",
       "captures": {
         "1": { "name": "keyword.control.transition.tszor" },
         "2": { "name": "keyword.control.directive.tszor" },
         "3": { "name": "string.quoted.double.tszor" },
-        "4": { "name": "comment.line.double-slash.tszor" }
+        "4": { "name": "keyword.control.as.tszor" },
+        "5": { "name": "variable.other.constant.route.tszor" },
+        "6": { "name": "comment.line.double-slash.tszor" }
       }
+    },
+    "routes-block": {
+      "comment": "@ClientRoutes(route) { sections }: only sections are recognized directly inside the braces.",
+      "begin": "(?<![[:alnum:]])(@)(ClientRoutes|ServerRoutes)[ \\t]*(?=\\()",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.tszor" },
+        "2": { "name": "keyword.control.directive.tszor" }
+      },
+      "end": "(?<=\\})",
+      "patterns": [
+        { "include": "#route-params" },
+        {
+          "begin": "\\{",
+          "beginCaptures": { "0": { "name": "punctuation.section.block.begin.tszor" } },
+          "end": "\\}",
+          "endCaptures": { "0": { "name": "punctuation.section.block.end.tszor" } },
+          "patterns": [
+            { "include": "#razor-comment" },
+            { "include": "#comment" },
+            { "include": "#route-section" }
+          ]
+        }
+      ]
+    },
+    "route-params": {
+      "match": "(\\()[ \\t]*([_$[:alpha:]][_$[:alnum:]]*\\??)?[ \\t]*(\\))",
+      "captures": {
+        "1": { "name": "punctuation.section.parens.begin.tszor" },
+        "2": { "name": "variable.parameter.tszor" },
+        "3": { "name": "punctuation.section.parens.end.tszor" }
+      }
+    },
+    "route-section": {
+      "comment": "@tag(page) { }, @/re/flags(page?) { }, @\"pattern\"(page?) { }, @notFound { }, @catch(e) { }, @default(page) { }.",
+      "begin": "(?<![[:alnum:]])(@)(?=[/\"_$[:alpha:]])",
+      "beginCaptures": { "1": { "name": "keyword.control.transition.tszor" } },
+      "end": "(?<=\\})",
+      "patterns": [
+        { "match": "\\G(notFound|catch|default)\\b", "name": "keyword.control.tszor" },
+        { "match": "\\G[_$[:alpha:]][_$[:alnum:]]*", "name": "variable.other.constant.route.tszor" },
+        { "match": "\\G\"(?:[^\"\\\\]|\\\\.)*\"", "name": "string.quoted.double.tszor" },
+        {
+          "name": "string.regexp.ts",
+          "begin": "\\G/(?=(?:[^/\\\\\\[\\n]|\\\\.|\\[(?:[^\\]\\\\\\n]|\\\\.)*\\])+/)",
+          "end": "/[dgimsuvy]*",
+          "patterns": [{ "include": "source.ts#regexp" }]
+        },
+        { "include": "#route-params" },
+        { "include": "#block" }
+      ]
     },
     "typeparam": {
       "match": "(?<![[:alnum:]])(@)(typeparam)\\s+([_$[:alpha:]][_$[:alnum:]]*)((?:\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|[^/@]|/(?!/))*)(//.*$)?",
