@@ -50,6 +50,7 @@ pub fn parse(src: &str) -> PResult<(Document, Vec<Token>)> {
         case_break: false,
         in_component: false,
         bound: Vec::new(),
+        routes_seen: false,
     };
     p.doc.nodes = p.nodes(Until::Eof)?;
     Ok((p.doc, p.tokens))
@@ -83,7 +84,14 @@ struct Parser<'a> {
     in_component: bool,
     /// Names a routes block binds (`route`, `page`, the `@catch` error); they shadow directives.
     bound: Vec<String>,
+    /// A routes block was already opened in this document.
+    routes_seen: bool,
 }
+
+/// Words that follow `@` as directives; `@cascade`, `@ClientRoutes` and `@ServerRoutes` are
+/// directives only in certain shapes, so they are matched separately.
+const DIRECTIVES: &[&str] =
+    &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject"];
 
 impl<'a> Parser<'a> {
     fn at_word(&self, w: &str) -> bool {
@@ -103,9 +111,9 @@ impl<'a> Parser<'a> {
         self.b[self.pos..].starts_with(s.as_bytes())
     }
 
-    /// The next byte that is not whitespace, without moving.
-    fn next_non_ws(&self) -> Option<u8> {
-        self.b[self.pos..].iter().copied().find(|c| !c.is_ascii_whitespace())
+    /// The next byte that is not a space or tab, without moving.
+    fn next_non_blank(&self) -> Option<u8> {
+        self.b[self.pos..].iter().copied().find(|c| !matches!(c, b' ' | b'\t'))
     }
 
     fn prev_is_alnum(&self) -> bool {
@@ -387,18 +395,13 @@ impl<'a> Parser<'a> {
         let word = self.ident();
         // `@cascade` is only a block when `:` and a name follow; otherwise it is a member reference.
         let cascade = word == "cascade" && self.peek() == Some(b':') && matches!(self.peek_at(1), Some(c) if is_ident_start(c));
-        // Likewise `@ClientRoutes`/`@ServerRoutes` only open a routes block when `(` follows.
-        let routes = matches!(word, "ClientRoutes" | "ServerRoutes") && self.next_non_ws() == Some(b'(');
+        // Likewise `@ClientRoutes`/`@ServerRoutes` only open a routes block when `(` follows on the same line.
+        let routes = matches!(word, "ClientRoutes" | "ServerRoutes") && self.next_non_blank() == Some(b'(');
         self.mark(TokenKind::Transition, at, at + 1);
         if self.bound.iter().any(|b| b == word) {
             return self.implicit_expression(word_start);
         }
-        let is_keyword = cascade
-            || routes
-            || matches!(
-                word,
-                "code" | "page" | "import" | "if" | "for" | "while" | "switch" | "typeparam" | "slot" | "inherits" | "implements" | "attribute" | "inject"
-            );
+        let is_keyword = cascade || routes || DIRECTIVES.contains(&word);
         if is_keyword {
             self.mark(TokenKind::Keyword, word_start, self.pos);
         }
@@ -842,6 +845,13 @@ impl<'a> Parser<'a> {
         if !crate::routes::is_ident(&var) {
             return Err(ParseError { message: format!("expected a name in @{keyword}(...)"), offset: s + 1 });
         }
+        if DIRECTIVES.contains(&&*var.text) || matches!(&*var.text, "cascade" | "ClientRoutes" | "ServerRoutes") {
+            return Err(ParseError { message: format!("{:?} can't name the route variable", &*var.text), offset: var.at });
+        }
+        if self.routes_seen {
+            return Err(ParseError { message: "only one routes block per project (also in this file)".into(), offset: var.at });
+        }
+        self.routes_seen = true;
         self.skip_ws();
         if self.peek() != Some(b'{') {
             return self.err(format!("expected {{ after @{keyword}(...)"));
@@ -859,6 +869,9 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     self.bound.pop();
                     return Ok(Node::Routes { engine, var, sections });
+                }
+                Some(b'@') if self.peek_at(1) == Some(b'*') => {
+                    self.transition()?;
                 }
                 Some(b'@') => {
                     if sections.last().is_some_and(|s| matches!(s.kind, RouteSectionKind::Default { .. })) {
@@ -1926,6 +1939,62 @@ after"#;
         assert_eq!(err("@ClientRoutes(route) { @\"a\" { <p/> } }"), "invalid route pattern \"a\": must start with '/'");
         assert_eq!(err("@ClientRoutes() { }"), "expected a name in @ClientRoutes(...)");
         assert_eq!(err("@ClientRoutes(route)"), "expected { after @ClientRoutes(...)");
+    }
+
+    #[test]
+    fn a_second_routes_block_in_one_document_is_an_error() {
+        let src = "@ClientRoutes(r) { @notFound { <p/> } }\n<div>@ServerRoutes(s) { @notFound { <p/> } }</div>";
+        let e = parse(src).unwrap_err();
+        assert_eq!(e.message, "only one routes block per project (also in this file)");
+        assert_eq!(e.offset, src.find("(s)").unwrap() + 1);
+    }
+
+    #[test]
+    fn comments_are_allowed_between_sections_and_after_default() {
+        let src = "@ClientRoutes(route) {\n @* one *@\n @a(page) { <p/> }\n @* two *@\n @default(page) { <p/> }\n @* after *@\n}";
+        let (doc, tokens) = parse(src).unwrap();
+        let [Node::Routes { sections, .. }] = doc.nodes.as_slice() else { panic!("{:?}", doc.nodes) };
+        assert_eq!(sections.len(), 2);
+        assert_eq!(tokens.iter().filter(|t| t.kind == TokenKind::Comment).count(), 3, "{tokens:?}");
+        let e = parse("@ClientRoutes(route) { @default(page) { <p/> } @* c *@ @a(page) { <p/> } }").unwrap_err();
+        assert_eq!(e.message, "@default must be the last section");
+    }
+
+    #[test]
+    fn the_routes_header_needs_its_paren_on_the_same_line() {
+        let n = nodes("@ClientRoutes\n(route) { @notFound { <p/> } }");
+        assert_eq!(n[0], Node::Expr("ClientRoutes".into()), "{n:?}");
+        assert!(!n.iter().any(|n| matches!(n, Node::Routes { .. })), "{n:?}");
+        let n = nodes("@ClientRoutes (route)\n{\n  @notFound { <p/> }\n}");
+        assert!(matches!(n.as_slice(), [Node::Routes { .. }]), "{n:?}");
+    }
+
+    #[test]
+    fn the_route_variable_cannot_be_a_directive_word() {
+        for word in ["if", "for", "while", "switch", "code", "slot", "cascade", "page", "ClientRoutes"] {
+            let e = parse(&format!("@ClientRoutes({word}) {{ @notFound {{ <p/> }} }}")).unwrap_err();
+            assert_eq!(e.message, format!("\"{word}\" can't name the route variable"));
+            assert_eq!(e.offset, "@ClientRoutes(".len());
+        }
+    }
+
+    /// The regex literal of a `@/…/flags(page)` section.
+    fn regex_of(re: &str) -> String {
+        let n = nodes(&format!("@ClientRoutes(r) {{ @{re}(page) {{ <p/> }} }}"));
+        let [Node::Routes { sections, .. }] = n.as_slice() else { panic!("{n:?}") };
+        let RouteSectionKind::Regex { re, .. } = &sections[0].kind else { panic!("{sections:?}") };
+        re.text.to_string()
+    }
+
+    #[test]
+    fn regex_literals_scan_classes_escapes_and_flags() {
+        assert_eq!(regex_of("/a[/]b/"), "/a[/]b/");
+        assert_eq!(regex_of("/a\\/b/"), "/a\\/b/");
+        assert_eq!(regex_of("/[^\\]/]+/"), "/[^\\]/]+/");
+        assert_eq!(regex_of("/x/gimsuy"), "/x/gimsuy");
+        let e = parse("@ClientRoutes(r) { @/a[/b/(page) { <p/> } }").unwrap_err();
+        assert_eq!(e.message, "unterminated regex");
+        assert!(parse("@ClientRoutes(r) { @/ab").is_err());
     }
 
     #[test]
