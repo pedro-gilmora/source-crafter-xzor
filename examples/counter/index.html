@@ -3,9 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <title>zor counter</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; }
+      .shell { display: flex; gap: 1rem; align-items: center; padding: 0.5rem 1rem; border-bottom: 1px solid #ccc; }
+      .site, .tabs { display: flex; gap: 0.75rem; }
+      a.active { font-weight: bold; }
+      .main, .admin { padding: 1rem; }
+      .dark { background: #1e1e1e; color: #eee; }
+      .error { color: #c00; }
+    </style>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="./dist/main.js"></script>
+    <!-- Absolute: client routes like /users/1 load the same page. -->
+    <script type="module" src="/dist/main.js"></script>
   </body>
 </html>

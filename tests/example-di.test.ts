@@ -18,10 +18,12 @@ async function until(what: string, done: () => boolean): Promise<void> {
 
 const logged = (message: string) => log.mock.calls.filter((c) => c[0] === message).length;
 const texts = (selector: string) => [...document.querySelectorAll(`#app ${selector}`)].map((e) => e.textContent);
+const happyDOM = () => (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM;
 
 beforeAll(async () => {
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", "examples/counter"], { cwd: root });
   expect(run.exitCode, run.stderr.toString()).toBe(0);
+  happyDOM().setURL("http://localhost/");
   document.body.innerHTML = `<div id="app"></div>`;
   await import(bundle);
   // The settings factory resolves on a later macrotask; the import settles on microtasks.
@@ -32,7 +34,13 @@ beforeAll(async () => {
   await until("the third Counter", () => document.querySelectorAll("#app .counter").length === 3);
 }, 120_000);
 
-afterAll(() => log.mockRestore());
+afterAll(async () => {
+  log.mockRestore();
+  // The bundled app's router keeps listening on this document; later test files get a fresh one.
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+  await GlobalRegistrator.unregister();
+  GlobalRegistrator.register();
+});
 
 test("Counters show the injected database name", () => {
   expect(texts(".counter .db")).toEqual(["in-memory db", "in-memory db", "in-memory db"]);
@@ -52,6 +60,51 @@ test("the keyed requestId reaches AuthService and is stable across Counters", ()
 test("Greeting's place is empty until the async settings resolve, then filled", () => {
   expect(greetingBeforeSettings).toBeNull();
   expect(document.querySelector("#app .greeting")?.textContent).toBe("Hello from async injected settings");
+});
+
+const link = (text: string) => [...document.querySelectorAll("#app a")].find((a) => a.textContent?.trim() === text) as HTMLElement;
+const one = (selector: string) => document.querySelector(`#app ${selector}`)?.textContent?.trim();
+
+test("the shell routes every kind of section", async () => {
+  link("User 1").click();
+  expect(location.pathname).toBe("/users/1");
+  expect(one("main.main h2")).toBe("User 1");
+  expect(one(".user")).toBe("Viewing user #1 on zor demo (parameter sets: 1)");
+  expect(link("User 1").className).toBe("active");
+  expect(document.title).toBe("User 1 · zor demo");
+  expect(one(".registered")).toBe("Registered as user page");
+
+  // Same pattern, new params: the instance is kept and runs onParametersSet again.
+  link("Next user").click();
+  expect(one("main.main h2")).toBe("User 2");
+  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 2)");
+  // Another pattern of the same page is another route, so it builds a new instance.
+  link("Posts").click();
+  expect(one(".tab")).toBe("Tab: posts");
+  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 1)");
+
+  link("Admin").click();
+  expect(one(".admin .admin-home")).toBe("Welcome to the admin area.");
+  expect(one(".admin-path")).toBe("/admin");
+  link("Manage user 2").click();
+  await until("the injected admin page", () => one(".admin-user") !== undefined);
+  expect(one(".admin-user")).toBe("Managing user 2");
+  expect(document.querySelectorAll("#app .dot")).toHaveLength(2);
+
+  link("Terms").click();
+  expect(one(".legal h2")).toBe("Legal: terms");
+  link("Old link").click();
+  expect(one(".moved")).toStartWith('"pricing" has moved.');
+  link("Broken page").click();
+  await until("the @catch section", () => one(".error") !== undefined);
+  expect(one(".error")).toBe("This page failed: Error: this page always fails");
+  link("Missing").click();
+  expect(one(".missing")).toBe("No page at /nowhere");
+
+  link("Home").click();
+  expect(document.querySelector("#app main.main")?.className).toBe("main light");
+  (document.querySelector("#app .theme") as HTMLElement).click();
+  expect(document.querySelector("#app main.main")?.className).toBe("main dark");
 });
 
 test("the emitted provider disposes scoped services per scope and singletons at the root", async () => {

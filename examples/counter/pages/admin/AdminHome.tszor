@@ -1,0 +1,18 @@
+@page "/admin" as admin
+@import { href } from "../../routes"
+
+@code {
+  ids = [1, 2, 3];
+
+  shuffle() {
+    this.ids = [...this.ids].reverse();
+  }
+}
+
+<p class="admin-home">Welcome to the admin area.</p>
+<button @onclick="shuffle">reverse</button>
+<ul>
+  @for (const id of ids) {
+    <li @key="id"><a href="@href.AdminUser({ id: id })">Manage user @id</a></li>
+  }
+</ul>

@@ -1,0 +1,76 @@
+@page "/"
+@import Counter from "../Counter.tszor"
+@import Card from "../Card.tszor"
+@import List from "../List.tszor"
+@import Stepper from "../Stepper.tszor"
+@import { type RenderFragment } from "@zor/runtime"
+
+@code {
+  title = "zor demo";
+  name = "world";
+  total = 0;
+  stepSize = 2;
+  steps: string[] = ["parse .tszor", "generate .ts", "type check", "bundle .js"];
+  view: "steps" | "summary" | "counter" = "steps";
+  nameInput?: HTMLInputElement;
+  clicks?: Counter;
+  linkAttrs: Record<string, unknown> = { title: "Show the summary", "data-kind": "link" };
+  summary: RenderFragment = <p>@this.steps.length steps, compiled ahead of time.</p>;
+
+  protected override onAfterRender(firstRender: boolean): void {
+    if (firstRender) this.nameInput?.focus();
+  }
+
+  reverse() {
+    this.steps = [...this.steps].reverse();
+  }
+
+  panel(view: Home["view"]): RenderFragment {
+    switch (view) {
+      case "steps":
+        return <ol>
+          @for (const step of this.steps) {
+            <li>@step</li>
+          }
+        </ol>;
+      case "counter":
+        return <Counter label="Panel" step="10" />;
+      default:
+        return this.summary;
+    }
+  }
+}
+
+<div class="home">
+  <h1>@title</h1>
+  <Counter label="Clicks" onChange="(n) => total = n" @ref="clicks" />
+  <Counter label="Fives" step="5" />
+  <Card title="Binding">
+    <input @ref="nameInput" @bind="name" @bind:event="oninput" />
+    <p>Hello, @name! First counter total: @total (via @@ref: @(clicks?.count ?? 0))</p>
+    <Stepper @bind-value="stepSize" />
+    <p class="step-size">Step size: @stepSize</p>
+  </Card>
+  <Card>
+    @slot header { <em>Steps as a templated list</em> }
+    @slot {
+      <List items="@steps">
+        @slot item(step, index) { <code>@(index + 1). @step.toUpperCase()</code> }
+      </List>
+    }
+  </Card>
+  <nav>
+    @* Razor-style comments never reach the output *@
+    <a href="#" @attributes="linkAttrs" @onclick:preventDefault @onclick="() => view = 'summary'">summary link</a>
+    <button @onclick="reverse">reverse steps</button>
+    <button @onclick="() => view = 'steps'">steps</button>
+    <button @onclick="() => view = 'summary'">summary</button>
+    <button @onclick="() => view = 'counter'">counter</button>
+  </nav>
+  @{
+    const first = steps[0] ?? "nothing";
+    <p>First step: <text>@first</text></p>
+    @: (@steps.length in total)
+  }
+  @panel(view)
+</div>

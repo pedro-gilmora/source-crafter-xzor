@@ -1,0 +1,9 @@
+@import { type Theme } from "../services/theme"
+
+@code {
+  @Cascade theme!: Theme;
+}
+
+<main class="main @theme">
+  @slot
+</main>

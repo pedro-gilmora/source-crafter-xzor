@@ -43,7 +43,7 @@ async function waitFor<T>(check: () => T | undefined, ms = 15000): Promise<T> {
   }
 }
 
-const app = join(root, "App.tszor");
+const app = join(root, "pages", "Home.tszor");
 const counter = join(root, "Counter.tszor");
 const appText = await Bun.file(app).text();
 const counterText = await Bun.file(counter).text();
