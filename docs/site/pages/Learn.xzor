@@ -5,6 +5,7 @@
 
 @code {
   step = 1;
+  #test = 3
   readonly steps = [
     "A component and an app",
     "Components that talk",
@@ -19,17 +20,17 @@
   }
 
   protected override onParametersSet(): void {
-    document.title = `${this.title} · xzor`;
+    document.title = `${this.title}#${this.#test} · xzor`;
     window.scrollTo?.(0, 0);
   }
 }
 
 <div class="learn">
   <aside>
-    <span class="label">Learn xzor</span>
+    <span class="label">Learn xzor @#test</span>
     <ol>
       @for (let i = 1; i <= steps.length; i++) {
-        <li><NavLink href="@href.Learn({ step: i })" match="exact">@steps[i - 1]</NavLink></li>
+        <li><NavLink href="@href.Learn({ step: i + #test })" match="exact">@steps[i - 1]</NavLink></li>
       }
     </ol>
   </aside>
