@@ -29,7 +29,7 @@ From a clone of this repo, run `.\install.ps1 my-app` or `bash install.sh my-app
 
 1. installs [Bun](https://bun.sh) if you don't have it;
 2. adds `@source-crafter/xzor`, `@source-crafter/xzor-runtime` and TypeScript 7 to the project;
-3. runs `xzor init`: it creates `package.json`, `tsconfig.json` and `.gitignore`, or adds only what's missing to the ones you already have (scripts, `rootDirs`, `lib`, `include`), plus a starter app if the folder has no `main.ts`;
+3. runs `xzor init`: it creates `package.json`, `tsconfig.json` and `.gitignore`, or adds only what's missing to the ones you already have (scripts, `rootDirs`, `lib`, `include`), plus a starter app if the folder has no `main.ts`. It also installs the **xzor skill** in `.github/skills/xzor/SKILL.md`, so your AI assistant can write xzor from a plain description ("a todo page with a pending counter and an about page") without inventing Blazor APIs;
 4. installs the VS Code extension if `code` is on your `PATH` (highlighting, completions, hover, go to definition and live errors).
 
 Then:

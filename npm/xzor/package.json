@@ -4,7 +4,7 @@
   "description": "Compiler for .xzor components: Blazor-style components for TypeScript",
   "license": "MIT",
   "bin": { "xzor": "bin/xzor.js" },
-  "files": ["bin/xzor.js", "bin/init.ts"],
+  "files": ["bin/xzor.js", "bin/init.ts", "skills/xzor/SKILL.md"],
   "optionalDependencies": {
     "@source-crafter/xzor-cli-win32-x64": "0.0.0",
     "@source-crafter/xzor-cli-linux-x64": "0.0.0",

@@ -1,7 +1,7 @@
 // `xzor init`, run by the launcher under Bun.
 // Creates package.json, tsconfig.json and .gitignore, or adds only what xzor needs to the existing ones.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 function update(file: string, fresh: object, change: (json: any) => void) {
   const exists = existsSync(file);
@@ -40,6 +40,16 @@ const missing = ["node_modules", ".xzor", "dist"].filter((l) => !lines.includes(
 if (missing.length) {
   appendFileSync(".gitignore", (ignore && !ignore.endsWith("\n") ? "\n" : "") + missing.map((l) => `${l}/\n`).join(""));
   console.log(`  .gitignore: ${ignore ? "updated" : "created"}`);
+}
+
+// The skill teaches the project's AI assistant xzor; it is ours, so a newer package refreshes it.
+const skill = readFileSync(join(import.meta.dir, "..", "skills", "xzor", "SKILL.md"), "utf8");
+const skillPath = ".github/skills/xzor/SKILL.md";
+const current = existsSync(skillPath) ? readFileSync(skillPath, "utf8") : undefined;
+if (current !== skill) {
+  mkdirSync(dirname(skillPath), { recursive: true });
+  writeFileSync(skillPath, skill);
+  console.log(`  ${skillPath}: ${current === undefined ? "created" : "updated"}`);
 }
 
 if (!existsSync("main.ts")) {

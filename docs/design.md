@@ -268,3 +268,4 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 1. Rename and find references, through the same mappings.
 2. Keep TypeScript features working while the template has syntax errors.
 3. Color markup inside `@code` as markup.
+4. PWA support: `@Pwa({...})` next to `@Mount` generates the manifest, a service worker and its registration, on top of content-hashed assets ([plan](plans/backlog-pwa.md)).
