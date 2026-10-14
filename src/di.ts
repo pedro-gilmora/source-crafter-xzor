@@ -19,8 +19,10 @@
 // --serve: new API({ cwd, fs: { readFile, fileExists, directoryExists, getAccessibleEntries } }) serves overlays (undefined falls back to disk). Later requests call
 // updateSnapshot({ fileChanges: { changed, created, deleted } }) for changed overlays and mtimes; new files need the tsconfig
 // listed as changed to rerun its include globs. The client's parsed-file cache survives such snapshots, so clearSourceFileCache() first.
-import { readdirSync, statSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { spawnSync, type ChildProcess } from "node:child_process";
+import { closeSync, mkdtempSync, openSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import type { CallExpression, ClassDeclaration, Node, SourceFile } from "typescript/unstable/ast";
 import {
   isCallExpression,
@@ -32,19 +34,39 @@ import {
   isPropertyAccessExpression,
   isStringLiteral,
 } from "typescript/unstable/ast/is";
-import {
-  API,
-  ModifierFlags,
-  SignatureKind,
-  SymbolFlags,
-  TypeFlags,
-  type Checker,
-  type Program,
-  type Signature,
-  type Snapshot,
-  type Symbol as Sym,
-  type Type,
-} from "typescript/unstable/sync";
+import type { Checker, Program, Signature, Snapshot, Symbol as Sym, Type } from "typescript/unstable/sync";
+
+// On Linux and macOS the sync API reads the child's pipe fds from Node internals (`stdout._handle.fd`) that Bun lacks.
+// It gets two FIFOs instead, opened read-write so neither open blocks; Windows uses a named pipe and is left alone.
+if (process.platform !== "win32") {
+  const end = (fd: number) => ({ _handle: { fd, setBlocking() {} }, pause() {}, unref() {}, destroy: () => closeSync(fd) });
+  (globalThis as { __xzorPipes?: unknown }).__xzorPipes = (spawn: typeof import("node:child_process").spawn, exe: string, args: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "xzor-ts-"));
+    const [toChild, fromChild] = [join(dir, "in"), join(dir, "out")];
+    if (spawnSync("mkfifo", [toChild, fromChild]).status !== 0) throw new Error("xzor: mkfifo failed");
+    const write = openSync(toChild, "r+");
+    const read = openSync(fromChild, "r+");
+    const child: ChildProcess = spawn(exe, args, { stdio: [write, read, "inherit"] });
+    // Both ends are open, so the paths are no longer needed.
+    rmSync(dir, { recursive: true, force: true });
+    Object.defineProperty(child, "stdin", { value: end(write) });
+    Object.defineProperty(child, "stdout", { value: end(read) });
+    return child;
+  };
+  Bun.plugin({
+    name: "xzor-ts-posix-pipes",
+    setup(build) {
+      build.onLoad({ filter: /typescript[\\/]dist[\\/]api[\\/]syncChannel\.js$/ }, async ({ path }) => {
+        const text = await Bun.file(path).text();
+        const patched = text.replace(/spawn\(exe, args, \{\s*stdio: \["pipe", "pipe", "inherit"\],?\s*\}\)/, "globalThis.__xzorPipes(spawn, exe, args)");
+        if (patched === text) throw new Error("xzor: unsupported TypeScript version (its sync channel changed)");
+        return { contents: patched, loader: "js" };
+      });
+    },
+  });
+}
+// Loaded after the plugin above, which must see this module's sync channel.
+const { API, ModifierFlags, SignatureKind, SymbolFlags, TypeFlags } = await import("typescript/unstable/sync");
 
 type TypeRef = { id: string; text: string; module: string | null; export: string | null };
 type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef; file: string; at: number; badKeys: string[] };
