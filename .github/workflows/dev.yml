@@ -236,9 +236,35 @@ jobs:
           fi
         done
 
+    - name: Publish the VS Code extension
+      # Each store publishes only once its token is set: VSCE_PAT (VS Code Marketplace), OVSX_PAT (Open VSX).
+      if: needs.resolve.outputs.release == 'true'
+      env:
+        VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      run: |
+        vsix="publish/xzor-${{ env.VERSION }}.vsix"
+        [ -f "$vsix" ] || exit 0
+        id=$(jq -r '.publisher + "." + .name' editors/vscode/package.json)
+
+        # A version already in the store (a rerun) counts as published instead of failing the release.
+        if [ -n "$VSCE_PAT" ]; then
+          if output=$(bun x @vscode/vsce publish --packagePath "$vsix" -p "$VSCE_PAT" 2>&1) || grep -q "already exists" <<< "$output"; then
+            jq -nc --arg p "$id" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "marketplace"}' >> packages.jsonl
+          else
+            echo -e "VS Code Marketplace errors for $id:\n$output\n" >> errors.log
+          fi
+        fi
+        if [ -n "$OVSX_PAT" ]; then
+          if output=$(bun x ovsx publish "$vsix" -p "$OVSX_PAT" 2>&1) || grep -q "is already published" <<< "$output"; then
+            jq -nc --arg p "$id" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "openvsx"}' >> packages.jsonl
+          else
+            echo -e "Open VSX errors for $id:\n$output\n" >> errors.log
+          fi
+        fi
+
     - name: Prepare release downloads
-      # La extension aun no va al Marketplace: el release ofrece el .vsix, los paquetes
-      # de npm y el binario de cada plataforma para instalarlos a mano.
+      # The release also offers the .vsix, the npm packages and each platform's binary for manual installs.
       if: needs.resolve.outputs.release == 'true'
       run: |
         for dir in binaries/*/; do
