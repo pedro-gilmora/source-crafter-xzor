@@ -1252,6 +1252,24 @@ fn rewrite_tracked<'a>(src: &str, prefix: &dyn Fn(&str) -> Option<&'a str>, inse
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
+        // `#name` alone can only be one of our private members; `x.#name` and `#name in x` stay as written.
+        if c == b'#' && b.get(i + 1).is_some_and(|&n| is_ident_start(n)) {
+            let start = i;
+            i += 1;
+            while i < b.len() && is_ident_char(b[i]) {
+                i += 1;
+            }
+            let word = &src[start..i];
+            let rest = src[i..].trim_start();
+            let brand_check = rest.starts_with("in") && !rest.as_bytes().get(2).is_some_and(|&n| is_ident_char(n));
+            if let Some(p) = prefix(word).filter(|_| prev != Some(b'.') && !brand_check) {
+                inserts.push((base + start, p.len()));
+                out.push_str(p);
+            }
+            out.push_str(word);
+            prev = Some(b'a');
+            continue;
+        }
         if is_ident_start(c) {
             let start = i;
             while i < b.len() && is_ident_char(b[i]) {
@@ -1647,7 +1665,7 @@ pub fn component_info(source: &str) -> ComponentInfo {
         .collect();
     let mut props = HashMap::new();
     for code in &doc.code {
-        for m in member_decls(code).into_iter().filter(|m| !m.is_method) {
+        for m in member_decls(code).into_iter().filter(|m| !m.is_method && !m.name.starts_with('#')) {
             let rest = &code[m.offset..];
             let end = rest.find(['\n', ';']).unwrap_or(rest.len());
             props.insert(m.name, prop_kind(&rest[..end]));
@@ -1754,8 +1772,12 @@ pub fn member_decls(code: &str) -> Vec<MemberDecl> {
                 prev = Some(b')');
                 continue;
             }
-            _ if depth == 0 && at_decl && is_ident_start(c) => {
+            _ if depth == 0 && at_decl && (is_ident_start(c) || (c == b'#' && b.get(i + 1).is_some_and(|&n| is_ident_start(n)))) => {
                 let start = i;
+                // A `#private` member keeps its `#`: the bare name is a different identifier.
+                if c == b'#' {
+                    i += 1;
+                }
                 while i < b.len() && is_ident_char(b[i]) {
                     i += 1;
                 }
@@ -2189,6 +2211,19 @@ mod tests {
         assert_eq!(kind("frag"), Some(PropKind::Expr));
         assert_eq!(kind("onChange"), Some(PropKind::Callback));
         assert_eq!(kind("go"), None);
+    }
+
+    #[test]
+    fn private_members_are_template_names_but_not_props() {
+        let src = "@code {\n  #test = 3;\n  static #all = 1;\n  #go() { return 1; }\n  test2 = 0;\n}\n<p title=\"@#test\">@#test @(#test + 1) @#go() @#all @this.#test @test</p>\n<button @onclick=\"() => #test++\">x</button>\n<i>@(#test in this)</i>";
+        let info = component_info(src);
+        assert!(!info.props.contains_key("#test") && !info.props.contains_key("test"), "{:?}", info.props);
+        let g = gen_with(src, &[]);
+        for m in ["addAttribute(\"title\", this.#test)", "addContent(this.#test)", "addContent(this.#test + 1)", "addContent(this.#go())", "addContent(C.#all)", "() => this.#test++", "addContent(#test in this)"] {
+            assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
+        }
+        // `this.#test` is left alone, and a bare `test` is not the private field.
+        assert!(!g.code.contains("this.this.") && g.code.contains("addContent(test)"), "{}", g.code);
     }
 
     fn gen_with(src: &str, components: &[(&str, &str)]) -> Generated {

@@ -58,6 +58,7 @@ const spec: [string, A[]][] = [
   ["@for (const item of items) {", [["for", "keyword.control.xzor"], ["const", "storage.type.ts"]]],
   ["  <li>@item</li>", [["@", "keyword.control.transition.xzor"], ["item", "variable.other.readwrite.xzor"]]],
   ["}", []],
+  ["<p>@#secret @this.#secret</p>", [["@", "keyword.control.transition.xzor"], ["#secret", "variable.other.readwrite.xzor"], ["this.#secret", "variable.other.readwrite.xzor"]]],
   ["@switch (kind) {", [["switch", "keyword.control.xzor"]]],
   ['  case "a":', [["case", "keyword.control.xzor"], ['"a"', "string.quoted.double.ts"]]],
   ["    in case of", [["case", "- keyword.control.xzor"]]],

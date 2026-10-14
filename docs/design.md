@@ -44,7 +44,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@ref="field"` | On an element, assigns the DOM element, typed from the tag (`<input>` gives `HTMLInputElement`). On a component, assigns the instance. Updated after each render. |
 | `protected override onInitialized()` and similar | Lifecycle methods, in Blazor's order: `onInitialized`/`onInitializedAsync` once, `onParametersSet`/`onParametersSetAsync` on mount and whenever props change, then render, then `onAfterRender(first)`/`onAfterRenderAsync(first)`. `shouldRender()` can veto re-renders, and `dispose()` runs when the component leaves the tree. A settled `...Async` promise re-renders the component. |
 
-In template expressions, free identifiers that name `@code` members are rewritten to `this.x`. Loop variables shadow members.
+In template expressions, free identifiers that name `@code` members are rewritten to `this.x`. Loop variables shadow members. `#private` members work the same way: `@#secret`, `@(#secret + 1)` and `@onclick="() => #count++"` become `this.#secret` (`C.#x` for statics), `@this.#secret` is left as written, and `#x in obj` stays a brand check. Private members are never props.
 
 ### Markup as values (RenderFragment)
 

@@ -6,7 +6,7 @@
 @import Counter from "./Counter.xzor"
 <!-- <- keyword.control.transition.xzor
 <!-- <~------ keyword.control.import.ts
-<!--                 ^^^^^^^^^^^^^^^^^ string.quoted.double.ts
+<!--                 ^^^^^^^^^^^^^^^^ string.quoted.double.ts
 @typeparam T extends object
 <!-- <~--------- keyword.control.directive.xzor
 <!--       ^ entity.name.type.parameter.xzor
@@ -114,6 +114,10 @@ else {
 <!--  ^ keyword.control.transition.xzor
 <!--   ^^^^ variable.other.readwrite.xzor
 }
+<p>@#secret @this.#secret</p>
+<!-- <~~~- keyword.control.transition.xzor
+<!-- <~~~~------- variable.other.readwrite.xzor
+<!--         ^^^^^^^^^^^^ variable.other.readwrite.xzor
 @switch (kind) {
 <!-- <~------ keyword.control.xzor
   case "a":

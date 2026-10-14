@@ -267,7 +267,7 @@
       "patterns": [{ "include": "source.ts#expression" }]
     },
     "implicit-call": {
-      "begin": "(?<![[:alnum:]])(@)([_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.[_$[:alpha:]][_$[:alnum:]]*)*)(\\()",
+      "begin": "(?<![[:alnum:]])(@)(#?[_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.#?[_$[:alpha:]][_$[:alnum:]]*)*)(\\()",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "variable.other.readwrite.xzor" },
@@ -279,7 +279,7 @@
       "patterns": [{ "include": "source.ts#expression" }]
     },
     "implicit": {
-      "match": "(?<![[:alnum:]])(@)([_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.[_$[:alpha:]][_$[:alnum:]]*)*)",
+      "match": "(?<![[:alnum:]])(@)(#?[_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.#?[_$[:alpha:]][_$[:alnum:]]*)*)",
       "captures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "variable.other.readwrite.xzor" }

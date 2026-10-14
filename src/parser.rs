@@ -387,6 +387,14 @@ impl<'a> Parser<'a> {
                 self.mark(TokenKind::Code, s, e);
                 return Ok(Transition::Node(Node::Expr(self.span(s + 1, e - 1))));
             }
+            Some(b'#') if matches!(self.peek_at(1), Some(c) if is_ident_start(c)) => {
+                // `@#name`: a `#private` member of the component.
+                let word_start = self.pos;
+                self.pos += 1;
+                self.ident();
+                self.mark(TokenKind::Transition, at, at + 1);
+                return self.implicit_expression(word_start);
+            }
             Some(c) if is_ident_start(c) => {}
             _ => return Ok(Transition::Text("@")),
         }
@@ -513,8 +521,12 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     self.ident();
                 }
-                (Some(b'?'), Some(b'.')) if matches!(self.peek_at(2), Some(c) if is_ident_start(c)) => {
+                (Some(b'.'), Some(b'#')) if matches!(self.peek_at(2), Some(c) if is_ident_start(c)) => {
                     self.pos += 2;
+                    self.ident();
+                }
+                (Some(b'?'), Some(b'.')) if matches!(self.peek_at(2), Some(c) if is_ident_start(c) || c == b'#') => {
+                    self.pos += if self.peek_at(2) == Some(b'#') { 3 } else { 2 };
                     self.ident();
                 }
                 (Some(b'('), _) => {
