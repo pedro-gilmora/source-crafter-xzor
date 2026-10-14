@@ -2,7 +2,7 @@
   "name": "tszor",
   "displayName": "TSZor",
   "description": "Language support for .tszor components (zor: Blazor-style components for TypeScript)",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "publisher": "rs-zor",
   "license": "MIT",
   "engines": { "vscode": "^1.90.0" },
