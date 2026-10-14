@@ -3,7 +3,7 @@
 pub use crate::analyzer::Analyzer;
 use crate::codegen::Generated;
 use crate::lsp::{offset_at, position_at, same_path};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 use std::fs;
 use std::io::{self, BufRead};
@@ -111,6 +111,55 @@ pub fn compile_one(src: &Path) -> Result<Compiled, String> {
     write_if_changed(&out, &generated.code)?;
     write_if_changed(&map_path(&out), &map)?;
     Ok(Compiled { source: src.to_path_buf(), out, text, generated })
+}
+
+/// Writes `<project root>/.zor/routes.ts` per project among `units` (deleting it when the project
+/// has no pages). `written` holds the roots with a table, so one that loses all its units is cleaned.
+/// Route errors of every project fail like compile errors, as `<path>:<line>:<col>: <message>`.
+pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Result<(), String> {
+    let mut groups: BTreeMap<PathBuf, Vec<&Compiled>> = BTreeMap::new();
+    for u in units {
+        groups.entry(project_root(&u.source)).or_default().push(u);
+    }
+    for root in written.iter() {
+        groups.entry(root.clone()).or_default();
+    }
+    let mut errors = Vec::new();
+    for (root, group) in groups {
+        let path = root.join(".zor").join("routes.ts");
+        if !group.iter().any(|u| !u.generated.routes.is_empty() || u.generated.routes_block.is_some()) {
+            let _ = fs::remove_file(&path);
+            written.remove(&root);
+            continue;
+        }
+        let classes: Vec<String> = group
+            .iter()
+            .map(|u| {
+                let name = u.source.file_name().unwrap_or_default().to_string_lossy();
+                crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name))
+            })
+            .collect();
+        let views: Vec<crate::routes::Unit> = group
+            .iter()
+            .zip(&classes)
+            .map(|(u, class)| crate::routes::Unit {
+                source: &u.source,
+                out: &u.out,
+                text: &u.text,
+                class,
+                routes: &u.generated.routes,
+                block: u.generated.routes_block.as_ref(),
+            })
+            .collect();
+        let (table, diags) = crate::routes::table(&root, &views);
+        if diags.is_empty() {
+            write_if_changed(&path, &table)?;
+            written.insert(root);
+        } else {
+            errors.extend(diags.iter().map(|(file, d)| format!("{}:{d}", file.display())));
+        }
+    }
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
 }
 
 fn map_path(out: &Path) -> PathBuf {
@@ -308,7 +357,7 @@ pub(crate) fn write_if_changed(path: &Path, content: &str) -> Result<(), String>
 }
 
 /// `to` relative to directory `from`, with forward slashes (`fallback` when unrelated).
-fn relative_from(from: &Path, to: &Path, fallback: &str) -> String {
+pub(crate) fn relative_from(from: &Path, to: &Path, fallback: &str) -> String {
     let from: Vec<_> = from.components().collect();
     let target: Vec<_> = to.components().collect();
     let common = from.iter().zip(&target).take_while(|(a, b)| a == b).count();
@@ -891,6 +940,109 @@ mod tests {
         assert!(!root.join(".zor/B.tszor.ts").exists() && !root.join(".zor/B.tszor.ts.map").exists());
         remove_outputs(&root.join("A.tszor"));
         assert!(!root.join(".zor/A.tszor.ts").exists() && !root.join(".zor/A.tszor.ts.map").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn write_routes_writes_and_removes() {
+        let root = temp("routes-write");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("A.tszor"), "@page \"/a\"\n<p/>").unwrap();
+        fs::write(root.join("B.tszor"), "@page \"/b/:id\"\n<p/>").unwrap();
+        let units = compile_all(&root).unwrap();
+        write_routes(&units, &mut HashSet::new()).unwrap();
+        let table = fs::read_to_string(root.join(".zor/routes.ts")).unwrap();
+        assert!(table.contains("\"/a\"") && table.contains("\"/b/:id\""), "{table}");
+
+        fs::write(root.join("A.tszor"), "<p/>").unwrap();
+        fs::write(root.join("B.tszor"), "<p/>").unwrap();
+        let units = compile_all(&root).unwrap();
+        write_routes(&units, &mut HashSet::new()).unwrap();
+        assert!(!root.join(".zor/routes.ts").exists());
+        write_routes(&units, &mut HashSet::new()).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn sibling_projects_each_get_their_own_table() {
+        let root = temp("routes-siblings");
+        for app in ["app1", "app2"] {
+            fs::create_dir_all(root.join(app)).unwrap();
+            fs::write(root.join(app).join("tsconfig.json"), "{}").unwrap();
+            fs::write(root.join(app).join("Home.tszor"), "@page \"/x\"\n<p/>").unwrap();
+        }
+        let units = compile_all(&root).unwrap();
+        write_routes(&units, &mut HashSet::new()).unwrap();
+        for app in ["app1", "app2"] {
+            let table = fs::read_to_string(root.join(app).join(".zor/routes.ts")).unwrap();
+            assert!(table.contains("from \"./Home.tszor\""), "{table}");
+        }
+        assert!(!root.join(".zor/routes.ts").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn building_a_project_subdirectory_writes_the_table_at_the_project_root() {
+        let root = temp("routes-subdir");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("pages/Home.tszor"), "@page \"/\"\n<p/>").unwrap();
+        let units = compile_all(&root.join("pages")).unwrap();
+        write_routes(&units, &mut HashSet::new()).unwrap();
+        let table = fs::read_to_string(root.join(".zor/routes.ts")).unwrap();
+        assert!(table.contains("from \"./pages/Home.tszor\""), "{table}");
+        assert!(!root.join("pages/.zor").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn compiling_a_single_file_does_not_treat_it_as_a_directory() {
+        let root = temp("routes-file");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("Y.tszor"), "@page \"/y\"\n<p/>").unwrap();
+        let units = compile_all(&root.join("Y.tszor")).unwrap();
+        write_routes(&units, &mut HashSet::new()).unwrap();
+        assert!(root.join(".zor/routes.ts").is_file());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn route_errors_of_every_project_are_reported() {
+        let root = temp("routes-errors");
+        for app in ["app1", "app2"] {
+            fs::create_dir_all(root.join(app)).unwrap();
+            fs::write(root.join(app).join("tsconfig.json"), "{}").unwrap();
+            fs::write(root.join(app).join("A.tszor"), "@page \"/x\"\n<p/>").unwrap();
+            fs::write(root.join(app).join("B.tszor"), "@page \"/x\"\n<p/>").unwrap();
+        }
+        let units = compile_all(&root).unwrap();
+        let e = write_routes(&units, &mut HashSet::new()).unwrap_err();
+        assert!(e.contains("app1") && e.contains("app2"), "{e}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_root_that_lost_all_its_units_loses_its_table() {
+        let root = temp("routes-stale");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("A.tszor"), "@page \"/a\"\n<p/>").unwrap();
+        let mut written = HashSet::new();
+        write_routes(&compile_all(&root).unwrap(), &mut written).unwrap();
+        assert!(root.join(".zor/routes.ts").is_file());
+        write_routes(&[], &mut written).unwrap();
+        assert!(!root.join(".zor/routes.ts").exists() && written.is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn table_errors_fail_the_build() {
+        let root = temp("routes-dup");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("A.tszor"), "@page \"/x\"\n<p/>").unwrap();
+        fs::write(root.join("B.tszor"), "@page \"/x\"\n<p/>").unwrap();
+        let units = compile_all(&root).unwrap();
+        let e = write_routes(&units, &mut HashSet::new()).unwrap_err();
+        assert!(e.contains("B.tszor:1:8: duplicate route pattern \"/x\" (also in A.tszor)"), "{e}");
         fs::remove_dir_all(&root).unwrap();
     }
 

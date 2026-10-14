@@ -457,3 +457,67 @@ test("an @inherits base that can't be read shows a warning on the base name", as
   notify("textDocument/didClose", { textDocument: { uri } });
   rmSync(dir, { recursive: true, force: true });
 }, 60000);
+
+/** A project with the fixture's tsconfig, at the same depth below the repo so its paths resolve. */
+function project(name: string): string {
+  const dir = join(repo, "target", "tmp-lsp-routes", `${name}-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
+  return dir;
+}
+
+test("a link built with href is typed from the route table of the open documents", async () => {
+  const dir = project("href");
+  const page = `@page "/users/:id"\n\n@code {\n  id = 0;\n}\n\n<p>@id</p>\n`;
+  const bad = `@import { href } from "./routes"\n\n<a href="@href.UserPage({ id: "x" })">user</a>\n`;
+  const good = bad.replace('{ id: "x" }', "{ id: 2 }");
+  const [pagePath, appPath] = [join(dir, "UserPage.tszor"), join(dir, "App.tszor")];
+  await Bun.write(pagePath, page);
+  await Bun.write(appPath, bad);
+  const uri = uriOf(appPath);
+  notify("textDocument/didOpen", { textDocument: { uri: uriOf(pagePath), languageId: "tszor", version: 1, text: page } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: bad } });
+
+  const error = await waitFor(() => diagnostics.get(uri)?.find((d) => d.severity === 1), 30000);
+  expect(error.message).toContain("number");
+  expect(error.range.start.line).toBe(pos(bad, "href.UserPage").line);
+  notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: good }] });
+  await waitFor(() => (diagnostics.get(uri)?.every((d: any) => d.severity !== 1) ? true : undefined), 30000);
+
+  notify("textDocument/didClose", { textDocument: { uri } });
+  notify("textDocument/didClose", { textDocument: { uri: uriOf(pagePath) } });
+  rmSync(dir, { recursive: true, force: true });
+}, 90000);
+
+test("a route pattern duplicated by another open document is reported on the pattern", async () => {
+  const dir = project("dup");
+  const a = `@page "/dup"\n<p>a</p>\n`;
+  const b = `@page "/dup"\n<p>b</p>\n`;
+  const [aPath, bPath] = [join(dir, "A.tszor"), join(dir, "B.tszor")];
+  await Bun.write(aPath, a);
+  await Bun.write(bPath, b);
+  const uri = uriOf(bPath);
+  notify("textDocument/didOpen", { textDocument: { uri: uriOf(aPath), languageId: "tszor", version: 1, text: a } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: b } });
+
+  const dup = (u: string) => diagnostics.get(u)?.find((d) => d.message.startsWith("duplicate route pattern"));
+  const error = await waitFor(() => dup(uri), 30000);
+  expect(error.message).toBe('duplicate route pattern "/dup" (also in A.tszor)');
+  expect(error.source).toBe("zor");
+  expect(error.severity).toBe(1);
+  const start = pos(b, "/dup");
+  expect(error.range).toEqual({ start, end: { line: start.line, character: start.character + "/dup".length } });
+  // The first page keeps the pattern, so only the second document is at fault.
+  expect(dup(uriOf(aPath))).toBeUndefined();
+
+  notify("textDocument/didChange", {
+    textDocument: { uri, version: 2 },
+    contentChanges: [{ text: b.replace("/dup", "/other") }],
+  });
+  await waitFor(() => (dup(uri) ? undefined : true), 30000);
+
+  notify("textDocument/didClose", { textDocument: { uri } });
+  notify("textDocument/didClose", { textDocument: { uri: uriOf(aPath) } });
+  rmSync(dir, { recursive: true, force: true });
+}, 90000);

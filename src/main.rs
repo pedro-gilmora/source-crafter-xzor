@@ -43,6 +43,7 @@ fn run(args: &[String]) -> Result<(), String> {
             for p in paths {
                 let path = PathBuf::from(p);
                 let units = build::compile_all(&path)?;
+                build::write_routes(&units, &mut HashSet::new())?;
                 for unit in &units {
                     build::print_warnings(unit);
                     println!("{}", unit.out.display());
@@ -82,6 +83,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 return watch_loop(&opts);
             }
             let units = build::compile_all(&opts.dir)?;
+            build::write_routes(&units, &mut HashSet::new())?;
             units.iter().for_each(build::print_warnings);
             println!("zor: compiled {} component(s)", units.len());
             let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
@@ -140,6 +142,8 @@ fn watch_loop(o: &Options) -> Result<(), String> {
     let sources = build::find_sources(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut plan = build::WatchPlan { recompile: sources.into_iter().filter(|s| build::in_project(s)).collect(), di: true, rebuild: true, ..Default::default() };
     let (mut di_due, mut di_entry) = (false, None);
+    // The build root is seeded so an empty project still loses a stale table.
+    let (mut routes_due, mut routes_written) = (true, HashSet::from([dir.clone()]));
     let mut batch: Vec<String> = Vec::new();
     loop {
         if plan.config {
@@ -171,6 +175,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
         let dependents = build::dependents(&units, &changed);
         recompile.extend(dependents);
+        routes_due |= plan.config || !recompile.is_empty() || !plan.remove.is_empty();
         for src in &recompile {
             match build::compile_one(src) {
                 Ok(unit) => {
@@ -195,7 +200,8 @@ fn watch_loop(o: &Options) -> Result<(), String> {
             } else {
                 println!("zor: compiled {} component(s), {} with errors", recompile.len(), errors.len());
             }
-            if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry) {
+            let routes = (&mut routes_due, &mut routes_written);
+            if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes) {
                 eprintln!("{e}");
             }
             println!("zor: watching {} for changes (Ctrl+C to stop)", dir.display());
@@ -223,9 +229,15 @@ fn rebuild(
     analyzer: &mut build::Analyzer,
     di_due: &mut bool,
     di_entry: &mut Option<PathBuf>,
+    (routes_due, routes_written): (&mut bool, &mut HashSet<PathBuf>),
 ) -> Result<(), String> {
     if !errors.is_empty() {
         return Err(errors.values().cloned().collect::<Vec<_>>().join("\n"));
+    }
+    // A failed run stays due, so the next change retries it.
+    if *routes_due {
+        build::write_routes(units, routes_written)?;
+        *routes_due = false;
     }
     if *di_due {
         let mut files: Vec<PathBuf> = providers.iter().map(|p| p.strip_prefix(&o.dir).unwrap_or(p).to_path_buf()).collect();

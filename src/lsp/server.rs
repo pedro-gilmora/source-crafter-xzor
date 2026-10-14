@@ -63,6 +63,28 @@ struct Doc {
     ts: Vec<Json>,
     /// DI diagnostics from the last analysis.
     di: Vec<Json>,
+    /// Route errors from the last route table of this document's project.
+    routes: Vec<Json>,
+}
+
+/// What the route table needs from a `.tszor` no open document covers.
+struct RouteUnit {
+    text: String,
+    routes: Vec<crate::routes::RouteInfo>,
+    block: Option<crate::routes::RoutesBlockInfo>,
+}
+
+/// One project's `.zor/routes.ts`, synced to TypeScript as an in-memory document.
+struct RoutesRoot {
+    root: PathBuf,
+    uri: String,
+    text: String,
+    version: i64,
+    ts_open: bool,
+    /// Route info of the `.tszor` files read from disk, by modification time; `None` when a file has none.
+    cache: HashMap<PathBuf, (SystemTime, Option<RouteUnit>)>,
+    /// Route errors of the last table, by `.tszor`.
+    marks: Vec<(PathBuf, Vec<Json>)>,
 }
 
 /// DI state of one project root.
@@ -109,6 +131,8 @@ struct Server {
     /// Roots to analyze live once `di_deadline` passes.
     di_due: Vec<PathBuf>,
     di_deadline: Option<Instant>,
+    /// Route table state of the projects with an open document.
+    routes: Vec<RoutesRoot>,
     /// The client's `initialize` capabilities.
     client_caps: Json,
     /// TypeScript's semantic token legend.
@@ -149,6 +173,7 @@ pub fn run() -> io::Result<()> {
         di_marks: Vec::new(),
         di_due: Vec::new(),
         di_deadline: None,
+        routes: Vec::new(),
         client_caps: Json::Null,
         legend: None,
     };
@@ -272,6 +297,31 @@ fn lsp_pos((line, character): (usize, usize)) -> Json {
 
 fn range_json(text: &str, start: usize, end: usize) -> Json {
     Json::obj([("start", pos_json(text, start)), ("end", pos_json(text, end))])
+}
+
+/// The route info of a `.tszor` read from disk; `None` when it has no pages and no routes block.
+fn route_unit(path: &Path, text: String) -> Option<RouteUnit> {
+    // Compiling is the cost; a project without routes only pays for this scan.
+    if !text.contains("@page") && !text.contains("@ClientRoutes") && !text.contains("@ServerRoutes") {
+        return None;
+    }
+    let g = crate::compile_mapped_with(&text, path, &|p| std::fs::read_to_string(p).ok()).ok()?;
+    if g.routes.is_empty() && g.routes_block.is_none() {
+        return None;
+    }
+    Some(RouteUnit { text, routes: g.routes, block: g.routes_block })
+}
+
+/// The component class a `.tszor` compiles to.
+fn class_of(path: &Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name))
+}
+
+/// Length of the route token (tag, pattern or block keyword) starting at `at`.
+fn route_token(text: &str, at: usize) -> usize {
+    let rest = text.get(at..).unwrap_or_default();
+    rest.find(|c: char| c.is_whitespace() || matches!(c, '"' | '(' | ')' | '{')).unwrap_or(rest.len())
 }
 
 fn offset_of(text: &str, pos: &Json) -> usize {
@@ -466,10 +516,23 @@ impl Server {
                     path_to_uri(&output_path_in(root.as_deref().unwrap_or(path.parent().unwrap_or(Path::new("."))), &path))
                 };
                 let di = self.di_of(&path);
-                let shown = !di.is_empty();
+                let routes = self.routes_of(&path);
+                let shown = !di.is_empty() || !routes.is_empty();
                 self.di_schedule(&path, root.as_deref(), Some(&text));
-                let doc =
-                    Doc { text, path, root, ts_file, gen_uri, compiled: None, version: 0, ts_open: false, error: None, ts: Vec::new(), di };
+                let doc = Doc {
+                    text,
+                    path,
+                    root,
+                    ts_file,
+                    gen_uri,
+                    compiled: None,
+                    version: 0,
+                    ts_open: false,
+                    error: None,
+                    ts: Vec::new(),
+                    di,
+                    routes,
+                };
                 self.docs.insert(uri.clone(), doc);
                 if !ts_file {
                     self.refresh(&uri)?;
@@ -512,6 +575,7 @@ impl Server {
             }
             "workspace/didChangeWatchedFiles" => {
                 let mut roots: Vec<PathBuf> = Vec::new();
+                let mut route_roots: Vec<PathBuf> = Vec::new();
                 for change in params["changes"].as_array().into_iter().flatten() {
                     let uri = change["uri"].as_str().unwrap_or_default();
                     // DI writes `.zor/` files; reacting to them would loop.
@@ -524,9 +588,17 @@ impl Server {
                         continue;
                     }
                     self.refresh_inheritors(&path)?;
+                    if path.extension().is_some_and(|e| e == "tszor")
+                        && let Some(root) = tsconfig_root(&path).filter(|r| self.tracks_routes(r) && !route_roots.iter().any(|x| same_path(x, r)))
+                    {
+                        route_roots.push(root);
+                    }
                     if let Some(root) = self.di_root_of(&path, tsconfig_root(&path).as_deref(), None).filter(|r| !roots.iter().any(|x| same_path(x, r))) {
                         roots.push(root);
                     }
+                }
+                for root in route_roots {
+                    self.sync_routes(&root, None)?;
                 }
                 for root in roots {
                     self.di_request(root, true);
@@ -538,10 +610,19 @@ impl Server {
                         self.ts_notify("textDocument/didClose", Json::obj([("textDocument", Json::obj([("uri", doc.gen_uri.into())]))]));
                     }
                     self.notify("textDocument/publishDiagnostics", Json::obj([("uri", uri.into()), ("diagnostics", Json::Arr(vec![]))]))?;
-                    match doc.root.as_deref() {
-                        Some(root) if !self.has_docs(root) => self.di_retire(root),
+                    let routed = doc.compiled.as_ref().is_some_and(|c| !c.g.routes.is_empty() || c.g.routes_block.is_some());
+                    match doc.root.clone() {
+                        Some(root) if !self.has_docs(&root) => {
+                            self.di_retire(&root);
+                            self.routes_retire(&root);
+                        }
                         // Its unsaved text no longer overlays the disk.
-                        root => self.di_schedule(&doc.path, root, None),
+                        root => {
+                            self.di_schedule(&doc.path, root.as_deref(), None);
+                            if let Some(root) = root.filter(|r| routed || self.tracks_routes(r)) {
+                                self.sync_routes(&root, None)?;
+                            }
+                        }
                     }
                 }
             }
@@ -559,11 +640,21 @@ impl Server {
             None => std::fs::read_to_string(p).ok(),
         };
         let compiled = crate::compile_mapped_with(&doc.text, &doc.path, &read);
+        let root = doc.root.clone();
         let doc = self.docs.get_mut(uri).expect("checked above");
         match compiled {
             Ok(g) => {
                 doc.error = None;
                 doc.version += 1;
+                // The project's table is built from the open documents, so it follows their route lines.
+                let resync = match &doc.compiled {
+                    // Moved route lines only matter when this document shows route errors at their old place.
+                    Some(c) => {
+                        crate::routes::routes_differ((&c.g.routes, c.g.routes_block.as_ref()), (&g.routes, g.routes_block.as_ref()))
+                            || (!doc.routes.is_empty() && (c.g.routes != g.routes || c.g.routes_block != g.routes_block))
+                    }
+                    None => !g.routes.is_empty() || g.routes_block.is_some(),
+                };
                 let (gen_uri, version, code, was_open) = (doc.gen_uri.clone(), doc.version, g.code.clone(), doc.ts_open);
                 doc.compiled = Some(Compiled { text: doc.text.clone(), g });
                 doc.ts_open = self.ts.is_some();
@@ -590,6 +681,9 @@ impl Server {
                     );
                 }
                 let params = Json::obj([("textDocument", Json::obj([("uri", gen_uri.into())]))]);
+                if let Some(root) = root.filter(|r| resync || !self.tracks_routes(r)) {
+                    self.sync_routes(&root, Some(uri))?;
+                }
                 if !self.ts_request("textDocument/diagnostic", params, Pending::Diagnostics { uri: uri.to_string(), version }) {
                     self.publish(uri, Vec::new())?;
                 }
@@ -615,6 +709,145 @@ impl Server {
             .collect();
         for uri in uris {
             self.refresh(&uri)?;
+        }
+        Ok(())
+    }
+
+    /// Whether a route table is already tracked for the project at `root`.
+    fn tracks_routes(&self, root: &Path) -> bool {
+        self.routes.iter().any(|r| same_path(&r.root, root))
+    }
+
+    /// The route errors last found for `path`.
+    fn routes_of(&self, path: &Path) -> Vec<Json> {
+        self.routes.iter().flat_map(|r| &r.marks).filter(|(p, _)| same_path(p, path)).flat_map(|(_, d)| d.iter().cloned()).collect()
+    }
+
+    /// Forgets the route table of a root whose last document closed.
+    fn routes_retire(&mut self, root: &Path) {
+        let Some(i) = self.routes.iter().position(|r| same_path(&r.root, root)) else { return };
+        let state = self.routes.remove(i);
+        if state.ts_open {
+            self.ts_notify("textDocument/didClose", Json::obj([("textDocument", Json::obj([("uri", state.uri.into())]))]));
+        }
+    }
+
+    /// Rebuilds `<root>/.zor/routes.ts` from the project's `.tszor` files (open documents' text first,
+    /// then disk), syncs it to TypeScript as an in-memory document like a generated component, and
+    /// publishes the project-wide route errors. `skip` is the document whose TypeScript diagnostics the
+    /// caller requests itself.
+    fn sync_routes(&mut self, root: &Path, skip: Option<&str>) -> io::Result<()> {
+        let i = match self.routes.iter().position(|r| same_path(&r.root, root)) {
+            Some(i) => i,
+            None => {
+                // TypeScript resolves `./routes` through `rootDirs` only when the directory exists.
+                let _ = std::fs::create_dir_all(root.join(".zor"));
+                let uri = path_to_uri(&root.join(".zor").join("routes.ts"));
+                let state =
+                    RoutesRoot { root: root.to_path_buf(), uri, text: String::new(), version: 0, ts_open: false, cache: HashMap::new(), marks: Vec::new() };
+                self.routes.push(state);
+                self.routes.len() - 1
+            }
+        };
+        let mut paths: Vec<PathBuf> = project_sources(root).into_iter().filter(|p| p.extension().is_some_and(|e| e == "tszor")).collect();
+        // Sorted so a duplicate pattern always lands on the same document.
+        paths.sort();
+        let mut old = std::mem::take(&mut self.routes[i].cache);
+        let mut cache = HashMap::with_capacity(paths.len());
+        for path in &paths {
+            if self.docs.values().any(|d| same_path(&d.path, path) && d.compiled.is_some()) {
+                continue;
+            }
+            let Ok(mtime) = std::fs::metadata(path).and_then(|m| m.modified()) else { continue };
+            let unit = match old.remove(path) {
+                Some((m, unit)) if m == mtime => unit,
+                _ => std::fs::read_to_string(path).ok().and_then(|t| route_unit(path, t)),
+            };
+            cache.insert(path.clone(), (mtime, unit));
+        }
+        let outs: Vec<PathBuf> = paths.iter().map(|p| output_path_in(root, p)).collect();
+        let classes: Vec<String> = paths.iter().map(|p| class_of(p)).collect();
+        let (table, marks, empty) = {
+            let mut views: Vec<crate::routes::Unit> = Vec::new();
+            for (k, path) in paths.iter().enumerate() {
+                let open = self.docs.values().find(|d| same_path(&d.path, path)).and_then(|d| d.compiled.as_ref().map(|c| (&d.text, c)));
+                let (text, routes, block) = match open {
+                    Some((text, c)) => (text.as_str(), &c.g.routes, c.g.routes_block.as_ref()),
+                    None => match cache.get(path).and_then(|(_, u)| u.as_ref()) {
+                        Some(u) => (u.text.as_str(), &u.routes, u.block.as_ref()),
+                        None => continue,
+                    },
+                };
+                if routes.is_empty() && block.is_none() {
+                    continue;
+                }
+                views.push(crate::routes::Unit { source: path, out: &outs[k], text, class: &classes[k], routes, block });
+            }
+            let (table, diags) = crate::routes::table(root, &views);
+            let mut marks: Vec<(PathBuf, Vec<Json>)> = Vec::new();
+            for (file, d) in diags {
+                let text = views.iter().find(|v| same_path(v.source, &file)).map_or("", |v| v.text);
+                let end = d.offset + route_token(text, d.offset);
+                let json = Json::obj([
+                    ("range", range_json(text, d.offset, end)),
+                    ("severity", 1usize.into()),
+                    ("source", "zor".into()),
+                    ("message", d.message.into()),
+                ]);
+                match marks.iter_mut().find(|(p, _)| same_path(p, &file)) {
+                    Some((_, list)) => list.push(json),
+                    None => marks.push((file, vec![json])),
+                }
+            }
+            (table, marks, views.is_empty())
+        };
+        self.routes[i].cache = cache;
+        self.routes[i].marks = marks;
+        // A project with no routes at all gets no table, unless one was already synced.
+        let changed = self.routes[i].text != table && !(empty && !self.routes[i].ts_open);
+        if changed {
+            self.routes[i].text = table.clone();
+            self.routes[i].version += 1;
+            let (uri, version, was_open) = (self.routes[i].uri.clone(), self.routes[i].version as usize, self.routes[i].ts_open);
+            if was_open {
+                self.ts_notify(
+                    "textDocument/didChange",
+                    Json::obj([
+                        ("textDocument", Json::obj([("uri", uri.into()), ("version", version.into())])),
+                        ("contentChanges", Json::Arr(vec![Json::obj([("text", table.into())])])),
+                    ]),
+                );
+            } else {
+                self.ts_notify(
+                    "textDocument/didOpen",
+                    Json::obj([(
+                        "textDocument",
+                        Json::obj([
+                            ("uri", uri.into()),
+                            ("languageId", "typescript".into()),
+                            ("version", version.into()),
+                            ("text", table.into()),
+                        ]),
+                    )]),
+                );
+            }
+            self.routes[i].ts_open = self.ts.is_some();
+        }
+        let uris: Vec<String> = self.docs.iter().filter(|(_, d)| !d.ts_file).map(|(u, _)| u.clone()).collect();
+        for uri in uris {
+            let found = self.routes_of(&self.docs[&uri].path);
+            let doc = self.docs.get_mut(&uri).expect("key from docs");
+            if doc.routes != found {
+                doc.routes = found;
+                self.emit(&uri)?;
+            }
+            // The table they import changed, so their type errors may have.
+            let doc = &self.docs[&uri];
+            if changed && skip != Some(uri.as_str()) && doc.ts_open && doc.root.as_deref().is_some_and(|r| same_path(r, root)) {
+                let (gen_uri, version) = (doc.gen_uri.clone(), doc.version);
+                let params = Json::obj([("textDocument", Json::obj([("uri", gen_uri.into())]))]);
+                self.ts_request("textDocument/diagnostic", params, Pending::Diagnostics { uri, version });
+            }
         }
         Ok(())
     }
@@ -819,6 +1052,7 @@ impl Server {
             }
         }
         all.extend(doc.di.iter().cloned());
+        all.extend(doc.routes.iter().cloned());
         all.extend(doc.ts.iter().cloned());
         self.notify("textDocument/publishDiagnostics", Json::obj([("uri", uri.into()), ("diagnostics", Json::Arr(all))]))
     }
@@ -873,7 +1107,7 @@ impl Server {
         let ctx = features::context(&doc.text, off);
         let mapped = doc.compiled.as_ref().and_then(|c| c.to_gen(&doc.text, off));
         match (&ctx, mapped) {
-            (Context::Tag { .. } | Context::Attr { .. } | Context::SlotName { .. }, _) | (_, None) => {
+            (Context::Tag { .. } | Context::Attr { .. } | Context::SlotName { .. } | Context::Route { .. }, _) | (_, None) => {
                 let items = self.local_completions(&uri, off);
                 self.respond(id, Json::obj([("isIncomplete", false.into()), ("items", Json::Arr(items))]))
             }
@@ -890,7 +1124,8 @@ impl Server {
             Context::Tag { start, .. }
             | Context::Attr { start, .. }
             | Context::Directive { start, .. }
-            | Context::SlotName { start, .. } => start,
+            | Context::SlotName { start, .. }
+            | Context::Route { start, .. } => start,
             Context::Other => off,
         };
         let comps = self.components(&doc.path);

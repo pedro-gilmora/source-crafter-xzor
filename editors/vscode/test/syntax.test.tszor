@@ -228,3 +228,57 @@ else {
 <!-- <~~~-- keyword.control.transition.tszor
 <a @onclick:preventDefault>x</a>
 <!-- <~~~----------------------- entity.other.attribute-name.html
+@page "/users/:id" as admin // c
+<!-- <~---- keyword.control.directive.tszor
+<!--  ^^^^^^^^^^^^ string.quoted.double.tszor
+<!--               ^^ keyword.control.as.tszor
+<!--                  ^^^^^ variable.other.constant.route.tszor
+<!--                        ^^^^ comment.line.double-slash.tszor
+@page "/x" asx
+<!--       ^^^ - keyword.control.as.tszor
+@ClientRoutes(route) {
+<!-- <- keyword.control.transition.tszor
+<!-- <~------------ keyword.control.directive.tszor
+<!--          ^^^^^ variable.parameter.tszor
+<!--                 ^ punctuation.section.block.begin.tszor
+  @admin(page) { <AdminLayout>@page</AdminLayout> }
+<!-- <~~- keyword.control.transition.tszor
+<!-- <~~~----- variable.other.constant.route.tszor
+<!--     ^^^^ variable.parameter.tszor
+<!--              ^^^^^^^^^^^ support.class.component.tszor
+<!--                          ^ keyword.control.transition.tszor
+<!--                           ^^^^ variable.other.readwrite.tszor
+  @/^\/a/i(page) {
+<!-- <~~~------- string.regexp.ts
+<!--       ^^^^ variable.parameter.tszor
+    <p>x</p>
+<!-- ^ entity.name.tag.html
+  }
+<!-- <~~- punctuation.section.block.end.tszor
+  @"/x/:y" {
+<!-- <~~~------- string.quoted.double.tszor
+  }
+  @/(?<g>[a/b]+)\w/(page?) {
+<!-- <~~~---------------- string.regexp.ts
+<!--                ^^^^^ variable.parameter.tszor
+  }
+  @notFound { <i/> }
+<!-- <~~~-------- keyword.control.tszor
+<!--           ^ entity.name.tag.html
+  @catch(e) { <b/> }
+<!-- <~~~----- keyword.control.tszor
+<!--     ^ variable.parameter.tszor
+<!--           ^ entity.name.tag.html
+  @default(page) {
+<!-- <~~~------- keyword.control.tszor
+<!--       ^^^^ variable.parameter.tszor
+  }
+}
+<!-- <- punctuation.section.block.end.tszor
+<p>@notFound(x)</p>
+<!-- <~~~~-------- variable.other.readwrite.tszor
+@ServerRoutes(route)
+<!-- <~------------ keyword.control.directive.tszor
+{
+<!-- <- punctuation.section.block.begin.tszor
+}

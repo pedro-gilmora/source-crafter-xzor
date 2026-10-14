@@ -14,7 +14,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 
 | Syntax | Meaning |
 |---|---|
-| `@page "/route"` | `static readonly route` |
+| `@page "/route"`, `@page "/users/:id" as admin` | Route of this component (see [Routing](#routing)) |
 | `@import A from "./A.tszor"` | Verbatim ES import |
 | `@code { ... }` | Class members |
 | `@name`, `@a.b(c)[0]?.d` | Implicit expression; stops at text such as `:` or `.` followed by a non-identifier |
@@ -131,6 +131,34 @@ A provider passes a value down to any depth without threading props. A consumer 
 - A consumer whose provider value changes gets the new value, runs `onParametersSet`/`onParametersSetAsync`, then re-renders, like a prop change. With no provider, the field is left untouched.
 - Changes are detected by identity (`Object.is`): mutating the provided object in place notifies nobody. Provide a new object instead.
 
+## Routing
+
+Full design: [the routing and cascading spec](superpowers/specs/2026-10-13-routing-cascading-design.md).
+
+```tszor
+@page "/admin/users/:id" as admin
+@page "/users/:id/*"
+
+@ClientRoutes(route) {
+  @admin(page) { <AdminLayout>@page</AdminLayout> }
+  @/^\/docs\/(?<area>\w+)/i(page) { <DocsLayout area="@route.match.area">@page</DocsLayout> }
+  @"/legal/:doc" { <LegalText doc="@route.params.doc" /> }
+  @notFound { <p>Not found</p> }
+  @catch(e) { <ErrorPanel error="@e" /> }
+  @default(page) { <MainLayout>@page</MainLayout> }
+}
+```
+
+- **`@page "pattern" [as tag]`**: Bun.serve pattern syntax: `/`-led segments that are literals, `:param`, or a final `*`. A component may have several. Params fill the props of the same name, converted from the prop's declaration: `number` (`Number`, `NaN` is no match), `boolean` (`"true"`/`"false"`), a union of string literals (must be one of them), otherwise `string`. Values are decoded with `decodeURIComponent`. The text matched by `*` fills a prop named `rest` if the page declares one. The optional tag is shared by any number of routes (`default`, `notFound` and `catch` are reserved). Most specific wins, as in Bun: literal, then `:param`, then `*`.
+- **The routes block**: `@ClientRoutes(route) { ... }` or `@ServerRoutes(route) { ... }`, at most one per project, holding only sections (`{` may be on the next line). `route` is visible in every section. Sections: `@tag(page)` (a tag some `@page` uses), `@/regex/flags(page?)` (client only), `@"pattern"(page?)`, `@notFound`, `@catch(e)` (the matched page's construction, `onInitialized`, rejected `onInitializedAsync` or first render failed; cleared on the next navigation), `@default(page)` (last; `page` renders the matched page).
+- **Matching order**: when a `@page` route matches, the sections with `(page)` are tried in source order, then `@default`, then the page renders bare. Without a page route, the page-less sections are tried in order, then `@notFound`, then nothing renders. A `(page)` pattern section's captures are on `route.match`; a page-less one's are on `route.params`.
+- **`route`**: `{ path, tag, params, query, match, is(tag), navigate(url, { replace }) }`, also the cascading value `route`. `is(tag)` narrows `params` inside the routes block's sections; elsewhere type the field with the table's `AppRoute` (`@Cascade route!: AppRoute`, `import type { AppRoute } from "./routes"`) to get the same narrowing. A new object is published on each navigation. A page is kept across navigations that only change its params (same route, same component): its props are set again and `onParametersSet` runs.
+- **`href.<Component>(params)`**: from `routes` (imported relatively, e.g. `import { href } from "../routes"`). One overload per `@page` of the component, typed from its props, so `href.UserProfile({ id: "x" })` is a type error when `id` is a `number`. Values are `encodeURIComponent`ed; the first of the component's patterns whose param names equal the given keys is used.
+- **`<NavLink href="/x" activeClass="active" match="prefix|exact">`**: an `<a>` that carries the class while the current path is on its `href` (resolved against the base URL, compared percent-encoded). It follows navigation by itself, so it also works outside the routes block (a nav bar beside it); it never intercepts clicks on its own.
+- **Engines**: `@ClientRoutes` is a single-page app on the History API. It intercepts `<a>` clicks that are same-origin, left-button, without modifier keys, with `target` absent or `_self`, no `download` and no `rel="external"`. `popstate` re-renders, and `navigate` uses `pushState` (`replaceState` with `replace`). `@ServerRoutes` (one page per entry, no History API) is coming in the next part.
+- **`.zor/routes.ts`**: the generated route table (matchers, `href`, `RouteTag`, `RouteParams`, `AppRoute`), written from every `@page` of the project and removed when it has none. A real `routes.ts` at the project root is reserved.
+- **Limits**: a trailing slash (`/a/`) is rejected, regex sections only work in `@ClientRoutes` (`@ServerRoutes` takes string patterns), a duplicate pattern or page component name is an error, and a `@page` component can't hold the routes block (it would render itself; keep the block in a shell component without `@page`).
+
 ## Rendering
 
 - An event re-renders only the component that owns the handler. `stateHasChanged()` does the same for any component.
@@ -216,6 +244,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
 - Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
 - `@Mount` must be in the entry module (`--entry`, default `main.ts`).
+- `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.zor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
 - Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
 
 ## Build
