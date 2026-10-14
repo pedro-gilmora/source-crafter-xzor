@@ -68,4 +68,4 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
 }
 
 Step "Ready"
-Write-Host "  bun run dev   builds, rebuilds on every save and serves the app (open the printed URL)"
+Write-Host "  bun run dev   builds, serves the app (open the printed URL) and reloads it on every save"

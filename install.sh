@@ -50,4 +50,4 @@ if command -v code > /dev/null; then
 fi
 
 step "Ready"
-echo "  bun run dev   builds, rebuilds on every save and serves the app (open the printed URL)"
+echo "  bun run dev   builds, serves the app (open the printed URL) and reloads it on every save"
