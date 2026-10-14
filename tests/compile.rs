@@ -2,11 +2,11 @@ use std::path::Path;
 
 #[test]
 fn example_components_compile() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/counter");
-    let app = std::fs::read_to_string(dir.join("App.tszor")).unwrap();
-    let ts = zor::compile(&app, &dir.join("App.tszor")).unwrap();
-    assert!(ts.contains("import Counter from \"./Counter.tszor\";"));
-    assert!(ts.contains("export default class App extends ComponentBase {"));
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/counter/pages");
+    let app = std::fs::read_to_string(dir.join("Home.tszor")).unwrap();
+    let ts = zor::compile(&app, &dir.join("Home.tszor")).unwrap();
+    assert!(ts.contains("import Counter from \"../Counter.tszor\";"));
+    assert!(ts.contains("export default class Home extends ComponentBase {"));
     assert!(ts.contains("static readonly route = \"/\";"));
     assert!(ts.contains("__b.addComponent(Counter, { label: \"Fives\", step: 5 });"));
     assert!(app.contains("step=\"5\""));

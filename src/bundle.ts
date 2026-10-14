@@ -128,6 +128,20 @@ function generatedPath(source: string): string {
   return join(root, ".zor", `${relative(root, source)}.ts`);
 }
 
+/** `rootDirs: [".", ".zor"]`: the importer's directory in the other root (sources <-> `.zor/`). */
+export function mirroredDir(dir: string, root: string): string {
+  const zor = join(root, ".zor");
+  return inProject(dir, zor) || dir === zor ? join(root, relative(zor, dir)) : join(zor, relative(root, dir));
+}
+
+function tryResolve(spec: string, dir: string): string | undefined {
+  try {
+    return Bun.resolveSync(spec, dir);
+  } catch {
+    return undefined;
+  }
+}
+
 // zor's DI decorators are no-ops read only by the analyzer; stripping them spares the bundle the decorator helpers.
 const MARKERS = new Set(["ServiceProvider", "Mount", "Import", "Singleton", "Scoped", "Transient"]);
 const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@zor\/runtime["']/g;
@@ -291,6 +305,14 @@ async function main(entry: string, outdir: string): Promise<void> {
           build.onResolve({ filter: /\.tszor$/ }, (args) => ({
             path: generatedPath(resolve(dirname(args.importer), args.path)),
           }));
+          // Like the type check's rootDirs: a relative import missing beside its importer comes from the other root.
+          build.onResolve({ filter: /^\.\.?\// }, (args) => {
+            const dir = dirname(args.importer);
+            if (!inProject(args.importer, root) || args.importer.replaceAll("\\", "/").includes("/node_modules/")) return undefined;
+            if (tryResolve(args.path, dir)) return undefined;
+            const path = tryResolve(args.path, mirroredDir(dir, root));
+            return path ? { path } : undefined;
+          });
           build.onLoad({ filter: /\.ts$/ }, (args) => {
             const path = args.path.replaceAll("\\", "/");
             const text = readFileSync(args.path, "utf8");

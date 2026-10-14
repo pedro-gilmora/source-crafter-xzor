@@ -1,0 +1,16 @@
+@import { type EventCallback } from "@zor/runtime"
+
+@code {
+  value: number = 0;
+  valueChanged?: EventCallback<number>;
+
+  change(by: number) {
+    this.valueChanged?.(this.value + by);
+  }
+}
+
+<span class="stepper">
+  <button @onclick="() => change(-1)" disabled="@(value <= 1)">-</button>
+  <b>@value</b>
+  <button @onclick="() => change(1)">+</button>
+</span>

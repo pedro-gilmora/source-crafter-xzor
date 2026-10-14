@@ -1,0 +1,15 @@
+@import { type AppRoute } from "../routes"
+@import { type Theme } from "../services/theme"
+
+@code {
+  @Cascade route!: AppRoute;
+  @Cascade("theme") mode!: Theme;
+}
+
+<section class="admin @mode">
+  <h2>Admin</h2>
+  @if (route.is("admin")) {
+    <small class="admin-path">@route.path</small>
+  }
+  @slot
+</section>

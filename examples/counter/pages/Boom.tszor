@@ -1,0 +1,9 @@
+@page "/boom"
+
+@code {
+  protected override onInitialized(): void {
+    throw new Error("this page always fails");
+  }
+}
+
+<p>Never rendered.</p>

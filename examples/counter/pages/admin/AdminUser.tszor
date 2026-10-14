@@ -1,0 +1,17 @@
+@page "/admin/users/:id" as admin
+@import { type AuthService } from "../../services/auth"
+@inject AuthService auth
+
+@code {
+  id = 0;
+}
+
+<p class="admin-user">Managing user @id</p>
+<small>Signed in at @auth.signedInAt.toLocaleTimeString()</small>
+<p class="level">
+  @{ let n = 0; }
+  @while (n < id) {
+    <span class="dot">*</span>
+    @{ n++; }
+  }
+</p>

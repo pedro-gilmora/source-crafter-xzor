@@ -2114,7 +2114,7 @@ mod tests {
     fn mappings_copy_source_text_exactly() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/counter");
         let extra = "@code {\n    x = 1;\n  go(e: Event) {}\n}\n<p title=\"a @x b\" @onclick=\"go\">@(`${x}`) @x</p>\n@switch (x) { case 1: @x }\n@for (const x of [1]) { @x }";
-        let mut sources: Vec<String> = ["App.tszor", "Counter.tszor"]
+        let mut sources: Vec<String> = ["App.tszor", "pages/Home.tszor", "pages/UserPage.tszor", "Counter.tszor"]
             .iter()
             .map(|f| std::fs::read_to_string(dir.join(f)).unwrap())
             .collect();

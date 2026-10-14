@@ -1,0 +1,38 @@
+@page "/users/:id"
+@page "/users/:id/*" // the tab, in `rest`
+@inherits PageBase
+@implements Describable
+@attribute registered("user page")
+@import { PageBase, type Describable, registered } from "./PageBase"
+@import { NavLink } from "@zor/runtime"
+@import { href } from "../routes"
+
+@code {
+  id = 0;
+  rest = "";
+  visits = 0;
+
+  get heading(): string {
+    return `User ${this.id}`;
+  }
+
+  describe(): string {
+    return `user #${this.id}`;
+  }
+
+  protected override onParametersSet(): void {
+    this.visits++;
+  }
+}
+
+<h2>@heading</h2>
+<p class="user">Viewing @describe() on @siteName (parameter sets: @visits)</p>
+<small class="registered">Registered as @registeredAs()</small>
+@if (rest) {
+  <p class="tab">Tab: @rest</p>
+}
+<nav class="tabs">
+  <NavLink href="@href.UserPage({ id: id })" match="exact">Profile</NavLink>
+  <NavLink href="@href.UserPage({ id: id, rest: 'posts' })">Posts</NavLink>
+</nav>
+<a class="next" href="@href.UserPage({ id: id + 1 })">Next user</a>
