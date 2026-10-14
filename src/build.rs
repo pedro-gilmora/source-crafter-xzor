@@ -98,7 +98,7 @@ pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
 
 /// `compile_one` over `sources` on all cores; one result per source, in the same order.
 pub fn compile_many(sources: &[PathBuf]) -> Vec<Result<Compiled, String>> {
-    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(sources.len());
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8).min(sources.len());
     if workers <= 1 {
         return sources.iter().map(|s| compile_one(s)).collect();
     }
