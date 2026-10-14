@@ -405,7 +405,7 @@ jobs:
         $telegramPackages
         "@
 
-        if( $isRelease -and -not $failed )
+        if( $isRelease -and '${{ job.status }}' -eq 'success' )
         {
           $releaseNotes = if($commits.Count -gt 0) {
         @"

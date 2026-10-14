@@ -6,10 +6,12 @@ const root = join(import.meta.dir, "..");
 const dir = join(root, "target", `tmp-routing-${process.pid}`);
 const happyDOM = () => (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM;
 
-afterAll(() => {
+afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
-  happyDOM().setURL("http://localhost/");
-  document.body.innerHTML = "";
+  // The bundled app's router keeps listening on this document; later test files get a fresh one.
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+  await GlobalRegistrator.unregister();
+  GlobalRegistrator.register();
 });
 
 const home = `@page "/"
