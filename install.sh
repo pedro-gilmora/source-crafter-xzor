@@ -27,7 +27,25 @@ if command -v code > /dev/null; then
     if [ -n "$url" ]; then curl -fsSL -o "$tmp/xzor.vsix" "$url"; fi
   fi
   vsix=$(ls "$tmp"/*.vsix 2> /dev/null | head -n 1 || true)
-  if [ -n "$vsix" ]; then code --install-extension "$vsix" --force; else echo "Could not download the extension; get the .vsix from https://github.com/$repo/releases"; fi
+  if [ -n "$vsix" ]; then
+    # `code` alone only reaches the default profile: install into every user profile too.
+    case "$(uname -s)" in
+      Darwin) storage="$HOME/Library/Application Support/Code/User/globalStorage/storage.json" ;;
+      *) storage="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User/globalStorage/storage.json" ;;
+    esac
+    profiles=""
+    if [ -f "$storage" ]; then
+      profiles=$(bun -e 'const s = await Bun.file(process.argv[1]).json(); for (const p of s.userDataProfiles ?? []) if (!String(p.location).startsWith("builtin/")) console.log(p.name)' "$storage" 2> /dev/null || true)
+    fi
+    export NODE_NO_WARNINGS=1
+    code --install-extension "$vsix" --force
+    while IFS= read -r name; do
+      [ -n "$name" ] && code --profile "$name" --install-extension "$vsix" --force
+    done <<< "$profiles"
+    echo "Installed $(basename "$vsix") in the default profile${profiles:+ and $(echo "$profiles" | paste -sd, -)}. Reload VS Code to use it."
+  else
+    echo "Could not download the extension; get the .vsix from https://github.com/$repo/releases"
+  fi
   rm -rf "$tmp"
 fi
 

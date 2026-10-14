@@ -34,7 +34,35 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
             } catch {}
         }
         $vsix = Get-ChildItem $tmp -Filter *.vsix | Select-Object -First 1
-        if ($vsix) { code --install-extension $vsix.FullName --force }
+        if ($vsix) {
+            # Install into the VS Code window running this script (it may use its own --user-data-dir /
+            # --extensions-dir) and into every profile: `code` alone only reaches the default one.
+            $codeArgs = @()
+            $userData = "$env:APPDATA\Code"
+            $p = Get-CimInstance Win32_Process -Filter "ProcessId = $PID"
+            while ($p -and $p.ParentProcessId) {
+                $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($p.ParentProcessId)"
+                if ($p -and $p.Name -eq 'Code.exe' -and $p.CommandLine -notmatch '--type=') {
+                    foreach ($opt in 'user-data-dir', 'extensions-dir') {
+                        if ($p.CommandLine -match "--$opt(?:=|\s+)(`"[^`"]+`"|\S+)") {
+                            $value = $Matches[1].Trim('"')
+                            $codeArgs += "--$opt", $value
+                            if ($opt -eq 'user-data-dir') { $userData = $value }
+                        }
+                    }
+                    break
+                }
+            }
+            $profiles = @()
+            $storage = Join-Path $userData "User\globalStorage\storage.json"
+            if (Test-Path $storage) {
+                $profiles = @((Get-Content $storage -Raw | ConvertFrom-Json).userDataProfiles | Where-Object { $_.location -notlike 'builtin/*' } | ForEach-Object name)
+            }
+            $env:NODE_NO_WARNINGS = "1"
+            code @codeArgs --install-extension $vsix.FullName --force
+            foreach ($name in $profiles) { code @codeArgs --profile $name --install-extension $vsix.FullName --force }
+            Write-Host "Installed $($vsix.Name) in the default profile$(if ($profiles) { ' and ' + ($profiles -join ', ') }). Reload VS Code (Developer: Reload Window) to use it."
+        }
         else { Write-Host "Could not download the extension; get the .vsix from https://github.com/$repo/releases" }
     } finally { Remove-Item -Recurse -Force $tmp }
 }
