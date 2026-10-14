@@ -6,3 +6,5 @@ dist/
 .xzor/
 editors/vscode/out/
 .superpowers/
+publish/
+binaries/

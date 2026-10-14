@@ -1,0 +1,12 @@
+{
+  "name": "@xzor/runtime",
+  "version": "0.0.0",
+  "description": "Runtime for components compiled by xzor",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.d.ts", "import": "./index.js" }
+  },
+  "types": "./index.d.ts",
+  "files": ["index.js", "index.js.map", "index.d.ts"]
+}
