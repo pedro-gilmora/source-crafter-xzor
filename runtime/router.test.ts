@@ -799,3 +799,101 @@ test("NavLink marks the active link by prefix or exact match", () => {
   memory.go("/");
   expect(classes()).toEqual([null, null, null, "active"]);
 });
+
+/** Mounts `links` with no routes block anywhere in the tree. */
+function bare(links: (b: RenderTreeBuilder) => void) {
+  class Bar extends ComponentBase {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      links(b);
+    }
+  }
+  class Shell extends ComponentBase {
+    show = true;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openRegion();
+      if (this.show) b.addComponent(Bar, {});
+      b.closeRegion();
+    }
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const shell = mount(Shell, host);
+  const drop = () => {
+    shell.show = false;
+    shell.stateHasChanged();
+  };
+  live.push({ host, drop, unguard: () => {} });
+  return { host, drop, classes: () => Array.from(host.querySelectorAll("a"), (a) => a.getAttribute("class")) };
+}
+
+const text = (s: string) => ({ default: () => frag((c) => c.addText(s)) });
+
+test("NavLink works outside the routes block and follows navigation by itself", () => {
+  const memory = nav("/users/7");
+  const r = bare((b) => {
+    b.addComponent(NavLink, { href: "/users" }, text("a"));
+    b.addComponent(NavLink, { href: "/" }, text("b"));
+  });
+  expect(r.classes()).toEqual(["active", null]);
+
+  memory.go("/");
+  expect(r.classes()).toEqual([null, "active"]);
+});
+
+test("each NavLink holds one subscription, released when it is disposed", () => {
+  const memory = nav("/");
+  const r = bare((b) => {
+    b.addComponent(NavLink, { href: "/a" }, text("a"));
+    b.addComponent(NavLink, { href: "/b" }, text("b"));
+  });
+  expect(memory.subs.size).toBe(2);
+  memory.go("/a");
+  memory.go("/b");
+  expect(memory.subs.size).toBe(2);
+
+  r.drop();
+  expect(memory.subs.size).toBe(0);
+});
+
+test("a NavLink alone does not take over link clicks", () => {
+  history.replaceState(null, "", "/");
+  const r = bare((b) => b.addComponent(NavLink, { href: "/users/2" }, text("a")));
+  let prevented: boolean | undefined;
+  const guard = (e: Event) => {
+    prevented = e.defaultPrevented;
+    e.preventDefault();
+  };
+  document.addEventListener("click", guard);
+  r.host.querySelector("a")!.dispatchEvent(event({}));
+  document.removeEventListener("click", guard);
+  expect(prevented).toBe(false);
+  expect(location.pathname).toBe("/");
+});
+
+test("NavLink resolves a relative href against the base url", () => {
+  const memory = nav("/users/7");
+  const r = bare((b) => {
+    b.addComponent(NavLink, { href: "users" }, text("a"));
+    b.addComponent(NavLink, { href: "users/7?tab=1#x", match: "exact" }, text("b"));
+    b.addComponent(NavLink, { href: "../other" }, text("c"));
+    b.addComponent(NavLink, { href: "http://elsewhere.test/users" }, text("d"));
+  });
+  expect(r.classes()).toEqual(["active", "active", null, null]);
+  expect(r.host.querySelector("a")!.getAttribute("href")).toBe("users");
+
+  memory.go("/other");
+  expect(r.classes()).toEqual([null, null, "active", null]);
+});
+
+test("NavLink compares encoded paths whichever way the href is written", () => {
+  const memory = nav("/caf%C3%A9/a%20b");
+  const r = bare((b) => {
+    b.addComponent(NavLink, { href: "/café/a b", match: "exact" }, text("a"));
+    b.addComponent(NavLink, { href: "/caf%C3%A9" }, text("b"));
+    b.addComponent(NavLink, { href: "/café" }, text("c"));
+    b.addComponent(NavLink, { href: "/cafe" }, text("d"));
+  });
+  expect(r.classes()).toEqual(["active", "active", "active", null]);
+  memory.go("/cafe");
+  expect(r.classes()).toEqual([null, null, null, "active"]);
+});

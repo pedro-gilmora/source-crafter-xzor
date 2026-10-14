@@ -118,15 +118,19 @@ export type Navigation = {
   current(): URL;
   navigate(url: string, replace: boolean): void;
   subscribe(fn: () => void): () => void;
+  /** Like `subscribe`, without taking over link clicks (a `NavLink` only watches). Defaults to `subscribe`. */
+  observe?(fn: () => void): () => void;
 };
 
 // One set for the whole page: the listeners below exist only while a routes block is mounted.
 const navigated = new Set<() => void>();
+// NavLinks: notified like routes blocks, but they never intercept clicks.
+const observers = new Set<() => void>();
 const EXTERNAL = /(^|\s)external(\s|$)/;
-const QUERY = /[?#]/;
 
 function notifyNavigated(): void {
   for (const fn of [...navigated]) fn();
+  for (const fn of [...observers]) fn();
 }
 
 const onPopState = (): void => notifyNavigated();
@@ -160,15 +164,23 @@ const browserNavigation: Navigation = {
   subscribe(fn) {
     navigated.add(fn);
     if (navigated.size === 1) {
-      window.addEventListener("popstate", onPopState);
+      if (observers.size === 0) window.addEventListener("popstate", onPopState);
       document.addEventListener("click", onLinkClick);
     }
     return () => {
       navigated.delete(fn);
       if (navigated.size === 0) {
-        window.removeEventListener("popstate", onPopState);
+        if (observers.size === 0) window.removeEventListener("popstate", onPopState);
         document.removeEventListener("click", onLinkClick);
       }
+    };
+  },
+  observe(fn) {
+    observers.add(fn);
+    if (observers.size === 1 && navigated.size === 0) window.addEventListener("popstate", onPopState);
+    return () => {
+      observers.delete(fn);
+      if (observers.size === 0 && navigated.size === 0) window.removeEventListener("popstate", onPopState);
     };
   },
 };
@@ -1154,22 +1166,45 @@ export function mount<C extends ComponentBase>(type: Ctor<C>, target: string | E
   return root as C;
 }
 
-/** An `<a>` that carries `activeClass` while the cascaded `route` is on its `href`. */
+/** An `<a>` that carries `activeClass` while the current URL is on its `href`; it follows navigation itself. */
 export class NavLink extends ComponentBase {
-  static readonly cascades = [["route", "route"]] as const;
-
   href = "";
   activeClass = "active";
   match: "prefix" | "exact" = "prefix";
-  route: Route | undefined = undefined;
 
   declare slots: { default?: () => RenderFragment };
 
+  #path = "";
+  // `href` resolved against the base URL, encoded like `location.pathname`; `null` for another origin.
+  #for: string | undefined;
+  #target: string | null = null;
+  #off: (() => void) | undefined;
+
+  protected override onInitialized(): void {
+    const nav = navigationOf();
+    this.#path = nav.current().pathname;
+    const fn = () => {
+      const path = nav.current().pathname;
+      if (path === this.#path) return;
+      this.#path = path;
+      this.stateHasChanged();
+    };
+    this.#off = nav.observe ? nav.observe(fn) : nav.subscribe(fn);
+  }
+
+  protected override dispose(): void {
+    this.#off?.();
+  }
+
   #active(): boolean {
-    const path = this.route?.path;
-    if (path === undefined) return false;
-    const cut = this.href.search(QUERY);
-    const target = cut < 0 ? this.href : this.href.slice(0, cut);
+    if (this.#for !== this.href) {
+      this.#for = this.href;
+      const url = new URL(this.href, document.baseURI);
+      this.#target = url.origin === location.origin ? url.pathname : null;
+    }
+    const target = this.#target;
+    if (target === null) return false;
+    const path = this.#path;
     // The root is every path's prefix, so it only ever matches exactly.
     if (this.match === "exact" || target === "/") return path === target;
     return path === target || path.startsWith(target.endsWith("/") ? target : `${target}/`);
