@@ -1247,6 +1247,8 @@ fn rewrite_tracked<'a>(src: &str, prefix: &dyn Fn(&str) -> Option<&'a str>, inse
     let b = src.as_bytes();
     let mut out = String::with_capacity(src.len() + 16);
     let mut prev: Option<u8> = None;
+    // Open brackets, to tell `{ a, b }` (shorthand properties) from `[a, b]` and `f(a, b)`.
+    let mut open: Vec<u8> = Vec::new();
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
@@ -1257,11 +1259,14 @@ fn rewrite_tracked<'a>(src: &str, prefix: &dyn Fn(&str) -> Option<&'a str>, inse
             }
             let word = &src[start..i];
             let next = b[i..].iter().copied().find(|c| !c.is_ascii_whitespace());
-            let is_property = prev == Some(b'.');
-            let is_object_key = next == Some(b':') && matches!(prev, Some(b'{' | b','));
+            let is_property = prev == Some(b'.') && !src[..start].trim_end().ends_with("...");
+            let in_object = open.last() == Some(&b'{') && matches!(prev, Some(b'{' | b','));
+            let is_object_key = next == Some(b':') && in_object;
+            let is_shorthand = in_object && matches!(next, Some(b',' | b'}'));
             if let Some(p) = prefix(word).filter(|_| !is_property && !is_object_key) {
+                let p = if is_shorthand { format!("{word}: {p}") } else { p.to_string() };
                 inserts.push((base + start, p.len()));
-                out.push_str(p);
+                out.push_str(&p);
             }
             out.push_str(word);
             prev = Some(word_prev(word, prev));
@@ -1286,6 +1291,13 @@ fn rewrite_tracked<'a>(src: &str, prefix: &dyn Fn(&str) -> Option<&'a str>, inse
             _ => None,
         };
         let Some(end) = end else {
+            match c {
+                b'{' | b'(' | b'[' => open.push(c),
+                b'}' | b')' | b']' => {
+                    open.pop();
+                }
+                _ => {}
+            }
             let ch = src[i..].chars().next().expect("char boundary");
             out.push(ch);
             i += ch.len_utf8();
@@ -1969,6 +1981,21 @@ mod tests {
         assert_eq!(rw("\"count\" + 'name'", &m), "\"count\" + 'name'");
         assert_eq!(rw("`n=${count} ${'x'}`", &m), "`n=${this.count} ${'x'}`");
         assert_eq!(rw("count /* name */", &m), "this.count /* name */");
+    }
+
+    #[test]
+    fn shorthand_properties_keep_their_key() {
+        let m = ["count", "items", "name"];
+        assert_eq!(rw("f({ count })", &m), "f({ count: this.count })");
+        assert_eq!(rw("({ count, x: 1, name })", &m), "({ count: this.count, x: 1, name: this.name })");
+        assert_eq!(rw("{ a: { count } }", &m), "{ a: { count: this.count } }");
+        // Array elements and arguments between commas are not properties.
+        assert_eq!(rw("[1, count, name]", &m), "[1, this.count, this.name]");
+        assert_eq!(rw("f(count, name)", &m), "f(this.count, this.name)");
+        assert_eq!(rw("{ ...items }", &m), "{ ...this.items }");
+        // The mappings still copy the source exactly around the inserted key.
+        let g = gen_with("@code { id = 1; f(o: { id: number }) { return o.id; } }\n<p>@f({ id })</p>", &[]);
+        assert!(g.code.contains("this.f({ id: this.id })"), "{}", g.code);
     }
 
     #[test]

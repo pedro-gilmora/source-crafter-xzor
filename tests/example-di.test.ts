@@ -78,10 +78,14 @@ test("the shell routes every kind of section", async () => {
   link("Next user").click();
   expect(one("main.main h2")).toBe("User 2");
   expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 2)");
-  // Another pattern of the same page is another route, so it builds a new instance.
+  // `/users/:id/*` extends `/users/:id`: one route family, so the instance is still kept.
   link("Posts").click();
   expect(one(".tab")).toBe("Tab: posts");
-  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 1)");
+  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 3)");
+  // Back to the shorter route: `rest` is cleared, not left over.
+  link("Profile").click();
+  expect(one(".tab")).toBeUndefined();
+  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 4)");
 
   link("Admin").click();
   expect(one(".admin .admin-home")).toBe("Welcome to the admin area.");

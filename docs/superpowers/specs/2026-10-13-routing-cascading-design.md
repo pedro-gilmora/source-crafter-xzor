@@ -132,7 +132,7 @@ Each part ships working and tested on its own.
 6. **`@catch` scope:** errors thrown by the page's constructor/DI arrival, `onInitialized`, rejected `onInitializedAsync`, and its first render. The page's partial output is discarded and the `@catch` body renders in its place. Module load errors don't apply (no lazy loading yet). Implemented as a field on the page's vnode that the runtime checks on those paths, not a wrapper component.
 7. **Cascading is unchecked across files** (as in Blazor): no compile-time match between providers and consumers; a missing provider leaves the field as initialized. Documented.
 8. **`@ServerRoutes` and unknown paths:** `@notFound` produces its own entry (`.zor/pages/notFound.*`) exported from `server-routes.ts` as `notFound` for the user's `fetch` fallback (`fetch: () => new Response(...)`) — no hidden catch-all. `@catch` applies per page load. In client mode regex/pattern-only sections are reachable through navigation, and through Bun.serve only if covered by a pattern.
-9. **Param-only navigation keeps the page instance** (same route pattern, same component): new params are set as props and `onParametersSet` runs, like Blazor. Props without a matching param keep their defaults; `rest` is only set if declared.
+9. **Navigation within a route family keeps the page instance**: routes of one component that extend, segment by segment, the shortest of its own patterns they start with (`/users/:id` and `/users/:id/:view`). New params are set as props and `onParametersSet` runs, like Blazor; params only other routes of the family fill become `undefined`. A route extending none of its page's shorter patterns builds a new instance (not an error).
 
 ## Left to the builder
 

@@ -13,6 +13,6 @@
 <button @onclick="shuffle">reverse</button>
 <ul>
   @for (const id of ids) {
-    <li @key="id"><a href="@href.AdminUser({ id: id })">Manage user @id</a></li>
+    <li @key="id"><a href="@href.AdminUser({ id })">Manage user @id</a></li>
   }
 </ul>
