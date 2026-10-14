@@ -389,7 +389,8 @@ pub fn generate_with(
     head.push_str(" } from \"@zor/runtime\";\n");
     if block.is_some() {
         let params = if types & ROUTE_PARAMS != 0 { ", type RouteParams as __RouteParams" } else { "" };
-        head.push_str(&format!("import {{ routes as __routes{params} }} from {};\n", js_string(table)));
+        let app = if types & ROUTE_APP != 0 { ", type AppRoute as __AppRoute" } else { "" };
+        head.push_str(&format!("import {{ routes as __routes{app}{params} }} from {};\n", js_string(table)));
     }
     g.out.insert_str(head_at, &head);
     for m in &mut g.mappings {
@@ -567,13 +568,14 @@ struct Gen<'p> {
     inline: bool,
     /// Next `__p<N>` name for a hoisted props object; unique across nested fragments.
     props_ids: std::cell::Cell<usize>,
-    /// Which of `Route`, `__RouteParams` and `RenderFragment` the route sections reference (`ROUTE_*` bits).
+    /// Which of `Route`, `__AppRoute`, `__RouteParams` and `RenderFragment` the route sections reference (`ROUTE_*` bits).
     route_types: std::cell::Cell<u8>,
 }
 
 const ROUTE_TYPE: u8 = 1;
 const ROUTE_PARAMS: u8 = 2;
 const ROUTE_FRAGMENT: u8 = 4;
+const ROUTE_APP: u8 = 8;
 
 /// Whether `word` is used as a free identifier in generated code `text` (not in strings or as a property).
 fn mentions(text: &str, word: &str) -> bool {
@@ -647,32 +649,34 @@ impl Gen<'_> {
     }
 
     /// One section of a routes block as its `RouteSection` descriptor. `RouteSection.render` takes a
-    /// plain `Route`, so a section that knows more about it narrows through a local instead.
+    /// plain `Route`, so a section that reads `route` casts it to the project's `AppRoute` in a local.
     fn route_section(&self, i: usize, var: &Src, section: &RouteSectionNode) -> Result<M, String> {
+        let app = "__AppRoute".to_string();
         let (head, narrowed) = match &section.kind {
             RouteSectionKind::Tag { tag, .. } => (
                 M::lit("{ kind: \"tag\", tag: ").add(M::lit("\"").add(M::src(tag, tag.at)).lit_then("\"")).lit_then(", render: "),
-                Some(format!("Route<__RouteParams[{}]>", js_string(tag))),
+                format!("__AppRoute<__RouteParams[{}]>", js_string(tag)),
             ),
             RouteSectionKind::Regex { re, page } => {
                 let groups = named_groups(re);
-                let narrowed = (!groups.is_empty()).then(|| format!("Route & {{ match: {{ {} }} }}", fields(&groups)));
+                let narrowed = if groups.is_empty() { app } else { format!("{app} & {{ match: {{ {} }} }}", fields(&groups)) };
                 let head = format!("{{ kind: \"regex\", re: {}__re{i}, page: {}, render: ", self.static_prefix, page.is_some());
                 (M::lit(&head), narrowed)
             }
             RouteSectionKind::Pattern { pattern, page } => {
                 let params = crate::routes::param_names(pattern);
                 // With a page, `params` are the page's; the section's own captures are on `match`.
-                let narrowed = (!params.is_empty()).then(|| match page {
-                    Some(_) => format!("Route & {{ match: {{ {} }} }}", fields(&params)),
-                    None => format!("Route<{{ {} }}>", fields(&params)),
-                });
+                let narrowed = match (params.is_empty(), page) {
+                    (true, _) => app,
+                    (false, Some(_)) => format!("{app} & {{ match: {{ {} }} }}", fields(&params)),
+                    (false, None) => format!("__AppRoute<{{ {} }}>", fields(&params)),
+                };
                 let head = format!("{{ kind: \"pattern\", match: {}__m{i}, page: {}, render: ", self.static_prefix, page.is_some());
                 (M::lit(&head), narrowed)
             }
-            RouteSectionKind::NotFound => (M::lit("{ kind: \"notFound\", render: "), None),
-            RouteSectionKind::Catch { .. } => (M::lit("{ kind: \"catch\", render: "), None),
-            RouteSectionKind::Default { .. } => (M::lit("{ kind: \"default\", render: "), None),
+            RouteSectionKind::NotFound => (M::lit("{ kind: \"notFound\", render: "), app),
+            RouteSectionKind::Catch { .. } => (M::lit("{ kind: \"catch\", render: "), app),
+            RouteSectionKind::Default { .. } => (M::lit("{ kind: \"default\", render: "), app),
         };
         let mut locals = vec![var.text.clone()];
         let bound = section.kind.binding();
@@ -683,35 +687,37 @@ impl Gen<'_> {
         // Only what the body reads is declared, so `noUnusedLocals`/`noUnusedParameters` stay quiet.
         let uses_var = mentions(&body.text, &var.text);
         let uses_bound = bound.is_some_and(|b| mentions(&body.text, &b.text));
-        let narrowed = narrowed.filter(|_| uses_var);
         let is_catch = matches!(section.kind, RouteSectionKind::Catch { .. });
         let mut types = 0;
         let mut params = M::lit("(");
         if uses_var || uses_bound {
             types |= ROUTE_TYPE;
-            params = match (&narrowed, uses_var) {
-                (Some(_), _) => params.lit_then("__route"),
-                (None, true) => params.add(M::src(var, var.at)),
-                (None, false) => params.lit_then("_route"),
-            }
-            .lit_then(": Route");
+            // `any` lets the cast below reach the project's route type; `Route` alone does not overlap with it.
+            params = match uses_var {
+                true => params.lit_then("__route: Route<any, any>"),
+                false => params.lit_then("_route: Route"),
+            };
         }
         if let Some(bound) = bound.filter(|_| uses_bound) {
             types |= if is_catch { 0 } else { ROUTE_FRAGMENT };
             params = params.lit_then(", ").add(M::src(bound, bound.at)).lit_then(if is_catch { ": unknown" } else { ": RenderFragment" });
         }
-        if narrowed.is_some() && matches!(section.kind, RouteSectionKind::Tag { .. }) {
-            types |= ROUTE_PARAMS;
+        if uses_var {
+            types |= ROUTE_APP;
+            if matches!(section.kind, RouteSectionKind::Tag { .. }) {
+                types |= ROUTE_PARAMS;
+            }
         }
         self.route_types.set(self.route_types.get() | types);
-        let render = match narrowed {
-            Some(ty) => params
+        let render = if uses_var {
+            params
                 .lit_then(") => { const ")
                 .add(M::src(var, var.at))
-                .lit_then(&format!(" = __route as {ty}; return "))
+                .lit_then(&format!(" = __route as {narrowed}; return "))
                 .add(body)
-                .lit_then("; }"),
-            None => params.lit_then(") => ").add(body),
+                .lit_then("; }")
+        } else {
+            params.lit_then(") => ").add(body)
         };
         Ok(head.add(render).lit_then(" },"))
     }
@@ -2233,11 +2239,11 @@ mod tests {
         let g = gen_with(ROUTES_BLOCK, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s}\nmissing in\n{}", g.code);
         has("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@zor/runtime\";");
-        has("import { routes as __routes } from \"./routes\";");
+        has("import { routes as __routes, type AppRoute as __AppRoute } from \"./routes\";");
         has("  __b.addRoutes(\"client\", __routes, [\n");
         has("    { kind: \"tag\", tag: \"admin\", render: (_route: Route, page: RenderFragment) => ComponentBase.fragment((__b) => { __b.openElement(\"main\"); __b.addContent(page); __b.closeElement(); }) },\n");
-        has("    { kind: \"regex\", re: C.__re1, page: true, render: (__route: Route) => { const route = __route as Route & { match: { area: string } }; return ComponentBase.fragment((__b) => {");
-        has("    { kind: \"pattern\", match: C.__m2, page: false, render: (__route: Route) => { const route = __route as Route<{ doc: string }>; return ComponentBase.fragment((__b) => {");
+        has("    { kind: \"regex\", re: C.__re1, page: true, render: (__route: Route<any, any>) => { const route = __route as __AppRoute & { match: { area: string } }; return ComponentBase.fragment((__b) => {");
+        has("    { kind: \"pattern\", match: C.__m2, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return ComponentBase.fragment((__b) => {");
         has("    { kind: \"notFound\", render: () => ComponentBase.fragment((__b) => { __b.openElement(\"p\"); __b.addText(\"Not found\"); __b.closeElement(); }) },\n");
         has("    { kind: \"catch\", render: (_route: Route, e: unknown) => ComponentBase.fragment((__b) => { __b.openElement(\"p\"); __b.addContent(e); __b.closeElement(); }) },\n");
         has("    { kind: \"default\", render: (_route: Route, page: RenderFragment) => ComponentBase.fragment((__b) => { __b.openElement(\"aside\"); __b.addContent(page); __b.closeElement(); }) },\n");
@@ -2259,7 +2265,7 @@ mod tests {
         has("{ kind: \"catch\", render: (_route: Route, e: unknown) => ");
         has("{ kind: \"default\", render: () => ");
         has("page: false, render: () => ");
-        assert!(!g.code.contains("const route") && !g.code.contains("__route:") && !g.code.contains("__RouteParams"), "{}", g.code);
+        assert!(!g.code.contains("const route") && !g.code.contains("__route:") && !g.code.contains("AppRoute"), "{}", g.code);
         // Imports the bindings no longer use are dropped too.
         assert!(g.code.contains("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@zor/runtime\";"), "{}", g.code);
         assert!(g.code.contains("import { routes as __routes } from \"./routes\";"), "{}", g.code);
@@ -2269,10 +2275,13 @@ mod tests {
         let text = gen_with("@ClientRoutes(route) { @a(page) { <p>the page route</p> } @notFound { <p>route not found</p> } }", &[]);
         assert!(!text.code.contains("const route") && !text.code.contains(" page:"), "{}", text.code);
         let paged = gen_with("@ClientRoutes(route) { @\"/x/:id\"(page) { <p>@route.match.id @page</p> } }", &[]);
-        assert!(paged.code.contains("const route = __route as Route & { match: { id: string } };"), "{}", paged.code);
+        assert!(paged.code.contains("const route = __route as __AppRoute & { match: { id: string } };"), "{}", paged.code);
         let used = gen_with("@ClientRoutes(route) { @a(page) { <p>@route.params.x</p> } }", &[]);
-        assert!(used.code.contains("render: (__route: Route) => { const route = __route as Route<__RouteParams[\"a\"]>; return "), "{}", used.code);
-        assert!(used.code.contains("import { routes as __routes, type RouteParams as __RouteParams } from \"./routes\";"), "{}", used.code);
+        assert!(used.code.contains("render: (__route: Route<any, any>) => { const route = __route as __AppRoute<__RouteParams[\"a\"]>; return "), "{}", used.code);
+        assert!(used.code.contains("import { routes as __routes, type AppRoute as __AppRoute, type RouteParams as __RouteParams } from \"./routes\";"), "{}", used.code);
+        let other = gen_with("@ClientRoutes(route) { @notFound { <p>@route.path</p> } }", &[]);
+        assert!(other.code.contains("render: (__route: Route<any, any>) => { const route = __route as __AppRoute; return "), "{}", other.code);
+        assert!(other.code.contains("import { routes as __routes, type AppRoute as __AppRoute } from \"./routes\";"), "{}", other.code);
     }
 
     #[test]
@@ -2282,8 +2291,7 @@ mod tests {
         let at = src.find("route)").unwrap();
         let decls: Vec<_> = g.mappings.iter().filter(|m| m.src == at && m.len == 5).collect();
         assert_eq!(decls.len(), 2, "{:?}\n{}", g.mappings, g.code);
-        assert!(decls.iter().any(|m| g.code[..m.out].ends_with("const ")), "{}", g.code);
-        assert!(decls.iter().any(|m| g.code[..m.out].ends_with("render: (")), "{}", g.code);
+        assert!(decls.iter().all(|m| g.code[..m.out].ends_with("const ")), "{}", g.code);
     }
 
     #[test]

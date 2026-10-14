@@ -69,13 +69,16 @@ export type RouteEntry = {
 /** The project's routes, in precedence order. */
 export type RouteTable = readonly RouteEntry[];
 
-/** The state of the current navigation, published to the routes block and as the cascading value `route`. */
-export class Route<P = Record<string, unknown>> {
+/**
+ * The state of the current navigation, published to the routes block and as the cascading value `route`.
+ * `Tags` maps each route tag to its params; the generated table fixes it (`AppRoute`) so `is` checks tags.
+ */
+export class Route<P = Record<string, unknown>, Tags extends object = Record<string, Record<string, unknown>>> {
   readonly #nav: Navigation | undefined;
 
   constructor(
     readonly path: string,
-    readonly tag: string | undefined,
+    readonly tag: (keyof Tags & string) | undefined,
     readonly params: P,
     readonly query: URLSearchParams,
     readonly match: Record<string, string>,
@@ -85,7 +88,7 @@ export class Route<P = Record<string, unknown>> {
   }
 
   /** Narrows `params` to the routes carrying `tag`. */
-  is(tag: string): boolean {
+  is<K extends keyof Tags & string>(tag: K): this is Route<Tags[K], Tags> & { readonly tag: K } {
     return this.tag === tag;
   }
 
