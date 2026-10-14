@@ -15,7 +15,7 @@ function findServer(): string {
       if (existsSync(candidate)) return candidate;
     }
     // Installed from npm: the platform package holds the binary itself, no Node launcher in between.
-    const installed = join(folder.uri.fsPath, "node_modules", "@xzor", `cli-${process.platform}-${process.arch}`, exe);
+    const installed = join(folder.uri.fsPath, "node_modules", "@source-crafter", `xzor-cli-${process.platform}-${process.arch}`, exe);
     if (existsSync(installed)) return installed;
   }
   return "xzor";

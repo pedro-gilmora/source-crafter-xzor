@@ -386,7 +386,7 @@ pub fn generate_with(
     if types & ROUTE_TYPE != 0 {
         head.push_str(", type Route");
     }
-    head.push_str(" } from \"@xzor/runtime\";\n");
+    head.push_str(" } from \"@source-crafter/xzor-runtime\";\n");
     if block.is_some() {
         let params = if types & ROUTE_PARAMS != 0 { ", type RouteParams as __RouteParams" } else { "" };
         let app = if types & ROUTE_APP != 0 { ", type AppRoute as __AppRoute" } else { "" };
@@ -2265,7 +2265,7 @@ mod tests {
     fn routes_block_emits_sections_for_the_runtime() {
         let g = gen_with(ROUTES_BLOCK, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s}\nmissing in\n{}", g.code);
-        has("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@xzor/runtime\";");
+        has("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@source-crafter/xzor-runtime\";");
         has("import { routes as __routes, type AppRoute as __AppRoute } from \"./routes\";");
         has("  __b.addRoutes(\"client\", __routes, [\n");
         has("    { kind: \"tag\", tag: \"admin\", render: (_route: Route, page: RenderFragment) => ComponentBase.fragment((__b) => { __b.openElement(\"main\"); __b.addContent(page); __b.closeElement(); }) },\n");
@@ -2294,10 +2294,10 @@ mod tests {
         has("page: false, render: () => ");
         assert!(!g.code.contains("const route") && !g.code.contains("__route:") && !g.code.contains("AppRoute"), "{}", g.code);
         // Imports the bindings no longer use are dropped too.
-        assert!(g.code.contains("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@xzor/runtime\";"), "{}", g.code);
+        assert!(g.code.contains("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@source-crafter/xzor-runtime\";"), "{}", g.code);
         assert!(g.code.contains("import { routes as __routes } from \"./routes\";"), "{}", g.code);
         let none = gen_with("@ClientRoutes(route) { @notFound { <p/> } }", &[]);
-        assert!(none.code.contains("import { ComponentBase, type RenderTreeBuilder } from \"@xzor/runtime\";"), "{}", none.code);
+        assert!(none.code.contains("import { ComponentBase, type RenderTreeBuilder } from \"@source-crafter/xzor-runtime\";"), "{}", none.code);
         // The names inside text are not uses.
         let text = gen_with("@ClientRoutes(route) { @a(page) { <p>the page route</p> } @notFound { <p>route not found</p> } }", &[]);
         assert!(!text.code.contains("const route") && !text.code.contains(" page:"), "{}", text.code);
@@ -2354,7 +2354,7 @@ mod tests {
     fn slot_definitions_declare_typed_slots_and_render_with_fallbacks() {
         let src = "@typeparam T\n@code { title = \"\"; items: T[] = []; n = 1; }\n<section>\n  @slot:header { <h3>@title</h3> }\n  @for (const x of items) {\n    @slot:item(x, n, \"s\", this.title.length, <b/>)\n  }\n  @slot:extra((n + 1) as number)\n  @slot\n</section>";
         let g = gen_with(src, &[]);
-        assert!(g.code.contains("import { ComponentBase, type RenderTreeBuilder, type RenderFragment } from \"@xzor/runtime\";"), "{}", g.code);
+        assert!(g.code.contains("import { ComponentBase, type RenderTreeBuilder, type RenderFragment } from \"@source-crafter/xzor-runtime\";"), "{}", g.code);
         assert!(
             g.code.contains(r#"  declare slots: { header?: () => RenderFragment; item?: (x: this["items"][number], n: this["n"], arg2: string, length: this["title"]["length"], arg4: RenderFragment) => RenderFragment; extra?: (arg0: number) => RenderFragment; default?: () => RenderFragment };"#),
             "{}",

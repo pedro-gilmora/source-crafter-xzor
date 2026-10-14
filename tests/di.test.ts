@@ -8,12 +8,12 @@ const script = join(import.meta.dir, "..", "src", "di.ts");
 
 // Stand-ins for what codegen emits into .xzor/ (the folder is gitignored).
 const generated: Record<string, string> = {
-  "App.xzor.ts": `import { ComponentBase, type RenderTreeBuilder } from "@xzor/runtime";
+  "App.xzor.ts": `import { ComponentBase, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
 export default class App extends ComponentBase {
   protected override buildRenderTree(__b: RenderTreeBuilder): void {}
 }
 `,
-  "Counter.xzor.ts": `import { ComponentBase, type RenderTreeBuilder } from "@xzor/runtime";
+  "Counter.xzor.ts": `import { ComponentBase, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
 import type { IDatabase } from "./services/data";
 import { AuthService } from "./main";
 export default class Counter extends ComponentBase {
@@ -258,7 +258,7 @@ test("--serve picks up a disk edit between requests", async () => {
   }
 });
 
-// Temp project copies; `paths: false` leaves @xzor/runtime unresolvable.
+// Temp project copies; `paths: false` leaves @source-crafter/xzor-runtime unresolvable.
 const temps: string[] = [];
 afterAll(() => temps.forEach((d) => rmSync(d, { recursive: true, force: true })));
 function analyzeTemp(files: Record<string, string>, paths = true) {
@@ -266,7 +266,7 @@ function analyzeTemp(files: Record<string, string>, paths = true) {
   temps.push(dir);
   const runtime = join(import.meta.dir, "..", "runtime", "index.ts").replaceAll("\\", "/");
   const compilerOptions: any = { target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ESNext", "DOM"], strict: true, noEmit: true, skipLibCheck: true };
-  if (paths) compilerOptions.paths = { "@xzor/runtime": [runtime] };
+  if (paths) compilerOptions.paths = { "@source-crafter/xzor-runtime": [runtime] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["**/*.ts"] }));
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
   const run = Bun.spawnSync(["bun", script, dir, ...Object.keys(files)]);
@@ -276,14 +276,14 @@ function analyzeTemp(files: Record<string, string>, paths = true) {
 }
 
 test("unresolvable runtime is an error", () => {
-  const main = `import { ServiceProvider } from "@xzor/runtime";\n\n@ServiceProvider()\nexport class P {}\n`;
+  const main = `import { ServiceProvider } from "@source-crafter/xzor-runtime";\n\n@ServiceProvider()\nexport class P {}\n`;
   const out = analyzeTemp({ "main.ts": main }, false);
   expect(out.providers).toEqual([]);
-  expect(out.errors).toEqual([{ file: "main.ts", at: main.indexOf("@ServiceProvider"), message: "cannot resolve @xzor/runtime" }]);
+  expect(out.errors).toEqual([{ file: "main.ts", at: main.indexOf("@ServiceProvider"), message: "cannot resolve @source-crafter/xzor-runtime" }]);
 });
 
 test("non-importable types are errors, primitives and lib types are not", () => {
-  const main = `import { ServiceProvider, Singleton } from "@xzor/runtime";
+  const main = `import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
 export class Svc {}
 export type Shape = { a: number };
 export type Either = Svc | Date;
@@ -323,7 +323,7 @@ export class P {}
 });
 
 test("decorator misuse", () => {
-  const main = `import { Mount, ServiceProvider } from "@xzor/runtime";
+  const main = `import { Mount, ServiceProvider } from "@source-crafter/xzor-runtime";
 export class App {}
 
 @Mount(App, "a")
@@ -340,7 +340,7 @@ export class P {}
 });
 
 test("non-public factories are errors", () => {
-  const main = `import { ServiceProvider, Singleton } from "@xzor/runtime";
+  const main = `import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
 export class Factories {
   private static hidden(): string { return ""; }
   static #secret(): string { return ""; }
@@ -363,7 +363,7 @@ export class P {}
 });
 
 test("function factories, local or imported", () => {
-  const main = `import { ServiceProvider, Singleton } from "@xzor/runtime";
+  const main = `import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
 import { loadPort as port, type Port } from "./ports";
 export function newId(): string { return ""; }
 export const later = async (id: string): Promise<number> => id.length;
@@ -390,7 +390,7 @@ export function loadPort(): Port { return { n: 1 }; }
 });
 
 test("generic service types are errors", () => {
-  const main = `import { ServiceProvider, Singleton } from "@xzor/runtime";
+  const main = `import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
 export class Repo<T> { item?: T }
 export class User {}
 export class UserRepo extends Repo<User> {}
@@ -408,7 +408,7 @@ export class P {}
 });
 
 test("lib generic types are allowed for keyed factories", () => {
-  const main = `import { ServiceProvider, Singleton } from "@xzor/runtime";
+  const main = `import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
 export class Repo<T> { item?: T }
 export class User {}
 export class Factories {

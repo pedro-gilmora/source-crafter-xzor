@@ -643,7 +643,7 @@ mod tests {
         base_members(&doc, &root.join("C.xzor"), &|p| map.get(p).cloned()).unresolved
     }
 
-    const TITLED: &str = r#"import { ComponentBase } from "@xzor/runtime";
+    const TITLED: &str = r#"import { ComponentBase } from "@source-crafter/xzor-runtime";
 // } a stray brace in a comment
 export abstract class Titled extends ComponentBase {
   title = "}";
@@ -672,7 +672,7 @@ export class After { late = 1; }
 
     #[test]
     fn follows_a_chain_across_files() {
-        let a = "import { ComponentBase } from \"@xzor/runtime\";\nexport class A extends ComponentBase { a = 1; }\n";
+        let a = "import { ComponentBase } from \"@source-crafter/xzor-runtime\";\nexport class A extends ComponentBase { a = 1; }\n";
         let b = "import {\n  A,\n} from './a';\nexport class B extends A { b = 2; }\nclass Local extends B { l = 3; }\nexport { Local };\n";
         let code = compile(&[("a.ts", a), ("lib/b.ts", b.replace("'./a'", "'../a'").as_str())], "@import { B } from \"./lib/b\"\n@inherits B\n<p>@a @b</p>\n");
         assert!(code.contains("this.a") && code.contains("this.b"), "{code}");
@@ -933,7 +933,7 @@ export class After { late = 1; }
     fn without_inherits_nothing_is_read() {
         let (_, reads) = compile_in(&[("base.ts", TITLED)], "<p>@title</p>\n");
         assert!(reads.is_empty(), "{reads:?}");
-        let main = "@import { ComponentBase } from \"@xzor/runtime\"\n@inherits ComponentBase\n<p>@title</p>\n";
+        let main = "@import { ComponentBase } from \"@source-crafter/xzor-runtime\"\n@inherits ComponentBase\n<p>@title</p>\n";
         let (_, reads) = compile_in(&[("base.ts", TITLED)], main);
         assert!(reads.is_empty(), "{reads:?}");
     }

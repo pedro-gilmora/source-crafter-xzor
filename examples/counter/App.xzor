@@ -1,7 +1,7 @@
 @import Greeting from "./Greeting.xzor"
 @import MainLayout from "./layouts/MainLayout.xzor"
 @import AdminLayout from "./layouts/AdminLayout.xzor"
-@import { NavLink } from "@xzor/runtime"
+@import { NavLink } from "@source-crafter/xzor-runtime"
 @import { href } from "./routes"
 @import { type Theme } from "./services/theme"
 

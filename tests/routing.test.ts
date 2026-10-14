@@ -47,7 +47,7 @@ const app = `@import { href } from "./routes"
 }
 `;
 
-const main = `import { mount } from "@xzor/runtime";
+const main = `import { mount } from "@source-crafter/xzor-runtime";
 import App from "./App.xzor";
 
 mount(App, document.getElementById("app")!);
@@ -60,7 +60,7 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   // Bun's default tsconfig turns these on, and the generated table is code the user cannot edit.
   tsconfig.compilerOptions.noUncheckedIndexedAccess = true;
   tsconfig.compilerOptions.noPropertyAccessFromIndexSignature = true;

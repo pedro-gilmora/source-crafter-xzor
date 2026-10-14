@@ -416,7 +416,7 @@ test("an open .xzor refreshes when a base .ts anywhere in its @inherits chain ch
   mkdirSync(dir, { recursive: true });
   cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
   const base = (name: string) =>
-    `import { ComponentBase } from "@xzor/runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
+    `import { ComponentBase } from "@source-crafter/xzor-runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
   // D -> Mid (mid.ts) -> Titled (base.ts): D's text never mentions base.
   const mid = `import { Titled } from "./base";\nexport abstract class Mid extends Titled {}\n`;
   const text = `@import { Mid } from "./mid"\n@inherits Mid\n<p>@title</p>\n`;

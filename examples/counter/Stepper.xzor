@@ -1,4 +1,4 @@
-@import { type EventCallback } from "@xzor/runtime"
+@import { type EventCallback } from "@source-crafter/xzor-runtime"
 
 @code {
   value: number = 0;

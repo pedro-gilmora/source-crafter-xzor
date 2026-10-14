@@ -1,4 +1,4 @@
-import { ServiceProvider, Transient } from "@xzor/runtime";
+import { ServiceProvider, Transient } from "@source-crafter/xzor-runtime";
 
 class Hidden {}
 

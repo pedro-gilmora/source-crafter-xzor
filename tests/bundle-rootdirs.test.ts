@@ -18,7 +18,7 @@ test("the bundle resolves imports across the source and .xzor roots, like tsconf
   writeFileSync(join(dir, "pages", "Home.xzor"), `@import { greeting } from "./base"\n<p class="home">@greeting</p>\n`);
   // And a script in the sources importing a generated module.
   writeFileSync(join(dir, "mount.ts"), `import Home from "./pages/Home.xzor";\nexport { Home };\n`);
-  writeFileSync(join(dir, "main.ts"), `import { mount } from "@xzor/runtime";\nimport { Home } from "./mount";\nmount(Home, document.getElementById("app")!);\n`);
+  writeFileSync(join(dir, "main.ts"), `import { mount } from "@source-crafter/xzor-runtime";\nimport { Home } from "./mount";\nmount(Home, document.getElementById("app")!);\n`);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
   expect(run.exitCode, run.stdout.toString() + run.stderr.toString()).toBe(0);
   const bundle = readFileSync(join(dir, "dist", "main.js"), "utf8");

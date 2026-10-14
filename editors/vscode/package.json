@@ -17,7 +17,7 @@
         "xzor.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the xzor executable. Defaults to target/{release,debug}/xzor in the workspace, then the binary installed from npm (node_modules/@xzor/cli-<platform>), then xzor on PATH."
+          "description": "Path to the xzor executable. Defaults to target/{release,debug}/xzor in the workspace, then the binary installed from npm (node_modules/@source-crafter/xzor-cli-<platform>), then xzor on PATH."
         }
       }
     },

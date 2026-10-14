@@ -5,7 +5,7 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 const dir = join(root, "target", "tmp-inherits");
 
-const base = `import { ComponentBase } from "@xzor/runtime";
+const base = `import { ComponentBase } from "@source-crafter/xzor-runtime";
 export interface Named { readonly name: string }
 export abstract class Titled extends ComponentBase {
   title = "base";
@@ -20,7 +20,7 @@ test("components use inherited members as bare names and pass the type check", (
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "base.ts"), base);
   writeFileSync(

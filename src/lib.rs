@@ -124,6 +124,6 @@ mod tests {
     #[test]
     fn no_warning_without_a_readable_chain() {
         assert!(warnings("<p/>\n").is_empty());
-        assert!(warnings("@import { ComponentBase } from \"@xzor/runtime\"\n@inherits ComponentBase\n<p/>\n").is_empty());
+        assert!(warnings("@import { ComponentBase } from \"@source-crafter/xzor-runtime\"\n@inherits ComponentBase\n<p/>\n").is_empty());
     }
 }

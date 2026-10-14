@@ -19,7 +19,7 @@ Before any task, check whether a skill applies and follow it:
 - `bun run build:vscode`, then `vsce package --no-dependencies` in `editors/vscode`: builds the extension (the client starts `xzor lsp`).
 - `cargo run -- build examples/counter`: full pipeline (compile, run `bun x tsc` type check, Bun bundle).
 - `cargo run -- highlight examples/counter/Counter.xzor`: prints the template with colors.
-- `./Package.ps1 [-test true] [-specificVersion x.y.z]`: restore, build, test and pack into `publish/` (npm tarballs `@xzor/runtime`, `xzor`, `@xzor/cli-<platform>`, plus `xzor-<version>.vsix`). Locally it packs the host binary only; CI (`.github/workflows/dev.yml`, on push to `main`; it publishes only when the head commit starts with `[Release]`) builds every platform and publishes to npm, the VS Code Marketplace and Open VSX. Launcher and package manifests live in `npm/`.
+- `./Package.ps1 [-test true] [-specificVersion x.y.z]`: restore, build, test and pack into `publish/` (npm tarballs `@source-crafter/xzor-runtime`, `@source-crafter/xzor` (the CLI, command `xzor`), `@source-crafter/xzor-cli-<platform>`, plus `xzor-<version>.vsix`). Locally it packs the host binary only; CI (`.github/workflows/dev.yml`, on push to `main`; it publishes only when the head commit starts with `[Release]`) builds every platform and publishes to npm, the VS Code Marketplace and Open VSX. Launcher and package manifests live in `npm/`.
 
 ## Conventions
 

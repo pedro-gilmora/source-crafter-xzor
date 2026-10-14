@@ -43,7 +43,7 @@ const badge = `@import Base from "./Base.xzor"
 <span class="role">@role</span>
 `;
 
-const main = `import { mount } from "@xzor/runtime";
+const main = `import { mount } from "@source-crafter/xzor-runtime";
 import App from "./App.xzor";
 
 mount(App, document.getElementById("app")!);
@@ -53,7 +53,7 @@ test("a @Cascade member follows the value of its @cascade provider", async () =>
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "App.xzor"), app);
   writeFileSync(join(dir, "Base.xzor"), base);

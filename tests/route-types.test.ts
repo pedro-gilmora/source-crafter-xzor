@@ -27,7 +27,7 @@ function build(name: string, body: string) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   tsconfig.compilerOptions.strict = true;
   tsconfig.compilerOptions.noUncheckedIndexedAccess = true;
   tsconfig.compilerOptions.noPropertyAccessFromIndexSignature = true;
