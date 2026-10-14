@@ -248,7 +248,8 @@ jobs:
           name=$(tar -xzOf "$package" package/package.json | jq -r '.name')
 
           # `if` keeps a failed publish from ending the step under bash -e: the rest still publish.
-          if output=$(npm publish "$package" --access public 2>&1); then
+          # `./`: without it npm reads `publish/<file>.tgz` as the GitHub repo shorthand `user/repo`.
+          if output=$(npm publish "./$package" --access public 2>&1); then
             jq -nc --arg p "$name" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "npm"}' >> packages.jsonl
           else
             # Log the entire output, not just filtered lines
@@ -420,7 +421,7 @@ jobs:
         $telegramPackages
         "@
 
-        if( $isRelease -and '${{ job.status }}' -eq 'success' )
+        if( $isRelease -and '${{ job.status }}' -eq 'success' -and -not $errors )
         {
           $releaseNotes = if($commits.Count -gt 0) {
         @"
