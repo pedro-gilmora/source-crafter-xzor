@@ -37,17 +37,22 @@ import {
 import type { Checker, Program, Signature, Snapshot, Symbol as Sym, Type } from "typescript/unstable/sync";
 
 // On Linux and macOS the sync API reads the child's pipe fds from Node internals (`stdout._handle.fd`) that Bun lacks.
-// It gets two FIFOs instead, opened read-write so neither open blocks; Windows uses a named pipe and is left alone.
+// It gets two FIFOs instead; Windows uses a named pipe and is left alone.
 if (process.platform !== "win32") {
   const end = (fd: number) => ({ _handle: { fd, setBlocking() {} }, pause() {}, unref() {}, destroy: () => closeSync(fd) });
   (globalThis as { __xzorPipes?: unknown }).__xzorPipes = (spawn: typeof import("node:child_process").spawn, exe: string, args: string[]) => {
     const dir = mkdtempSync(join(tmpdir(), "xzor-ts-"));
     const [toChild, fromChild] = [join(dir, "in"), join(dir, "out")];
     if (spawnSync("mkfifo", [toChild, fromChild]).status !== 0) throw new Error("xzor: mkfifo failed");
-    const write = openSync(toChild, "r+");
-    const read = openSync(fromChild, "r+");
-    const child: ChildProcess = spawn(exe, args, { stdio: [write, read, "inherit"] });
-    // Both ends are open, so the paths are no longer needed.
+    // A read-write open never blocks; it is held only while the one-way ends open, so the child sees EOF on
+    // its stdin once we close our write end, and we see EOF when it exits.
+    const holdIn = openSync(toChild, "r+");
+    const holdOut = openSync(fromChild, "r+");
+    const [childIn, write] = [openSync(toChild, "r"), openSync(toChild, "w")];
+    const [read, childOut] = [openSync(fromChild, "r"), openSync(fromChild, "w")];
+    for (const fd of [holdIn, holdOut]) closeSync(fd);
+    const child: ChildProcess = spawn(exe, args, { stdio: [childIn, childOut, "inherit"] });
+    for (const fd of [childIn, childOut]) closeSync(fd);
     rmSync(dir, { recursive: true, force: true });
     Object.defineProperty(child, "stdin", { value: end(write) });
     Object.defineProperty(child, "stdout", { value: end(read) });
