@@ -125,8 +125,8 @@ struct Options {
     timings: bool,
 }
 
-#[derive(Default)]
 struct Timings {
+    started: Instant,
     compile: Duration,
     routes: Duration,
     di: Duration,
@@ -134,11 +134,18 @@ struct Timings {
     bundle: Duration,
 }
 
+impl Default for Timings {
+    fn default() -> Self {
+        Timings { started: Instant::now(), compile: Duration::ZERO, routes: Duration::ZERO, di: Duration::ZERO, check: Duration::ZERO, bundle: Duration::ZERO }
+    }
+}
+
 impl Timings {
     fn print(&self, o: &Options) {
         if o.timings {
             let ms = |d: Duration| d.as_millis();
-            let total = self.compile + self.routes + self.di + self.check + self.bundle;
+            // Check and bundle overlap, so the total is wall time, not the sum.
+            let total = self.started.elapsed();
             println!(
                 "xzor: timings compile={}ms routes={}ms di={}ms check={}ms bundle={}ms total={}ms",
                 ms(self.compile), ms(self.routes), ms(self.di), ms(self.check), ms(self.bundle), ms(total)
@@ -147,21 +154,46 @@ impl Timings {
     }
 }
 
-/// Type check and bundle (from the DI-generated entry when there is one).
+/// Type check and bundle (from the DI-generated entry when there is one), running together.
+/// Bundle paths print only after a passing check: `xzor dev` reloads on them.
 fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, t: &mut Timings) -> Result<(), String> {
-    if o.check {
+    let entry = match di_entry.and_then(|p| p.strip_prefix(&o.dir).ok()) {
+        Some(generated) => generated.to_string_lossy().into_owned(),
+        None => o.entry.clone(),
+    };
+    let timed_check = || {
         let start = Instant::now();
-        build::check(&o.dir, o.checker.as_deref(), units)?;
-        t.check = start.elapsed();
+        let (ok, text) = build::check_output(&o.dir, o.checker.as_deref(), units);
+        (ok, text, start.elapsed())
+    };
+    let timed_bundle = || {
+        let start = Instant::now();
+        (build::bundle(&o.dir, &entry), start.elapsed())
+    };
+    let (checked, bundled) = match (o.check, o.bundle) {
+        (true, true) => {
+            let (checked, bundled) = std::thread::scope(|s| {
+                let check = s.spawn(timed_check);
+                let bundled = timed_bundle();
+                (check.join().expect("type check thread panicked"), bundled)
+            });
+            (Some(checked), Some(bundled))
+        }
+        (true, false) => (Some(timed_check()), None),
+        (false, true) => (None, Some(timed_bundle())),
+        (false, false) => (None, None),
+    };
+    if let Some((ok, text, elapsed)) = checked {
+        t.check = elapsed;
+        print!("{text}");
+        if !ok {
+            return Err("type check failed".to_string());
+        }
         println!("xzor: type check passed");
     }
-    if o.bundle {
-        let start = Instant::now();
-        match di_entry.and_then(|p| p.strip_prefix(&o.dir).ok()) {
-            Some(generated) => build::bundle(&o.dir, &generated.to_string_lossy())?,
-            None => build::bundle(&o.dir, &o.entry)?,
-        }
-        t.bundle = start.elapsed();
+    if let Some((result, elapsed)) = bundled {
+        t.bundle = elapsed;
+        print!("{}", result?);
     }
     Ok(())
 }
@@ -233,7 +265,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                 }
             }
         }
-        let timings = Timings { compile: compile_start.elapsed(), ..Default::default() };
+        let timings = Timings { started: compile_start, compile: compile_start.elapsed(), ..Default::default() };
         if plan.rebuild {
             if errors.is_empty() {
                 println!("xzor: compiled {} component(s)", recompile.len());

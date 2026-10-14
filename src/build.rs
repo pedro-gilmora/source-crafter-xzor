@@ -435,6 +435,21 @@ fn normalize(p: &Path) -> PathBuf {
 /// files. `checker` may contain `{dir}`. The default is TypeScript 7's
 /// `tsc --noEmit -p <dir>`, launched through `bun x` when Bun is installed, else `npx`.
 pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result<(), String> {
+    let (ok, text) = check_output(dir, checker, compiled);
+    print!("{text}");
+    if ok { Ok(()) } else { Err("type check failed".to_string()) }
+}
+
+/// `check` without printing: whether it passed, and the mapped output (or the launch error).
+pub fn check_output(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> (bool, String) {
+    match run_checker(dir, checker, compiled) {
+        Ok(r) => r,
+        Err(e) => (false, format!("{e}\n")),
+    }
+}
+
+fn run_checker(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result<(bool, String), String> {
+    static HAS_BUN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let mut cmd = match checker {
         Some(c) => {
             let dir = dir.display().to_string();
@@ -445,7 +460,7 @@ pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result
             cmd
         }
         None => {
-            let has_bun = Command::new("bun").arg("--version").output().is_ok_and(|o| o.status.success());
+            let has_bun = *HAS_BUN.get_or_init(|| Command::new("bun").arg("--version").output().is_ok_and(|o| o.status.success()));
             let mut cmd = if has_bun {
                 let mut c = Command::new("bun");
                 c.arg("x");
@@ -462,8 +477,7 @@ pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result
         .map_err(|e| format!("type check: failed to run {:?}: {e}", cmd.get_program()))?;
     let cwd = std::env::current_dir().unwrap_or_default();
     let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    print!("{}", map_tsc_output(&text, compiled, &cwd));
-    if output.status.success() { Ok(()) } else { Err(format!("type check failed ({})", output.status)) }
+    Ok((output.status.success(), map_tsc_output(&text, compiled, &cwd)))
 }
 
 /// Compile-time DI: analyzes the project's providers, writes the generated providers into `.xzor/`, and returns
@@ -716,21 +730,21 @@ fn utf16_to_byte(text: &str, at: usize) -> usize {
 
 const BUNDLE_SCRIPT: &str = include_str!("bundle.ts");
 
-pub fn bundle(dir: &Path, entry: &str) -> Result<(), String> {
+/// Bundles `entry` into `<dir>/dist`; returns the script's stdout (one output path per line).
+pub fn bundle(dir: &Path, entry: &str) -> Result<String, String> {
     let script = std::env::temp_dir().join(format!("xzor-bundle-{}.ts", env!("CARGO_PKG_VERSION")));
     if fs::read_to_string(&script).ok().as_deref() != Some(BUNDLE_SCRIPT) {
         fs::write(&script, BUNDLE_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
     }
     let mut cmd = Command::new("bun");
     cmd.arg(&script).arg(dir.join(entry)).arg(dir.join("dist"));
-    run(&mut cmd, "bundle")
-}
-
-fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
-    let status = cmd
-        .status()
-        .map_err(|e| format!("{what}: failed to run {:?}: {e}", cmd.get_program()))?;
-    if status.success() { Ok(()) } else { Err(format!("{what} failed ({status})")) }
+    cmd.stderr(std::process::Stdio::inherit());
+    let output = cmd.output().map_err(|e| format!("bundle: failed to run {:?}: {e}", cmd.get_program()))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(format!("bundle failed ({})", output.status))
+    }
 }
 
 #[cfg(test)]

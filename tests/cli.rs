@@ -75,3 +75,34 @@ fn build_prints_timings() {
     }
     fs::remove_dir_all(&root).unwrap();
 }
+
+const APP_MAIN: &str = "import App from \"./App.xzor\";\nconsole.log(App);\n";
+
+#[test]
+fn check_runs_while_bundling() {
+    if !has_bun() {
+        return;
+    }
+    let wait = "import { existsSync } from \"node:fs\";\nconst bundle = `${process.argv[2]}/dist/main.js`;\nfor (let i = 0; i < 250 && !existsSync(bundle); i++) await Bun.sleep(20);\nconsole.log(existsSync(bundle) ? \"saw bundle\" : \"no bundle\");\n";
+    let root = project("check-while-bundling", &[("App.xzor", "<p/>"), ("main.ts", APP_MAIN), ("wait.ts", wait)]);
+    let checker = format!("bun {}/wait.ts {{dir}}", root.display().to_string().replace('\\', "/"));
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).args(["--checker", &checker]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    let saw = stdout.find("saw bundle").unwrap_or_else(|| panic!("check did not overlap the bundle: {stdout}"));
+    assert!(saw < stdout.find("dist").unwrap(), "{stdout}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn failed_check_hides_bundle_paths() {
+    if !has_bun() {
+        return;
+    }
+    let root = project("failed-check", &[("App.xzor", "<p/>"), ("main.ts", APP_MAIN)]);
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).args(["--checker", "bun -e process.exit(1)"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "{stdout}");
+    assert!(!stdout.lines().any(|l| l.trim_end().ends_with("main.js")), "{stdout}");
+    fs::remove_dir_all(&root).unwrap();
+}
