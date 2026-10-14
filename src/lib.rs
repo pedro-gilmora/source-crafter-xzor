@@ -86,11 +86,117 @@ fn imported_components(doc: &ast::Document, path: &Path, read: &dyn Fn(&Path) ->
         }
         let file = dir.join(spec);
         if let Some(text) = read(&file) {
-            infos.insert(name.to_string(), codegen::component_info(&text));
+            let mut info = codegen::component_info(&text);
+            resolve_string_aliases(&mut info, &text, &file, read, &mut files);
+            infos.insert(name.to_string(), info);
         }
         files.push(file);
     }
     (infos, files)
+}
+
+/// Turns expression props typed by imported aliases of string literals (`type Size = "s" | "m"`)
+/// into text props. Every module probed is added to `deps`, so editing it refreshes the importer.
+fn resolve_string_aliases(info: &mut codegen::ComponentInfo, child: &str, child_path: &Path, read: &dyn Fn(&Path) -> Option<String>, deps: &mut Vec<PathBuf>) {
+    if info.named_types.is_empty() {
+        return;
+    }
+    let Ok((doc, _)) = parser::parse(child) else { return };
+    let dir = child_path.parent().unwrap_or(Path::new("."));
+    let mut modules: HashMap<PathBuf, Option<String>> = HashMap::new();
+    let named = std::mem::take(&mut info.named_types);
+    for (prop, names) in &named {
+        let text = names.iter().all(|local| {
+            let Some((original, spec)) = doc.imports.iter().find_map(|i| imported_binding(i, local)) else { return false };
+            let Some(module) = resolve_module(dir, spec, read, deps, &mut modules) else { return false };
+            alias_is_string(&module, original, 0)
+        });
+        if text {
+            info.props.insert(prop.clone(), codegen::PropKind::Text);
+        }
+    }
+    info.named_types = named;
+}
+
+/// `("Kind", "./kinds")` when `import` (an `@import` without the keyword) binds `local`.
+fn imported_binding<'a>(import: &'a str, local: &str) -> Option<(&'a str, &'a str)> {
+    let open = import.find('{')?;
+    let close = import[open..].find('}')? + open;
+    let spec = import[close..].rsplit(['"', '\'']).nth(1)?;
+    import[open + 1..close].split(',').find_map(|binding| {
+        let binding = binding.trim().trim_start_matches("type ").trim();
+        let (original, alias) = binding.split_once(" as ").map_or((binding, binding), |(o, a)| (o.trim(), a.trim()));
+        (alias == local).then_some((original, spec))
+    })
+}
+
+/// The text of a relative module (`./sizes`, `./sizes.js`, `./sizes.ts`, `./dir` with an index).
+fn resolve_module(dir: &Path, spec: &str, read: &dyn Fn(&Path) -> Option<String>, deps: &mut Vec<PathBuf>, cache: &mut HashMap<PathBuf, Option<String>>) -> Option<String> {
+    if !spec.starts_with('.') {
+        return None;
+    }
+    let base = dir.join(spec.strip_suffix(".js").unwrap_or(spec));
+    let base_str = base.to_string_lossy().into_owned();
+    let candidates: Vec<PathBuf> = if base_str.ends_with(".ts") {
+        vec![base]
+    } else {
+        vec![PathBuf::from(format!("{base_str}.ts")), PathBuf::from(format!("{base_str}.d.ts")), base.join("index.ts")]
+    };
+    for file in candidates {
+        if !deps.contains(&file) {
+            deps.push(file.clone());
+        }
+        let text = cache.entry(file.clone()).or_insert_with(|| read(&file)).clone();
+        if text.is_some() {
+            return text;
+        }
+    }
+    None
+}
+
+/// Whether `type <name> = ...` in `module` is a union of string literals, `string` and other such
+/// aliases of the same module.
+fn alias_is_string(module: &str, name: &str, depth: usize) -> bool {
+    let Some(body) = alias_body(module, name) else { return false };
+    depth < 8
+        && body.split('|').map(str::trim).filter(|t| !t.is_empty()).all(|t| {
+            t == "string"
+                || (t.len() >= 2 && (t.starts_with('"') && t.ends_with('"') || t.starts_with('\'') && t.ends_with('\'')))
+                || (t.len() >= 2 && t.starts_with('`') && t.ends_with('`') && !t.contains("${"))
+                || (codegen::is_identifier(t) && alias_is_string(module, t, depth + 1))
+        })
+}
+
+/// The right-hand side of `[export] type <name> = ...`, up to its `;` or the next statement.
+fn alias_body<'a>(module: &'a str, name: &str) -> Option<&'a str> {
+    let mut from = 0;
+    while let Some(i) = module[from..].find("type ") {
+        let at = from + i;
+        from = at + 5;
+        let line_start = module[..at].rfind('\n').map_or(0, |n| n + 1);
+        if !matches!(module[line_start..at].trim(), "" | "export" | "declare" | "export declare") {
+            continue;
+        }
+        let rest = module[at + 5..].trim_start();
+        let Some(after) = rest.strip_prefix(name) else { continue };
+        let Some(body) = after.trim_start().strip_prefix('=') else { continue };
+        // Ends at `;`, or at a line that starts something other than a `|` continuation.
+        let (mut end, mut pos) = (body.len(), 0);
+        for (i, line) in body.split_inclusive('\n').enumerate() {
+            if let Some(semi) = line.find(';') {
+                end = pos + semi;
+                break;
+            }
+            let trimmed = line.trim_start();
+            if i > 0 && !trimmed.is_empty() && !trimmed.starts_with('|') {
+                end = pos;
+                break;
+            }
+            pos += line.len();
+        }
+        return Some(&body[..end]);
+    }
+    None
 }
 
 /// 1-based line and column (in bytes) of a byte offset.
@@ -148,5 +254,26 @@ mod tests {
         assert!(g.deps.contains(&child), "{:?}", g.deps);
         let g = compile_mapped_with(main, &root.join("Page.xzor"), &read("@code { name: number = 1; }\n")).unwrap();
         assert!(g.code.contains("name: hero"), "{}", g.code);
+    }
+
+    /// `size?: Size` with `export type Size = "s" | "m"` in the imported module takes text, like `string`.
+    #[test]
+    fn props_typed_by_an_imported_string_alias_take_text() {
+        let root = Path::new("/p");
+        let files: HashMap<PathBuf, &str> = [
+            (root.join("Child.xzor"), "@import { type Size, type Count } from \"./sizes\"\n@import type { Kind as K } from \"./kinds.js\"\n@code { size?: Size; count?: Count; kind?: K; other?: Other; }\n<p/>"),
+            (root.join("sizes.ts"), "export type Size = \"s\" | \"m\" | Extra;\ntype Extra =\n  | 'xl'\n  | string;\nexport type Count = 1 | 2;\n"),
+            (root.join("kinds.ts"), "export type Kind = `a` | \"b\";\n"),
+        ]
+        .into_iter()
+        .collect();
+        let read = |p: &Path| files.get(p).map(|t| t.to_string());
+        let main = "@import Child from \"./Child.xzor\"\n<Child size=\"m\" count=\"n\" kind=\"a\" other=\"o\" />\n";
+        let g = compile_mapped_with(main, &root.join("Page.xzor"), &read).unwrap();
+        for m in ["size: \"m\"", "count: n", "kind: \"a\"", "other: o"] {
+            assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
+        }
+        // An edit to the alias module refreshes the importer.
+        assert!(g.deps.contains(&root.join("sizes.ts")) && g.deps.contains(&root.join("kinds.ts")), "{:?}", g.deps);
     }
 }

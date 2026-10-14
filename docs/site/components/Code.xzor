@@ -1,8 +1,7 @@
 @import { snippets, type SnippetName } from "../snippets.gen"
 
 @code {
-  // A string initializer keeps `name="hero"` text, and the cast still types it as a snippet name.
-  name = "hero" as SnippetName;
+  name: SnippetName = "hero";
   copied = false;
   body?: HTMLDivElement;
 

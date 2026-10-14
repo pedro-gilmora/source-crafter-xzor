@@ -232,6 +232,9 @@ pub struct ComponentInfo {
     /// `@typeparam` names, in order.
     pub type_params: Vec<String>,
     pub props: HashMap<String, PropKind>,
+    /// Expression props typed as a union of type names (and string literals): the names to look up,
+    /// since a name that is an alias of string literals makes the prop text.
+    pub named_types: HashMap<String, Vec<String>>,
 }
 
 /// `components` describes the `.xzor` components this document uses, by name; `inherited` names
@@ -1671,14 +1674,49 @@ pub fn component_info(source: &str) -> ComponentInfo {
         .map(str::to_string)
         .collect();
     let mut props = HashMap::new();
+    let mut named_types = HashMap::new();
     for code in &doc.code {
         for m in member_decls(code).into_iter().filter(|m| !m.is_method && !m.name.starts_with('#')) {
             let rest = &code[m.offset..];
             let end = rest.find(['\n', ';']).unwrap_or(rest.len());
-            props.insert(m.name, prop_kind(&rest[..end]));
+            let kind = prop_kind(&rest[..end]);
+            if kind == PropKind::Expr
+                && let Some(names) = type_names(&rest[..end])
+            {
+                named_types.insert(m.name.clone(), names);
+            }
+            props.insert(m.name, kind);
         }
     }
-    ComponentInfo { type_params, props }
+    ComponentInfo { type_params, props, named_types }
+}
+
+/// The type annotation of a declaration like `size?: Size = "s"`, without its initializer.
+fn annotation(decl: &str) -> Option<&str> {
+    let rest = decl.trim_start_matches(|c: char| c.is_ascii() && is_ident_char(c as u8)).trim_start();
+    let ty = rest.trim_start_matches(['?', '!']).trim_start().strip_prefix(':')?;
+    let b = ty.as_bytes();
+    let eq = (0..b.len()).find(|&i| {
+        b[i] == b'=' && b.get(i + 1) != Some(&b'>') && !matches!(i.checked_sub(1).map(|j| b[j]), Some(b'=' | b'!' | b'<' | b'>'))
+    });
+    Some(ty[..eq.unwrap_or(ty.len())].trim())
+}
+
+/// `["Size"]` for `size?: Size | "auto"`: the type names of an annotation that is a union of names,
+/// `string` and string literals; `None` for anything else (`number`, `T[]`, `keyof X`, ...).
+pub fn type_names(decl: &str) -> Option<Vec<String>> {
+    const NOT_NAMES: &[&str] = &["number", "boolean", "bigint", "symbol", "object", "any", "unknown", "never", "void", "null", "undefined", "true", "false"];
+    let mut names = Vec::new();
+    for t in annotation(decl)?.split('|').map(str::trim).filter(|t| !t.is_empty()) {
+        if t == "string" || t.starts_with(['"', '\'', '`']) {
+            continue;
+        }
+        if !is_identifier(t) || NOT_NAMES.contains(&t) {
+            return None;
+        }
+        names.push(t.to_string());
+    }
+    (!names.is_empty()).then_some(names)
 }
 
 /// Kind of a declaration like `step: number = 1`, `item?: RenderFragment<T>` or `title = "x"`.
@@ -1693,17 +1731,17 @@ pub fn prop_kind(decl: &str) -> PropKind {
     if takes_expression(decl) { PropKind::Expr } else { PropKind::Text }
 }
 
-/// Whether a declaration like `step: number = 1` or `title = "x"` has a non-string type.
+/// Whether a declaration like `step: number = 1` or `title = "x"` has a non-string type. A string
+/// default makes any annotation text (`name: SnippetName = "hero"`).
 pub fn takes_expression(decl: &str) -> bool {
     let rest = decl.trim_start_matches(|c: char| c.is_ascii() && is_ident_char(c as u8)).trim_start();
     let rest = rest.trim_start_matches(['?', '!']).trim_start();
     let is_stringy = |s: &str| s.starts_with(['"', '\'', '`']);
-    if let Some(ty) = rest.strip_prefix(':') {
-        let b = ty.as_bytes();
-        let eq = (0..b.len()).find(|&i| {
-            b[i] == b'=' && b.get(i + 1) != Some(&b'>') && !matches!(i.checked_sub(1).map(|j| b[j]), Some(b'=' | b'!' | b'<' | b'>'))
-        });
-        let ty = ty[..eq.unwrap_or(ty.len())].trim();
+    if let Some(ty) = annotation(decl) {
+        let init = rest.strip_prefix(':').map(|t| t.trim_start()[ty.len()..].trim_start()).and_then(|t| t.strip_prefix('='));
+        if init.is_some_and(|i| is_stringy(i.trim_start())) {
+            return false;
+        }
         return !ty.split('|').map(str::trim).filter(|t| !t.is_empty()).all(|t| t == "string" || is_stringy(t));
     }
     match rest.strip_prefix('=') {
@@ -2235,6 +2273,22 @@ mod tests {
         assert_eq!(kind("frag"), Some(PropKind::Expr));
         assert_eq!(kind("onChange"), Some(PropKind::Callback));
         assert_eq!(kind("go"), None);
+    }
+
+    #[test]
+    fn a_named_string_type_with_a_string_default_takes_text() {
+        let src = "@code {\n  name: SnippetName = \"hero\";\n  size?: Size;\n  mixed: Size | \"auto\" = \"auto\";\n  count: Count = 1;\n  pick: keyof typeof table = \"a\";\n  list: string[] = [];\n}\n<p/>";
+        let info = component_info(src);
+        let kind = |n: &str| info.props.get(n).copied();
+        assert_eq!(kind("name"), Some(PropKind::Text));
+        assert_eq!(kind("mixed"), Some(PropKind::Text));
+        // Without a string default the name has to be resolved from its module (see lib.rs).
+        assert_eq!(kind("size"), Some(PropKind::Expr));
+        assert_eq!(info.named_types.get("size").map(Vec::as_slice), Some(&["Size".to_string()][..]));
+        assert_eq!(kind("count"), Some(PropKind::Expr));
+        assert_eq!(kind("pick"), Some(PropKind::Text));
+        assert_eq!(kind("list"), Some(PropKind::Expr));
+        assert!(!info.named_types.contains_key("list"), "{:?}", info.named_types);
     }
 
     #[test]

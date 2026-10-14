@@ -96,7 +96,7 @@ Generated `.xzor/` and `dist/` are build output: never edit them. Don't create `
 | DOM/instance ref | `@ref="input"` with a field `input?: HTMLInputElement;` |
 | Spread attributes | `@attributes="attrs"` |
 
-Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A prop typed `string` (or initialized with a string) takes text; any other type takes a TypeScript expression. Misspelled or mistyped props are build errors.
+Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A prop typed `string`, a union of string literals, an imported alias of string literals (`type Size = "s" | "m"`), or given a string default (`name: Kind = "a"`) takes text; any other type takes a TypeScript expression. Misspelled or mistyped props are build errors.
 
 An event re-renders **only the component that owns the handler**, and that render reads everything again (its fields, props and injected services). If shared state changes in *another* component's handler, call `this.stateHasChanged()` on the components that show it, or pass the value down as a prop.
 
