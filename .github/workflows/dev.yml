@@ -1,0 +1,461 @@
+name: 'xzor: Build, Test & Deploy'
+
+on:
+  # Todo push a main se construye y se prueba; solo se despliega si el commit de
+  # cabeza empieza por [Release], que no aparece en los mensajes ni en el release.
+  push:
+    branches: [ main ]
+  # Permite relanzar el mismo trabajo a mano indicando el numero de la PR.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Numero de la PR a construir y desplegar'
+        required: false
+        type: string
+
+# El token por defecto de estos eventos es de solo lectura: sin esto
+# fallan tanto la creacion del release como la consulta de commits de la PR.
+permissions:
+  contents: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  # Cada disparador trae los datos en un sitio distinto: el push los lleva en el
+  # payload y el manual solo da, si acaso, el numero de la PR. Este trabajo
+  # normaliza ambos casos para que el resto lea siempre las mismas salidas.
+  resolve:
+    name: 'Resolve revision'
+    runs-on: 'ubuntu-latest'
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      base_ref: ${{ steps.pr.outputs.base_ref }}
+      title: ${{ steps.pr.outputs.title }}
+      url: ${{ steps.pr.outputs.url }}
+      approver: ${{ steps.pr.outputs.approver }}
+      proceed: ${{ steps.pr.outputs.proceed }}
+      release: ${{ steps.pr.outputs.release }}
+    steps:
+    - name: Read revision metadata
+      id: pr
+      env:
+        GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        APPROVER: ${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || github.event.pusher.name }}
+      run: |
+        if [ -n "${PR_NUMBER}" ]; then
+          pr=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")
+
+          # Un borrador no se despliega, y en el lanzamiento manual sobre una PR
+          # solo se acepta la que ya esta integrada.
+          draft=$(jq -r '.draft' <<< "$pr")
+          merged=$(jq -r '.merged' <<< "$pr")
+
+          number=${PR_NUMBER}
+          head_sha=$(jq -r '.head.sha' <<< "$pr")
+          head_ref=$(jq -r '.head.ref' <<< "$pr")
+          base_ref=$(jq -r '.base.ref' <<< "$pr")
+          title=$(jq -r '.title' <<< "$pr")
+          url=$(jq -r '.html_url' <<< "$pr")
+          proceed=$([ "$draft" = 'false' ] && [ "$merged" = 'true' ] && echo true || echo false)
+        else
+          # En un push la revision es el propio commit de cabeza: no hay PR que
+          # consultar y la rama destino es la que recibe el push.
+          number=''
+          head_sha='${{ github.sha }}'
+          head_ref='${{ github.ref_name }}'
+          base_ref='${{ github.ref_name }}'
+          title=$(head -n 1 <<< '${{ github.event.head_commit.message }}')
+          url='${{ github.event.head_commit.url }}'
+          proceed=$([ -n "${head_sha}" ] && echo true || echo false)
+        fi
+
+        {
+          echo "number=${number}"
+          echo "head_sha=${head_sha}"
+          echo "head_ref=${head_ref}"
+          echo "base_ref=${base_ref}"
+          echo "title=${title}"
+          echo "url=${url}"
+          echo "approver=${APPROVER}"
+          echo "proceed=${proceed}"
+          # Solo main despliega, y solo cuando el asunto lo pide.
+          echo "release=$([ "${base_ref}" = 'main' ] && [[ "${title}" == '[Release]'* ]] && echo true || echo false)"
+        } >> "$GITHUB_OUTPUT"
+
+  # El compilador es un binario de Rust: cada plataforma se compila en su propio
+  # runner y el empaquetado los recoge todos para los paquetes @source-crafter/xzor-cli-<plataforma>.
+  binaries:
+    name: 'Compiler binary (${{ matrix.target }})'
+    needs: resolve
+    if: needs.resolve.outputs.proceed == 'true'
+    strategy:
+      matrix:
+        include:
+        - { target: win32-x64, os: windows-latest, exe: xzor.exe }
+        - { target: linux-x64, os: ubuntu-latest, exe: xzor }
+        - { target: darwin-arm64, os: macos-latest, exe: xzor }
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Get source code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.resolve.outputs.head_sha }}
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build
+      run: cargo build --release --locked
+
+    - name: Upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.target }}
+        path: target/release/${{ matrix.exe }}
+        if-no-files-found: error
+
+  try-deliver:
+    name: 'xzor Build, Test & Deploy'
+    runs-on: 'ubuntu-latest'
+    needs: [ resolve, binaries ]
+    if: needs.resolve.outputs.proceed == 'true'
+
+    steps:
+    - name: Get source code
+      uses: actions/checkout@v4
+      with:
+        # El evento apunta al merge base, no al codigo integrado: hay que pedir
+        # explicitamente la cabeza de la PR recien fusionada.
+        ref: ${{ needs.resolve.outputs.head_sha }}
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.0
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Get compiler binaries
+      uses: actions/download-artifact@v4
+      with:
+        # Cada artefacto queda en binaries/<plataforma>/, que es lo que espera Package.ps1.
+        path: binaries
+
+    - name: Save GitHub Event Payload
+      env:
+        GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        PR_NUMBER: ${{ needs.resolve.outputs.number }}
+      run: |
+        # Los artefactos no conservan el bit de ejecucion, y npm instala los
+        # ficheros con el modo que traiga el tarball.
+        chmod +x binaries/*/xzor 2>/dev/null || true
+
+        # El evento push trae created_at como epoch, pero el de pull_request lo
+        # trae en ISO 8601: se normalizan ambas formas antes de pedir el año.
+        created_at='${{ github.event.repository.created_at }}'
+        case "$created_at" in
+          ''|*[!0-9]*) created_year=$( date -d "$created_at" +%Y ) ;;
+          *)           created_year=$( date -d "@$created_at" +%Y ) ;;
+        esac
+        # npm y el Marketplace exigen semver de tres partes y sin ceros a la izquierda:
+        # años desde la creacion . yy + dia del año . franja de 5 minutos del dia.
+        minutes=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
+        day=$(( 10#$(date +%y)$(date +%j) ))
+        version="$(( $(date --date='now' +%Y) - $created_year )).${day}.$(( minutes / 5 ))"
+        echo "VERSION=${version}" >> $GITHUB_ENV
+
+        # El evento de PR no trae head_commit ni commits: ese par solo viaja en el
+        # evento push. Se reconstruyen desde la API para que el resto del script siga
+        # leyendo la misma forma. El titulo de la PR hace de asunto porque describe el conjunto.
+        if [ -n "${PR_NUMBER}" ]; then
+          gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/commits" --paginate > pr_commits.json
+        else
+          gh api "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ needs.resolve.outputs.head_sha }}" --jq '.commits' > pr_commits.json
+        fi
+
+        jq -n \
+          --arg title "${{ needs.resolve.outputs.title }}" \
+          --arg sha "${{ needs.resolve.outputs.head_sha }}" \
+          --arg url "${{ needs.resolve.outputs.url }}" \
+          --slurpfile commits pr_commits.json \
+          '{
+            head_commit: { id: $sha, message: $title, url: $url },
+            commits: ($commits[0] | map({
+              id: .sha,
+              message: .commit.message,
+              url: .html_url,
+              author: { username: (.author.login // .commit.author.name) }
+            }))
+          }' > github_event.json
+
+    - name: Restore, Build, Test and Package
+      shell: pwsh
+      id: build
+      run: |
+        try {
+          ./Package.ps1 -clean true -specificVersion "${{ env.VERSION }}" -test true -binaries binaries -repository "${{ github.repository }}"
+        } catch {
+          Write-Error @"
+        Restore, Build, Test and Package errors:
+        $($_.Exception.Message)
+        "@
+        }
+
+    - name: Detect package changes
+      # Publicar solo aporta valor si cambio el codigo que va a npm: el compilador y el runtime.
+      id: changes
+      env:
+        GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        PR_NUMBER: ${{ needs.resolve.outputs.number }}
+      run: |
+        if [ -n "${PR_NUMBER}" ]; then
+          files=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')
+        else
+          files=$(gh api "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ needs.resolve.outputs.head_sha }}" --jq '.files[].filename')
+        fi
+
+        npm=$(grep -E '^(src/|runtime/index\.ts$|npm/|Cargo\.(toml|lock)$)' <<< "$files" | head -n 1)
+
+        echo "npm_changes=$([ -n "$npm" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+    - name: Publish compiler and runtime to npm
+      if: needs.resolve.outputs.release == 'true' && steps.changes.outputs.npm_changes == 'true'
+      env:
+        NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: |
+        echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+
+        # Los binarios por plataforma y el runtime van antes que el lanzador, que depende de ellos.
+        for package in publish/source-crafter-xzor-cli-*.tgz publish/source-crafter-xzor-runtime-*.tgz publish/source-crafter-xzor-[0-9]*.tgz; do
+          [ -f "$package" ] || continue
+          name=$(tar -xzOf "$package" package/package.json | jq -r '.name')
+
+          # `if` keeps a failed publish from ending the step under bash -e: the rest still publish.
+          if output=$(npm publish "$package" --access public 2>&1); then
+            jq -nc --arg p "$name" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "npm"}' >> packages.jsonl
+          else
+            # Log the entire output, not just filtered lines
+            echo -e "npm errors for $name:\n$output\n" >> errors.log
+          fi
+        done
+
+    - name: Prepare release downloads
+      # La extension aun no va al Marketplace: el release ofrece el .vsix, los paquetes
+      # de npm y el binario de cada plataforma para instalarlos a mano.
+      if: needs.resolve.outputs.release == 'true'
+      run: |
+        for dir in binaries/*/; do
+          target=$(basename "$dir")
+          for exe in "$dir"xzor "$dir"xzor.exe; do
+            [ -f "$exe" ] || continue
+            cp "$exe" "publish/xzor-${target}$([ "${exe##*.}" = exe ] && echo .exe)"
+          done
+        done
+        ls -la publish
+
+    - name: Notify Telegram & GitHub Release
+      if: always()
+      shell: pwsh
+      env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      run:  |
+        # Load the event payload as JSON
+        $githubEvent = @{}
+        if(Test-Path ./github_event.json) {
+          $githubEvent = Get-Content -Path ./github_event.json -Raw | ConvertFrom-Json
+        }
+
+        # Paquetes publicados, uno por linea y registro.
+        $packages = @( if (Test-Path "packages.jsonl") { Get-Content packages.jsonl | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } } ) | Sort-Object { $_.package.Length }
+
+        function packageUrl ($p) {
+          switch ($p.registry) {
+            'npm'         { "https://www.npmjs.com/package/$($p.package)/v/$($p.version)" }
+            'marketplace' { "https://marketplace.visualstudio.com/items?itemName=$($p.package)" }
+            'openvsx'     { "https://open-vsx.org/extension/$($p.package.Replace('.', '/'))/$($p.version)" }
+          }
+        }
+
+        function packageBadge ($p) {
+          switch ($p.registry) {
+            'npm'         { "https://img.shields.io/npm/v/$($p.package).svg?label=$([uri]::EscapeDataString($p.package))&style=plastic" }
+            'marketplace' { "https://img.shields.io/visual-studio-marketplace/v/$($p.package).svg?label=VS%20Code&style=plastic" }
+            'openvsx'     { "https://img.shields.io/open-vsx/v/$($p.package.Replace('.', '/')).svg?label=Open%20VSX&style=plastic" }
+          }
+        }
+
+        $telegramPackages, $githubPackages = if($packages){
+        @"
+        ---
+        ### Packages
+
+        | Package Name | Registry | Package Version |
+        |---|---|---|$($packages | ForEach-Object { "
+        | $($_.package) | $($_.registry) | [$($_.version)]($(packageUrl $_)) |" })
+        "@,
+        @"
+        ---
+        ### Packages
+        $($packages | ForEach-Object { "
+        [![$($_.package): $($_.version)]($(packageBadge $_))]($(packageUrl $_))" })
+        "@
+        } else {"",""}
+
+        # Load errors from errors logs file
+        $errors = ""
+        if (Test-Path "./errors.log") {
+          echo "Found errors log file"
+          $errors = $( Get-Content -Path "./errors.log" )
+        }
+
+        echo "These are the errors: [$errors]"
+
+        function escape ([string] $text)
+        {
+          return $text -replace "([\\_\*\[\]\(\)~``>#\+\-=|{}\.!`"'])", '\$1'
+        }
+
+        # No se escapan las comillas aqui: ConvertTo-Json ya lo hace al serializar el
+        # cuerpo, y hacerlo dos veces deja barras invertidas visibles en el mensaje.
+        function releaseTrimming ([string] $text)
+        {
+          return $text -replace '^\[Release\]\s*', ''
+        }
+
+        # Un mensaje de commit puede traer cuerpo, y cada salto de linea rompe la fila de
+        # la tabla en la que se inserta. Nos quedamos con el asunto y colapsamos el resto.
+        function subject ([string] $text)
+        {
+          $first = ($text -split '\r?\n')[0]
+          return (releaseTrimming $first).Trim()
+        }
+
+        # En una celda de tabla de GitHub la barra vertical abre una columna nueva, asi
+        # que hay que escaparla. El resto de la sintaxis de GitHub no rompe la fila, y
+        # escaparla sobraria: no es MarkdownV2 de Telegram.
+        function ghCell ([string] $text)
+        {
+          return (subject $text) -replace '\|', '\|'
+        }
+
+        $isRelease = '${{ needs.resolve.outputs.release }}' -eq 'true'
+        $headCommit = subject $githubEvent.head_commit.message
+        # Los commits de la PR llegan del mas antiguo al mas nuevo y el titulo ya encabeza
+        # el mensaje: se excluye por id el que coincida con la cabeza, y se listan del mas
+        # reciente al mas antiguo.
+        $commits = @( $githubEvent.commits | Where-Object { $_.id -ne $githubEvent.head_commit.id } )
+        [array]::Reverse($commits)
+        $failed = '${{ job.status }}' -eq 'failure'
+
+        $status, $icon, $message = if ($failed -or $errors) {
+          'failed', '💥', $errors
+        } elseif ('${{ job.status }}' -eq 'success') {
+          'successfully completed', '✅', $headCommit
+        } else {
+          'cancelled', '⛔', 'User aborted the action'
+        }
+
+        # El enlace debe apuntar al job de construccion, no al de resolucion, y
+        # cuando algun paso falla se ancla directamente al log de ese paso.
+        $job = ((gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --paginate --jq '[.jobs[] | select(.name == "xzor Build, Test & Deploy")] | last') -join '') | ConvertFrom-Json
+        $jobName = $job.name
+        $failedStep = @($job.steps | Where-Object { $_.conclusion -eq 'failure' })[0]
+        $jobUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/$($job.id)" + $(if ($failedStep) { "#step:$($failedStep.number):1" })
+
+        $message = @"
+        # 🚀 $(escape '${{ github.workflow }}') \#${{ github.run_number }}
+
+        $icon Build $status
+
+        👤 **Triggered by:** [${{ github.triggering_actor }}](https://github.com/${{ github.triggering_actor }})
+
+        🌿 **Branch:** $(escape '${{ needs.resolve.outputs.head_ref }}') → $(escape '${{ needs.resolve.outputs.base_ref }}')
+
+        🔀 **Merged by:** [${{ needs.resolve.outputs.approver }}](https://github.com/${{ needs.resolve.outputs.approver }})
+
+        🔗 **Change:** [$( $githubEvent.head_commit.id.Substring(0,8) )]($( $githubEvent.head_commit.url ))
+
+        ⚙️ **Job** [$jobName]($jobUrl)
+
+        ---
+        ### $(escape ( subject $githubEvent.head_commit.message) )$(if($commits.Count -gt 0 ) { "
+        #### Other changes
+
+        | Commit Id | Description | Author |
+        |---|---|---|
+        $([string]::Join("
+        ", $( $commits |
+        ForEach-Object {
+            "| [$( $_.id.Substring(0,8) )]($( $_.url )) | $( escape ( subject $_.message ) ) | [$( $_.author.username )](https://github.com/$($_.author.username)) |"
+        })))"
+        })$( if($errors) { "
+        ---
+        #### Errors
+
+        ``````
+        $( escape $errors.Trim() )
+        ``````" } )
+
+        $telegramPackages
+        "@
+
+        if( $isRelease -and -not $failed )
+        {
+          $releaseNotes = if($commits.Count -gt 0) {
+        @"
+        | ID | Message | Author |
+        |---|---|---|
+        $([string]::Join("
+        ", $( $commits |
+        ForEach-Object {
+              "| [$($_.id.Substring(0,8))]($($_.url)) | $( ghCell $_.message ) | [$( $_.author.username )]( https://github.com/$($_.author.username) ) |"
+        })))
+
+        $githubPackages
+        "@
+          } else { "$githubPackages" }
+
+          $downloads = @"
+
+        ---
+        ### Downloads
+
+        | File | Use |
+        |---|---|
+        | ``xzor-$($env:VERSION).vsix`` | VS Code extension: ``code --install-extension xzor-$($env:VERSION).vsix`` |
+        | ``xzor-<platform>[.exe]`` | The compiler binary for win32-x64, linux-x64 or darwin-arm64 |
+        | ``source-crafter-xzor-*.tgz`` | The npm packages, for ``bun add ./<file>.tgz`` |
+        "@
+
+          # El cuerpo va entre comillas: sin ellas PowerShell parte el argumento por cada
+          # espacio y salto de linea, y gh recibe la tabla despedazada.
+          # El tag debe colgar del commit integrado: en un evento de PR el
+          # repositorio local esta en esa cabeza, pero gh apuntaria por defecto a
+          # la rama por defecto del repositorio.
+          # La extension, los binarios y los paquetes se adjuntan para instalarlos sin registro.
+          $assets = @( Get-ChildItem publish/* -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } )
+          gh release create v${{ env.VERSION }} --target ${{ needs.resolve.outputs.head_sha }} -t "$(subject $githubEvent.head_commit.message)" -n "$releaseNotes$downloads" @assets
+        }
+
+        Write-Host $message
+
+        # Sin bot configurado no se avisa, pero el despliegue ya hecho no se marca como fallido.
+        if (-not '${{ secrets.TGBOT_TOKEN }}') {
+          Write-Host "TGBOT_TOKEN is not set: Telegram notification skipped"
+          return
+        }
+
+        $uri = "https://api.telegram.org/bot${{ secrets.TGBOT_TOKEN }}/sendRichMessage"
+
+        $body = @{
+          chat_id = '${{ secrets.SC_CHATID }}'
+          rich_message = @{ markdown = $message } | ConvertTo-Json
+          # El hilo puede ser variable o secreto del repositorio; por defecto, el mismo que SourceCrafter.
+          message_thread_id = '${{ vars.TG_THREAD_ID || secrets.TG_THREAD_ID || 4 }}'
+        }
+
+        Invoke-RestMethod -Uri $uri -Method Post -Body $body
