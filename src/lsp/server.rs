@@ -634,7 +634,7 @@ impl Server {
     /// Recompiles a document, syncs the generated code to TypeScript and requests diagnostics.
     fn refresh(&mut self, uri: &str) -> io::Result<()> {
         let Some(doc) = self.docs.get(uri) else { return Ok(()) };
-        // `@inherits` bases open in the editor are read from their unsaved text.
+        // `@inherits` bases and imported components open in the editor are read from their unsaved text.
         let read = |p: &Path| match self.docs.values().find(|d| same_path(&d.path, p)) {
             Some(d) => Some(d.text.clone()),
             None => std::fs::read_to_string(p).ok(),

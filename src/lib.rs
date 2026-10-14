@@ -12,7 +12,7 @@ pub mod routes;
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -47,7 +47,7 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
     })?;
     let file_name = path.file_name().map_or_else(|| "component.xzor".into(), |n| n.to_string_lossy());
     let stem = file_name.strip_suffix(".xzor").unwrap_or(&file_name);
-    let components = imported_components(&doc, path);
+    let (components, imported) = imported_components(&doc, path, read);
     if let Some(offset) = codegen::inject_constructor(&doc) {
         let (line, column) = line_col(source, offset);
         return Err(Diagnostic { message: codegen::ZDI08.into(), line, column, offset });
@@ -62,6 +62,7 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
         codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &base.members, &table)
             .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
     generated.deps = base.deps;
+    generated.deps.extend(imported);
     if let (Some(name), Some(inherits)) = (base.unresolved, &doc.inherits) {
         let (line, column) = line_col(source, inherits.at);
         let message = format!("could not read base class '{name}'; use this.<member> for its members");
@@ -70,21 +71,25 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
     Ok(generated)
 }
 
-/// Type parameters and prop kinds of each `.xzor` component imported by `doc`, read from disk.
-fn imported_components(doc: &ast::Document, path: &Path) -> HashMap<String, codegen::ComponentInfo> {
+/// Type parameters and prop kinds of each `.xzor` component imported by `doc`, read through `read`,
+/// plus the files they came from.
+fn imported_components(doc: &ast::Document, path: &Path, read: &dyn Fn(&Path) -> Option<String>) -> (HashMap<String, codegen::ComponentInfo>, Vec<PathBuf>) {
     let dir = path.parent().unwrap_or(Path::new("."));
-    doc.imports
-        .iter()
-        .filter_map(|import| {
-            let name = import.split_whitespace().next()?;
-            let spec = import.rsplit(['"', '\'']).nth(1)?;
-            if !spec.ends_with(".xzor") || !codegen::is_identifier(name) {
-                return None;
-            }
-            let text = std::fs::read_to_string(dir.join(spec)).ok()?;
-            Some((name.to_string(), codegen::component_info(&text)))
-        })
-        .collect()
+    let mut files = Vec::new();
+    let mut infos = HashMap::new();
+    for import in &doc.imports {
+        let Some(name) = import.split_whitespace().next() else { continue };
+        let Some(spec) = import.rsplit(['"', '\'']).nth(1) else { continue };
+        if !spec.ends_with(".xzor") || !codegen::is_identifier(name) {
+            continue;
+        }
+        let file = dir.join(spec);
+        if let Some(text) = read(&file) {
+            infos.insert(name.to_string(), codegen::component_info(&text));
+        }
+        files.push(file);
+    }
+    (infos, files)
 }
 
 /// 1-based line and column (in bytes) of a byte offset.
@@ -125,5 +130,22 @@ mod tests {
     fn no_warning_without_a_readable_chain() {
         assert!(warnings("<p/>\n").is_empty());
         assert!(warnings("@import { ComponentBase } from \"@source-crafter/xzor-runtime\"\n@inherits ComponentBase\n<p/>\n").is_empty());
+    }
+
+    /// The editor's text of an imported component decides its prop kinds, and a change to it refreshes the importer.
+    #[test]
+    fn imported_components_are_read_through_the_reader_and_listed_in_deps() {
+        let root = Path::new("/p");
+        let child = root.join("Code.xzor");
+        let read = |text: &'static str| {
+            let child = child.clone();
+            move |p: &Path| (p == child).then(|| text.to_string())
+        };
+        let main = "@import Code from \"./Code.xzor\"\n<Code name=\"hero\" />\n";
+        let g = compile_mapped_with(main, &root.join("Page.xzor"), &read("@code { name = \"x\" as Name; }\n")).unwrap();
+        assert!(g.code.contains("name: \"hero\""), "{}", g.code);
+        assert!(g.deps.contains(&child), "{:?}", g.deps);
+        let g = compile_mapped_with(main, &root.join("Page.xzor"), &read("@code { name: number = 1; }\n")).unwrap();
+        assert!(g.code.contains("name: hero"), "{}", g.code);
     }
 }
