@@ -226,9 +226,7 @@ jobs:
 
           # `if` keeps a failed publish from ending the step under bash -e: the rest still publish.
           # `./`: without it npm reads `publish/<file>.tgz` as the GitHub repo shorthand `user/repo`.
-          # A version already on npm (a rerun) counts as published instead of failing the release;
-          # `npm view` exits 0 with no output for a missing version, so its output decides.
-          if [ -n "$(npm view "${name}@${{ env.VERSION }}" version 2> /dev/null)" ] || output=$(npm publish "./$package" --access public 2>&1); then
+          if output=$(npm publish "./$package" --access public 2>&1); then
             jq -nc --arg p "$name" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "npm"}' >> packages.jsonl
           else
             # Log the entire output, not just filtered lines
@@ -248,20 +246,11 @@ jobs:
             cp "$exe" "publish/xzor-${target}$([ "${exe##*.}" = exe ] && echo .exe)"
           done
         done
+        # The extension is listed with the packages; it is downloaded from the release itself.
+        if [ -f "publish/xzor-${{ env.VERSION }}.vsix" ]; then
+          jq -nc --arg v "${{ env.VERSION }}" '{package: ("xzor-" + $v + ".vsix"), version: $v, registry: "vsix"}' >> packages.jsonl
+        fi
         ls -la publish
-
-    - name: Build the docs site
-      # The site is an xzor app, compiled with the compiler built above; GitHub Pages serves it under /<repo>/.
-      if: needs.resolve.outputs.release == 'true'
-      env:
-        BASE: /${{ github.event.repository.name }}/
-      run: bun docs/site/publish.ts "$BASE"
-
-    - name: Upload the docs site
-      if: needs.resolve.outputs.release == 'true'
-      uses: actions/upload-pages-artifact@v5
-      with:
-        path: docs/site/_site
 
     - name: Notify Telegram & GitHub Release
       if: always()
@@ -285,6 +274,7 @@ jobs:
         function packageUrl ($p) {
           switch ($p.registry) {
             'npm'         { "https://www.npmjs.com/package/$($p.package)/v/$($p.version)" }
+            'vsix'        { "https://github.com/${{ github.repository }}/releases/download/v$($p.version)/$($p.package)" }
             'marketplace' { "https://marketplace.visualstudio.com/items?itemName=$($p.package)" }
             'openvsx'     { "https://open-vsx.org/extension/$($p.package.Replace('.', '/'))/$($p.version)" }
           }
@@ -293,6 +283,7 @@ jobs:
         function packageBadge ($p) {
           switch ($p.registry) {
             'npm'         { "https://img.shields.io/npm/v/$($p.package).svg?label=$([uri]::EscapeDataString($p.package))&style=plastic" }
+            'vsix'        { "https://img.shields.io/badge/VS%20Code%20extension-$($p.version)-007ACC.svg?style=plastic" }
             'marketplace' { "https://img.shields.io/visual-studio-marketplace/v/$($p.package).svg?label=VS%20Code&style=plastic" }
             'openvsx'     { "https://img.shields.io/open-vsx/v/$($p.package.Replace('.', '/')).svg?label=Open%20VSX&style=plastic" }
           }
@@ -469,19 +460,3 @@ jobs:
         }
 
         Invoke-RestMethod -Uri $uri -Method Post -Body $body
-
-  # Publishes the site try-deliver built, once the release succeeded.
-  pages-deploy:
-    name: 'Docs site deploy'
-    needs: [ resolve, try-deliver ]
-    if: needs.resolve.outputs.release == 'true'
-    runs-on: 'ubuntu-latest'
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-    - id: deployment
-      uses: actions/deploy-pages@v5
