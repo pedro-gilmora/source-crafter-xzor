@@ -1,0 +1,118 @@
+// The dev-only client behind `xzor dev`'s hot reload. Hot bundles register their component classes here;
+// an update patches the original class in place, so the diff keeps every instance and its state.
+
+export type HotUpdate = {
+  id: string;
+  /** The module's JS without its imports, `export default class X` as `class X`, ending with `return X;`. */
+  code: string;
+  /** The value import locals the module needs; they must all be registered. */
+  imports?: string[];
+};
+
+export type HotRegistry = {
+  register(id: string, cls: Function, imports: () => Record<string, unknown>): void;
+  apply(updates: HotUpdate[]): boolean;
+};
+
+type Entry = { cls: Function; imports: () => Record<string, unknown> };
+type Instance = { stateHasChanged(): void };
+type Patch = { cls: Function; fresh: Function; probe: Record<string, unknown> | undefined };
+
+// `#private` names are per class body: the new methods could not reach the live instances' fields.
+const PRIVATE = /(^|[^\w$"'`])#[A-Za-z_$]/;
+const WRAPPED = "__xzorHotWrapped";
+const STATICS = new Set(["length", "name", "prototype"]);
+
+const copyOwn = (from: object, to: object, skip: (key: string | symbol) => boolean): void => {
+  for (const key of Reflect.ownKeys(from)) {
+    if (skip(key)) continue;
+    Object.defineProperty(to, key, Object.getOwnPropertyDescriptor(from, key)!);
+  }
+};
+
+export function installHot(target: { __xzorHot?: unknown; location?: { reload(): void } }): HotRegistry {
+  const entries = new Map<string, Entry>();
+  const live = new Set<Instance>();
+
+  // The runtime calls the lifecycle through the prototype chain, so an own wrapper on a registered
+  // prototype sees every instance. A patch may overwrite it; `observe` runs again after each one.
+  const wrap = (proto: any, name: string, track: (c: Instance) => void): void => {
+    const prev = proto[name];
+    if (prev?.[WRAPPED]) return;
+    const hook: any = function (this: Instance, ...args: unknown[]): unknown {
+      track(this);
+      return prev?.apply(this, args);
+    };
+    hook[WRAPPED] = true;
+    proto[name] = hook;
+  };
+  const observe = (cls: Function): void => {
+    wrap(cls.prototype, "onInitialized", (c) => live.add(c));
+    wrap(cls.prototype, "dispose", (c) => live.delete(c));
+  };
+
+  const reload = (): false => {
+    target.location?.reload();
+    return false;
+  };
+
+  const evaluate = (update: HotUpdate): Patch | undefined => {
+    const entry = entries.get(update.id);
+    if (!entry || PRIVATE.test(update.code)) return undefined;
+    try {
+      const bindings = entry.imports();
+      if (update.imports?.some((name) => !(name in bindings))) return undefined;
+      const names = Object.keys(bindings);
+      const fresh = new Function(...names, update.code)(...names.map((n) => bindings[n]));
+      if (typeof fresh !== "function") return undefined;
+      if (Object.getPrototypeOf(fresh) !== Object.getPrototypeOf(entry.cls)) return undefined;
+      let probe: Record<string, unknown> | undefined;
+      // The new field initializers; a component that needs constructor arguments contributes none.
+      try {
+        probe = new fresh();
+      } catch {}
+      return { cls: entry.cls, fresh, probe };
+    } catch {
+      return undefined;
+    }
+  };
+
+  const apply = (updates: HotUpdate[]): boolean => {
+    const patches: Patch[] = [];
+    for (const update of updates) {
+      const patch = evaluate(update);
+      if (!patch) return reload();
+      patches.push(patch);
+    }
+    try {
+      for (const { cls, fresh } of patches) {
+        copyOwn(fresh.prototype, cls.prototype, (key) => key === "constructor");
+        copyOwn(fresh, cls, (key) => typeof key === "string" && STATICS.has(key));
+        observe(cls);
+      }
+      // A re-render mounts children, which registers them; the snapshot keeps this loop finite.
+      for (const instance of [...live]) {
+        let patched = false;
+        for (const { cls, probe } of patches) {
+          if (!(instance instanceof (cls as new () => Instance))) continue;
+          patched = true;
+          if (probe) for (const key of Object.keys(probe)) if (!(key in instance)) (instance as any)[key] = probe[key];
+        }
+        if (patched) instance.stateHasChanged();
+      }
+    } catch {
+      return reload();
+    }
+    return true;
+  };
+
+  const registry: HotRegistry = {
+    register(id, cls, imports) {
+      entries.set(id, { cls, imports });
+      observe(cls);
+    },
+    apply,
+  };
+  target.__xzorHot = registry;
+  return registry;
+}
