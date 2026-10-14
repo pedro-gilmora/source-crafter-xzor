@@ -1,5 +1,5 @@
 import { type IApplication, Import, Mount, Singleton, Transient } from "@source-crafter/xzor-runtime";
-import App from "./App.xzor";
+import Routes from "./Routes.xzor";
 import { AuthService, Clock } from "./services/auth";
 import { DataServices } from "./services/data";
 import { type Settings } from "./services/settings";
@@ -13,7 +13,7 @@ export class Factories {
 export function newRequestId(): string {
   return crypto.randomUUID();
 }
-@Mount(App, "app")
+@Mount(Routes, "app")
 @Import(DataServices)
 @Singleton(AuthService)
 @Transient(Clock)

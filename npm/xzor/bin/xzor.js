@@ -16,7 +16,10 @@ function binary() {
   }
 }
 
-const run = spawnSync(binary(), process.argv.slice(2), { stdio: "inherit" });
+const run =
+  process.argv[2] === "init"
+    ? spawnSync("bun", [join(__dirname, "init.ts"), ...process.argv.slice(3)], { stdio: "inherit" })
+    : spawnSync(binary(), process.argv.slice(2), { stdio: "inherit" });
 if (run.error) {
   console.error(`xzor: ${run.error.message}`);
   process.exit(1);

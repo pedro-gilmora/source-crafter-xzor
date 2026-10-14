@@ -1,0 +1,116 @@
+@page "/learn/:step"
+@import Code from "../components/Code.xzor"
+@import { NavLink } from "@source-crafter/xzor-runtime"
+@import { href } from "../routes"
+
+@code {
+  step = 1;
+  readonly steps = [
+    "A component and an app",
+    "Components that talk",
+    "Slots",
+    "Cascading values",
+    "Pages and routing",
+    "Services",
+  ];
+
+  get title(): string {
+    return this.steps[this.step - 1] ?? "";
+  }
+
+  protected override onParametersSet(): void {
+    document.title = `${this.title} · xzor`;
+    window.scrollTo?.(0, 0);
+  }
+}
+
+<div class="learn">
+  <aside>
+    <span class="label">Learn xzor</span>
+    <ol>
+      @for (let i = 1; i <= steps.length; i++) {
+        <li><NavLink href="@href.Learn({ step: i })" match="exact">@steps[i - 1]</NavLink></li>
+      }
+    </ol>
+  </aside>
+
+  <article class="page">
+    <span class="label">Step @step of @steps.length</span>
+    <h1>@title</h1>
+    @switch (step) {
+      case 1:
+        <p>A component has two parts: <strong><code>@@code</code></strong> holds its state and methods, and <strong>the template</strong> (everything else) is the HTML it renders.</p>
+        <Code name="hero" />
+        <p>The entry point says which component to show and where:</p>
+        <Code name="main-counter" />
+        <Code name="index-html" />
+        <ul>
+          <li><code>@@count</code> prints a value. Use <code>@@(a + b)</code> for anything longer than a name or a member chain.</li>
+          <li>You write <code>count</code>, not <code>this.count</code>: names that refer to <code>@@code</code> members get <code>this.</code> added for you.</li>
+          <li><code>@@onclick</code> gets a typed DOM event and re-renders the component when the handler is done.</li>
+          <li><code>@@if</code>, <code>@@for</code>, <code>@@while</code> and <code>@@switch</code> are ordinary TypeScript control flow around markup.</li>
+        </ul>
+        break;
+      case 2:
+        <p>A field in <code>@@code</code> is a <strong>prop</strong>: the parent sets it as an attribute. This child reports changes to its parent:</p>
+        <Code name="stepper" />
+        <p>And this is the parent:</p>
+        <Code name="counter-bind" />
+        <ul>
+          <li>A capitalized tag is a component. A misspelled prop or a wrong type is a build error.</li>
+          <li>In lists, add <code>@@key="item.id"</code>: rows keep their DOM and state when they reorder.</li>
+          <li>Lifecycle methods follow Blazor's order: <code>onInitialized</code>, <code>onParametersSet</code>, the render, <code>onAfterRender</code>, and <code>dispose()</code> when the component leaves the page. The first two have <code>Async</code> versions.</li>
+        </ul>
+        break;
+      case 3:
+        <p>The component decides <em>where</em> the content goes:</p>
+        <Code name="card" />
+        <p>The parent decides <em>what</em> goes there:</p>
+        <Code name="card-use" />
+        <p>A slot can pass data back: the component writes <code>@@slot:item(item)</code> and the parent writes <code>@@slot item(x)</code> with a body, with <code>x</code> typed for you.</p>
+        break;
+      case 4:
+        <p>For things such as the theme or the current user: provide a value once, and every component below can read it, at any depth, without passing props.</p>
+        <Code name="cascade-provide" />
+        <Code name="cascade-consume" />
+        <p>When the value changes, the components reading it re-render.</p>
+        break;
+      case 5:
+        <p>Give a component a URL with <code>@@page</code>. URL parameters fill the props with the same name, converted to the prop's type.</p>
+        <Code name="user-page" />
+        <p>Keep the routes in one file. It decides which layout each page renders in and what to show when nothing matches:</p>
+        <Code name="routes" />
+        <Code name="main-routes" />
+        <p>Links are typed too:</p>
+        <Code name="layout-nav" />
+        <ul>
+          <li><code>href.UserPage(...)</code> is generated from your pages: a link to a route that doesn't exist won't compile.</li>
+          <li><code>NavLink</code> adds the <code>active</code> class while you're on its page.</li>
+          <li>Tag routes (<code>@@page "/admin" as admin</code>) to give them their own layout.</li>
+        </ul>
+        <p>Served from a sub-path, such as GitHub Pages? Declare it once and routes, links and <code>NavLink</code> follow it. This site does exactly that.</p>
+        <Code name="base-href" />
+        break;
+      case 6:
+        <p>Declare your services once:</p>
+        <Code name="services" />
+        <p>Register them with the application:</p>
+        <Code name="main-di" />
+        <p>Ask for one with <code>@@inject</code>:</p>
+        <Code name="inject" />
+        <p>xzor reads your types and generates the plain <code>new Database(new ConsoleLogger())</code> code. A missing service, an ambiguous one or a dependency cycle is a build error with a clear message. Async factories, keyed services and disposal work too.</p>
+        break;
+    }
+
+    <nav class="pager">
+      @if (step > 1) {
+        <a class="button" href="@href.Learn({ step: step - 1 })">← @steps[step - 2]</a>
+      }
+      @if (step < steps.length) {
+        <a class="button primary" href="@href.Learn({ step: step + 1 })">@steps[step] →</a>
+      } else {
+        <a class="button primary" href="@href.HowItWorks({})">How it works →</a>
+      }
+    </nav>
+  </article>
+</div>

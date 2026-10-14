@@ -1,0 +1,18 @@
+@import { NavLink } from "@source-crafter/xzor-runtime"
+@import { href } from "../routes"
+
+<header class="top">
+  <a class="brand" href="@href.Home({})"><span class="at">@@</span>xzor</a>
+  <nav>
+    <NavLink href="@href.Start({})">Get started</NavLink>
+    <NavLink href="@href.Learn({ step: 1 })">Learn</NavLink>
+    <NavLink href="@href.HowItWorks({})">How it works</NavLink>
+    <a href="https://github.com/pedro-gilmora/source-crafter-xzor" rel="external">GitHub</a>
+  </nav>
+</header>
+<main>
+  @slot
+</main>
+<footer>
+  This site is an xzor app: its pages are <code>.xzor</code> components, its code samples are highlighted at build time with the same grammar as the VS Code extension.
+</footer>

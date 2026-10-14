@@ -1,0 +1,34 @@
+@import { snippets, type SnippetName } from "../snippets.gen"
+
+@code {
+  // A string initializer keeps `name="hero"` text, and the cast still types it as a snippet name.
+  name = "hero" as SnippetName;
+  copied = false;
+  body?: HTMLDivElement;
+
+  protected override onAfterRender(): void {
+    // The highlighted HTML is built at compile time; it only has to be placed once per snippet.
+    if (this.body && this.body.dataset["name"] !== this.name) {
+      this.body.innerHTML = snippets[this.name].html;
+      this.body.dataset["name"] = this.name;
+    }
+  }
+
+  async copy() {
+    await navigator.clipboard.writeText(this.body?.innerText ?? "");
+    this.copied = true;
+    this.stateHasChanged();
+    setTimeout(() => {
+      this.copied = false;
+      this.stateHasChanged();
+    }, 1500);
+  }
+}
+
+<figure class="code">
+  <figcaption>
+    <span class="file">@snippets[name].file</span>
+    <button class="copy" @onclick="copy">@(copied ? "Copied" : "Copy")</button>
+  </figcaption>
+  <div class="code-body" @ref="body"></div>
+</figure>

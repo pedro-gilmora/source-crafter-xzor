@@ -1,6 +1,10 @@
-import { beforeAll, expect, test } from "bun:test";
+import { beforeAll, expect, mock, test } from "bun:test";
 import { join } from "node:path";
+import * as runtime from "../runtime/index";
 import type { RouteEntry } from "../runtime/index";
+
+// The table imports `basePath` from the package, which this standalone fixture has no install of.
+mock.module("@source-crafter/xzor-runtime", () => runtime);
 
 const root = join(import.meta.dir, "..");
 const dir = join(root, "target", "tmp-routes");

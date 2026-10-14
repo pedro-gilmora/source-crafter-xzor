@@ -1,0 +1,14 @@
+@import Shell from "./layouts/Shell.xzor"
+
+<Shell>
+  @ClientRoutes(route) {
+    @notFound {
+      <section class="page narrow">
+        <h1>Page not found</h1>
+        <p>There is nothing at <code>@route.path</code>. Try the links above.</p>
+      </section>
+    }
+    @catch(error) { <p class="error">This page failed: @(String(error))</p> }
+    @default(page) { @page }
+  }
+</Shell>

@@ -1,0 +1,38 @@
+@page "/start"
+@import Code from "../components/Code.xzor"
+@import { href } from "../routes"
+
+<section class="page narrow">
+  <h1>Get started</h1>
+  <p class="lead">One command sets up an empty folder or an existing project.</p>
+
+  <div class="two">
+    <Code name="install-win" />
+    <Code name="install-unix" />
+  </div>
+
+  <p>The installer:</p>
+  <ol class="checklist">
+    <li>installs <a href="https://bun.sh" rel="external">Bun</a> if you don't have it;</li>
+    <li>adds the compiler, the runtime and TypeScript 7;</li>
+    <li>runs <code>xzor init</code>: it creates <code>package.json</code>, <code>tsconfig.json</code> and <code>.gitignore</code>, or adds only what's missing to the ones you already have, plus a starter app if there is no <code>main.ts</code>;</li>
+    <li>installs the VS Code extension if <code>code</code> is on your PATH.</li>
+  </ol>
+
+  <h2>Run it</h2>
+  <Code name="run" />
+
+  <h2>Prefer to do it by hand?</h2>
+  <Code name="manual" />
+  <p>The settings <code>xzor init</code> makes sure of:</p>
+  <Code name="tsconfig" />
+
+  <h2>The editor</h2>
+  <p>
+    The extension gives you highlighting, completions, hover, go to definition and live errors, including inside the
+    <code>@@</code> expressions and the <code>@@code</code> block. Install <code>@("xzor-<version>.vsix")</code> from the
+    <a href="https://github.com/pedro-gilmora/source-crafter-xzor/releases" rel="external">releases page</a>.
+  </p>
+
+  <a class="button primary" href="@href.Learn({ step: 1 })">Next: learn it in six steps</a>
+</section>

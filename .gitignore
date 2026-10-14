@@ -8,3 +8,5 @@ editors/vscode/out/
 .superpowers/
 publish/
 binaries/
+docs/site/_site/
+docs/site/snippets.gen.ts

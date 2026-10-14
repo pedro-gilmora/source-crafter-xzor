@@ -226,6 +226,26 @@ function segmentsOf(pathname: string): string[] {
   return rest === "" ? [] : rest.split("/");
 }
 
+let baseFor: string | undefined;
+let base = "";
+
+/** The path of `<base href>` without its last segment: "" without one, "/docs" under `<base href="/docs/">`. */
+export function basePath(): string {
+  const uri = document.baseURI;
+  if (uri !== baseFor) {
+    baseFor = uri;
+    const path = document.querySelector("base[href]") ? new URL(uri).pathname : "/";
+    base = path.slice(0, path.lastIndexOf("/"));
+  }
+  return base;
+}
+
+/** The pathname routes match: relative to `basePath()`, starting with `/`. */
+function routePath(pathname: string): string {
+  const b = basePath();
+  return b !== "" && (pathname === b || pathname.startsWith(`${b}/`)) ? pathname.slice(b.length) || "/" : pathname;
+}
+
 /** The section's named groups, or null; `lastIndex` is reset in case the regex carries `g` or `y`. */
 function groupsOf(re: RegExp, pathname: string): Record<string, string> | null {
   re.lastIndex = 0;
@@ -235,7 +255,8 @@ function groupsOf(re: RegExp, pathname: string): Record<string, string> | null {
 
 /** Spec order: a page route picks among the `(page)` sections, otherwise the page-less ones decide. */
 function resolveRoute(router: Router, table: RouteTable, sections: readonly RouteSection[], url: URL): void {
-  const segments = segmentsOf(url.pathname);
+  const path = routePath(url.pathname);
+  const segments = segmentsOf(path);
   let page: RouteEntry | undefined;
   let params: Record<string, unknown> | null = null;
   for (const entry of table) {
@@ -253,7 +274,7 @@ function resolveRoute(router: Router, table: RouteTable, sections: readonly Rout
       if (s.kind === "tag") {
         if (s.tag === page.tag) section = i;
       } else if (s.kind === "regex" && s.page) {
-        const groups = groupsOf(s.re, url.pathname);
+        const groups = groupsOf(s.re, path);
         if (groups) {
           section = i;
           match = groups;
@@ -267,7 +288,7 @@ function resolveRoute(router: Router, table: RouteTable, sections: readonly Rout
         }
       }
     } else if (s.kind === "regex" && !s.page) {
-      const groups = groupsOf(s.re, url.pathname);
+      const groups = groupsOf(s.re, path);
       if (groups) {
         section = i;
         match = groups;
@@ -286,7 +307,7 @@ function resolveRoute(router: Router, table: RouteTable, sections: readonly Rout
   router.page = page;
   router.params = params ?? {};
   router.section = section;
-  router.route = new Route(url.pathname, page?.tag, router.params, url.searchParams, match, router.nav);
+  router.route = new Route(path, page?.tag, router.params, url.searchParams, match, router.nav);
 }
 
 /** A navigation raised while something renders (a page redirecting itself) waits for that render to end. */
@@ -1212,7 +1233,7 @@ export class NavLink extends ComponentBase {
     if (target === null) return false;
     const path = this.#path;
     // The root is every path's prefix, so it only ever matches exactly.
-    if (this.match === "exact" || target === "/") return path === target;
+    if (this.match === "exact" || target === `${basePath()}/`) return path === target;
     return path === target || path.startsWith(target.endsWith("/") ? target : `${target}/`);
   }
 

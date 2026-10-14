@@ -1,0 +1,8 @@
+@code {
+  count = 0;
+}
+
+<button @onclick="() => count++">Clicked @count times</button>
+@if (count >= 10) {
+  <p>That's a lot of clicks!</p>
+}

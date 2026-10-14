@@ -1,0 +1,127 @@
+--- install-win | Windows · PowerShell | powershell
+irm https://raw.githubusercontent.com/pedro-gilmora/source-crafter-xzor/main/install.ps1 | iex
+--- install-unix | Linux / macOS · Terminal | shellscript
+curl -fsSL https://raw.githubusercontent.com/pedro-gilmora/source-crafter-xzor/main/install.sh | bash
+--- run | Terminal | shellscript
+bun run dev        # rebuilds dist/ every time you save
+bun x serve -s     # serves the app; open the printed URL
+--- manual | Terminal | shellscript
+bun add -d @source-crafter/xzor typescript@^7
+bun add @source-crafter/xzor-runtime
+bun x xzor init    # adds what xzor needs to package.json, tsconfig.json and .gitignore
+--- tsconfig | tsconfig.json | jsonc
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
+    "lib": ["ES2022", "ESNext.Disposable", "DOM"],
+    "strict": true, "noEmit": true, "skipLibCheck": true,
+    "rootDirs": [".", ".xzor"]          // import "./X.xzor" finds the generated .xzor/X.xzor.ts
+  },
+  "include": ["**/*.ts", ".xzor/**/*.ts"]
+}
+--- hero | Counter.xzor | xzor
+@code {
+  count = 0;
+}
+
+<button @onclick="() => count++">Clicked @count times</button>
+@if (count >= 10) {
+  <p>That's a lot of clicks!</p>
+}
+--- main-counter | main.ts | typescript
+import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import Counter from "./Counter.xzor";
+
+@Mount(Counter, "app")              // renders into <div id="app">
+export class Application implements IApplication {}
+--- index-html | index.html | html
+<div id="app"></div>
+<script type="module" src="./dist/main.js"></script>
+--- stepper | Stepper.xzor | xzor
+@import { type EventCallback } from "@source-crafter/xzor-runtime"
+
+@code {
+  value = 0;                                  // set by the parent
+  valueChanged?: EventCallback<number>;       // called to tell the parent
+}
+
+<button @onclick="() => valueChanged?.(value + 1)">@value</button>
+--- counter-bind | Counter.xzor | xzor
+@import Stepper from "./Stepper.xzor"
+
+@code {
+  n = 1;
+}
+
+<Stepper @bind-value="n" />          @* passes value and listens to valueChanged *@
+<input type="number" @bind="n" />    @* stays a number, not a string *@
+--- card | Card.xzor | xzor
+<section class="card">
+  @slot:header { <h3>Untitled</h3> }    @* a named slot, with fallback content *@
+  @slot                                 @* the default slot *@
+</section>
+--- card-use | Home.xzor | xzor
+<Card>
+  @slot header { <em>Today</em> }
+  <p>Anything outside a @slot block goes to the default slot.</p>
+</Card>
+--- cascade-provide | layouts/Shell.xzor · template | xzor
+@cascade:theme(theme) {
+  @slot
+}
+--- cascade-consume | layouts/MainLayout.xzor · @code | xzor
+@code {
+  @Cascade theme!: string;
+}
+--- user-page | pages/UserPage.xzor | xzor
+@page "/users/:id"
+
+@code {
+  id = 0;           // "/users/42" sets id to the number 42
+}
+
+<h2>User @id</h2>
+--- routes | Routes.xzor | xzor
+@import MainLayout from "./layouts/MainLayout.xzor"
+
+@ClientRoutes(route) {
+  @notFound { <p>Nothing at @route.path</p> }
+  @catch(error) { <p class="error">This page failed: @(String(error))</p> }
+  @default(page) { <MainLayout>@page</MainLayout> }
+}
+--- main-routes | main.ts | typescript
+import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import Routes from "./Routes.xzor";
+
+@Mount(Routes, "app")
+export class Application implements IApplication {}
+--- layout-nav | layouts/MainLayout.xzor | xzor
+@import { NavLink } from "@source-crafter/xzor-runtime"
+@import { href } from "../routes"
+
+<nav>
+  <NavLink href="./" match="exact">Home</NavLink>
+  <NavLink href="@href.UserPage({ id: 1 })">User 1</NavLink>   @* id: "1" is a build error *@
+</nav>
+<main>@slot</main>
+--- base-href | index.html · <head> | html
+<!-- served from https://you.github.io/my-app/ -->
+<base href="/my-app/">
+--- services | services/data.ts | typescript
+import { Scoped, ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
+
+@ServiceProvider()
+@Singleton<ILogger>(ConsoleLogger)
+@Singleton<IDatabase>(Database)       // Database's constructor asks for an ILogger: it gets one
+@Scoped(UnitOfWork)
+export class DataServices {}
+--- main-di | main.ts | typescript
+@Mount(Routes, "app")
+@Import(DataServices)
+export class Application implements IApplication {}
+--- inject | Counter.xzor | xzor
+@inject IDatabase db
+
+<small>Connected to @db.name</small>
+--- pipeline | How a component is built | shellscript
+Counter.xzor  →  xzor  →  .xzor/Counter.xzor.ts  →  tsc  →  Bun  →  dist/main.js

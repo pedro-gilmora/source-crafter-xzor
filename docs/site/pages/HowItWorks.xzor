@@ -1,0 +1,41 @@
+@page "/how-it-works"
+@import Code from "../components/Code.xzor"
+
+@code {
+  readonly pieces = [
+    ["parser.rs", "Reads .xzor into a syntax tree that remembers source positions."],
+    ["codegen.rs", "Writes the TypeScript class (buildRenderTree), with source maps back to your file."],
+    ["build.rs", "Writes .xzor/ (components, route table, DI), runs tsc, then bundles with Bun."],
+    ["di.ts", "Reads your services with TypeScript's API and generates the code that creates them."],
+    ["runtime", "The render tree, the diff, components, the router and the DI types."],
+    ["lsp", "The language server behind the VS Code extension."],
+  ] as const;
+}
+
+<section class="page narrow">
+  <h1>How it works</h1>
+  <p class="lead">Each component goes through the same steps:</p>
+  <Code name="pipeline" />
+  <p>The generated TypeScript is an internal step, like Blazor's <code>obj/</code> folder: you never edit it, but your editor and the type checker read it.</p>
+
+  <h2>The pieces</h2>
+  <dl class="pieces">
+    @for (const [name, job] of pieces) {
+      <dt><code>@name</code></dt>
+      <dd>@job</dd>
+    }
+  </dl>
+
+  <h2>The rules</h2>
+  <ul>
+    <li><strong>Work at build time, not at runtime.</strong> Generic inference, DI and routing are generated as plain code.</li>
+    <li><strong>Allocate no more than hand-written code would.</strong></li>
+    <li><strong>No Rust dependencies.</strong> The compiler is a single small binary.</li>
+  </ul>
+
+  <h2>Go deeper</h2>
+  <p>
+    The <a href="https://github.com/pedro-gilmora/source-crafter-xzor/blob/main/docs/design.md" rel="external">design reference</a> covers every directive, and
+    <a href="https://github.com/pedro-gilmora/source-crafter-xzor/tree/main/examples/counter" rel="external">examples/counter</a> uses every feature in one app.
+  </p>
+</section>

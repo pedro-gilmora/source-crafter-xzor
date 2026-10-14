@@ -1,27 +1,54 @@
 # xzor
 
-**Blazor-style components for TypeScript.** You write `.xzor` files: markup with `@` expressions plus a `@code` block. A Rust compiler turns each one into a typed TypeScript class. The TypeScript 7 compiler checks it, and Bun bundles it into a small single-page app.
+**Write components the Blazor way. Ship plain, typed TypeScript.**
 
-```
-Counter.xzor ──xzor──▶ .xzor/Counter.xzor.ts ──tsc──▶ type errors ──Bun──▶ dist/main.js
+```xzor
+<button @onclick="() => count++">Clicked @count times</button>
 ```
 
-If you know Razor, you already know most of it. If you don't, the steps below take you from an empty folder to an app with routing and dependency injection.
+A `.xzor` file is HTML with `@` expressions plus a `@code` block. The xzor compiler, written in Rust, turns it into a TypeScript class. TypeScript 7 checks it, and Bun bundles it into a small single-page app. You get:
+
+- **Types everywhere**: props, events, slots, routes and services are checked at build time, and your editor shows the errors as you type.
+- **No runtime magic**: routing and dependency injection are generated as plain code. There is no reflection and no container.
+- **A small, fast runtime**: it diffs the render tree and touches only the DOM nodes that changed.
+
+The [documentation site](https://pedro-gilmora.github.io/source-crafter-xzor/) is itself an xzor app: see [`docs/site`](docs/site).
 
 ---
 
-## 0. Install
+## Get started in one minute
 
-You need [Bun](https://bun.sh) ≥ 1.4.
+Run the installer for your platform in an empty folder (or an existing project):
+
+| Platform | Command |
+|---|---|
+| **Windows** (PowerShell) | `irm https://raw.githubusercontent.com/pedro-gilmora/source-crafter-xzor/main/install.ps1 \| iex` |
+| **Linux / macOS** | `curl -fsSL https://raw.githubusercontent.com/pedro-gilmora/source-crafter-xzor/main/install.sh \| bash` |
+
+From a clone of this repo, run `.\install.ps1 my-app` or `bash install.sh my-app` instead. The installer:
+
+1. installs [Bun](https://bun.sh) if you don't have it;
+2. adds `@source-crafter/xzor`, `@source-crafter/xzor-runtime` and TypeScript 7 to the project;
+3. runs `xzor init`: it creates `package.json`, `tsconfig.json` and `.gitignore`, or adds only what's missing to the ones you already have (scripts, `rootDirs`, `lib`, `include`), plus a starter app if the folder has no `main.ts`;
+4. installs the VS Code extension if `code` is on your `PATH` (highlighting, completions, hover, go to definition and live errors).
+
+Then:
+
+```sh
+bun run dev        # rebuilds dist/ every time you save
+bun x serve -s     # serves the app; open the printed URL
+```
+
+<details>
+<summary>Prefer to set it up by hand?</summary>
 
 ```sh
 bun add -d @source-crafter/xzor typescript@^7
 bun add @source-crafter/xzor-runtime
+bun x xzor init    # sets up package.json, tsconfig.json and .gitignore
 ```
 
-For the editor, download `xzor-<version>.vsix` from the [releases](../../releases) and install it with `code --install-extension xzor-<version>.vsix`. It gives you highlighting, completions, hover, go-to-definition and live diagnostics, including inside the `@` expressions.
-
-`tsconfig.json` must also see the generated files:
+**`tsconfig.json`**: what `xzor init` makes sure of. The two `.xzor` entries let TypeScript see the generated code.
 
 ```jsonc
 {
@@ -29,32 +56,41 @@ For the editor, download `xzor-<version>.vsix` from the [releases](../../release
     "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
     "lib": ["ES2022", "ESNext.Disposable", "DOM"],
     "strict": true, "noEmit": true, "skipLibCheck": true,
-    "rootDirs": [".", ".xzor"]          // lets `import X from "./X.xzor"` resolve
+    "rootDirs": [".", ".xzor"]
   },
   "include": ["**/*.ts", ".xzor/**/*.ts"]
 }
 ```
 
-## 1. Your first component
+The extension is the `xzor-<version>.vsix` on the [releases page](../../releases): `code --install-extension xzor-<version>.vsix`.
+</details>
+
+---
+
+## Learn it in six steps
+
+Each step builds on the previous one. Every snippet starts with the file it belongs to.
+
+### 1. A component and an app
+
+A component has two parts: **`@code`** holds its state and methods, and **the template** (everything else) is the HTML it renders.
+
+**`Counter.xzor`**
 
 ```xzor
-@* Counter.xzor *@
 @code {
   count = 0;
 }
 
 <button @onclick="() => count++">Clicked @count times</button>
 @if (count >= 10) {
-  <p>That's a lot of clicks.</p>
+  <p>That's a lot of clicks!</p>
 }
 ```
 
-- `@name`, `@a.b(c)` and `@(expr)` print values. Names that refer to `@code` members get `this.` added for you.
-- `@if`, `@for`, `@while` and `@switch` are plain TypeScript control flow around markup.
-- `@onclick="..."` handles a DOM event, with the type of that event, and then re-renders the component.
+**`main.ts`**: the entry point. It says which component to show and where.
 
 ```ts
-// main.ts
 import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
 import Counter from "./Counter.xzor";
 
@@ -62,141 +98,221 @@ import Counter from "./Counter.xzor";
 export class Application implements IApplication {}
 ```
 
-```sh
-bun x xzor build            # compile + type-check + bundle into dist/
-bun x xzor build --watch    # rebuild on save
+**`index.html`**
+
+```html
+<div id="app"></div>
+<script type="module" src="./dist/main.js"></script>
 ```
 
-Load `dist/main.js` as a module script next to a `<div id="app">`, and that's it.
+That's a working app. A few things to notice:
 
-## 2. Components talk: props, callbacks, binding
+- `@count` prints a value. Use `@(a + b)` for anything longer than a name or a member chain.
+- You write `count`, not `this.count`: names that refer to `@code` members get `this.` added for you.
+- `@onclick` gets a typed DOM event and re-renders the component when the handler is done.
+- `@if`, `@for`, `@while` and `@switch` are ordinary TypeScript control flow wrapped around markup.
+
+### 2. Components that talk to each other
+
+A field in `@code` is a **prop**: the parent sets it as an attribute.
+
+**`Stepper.xzor`**: a child that reports changes to its parent.
 
 ```xzor
-@* Stepper.xzor *@
 @import { type EventCallback } from "@source-crafter/xzor-runtime"
+
 @code {
-  value = 0;
-  valueChanged?: EventCallback<number>;
+  value = 0;                                  // set by the parent
+  valueChanged?: EventCallback<number>;       // called to tell the parent
 }
+
 <button @onclick="() => valueChanged?.(value + 1)">@value</button>
 ```
 
+**`Counter.xzor`**: the parent.
+
 ```xzor
 @import Stepper from "./Stepper.xzor"
-@code { n = 1; }
 
-<Stepper @bind-value="n" />     @* two-way binding: passes value + valueChanged *@
-<input type="number" @bind="n" />
+@code {
+  n = 1;
+}
+
+<Stepper @bind-value="n" />          @* passes value and listens to valueChanged *@
+<input type="number" @bind="n" />    @* stays a number, not a string *@
 ```
 
-- A capitalized tag is a component. Its attributes are type-checked against the component's fields.
-- `@bind` works on inputs (numbers stay numbers, checkboxes bind `checked`), and `@bind-value` works on components.
-- `@key="item.id"` in a list keeps DOM nodes and component state when the items reorder.
-- The lifecycle follows Blazor's order: `onInitialized(Async)`, then `onParametersSet(Async)`, then render, then `onAfterRender(first)`, and `dispose()` when the component leaves the tree.
+- A capitalized tag is a component. A misspelled prop or a wrong type is a build error.
+- In lists, add `@key="item.id"`: rows keep their DOM and state when they reorder.
+- Lifecycle methods follow Blazor's order: `onInitialized(Async)`, then `onParametersSet(Async)`, then the render, then `onAfterRender(first)`. `dispose()` runs when the component leaves the page.
 
-## 3. Composition: slots and fragments
+### 3. Slots: components that wrap content
+
+**`Card.xzor`**: the component decides *where* the content goes.
 
 ```xzor
-@* Card.xzor *@
-<section>
-  @slot:header { <h3>Default title</h3> }   @* named slot, with fallback content *@
-  @slot                                     @* default slot *@
+<section class="card">
+  @slot:header { <h3>Untitled</h3> }    @* a named slot, with fallback content *@
+  @slot                                 @* the default slot *@
 </section>
 ```
 
+**`Home.xzor`**: the parent decides *what* goes there.
+
 ```xzor
 <Card>
-  @slot header { <em>Custom title</em> }
-  <p>Everything else goes to the default slot.</p>
+  @slot header { <em>Today</em> }
+  <p>Anything outside a @slot block goes to the default slot.</p>
 </Card>
 ```
 
-Slots can pass arguments (`@slot:item(item)` in the component, then `@slot item(x) { … }` in the parent), and their types are inferred. Inside `@code`, markup is a value (a `RenderFragment`) that you can return, store and render with `@member`.
+A slot can also pass data back: the component writes `@slot:item(item)` and the parent writes `@slot item(x) { <b>@x.name</b> }`, with `x` typed for you.
 
-## 4. Share state without prop drilling: cascading values
+### 4. Share a value with everything below: cascading values
+
+Use this for things such as the theme or the current user, so you don't have to pass a prop through every level.
+
+**`layouts/Shell.xzor`**, template: provides the value.
 
 ```xzor
-@cascade:theme(currentTheme) {
-  <Toolbar />                   @* any depth below can read it *@
+@cascade:theme(theme) {
+  @slot
 }
 ```
 
+**`layouts/MainLayout.xzor`**, `@code`: any component below it, at any depth, receives it.
+
 ```xzor
-@code { @Cascade theme!: string; }
+@code {
+  @Cascade theme!: string;
+}
 ```
 
-## 5. Pages and routing
+### 5. Pages and routing
+
+Give a component a URL with `@page`. URL parameters fill the props with the same name, converted to the prop's type.
+
+**`pages/UserPage.xzor`**
 
 ```xzor
 @page "/users/:id"
-@code { id!: number; }          @* ":id" is converted to number from the field type *@
-<h1>User @id</h1>
+
+@code {
+  id = 0;           // "/users/42" sets id to the number 42
+}
+
+<h2>User @id</h2>
 ```
 
-One shell component holds the routes block:
+Keep all your routes in one file, **`Routes.xzor`**. It decides which layout each page renders in and what to show when nothing matches:
 
 ```xzor
+@import MainLayout from "./layouts/MainLayout.xzor"
+
 @ClientRoutes(route) {
-  @notFound { <p>Not found</p> }
-  @catch(e) { <p class="error">@e</p> }
+  @notFound { <p>Nothing at @route.path</p> }
+  @catch(error) { <p class="error">This page failed: @(String(error))</p> }
   @default(page) { <MainLayout>@page</MainLayout> }
 }
 ```
 
-- `href.UserPage({ id: 7 })` (from `./routes`) builds typed links, and a wrong parameter type is a compile error.
-- `<NavLink href="/users" activeClass="active">` marks the link while its route is active.
-- Use `@page "/admin/:id" as admin` to tag routes, then lay them out with an `@admin(page) { … }` section.
-
-## 6. Services: compile-time dependency injection
+**`main.ts`**: mount the routes instead of a single component.
 
 ```ts
+import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import Routes from "./Routes.xzor";
+
+@Mount(Routes, "app")
+export class Application implements IApplication {}
+```
+
+**`layouts/MainLayout.xzor`**: links that know where they point.
+
+```xzor
+@import { NavLink } from "@source-crafter/xzor-runtime"
+@import { href } from "../routes"
+
+<nav>
+  <NavLink href="/" match="exact">Home</NavLink>
+  <NavLink href="@href.UserPage({ id: 1 })">User 1</NavLink>   @* id: "1" is a build error *@
+</nav>
+<main>@slot</main>
+```
+
+- `href.UserPage(...)` is generated from your `@page`s, so a link to a route that doesn't exist won't compile.
+- `NavLink` adds the `active` class while you're on its page.
+- Give some routes a tag (`@page "/admin" as admin`) and wrap them all in another layout with `@admin(page) { <AdminLayout>@page</AdminLayout> }`.
+
+### 6. Services: dependency injection at compile time
+
+Declare your services once.
+
+**`services/data.ts`**
+
+```ts
+import { Scoped, ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
+
 @ServiceProvider()
-@Singleton<IDatabase>(Database)       // Database(log: ILogger) is wired automatically
 @Singleton<ILogger>(ConsoleLogger)
+@Singleton<IDatabase>(Database)       // Database's constructor asks for an ILogger: it gets one
 @Scoped(UnitOfWork)
 export class DataServices {}
 ```
 
-```xzor
-@inject IDatabase db
-<small>@db.name</small>
+**`main.ts`**: register them with the application.
+
+```ts
+@Mount(Routes, "app")
+@Import(DataServices)
+export class Application implements IApplication {}
 ```
 
-There is no reflection and no runtime container. xzor reads your types and generates the plain `new` calls into `.xzor/`. Missing or ambiguous services, lifetime mistakes and cycles are build errors, and the editor shows them as you type. Async factories, keyed services (`@Singleton("key", factory)`) and disposal (`Symbol.dispose`) are supported.
+**`Counter.xzor`**: ask for one with `@inject`.
 
-## 7. The full tour
+```xzor
+@inject IDatabase db
 
-[`examples/counter`](examples/counter) uses every feature above in one app: layouts, an admin area, typed routes, an error page, async settings and scoped services. Build it with `cargo run -- build examples/counter`. For the complete reference, see [docs/design.md](docs/design.md).
+<small>Connected to @db.name</small>
+```
+
+xzor reads your types and generates the plain `new Database(new ConsoleLogger())` code. A missing service, an ambiguous one or a dependency cycle is a build error with a clear message. Async factories, keyed services (`@Singleton("key", factory)`) and disposal (`Symbol.dispose`) work too.
 
 ---
 
-## How it works (the short version)
+## See it all together
 
-| Piece | What it does |
-|---|---|
-| `src/parser.rs` | Turns `.xzor` into an AST with source spans |
-| `src/codegen.rs` | Generates a TypeScript class with `buildRenderTree(builder)`, plus source mappings |
-| `src/build.rs` | Writes `.xzor/`, the route table and the DI output, runs `tsc`, then bundles with Bun |
-| `src/di.ts` | Reads services and constructors with TypeScript 7's API and generates the providers |
-| `runtime/index.ts` | `RenderTreeBuilder`, the diff (by position, or keyed), components, the router and the DI types |
-| `src/lsp/` | `xzor lsp`: component features, and a proxy to `tsc --lsp` through the mappings for the TypeScript regions |
+[`examples/counter`](examples/counter) is a small app that uses every feature above: `Routes.xzor`, layouts, an admin area, typed links, an error page, async settings and scoped services. Build it with `cargo run -- build examples/counter`.
 
-The design rules:
-- **Pay at compile time, not at runtime.** Generic inference, DI and routing are all generated as plain code.
-- **Allocate no more than hand-written code would.**
-- **The compiler has zero Rust dependencies.**
+When you need the details, see the full reference: [docs/design.md](docs/design.md).
 
-## Development
+## How it works
 
-```sh
-cargo test                 # compiler unit + integration tests
-bun test                   # runtime, build, DI and LSP end-to-end tests
-bun run test:grammar       # VS Code grammar tests
-./Package.ps1 -test true   # build, test and pack everything into publish/
+```
+Counter.xzor ──xzor──▶ .xzor/Counter.xzor.ts ──tsc──▶ type errors ──Bun──▶ dist/main.js
 ```
 
-**Releasing:** push to `main` with a commit message that starts with `[Release]`. CI then:
-1. builds the binaries for win32-x64, linux-x64 and darwin-arm64;
-2. runs every test;
-3. publishes the npm packages with the next sequential version (the patch after the latest one on npm);
-4. creates a GitHub release with the `.vsix`, the binaries and the tarballs.
+| Piece | Job |
+|---|---|
+| `src/parser.rs` | Reads `.xzor` into a syntax tree that remembers source positions |
+| `src/codegen.rs` | Writes the TypeScript class (`buildRenderTree`), with source maps back to your file |
+| `src/build.rs` | Writes `.xzor/` (components, route table, DI), runs `tsc`, then bundles with Bun |
+| `src/di.ts` | Reads your services with TypeScript's API and generates the code that creates them |
+| `runtime/index.ts` | The render tree, the diff, components, the router and the DI types |
+| `src/lsp/` | The language server behind the VS Code extension |
+
+The rules the project follows:
+- **Work at build time, not at runtime.**
+- **Allocate no more than hand-written code would.**
+- **No Rust dependencies.**
+
+## Contributing
+
+```sh
+cargo test                 # compiler tests
+bun test                   # runtime, build, DI and language server tests
+bun run test:grammar       # VS Code syntax highlighting tests
+./Package.ps1 -test true   # build, test and pack everything into publish/
+bun run docs               # build the documentation site into docs/site/_site
+```
+
+**Releasing:** push to `main` with a commit message that starts with `[Release]`. CI then builds the binaries for Windows, Linux and macOS, runs every test, publishes to npm with the next version (`0.1.0`, `0.1.1`, …), and attaches the `.vsix`, the binaries and the npm tarballs to a GitHub release.

@@ -1,0 +1,43 @@
+@page "/"
+@import Code from "../components/Code.xzor"
+@import LiveCounter from "../components/LiveCounter.xzor"
+@import { href } from "../routes"
+
+<section class="hero">
+  <h1>Write components the Blazor way.<br /><span class="accent">Ship plain, typed TypeScript.</span></h1>
+  <p class="lead">
+    A <code>.xzor</code> file is HTML with <code>@@</code> expressions and a <code>@@code</code> block.
+    The compiler turns it into a TypeScript class, TypeScript 7 checks it, and Bun bundles a small single-page app.
+  </p>
+  <div class="actions">
+    <a class="button primary" href="@href.Start({})">Get started</a>
+    <a class="button" href="@href.Learn({ step: 1 })">Learn in six steps</a>
+  </div>
+</section>
+
+<section class="demo">
+  <Code name="hero" />
+  <div class="live">
+    <span class="label">Live: this is that component, running on this page</span>
+    <LiveCounter />
+  </div>
+</section>
+
+<section class="features">
+  <article>
+    <h3>Types everywhere</h3>
+    <p>Props, events, slots, routes and services are checked at build time. Your editor shows the errors as you type, even inside <code>@@</code> expressions.</p>
+  </article>
+  <article>
+    <h3>No runtime magic</h3>
+    <p>Routing and dependency injection are generated as plain code. No reflection, no container, nothing to configure at startup.</p>
+  </article>
+  <article>
+    <h3>Small and fast</h3>
+    <p>The runtime diffs a render tree and touches only the DOM nodes that changed. Focus and input state survive re-renders.</p>
+  </article>
+  <article>
+    <h3>Familiar</h3>
+    <p>If you know Razor, you already know most of it: <code>@@if</code>, <code>@@for</code>, <code>@@bind</code>, <code>@@page</code>, <code>@@inject</code>, layouts and cascading values.</p>
+  </article>
+</section>
