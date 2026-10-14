@@ -243,6 +243,9 @@ pub fn table(root: &Path, units: &[Unit]) -> (String, Vec<(PathBuf, crate::Diagn
     let mut first_block: Option<usize> = None;
     for (i, u) in units.iter().enumerate() {
         let Some(block) = u.block else { continue };
+        if !u.routes.is_empty() {
+            diags.push(diag(u, block.at, "a @page component can't hold the routes block (it would render itself); move the block to a component without @page".into()));
+        }
         match first_block {
             Some(j) => {
                 let other = rel_display(root, units[j].source);
@@ -814,14 +817,15 @@ mod table_tests {
 
     #[test]
     fn unknown_section_tags() {
-        let mut p = page("A.tszor", "A", vec![route(Some("admin"), "/a", &[])]);
+        let pages = page("Admin.tszor", "Admin", vec![route(Some("admin"), "/a", &[])]);
+        let mut p = page("A.tszor", "A", Vec::new());
         p.text = "\n\n@x(page) {\n".into();
         p.block = Some(RoutesBlockInfo {
             engine: Engine::Client,
             at: 2,
             sections: vec![("admin".into(), 3), ("x".into(), 3)],
         });
-        let (_, diags) = generate(&[p]);
+        let (_, diags) = generate(&[pages, p]);
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].1.message, "no route tagged \"x\"");
         assert_eq!((diags[0].1.line, diags[0].1.column), (3, 2));
@@ -838,6 +842,15 @@ mod table_tests {
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].1.message, "only one routes block per project (also in A.tszor)");
         assert_eq!(diags[0].0, PathBuf::from("/proj").join("sub/B.tszor"));
+    }
+
+    #[test]
+    fn a_page_cannot_hold_the_routes_block() {
+        let mut a = page("A.tszor", "A", vec![route(None, "/", &[])]);
+        a.block = Some(RoutesBlockInfo { engine: Engine::Client, at: 0, sections: Vec::new() });
+        let (_, diags) = generate(&[a]);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].1.message, "a @page component can't hold the routes block (it would render itself); move the block to a component without @page");
     }
 
     /// Writes `target/tmp-routes/` for `tests/routes-table.test.ts`, which runs the matchers.

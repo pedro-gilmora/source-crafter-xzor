@@ -26,20 +26,19 @@ const userPage = `@page "/users/:id" as admin
 <p class="user">@id</p>
 `;
 
+// A page that links through the table: the table imports it while it imports the table.
 const adminHome = `@page "/admin" as admin
+@import { href } from "./routes"
 
-<p class="admin-home">admin</p>
+<p class="admin-home">admin <a class="back-link" href="@href.UserPage({ id: 3 })">user 3</a></p>
 `;
 
-// The shell is a page too: the table imports it while it imports the table.
-const app = `@page "/shell"
-@import { href } from "./routes"
+const app = `@import { href } from "./routes"
 
 <nav>
   <a class="user-link" href="@href.UserPage({ id: 2 })">user 2</a>
   <a class="admin-link" href="@href.AdminHome({})">admin</a>
   <a class="missing-link" href="/nope">nope</a>
-  <a class="shell-link" href="@href.App({})">shell</a>
 </nav>
 @ClientRoutes(route) {
   @admin(page) { <section class="admin">@page</section> }
@@ -80,8 +79,6 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   await import(join(dir, "dist", "main.js"));
   // A page without a tag falls to @default.
   expect(text("main.main .home")).toBe("home");
-  // The shell's own route is in the table, so the cycle between the two modules loaded cleanly.
-  expect(document.querySelector("#app .shell-link")?.getAttribute("href")).toBe("/shell");
 
   // The generated href builder fills the link, and the click is a History navigation.
   expect(document.querySelector("#app .user-link")?.getAttribute("href")).toBe("/users/2");
@@ -90,7 +87,10 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   expect(text("section.admin .user")).toBe("2");
 
   click(".admin-link");
-  expect(text("section.admin .admin-home")).toBe("admin");
+  expect(text("section.admin .admin-home")).toContain("admin");
+  // The page imports the table that imports it; both loaded and link to each other.
+  click(".back-link");
+  expect(text("section.admin .user")).toBe("3");
 
   click(".missing-link");
   expect(text("main.main")).toBeUndefined();
