@@ -262,7 +262,8 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         let scripts = build::changed_scripts(&batch, dir);
         if plan.config || plan.di || !plan.remove.is_empty() || !scripts.is_empty() {
             hot = None;
-        }        let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
+        }
+        let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
         let dependents = build::dependents(&units, &changed);
         recompile.extend(dependents);
         routes_due |= plan.config || !recompile.is_empty() || !plan.remove.is_empty();
@@ -277,7 +278,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                         Some(slot) => {
                             if slot.generated.code != unit.generated.code {
                                 if let Some(ids) = hot.as_mut() {
-                                    ids.insert(hot_id(dir, &unit.out));
+                                    ids.insert(hot_id(&unit.source, &unit.out));
                                 }
                             }
                             *slot = unit;
@@ -362,8 +363,8 @@ fn rebuild(
     Ok(())
 }
 
-/// The generated file's path relative to the project root, `/`-separated.
-fn hot_id(dir: &Path, out: &Path) -> String {
-    let rel = out.strip_prefix(dir).unwrap_or(out);
+/// The generated file's path relative to its project root (nearest `tsconfig.json`), `/`-separated.
+fn hot_id(source: &Path, out: &Path) -> String {
+    let rel = out.strip_prefix(build::project_root(source)).unwrap_or(out);
     rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
 }
