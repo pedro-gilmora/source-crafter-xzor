@@ -226,8 +226,9 @@ jobs:
 
           # `if` keeps a failed publish from ending the step under bash -e: the rest still publish.
           # `./`: without it npm reads `publish/<file>.tgz` as the GitHub repo shorthand `user/repo`.
-          # A version already on npm (a rerun) counts as published instead of failing the release.
-          if npm view "${name}@${{ env.VERSION }}" version > /dev/null 2>&1 || output=$(npm publish "./$package" --access public 2>&1); then
+          # A version already on npm (a rerun) counts as published instead of failing the release;
+          # `npm view` exits 0 with no output for a missing version, so its output decides.
+          if [ -n "$(npm view "${name}@${{ env.VERSION }}" version 2> /dev/null)" ] || output=$(npm publish "./$package" --access public 2>&1); then
             jq -nc --arg p "$name" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "npm"}' >> packages.jsonl
           else
             # Log the entire output, not just filtered lines
