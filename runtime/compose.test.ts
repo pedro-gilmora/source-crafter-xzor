@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ComponentBase, type EventCallback, type RenderFragment, type RenderTreeBuilder, mount } from "./index";
 
-// Written the way zor emits slots, callbacks and @bind.
+// Written the way xzor emits slots, callbacks and @bind.
 
 class Panel extends ComponentBase {
   declare slots: { default?: () => RenderFragment; header?: (n: number) => RenderFragment };

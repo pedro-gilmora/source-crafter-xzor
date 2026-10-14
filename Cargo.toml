@@ -1,10 +1,10 @@
 [package]
-name = "zor"
+name = "xzor"
 version = "0.1.0"
 edition = "2024"
-description = "Blazor-like component compiler for TypeScript: .tszor -> .ts -> .js"
+description = "Blazor-like component compiler for TypeScript: .xzor -> .ts -> .js"
 license = "MIT"
 
 [[bin]]
-name = "zor"
+name = "xzor"
 path = "src/main.rs"

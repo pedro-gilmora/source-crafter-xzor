@@ -1,4 +1,4 @@
-//! `zor lsp`: answers component questions itself and proxies TypeScript regions to
+//! `xzor lsp`: answers component questions itself and proxies TypeScript regions to
 //! TypeScript 7's native server, mapping positions through codegen's source maps.
 
 use super::features::{self, Context, Symbol};
@@ -67,23 +67,23 @@ struct Doc {
     routes: Vec<Json>,
 }
 
-/// What the route table needs from a `.tszor` no open document covers.
+/// What the route table needs from a `.xzor` no open document covers.
 struct RouteUnit {
     text: String,
     routes: Vec<crate::routes::RouteInfo>,
     block: Option<crate::routes::RoutesBlockInfo>,
 }
 
-/// One project's `.zor/routes.ts`, synced to TypeScript as an in-memory document.
+/// One project's `.xzor/routes.ts`, synced to TypeScript as an in-memory document.
 struct RoutesRoot {
     root: PathBuf,
     uri: String,
     text: String,
     version: i64,
     ts_open: bool,
-    /// Route info of the `.tszor` files read from disk, by modification time; `None` when a file has none.
+    /// Route info of the `.xzor` files read from disk, by modification time; `None` when a file has none.
     cache: HashMap<PathBuf, (SystemTime, Option<RouteUnit>)>,
-    /// Route errors of the last table, by `.tszor`.
+    /// Route errors of the last table, by `.xzor`.
     marks: Vec<(PathBuf, Vec<Json>)>,
 }
 
@@ -105,7 +105,7 @@ struct DiWorker {
     analyzer: Analyzer,
     /// `.ts` files on disk: whether they declare a provider.
     providers: HashMap<PathBuf, (SystemTime, bool)>,
-    /// `.tszor` files compiled from disk, and whether their generated file was written.
+    /// `.xzor` files compiled from disk, and whether their generated file was written.
     units: HashMap<PathBuf, (SystemTime, build::Compiled, bool)>,
 }
 
@@ -222,9 +222,9 @@ pub fn run() -> io::Result<()> {
     Ok(())
 }
 
-/// TypeScript 7's native executable, found in `node_modules` above `root`; `ZOR_TSGO` overrides.
+/// TypeScript 7's native executable, found in `node_modules` above `root`; `XZOR_TSGO` overrides.
 fn find_tsgo(root: &Path) -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("ZOR_TSGO") {
+    if let Ok(p) = std::env::var("XZOR_TSGO") {
         return Some(PathBuf::from(p));
     }
     let os = match std::env::consts::OS {
@@ -299,7 +299,7 @@ fn range_json(text: &str, start: usize, end: usize) -> Json {
     Json::obj([("start", pos_json(text, start)), ("end", pos_json(text, end))])
 }
 
-/// The route info of a `.tszor` read from disk; `None` when it has no pages and no routes block.
+/// The route info of a `.xzor` read from disk; `None` when it has no pages and no routes block.
 fn route_unit(path: &Path, text: String) -> Option<RouteUnit> {
     // Compiling is the cost; a project without routes only pays for this scan.
     if !text.contains("@page") && !text.contains("@ClientRoutes") && !text.contains("@ServerRoutes") {
@@ -312,10 +312,10 @@ fn route_unit(path: &Path, text: String) -> Option<RouteUnit> {
     Some(RouteUnit { text, routes: g.routes, block: g.routes_block })
 }
 
-/// The component class a `.tszor` compiles to.
+/// The component class a `.xzor` compiles to.
 fn class_of(path: &Path) -> String {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name))
+    crate::codegen::class_name(name.strip_suffix(".xzor").unwrap_or(&name))
 }
 
 /// Length of the route token (tag, pattern or block keyword) starting at `at`.
@@ -374,7 +374,7 @@ impl Server {
         let Some(exe) = find_tsgo(root) else {
             self.notify(
                 "window/logMessage",
-                Json::obj([("type", 2usize.into()), ("message", "zor: TypeScript 7 not found; TypeScript features are off".into())]),
+                Json::obj([("type", 2usize.into()), ("message", "xzor: TypeScript 7 not found; TypeScript features are off".into())]),
             )?;
             return self.respond(client_id, capabilities(&None, &self.client_caps));
         };
@@ -499,7 +499,7 @@ impl Server {
                 if !registrations.is_empty() {
                     self.send(&Json::obj([
                         ("jsonrpc", "2.0".into()),
-                        ("id", "zor/register".into()),
+                        ("id", "xzor/register".into()),
                         ("method", "client/registerCapability".into()),
                         ("params", Json::obj([("registrations", Json::Arr(registrations))])),
                     ]))?;
@@ -578,17 +578,17 @@ impl Server {
                 let mut route_roots: Vec<PathBuf> = Vec::new();
                 for change in params["changes"].as_array().into_iter().flatten() {
                     let uri = change["uri"].as_str().unwrap_or_default();
-                    // DI writes `.zor/` files; reacting to them would loop.
-                    if uri.contains("/.zor/") || uri.contains("/node_modules/") {
+                    // DI writes `.xzor/` files; reacting to them would loop.
+                    if uri.contains("/.xzor/") || uri.contains("/node_modules/") {
                         continue;
                     }
                     let Some(path) = uri_to_path(uri) else { continue };
-                    // Open `.tszor` documents are covered by `didSave`.
+                    // Open `.xzor` documents are covered by `didSave`.
                     if self.docs.values().any(|d| same_path(&d.path, &path)) {
                         continue;
                     }
                     self.refresh_inheritors(&path)?;
-                    if path.extension().is_some_and(|e| e == "tszor")
+                    if path.extension().is_some_and(|e| e == "xzor")
                         && let Some(root) = tsconfig_root(&path).filter(|r| self.tracks_routes(r) && !route_roots.iter().any(|x| same_path(x, r)))
                     {
                         route_roots.push(root);
@@ -697,7 +697,7 @@ impl Server {
         Ok(())
     }
 
-    /// Refreshes the open `.tszor` documents whose `@inherits` chain probed the changed `path`.
+    /// Refreshes the open `.xzor` documents whose `@inherits` chain probed the changed `path`.
     fn refresh_inheritors(&mut self, path: &Path) -> io::Result<()> {
         let uris: Vec<String> = self
             .docs
@@ -732,7 +732,7 @@ impl Server {
         }
     }
 
-    /// Rebuilds `<root>/.zor/routes.ts` from the project's `.tszor` files (open documents' text first,
+    /// Rebuilds `<root>/.xzor/routes.ts` from the project's `.xzor` files (open documents' text first,
     /// then disk), syncs it to TypeScript as an in-memory document like a generated component, and
     /// publishes the project-wide route errors. `skip` is the document whose TypeScript diagnostics the
     /// caller requests itself.
@@ -741,15 +741,15 @@ impl Server {
             Some(i) => i,
             None => {
                 // TypeScript resolves `./routes` through `rootDirs` only when the directory exists.
-                let _ = std::fs::create_dir_all(root.join(".zor"));
-                let uri = path_to_uri(&root.join(".zor").join("routes.ts"));
+                let _ = std::fs::create_dir_all(root.join(".xzor"));
+                let uri = path_to_uri(&root.join(".xzor").join("routes.ts"));
                 let state =
                     RoutesRoot { root: root.to_path_buf(), uri, text: String::new(), version: 0, ts_open: false, cache: HashMap::new(), marks: Vec::new() };
                 self.routes.push(state);
                 self.routes.len() - 1
             }
         };
-        let mut paths: Vec<PathBuf> = project_sources(root).into_iter().filter(|p| p.extension().is_some_and(|e| e == "tszor")).collect();
+        let mut paths: Vec<PathBuf> = project_sources(root).into_iter().filter(|p| p.extension().is_some_and(|e| e == "xzor")).collect();
         // Sorted so a duplicate pattern always lands on the same document.
         paths.sort();
         let mut old = std::mem::take(&mut self.routes[i].cache);
@@ -791,7 +791,7 @@ impl Server {
                 let json = Json::obj([
                     ("range", range_json(text, d.offset, end)),
                     ("severity", 1usize.into()),
-                    ("source", "zor".into()),
+                    ("source", "xzor".into()),
                     ("message", d.message.into()),
                 ]);
                 match marks.iter_mut().find(|(p, _)| same_path(p, &file)) {
@@ -852,16 +852,16 @@ impl Server {
         Ok(())
     }
 
-    /// The project root to analyze when `path` changes: a `.tszor` in a tsconfig project (`root`), or a `.ts`
+    /// The project root to analyze when `path` changes: a `.xzor` in a tsconfig project (`root`), or a `.ts`
     /// there when the project has providers (they import other `.ts` files) or it declares one. `text` is the
     /// document's text when open.
     fn di_root_of(&self, path: &Path, root: Option<&Path>, text: Option<&str>) -> Option<PathBuf> {
         let name = path.file_name()?.to_string_lossy();
-        if !(name.ends_with(".tszor") || (name.ends_with(".ts") && !name.ends_with(".d.ts"))) {
+        if !(name.ends_with(".xzor") || (name.ends_with(".ts") && !name.ends_with(".d.ts"))) {
             return None;
         }
         let root = root?;
-        let relevant = name.ends_with(".tszor")
+        let relevant = name.ends_with(".xzor")
             || self.di_roots.iter().any(|r| same_path(&r.root, root) && !r.providers.is_empty())
             || match text {
                 Some(t) => declares_provider(t),
@@ -994,7 +994,7 @@ impl Server {
             let d = Json::obj([
                 ("range", Json::obj([("start", lsp_pos(m.start)), ("end", lsp_pos(m.end))])),
                 ("severity", 1usize.into()),
-                ("source", "zor".into()),
+                ("source", "xzor".into()),
                 ("code", m.code.into()),
                 ("message", m.message.into()),
             ]);
@@ -1035,7 +1035,7 @@ impl Server {
             all.push(Json::obj([
                 ("range", range_json(&doc.text, e.offset, end)),
                 ("severity", 1usize.into()),
-                ("source", "zor".into()),
+                ("source", "xzor".into()),
                 ("message", e.message.clone().into()),
             ]));
         }
@@ -1046,7 +1046,7 @@ impl Server {
                 all.push(Json::obj([
                     ("range", range_json(&doc.text, w.offset, w.offset + name.max(1))),
                     ("severity", 2usize.into()),
-                    ("source", "zor".into()),
+                    ("source", "xzor".into()),
                     ("message", w.message.clone().into()),
                 ]));
             }
@@ -1212,12 +1212,12 @@ impl Server {
         }
     }
 
-    /// Source path, current text and compile for a generated `.zor/…​.tszor.ts` path.
+    /// Source path, current text and compile for a generated `.xzor/…​.xzor.ts` path.
     fn source_of_generated(&self, gen_path: &Path) -> Option<(PathBuf, String, Compiled)> {
-        let zor_dir = gen_path.ancestors().find(|a| a.file_name().is_some_and(|n| n == ".zor"))?;
-        let rel = gen_path.strip_prefix(zor_dir).ok()?;
+        let xzor_dir = gen_path.ancestors().find(|a| a.file_name().is_some_and(|n| n == ".xzor"))?;
+        let rel = gen_path.strip_prefix(xzor_dir).ok()?;
         let rel = rel.to_string_lossy();
-        let source = zor_dir.parent()?.join(rel.strip_suffix(".ts")?);
+        let source = xzor_dir.parent()?.join(rel.strip_suffix(".ts")?);
         if let Some(doc) = self.docs.values().find(|d| same_path(&d.path, &source)) {
             return Some((source, doc.text.clone(), doc.compiled.clone()?));
         }
@@ -1226,7 +1226,7 @@ impl Server {
         Some((source, text.clone(), Compiled { text, g }))
     }
 
-    /// A location's `(uri, range)` with generated files mapped to their `.tszor`;
+    /// A location's `(uri, range)` with generated files mapped to their `.xzor`;
     /// `None` for generated scaffolding that has no source.
     fn map_location(&self, uri: &str, range: &Json) -> Option<(String, Json)> {
         let Some((source, text, c)) = uri_to_path(uri).and_then(|p| self.source_of_generated(&p)) else {
@@ -1256,7 +1256,7 @@ impl Server {
         Json::Arr(out)
     }
 
-    /// Maps a rename's edits to `.tszor` files, dropping edits on generated scaffolding.
+    /// Maps a rename's edits to `.xzor` files, dropping edits on generated scaffolding.
     fn map_workspace_edit(&self, edit: &Json) -> Json {
         let mut groups: Vec<(String, Vec<Json>)> = Vec::new();
         if let Some(Json::Obj(changes)) = edit.get("changes") {
@@ -1371,7 +1371,7 @@ impl Server {
         Ok(())
     }
 
-    /// zor keywords offered alongside TypeScript completions right after `@`.
+    /// xzor keywords offered alongside TypeScript completions right after `@`.
     fn keyword_items(&self, uri: &str) -> Vec<Json> {
         let doc = &self.docs[uri];
         features::completions("@", 1, &doc.path, &[])
@@ -1396,7 +1396,7 @@ impl DiWorker {
         Box::new(DiWorker { analyzer: Analyzer::new(root), providers: HashMap::new(), units: HashMap::new() })
     }
 
-    /// Analyzes `root`: `overlays` are open `.ts` documents, `units` the in-memory compiles of open `.tszor`
+    /// Analyzes `root`: `overlays` are open `.ts` documents, `units` the in-memory compiles of open `.xzor`
     /// documents, `skip` their paths. Other files come from the caches when unchanged. Only a `write` run
     /// writes generated files. Returns the located diagnostics (`None` on failure) and the absolute provider files.
     fn run(
@@ -1425,7 +1425,7 @@ impl DiWorker {
         let mut failed = false;
         for path in project_sources(root) {
             let key = path_key(&path);
-            if path.extension().is_some_and(|e| e == "tszor") {
+            if path.extension().is_some_and(|e| e == "xzor") {
                 if skip.contains(&key) {
                     if let Some(entry) = old_units.remove(&path) {
                         self.units.insert(path, entry);
@@ -1571,7 +1571,7 @@ fn item_insert_text_missing(o: &[(String, Json)]) -> bool {
     !o.iter().any(|(k, _)| k == "insertText")
 }
 
-/// Feature providers: `(method, server capability, client capability)`. They are registered for `.tszor`
+/// Feature providers: `(method, server capability, client capability)`. They are registered for `.xzor`
 /// documents only, since a static capability would also apply to the `.ts` documents synced for DI.
 const FEATURES: [(&str, &str, &str); 6] = [
     ("textDocument/completion", "completionProvider", "completion"),
@@ -1604,7 +1604,7 @@ fn capabilities(legend: &Option<Json>, client: &Json) -> Json {
             caps.set(capability, options);
         }
     }
-    Json::obj([("capabilities", caps), ("serverInfo", Json::obj([("name", "zor".into())]))])
+    Json::obj([("capabilities", caps), ("serverInfo", Json::obj([("name", "xzor".into())]))])
 }
 
 /// `client/registerCapability` registrations for the features the client registers dynamically.
@@ -1614,13 +1614,13 @@ fn registrations(legend: &Option<Json>, client: &Json) -> Vec<Json> {
         .filter(|(_, _, client_capability)| dynamic(client, client_capability))
         .filter_map(|(method, capability, _)| {
             let mut options = feature_options(capability, legend)?;
-            options.set("documentSelector", Json::Arr(vec![Json::obj([("language", "tszor".into())])]));
+            options.set("documentSelector", Json::Arr(vec![Json::obj([("language", "xzor".into())])]));
             Some(Json::obj([("id", (*method).into()), ("method", (*method).into()), ("registerOptions", options)]))
         })
         .collect()
 }
 
-/// Keeps TypeScript's semantic tokens that fall inside one mapping, at their `.tszor` position.
+/// Keeps TypeScript's semantic tokens that fall inside one mapping, at their `.xzor` position.
 fn map_semantic_tokens(c: &Compiled, text: &str, result: &Json) -> Json {
     let g = &c.g;
     let data: Vec<usize> = result["data"].as_array().map(|a| a.iter().filter_map(Json::as_usize).collect()).unwrap_or_default();

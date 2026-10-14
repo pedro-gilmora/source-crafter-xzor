@@ -1,4 +1,4 @@
-@import { type EventCallback } from "@zor/runtime"
+@import { type EventCallback } from "@xzor/runtime"
 
 @code {
   value: number = 0;

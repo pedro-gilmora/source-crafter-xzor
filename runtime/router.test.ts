@@ -15,8 +15,8 @@ import {
 // happy-dom starts on about:blank, where relative URLs and pushState are not allowed.
 (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL("http://localhost/");
 
-// Written the way zor emits `@ClientRoutes`/`@ServerRoutes`: a hand-written table in the shape of
-// `.zor/routes.ts` and sections in the shape of the generated descriptors.
+// Written the way xzor emits `@ClientRoutes`/`@ServerRoutes`: a hand-written table in the shape of
+// `.xzor/routes.ts` and sections in the shape of the generated descriptors.
 
 let lastUser: UserPage | undefined;
 

@@ -1,4 +1,4 @@
-//! Hand-written recursive-descent parser for `.tszor` (Razor-style) templates.
+//! Hand-written recursive-descent parser for `.xzor` (Razor-style) templates.
 //!
 //! Besides the AST it records classified token spans, which drive the highlighter
 //! (and later LSP semantic tokens).
@@ -1523,10 +1523,10 @@ mod tests {
 
     #[test]
     fn code_page_and_import() {
-        let src = "@page \"/x\"\n@import A from \"./A.tszor\";\n@code {\n  n = \"}\";\n}\n";
+        let src = "@page \"/x\"\n@import A from \"./A.xzor\";\n@code {\n  n = \"}\";\n}\n";
         let doc = parse(src).unwrap().0;
         assert_eq!(doc.pages[0].pattern, "/x");
-        assert_eq!(doc.imports, vec!["A from \"./A.tszor\""]);
+        assert_eq!(doc.imports, vec!["A from \"./A.xzor\""]);
         assert_eq!(doc.code, vec!["\n  n = \"}\";\n"]);
         assert!(doc.nodes.is_empty());
     }
@@ -1591,7 +1591,7 @@ after"#;
 
     #[test]
     fn spans_point_at_source_text() {
-        let src = "@import A from \"./A.tszor\"\n@code {\n  n = 1;\n}\n<A x=\"@( n + 1 )\" @onclick=\" go \">@user.name @if ( n > 1 ) {}</A>";
+        let src = "@import A from \"./A.xzor\"\n@code {\n  n = 1;\n}\n<A x=\"@( n + 1 )\" @onclick=\" go \">@user.name @if ( n > 1 ) {}</A>";
         let (doc, _) = parse(src).unwrap();
         let check = |s: &Src| assert_eq!(&src[s.at..s.at + s.len()], &**s, "{s:?}");
         check(&doc.imports[0]);
@@ -1604,7 +1604,7 @@ after"#;
                 check(e);
             }
         }
-        assert_eq!(&*doc.imports[0], "A from \"./A.tszor\"");
+        assert_eq!(&*doc.imports[0], "A from \"./A.xzor\"");
         let Node::Expr(e) = &el.children[0] else { panic!() };
         check(e);
         let Node::If { branches, .. } = &el.children[2] else { panic!("{:?}", el.children) };

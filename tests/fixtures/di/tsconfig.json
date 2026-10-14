@@ -7,10 +7,10 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "rootDirs": [".", ".zor"],
+    "rootDirs": [".", ".xzor"],
     "paths": {
-      "@zor/runtime": ["../../../runtime/index.ts"]
+      "@xzor/runtime": ["../../../runtime/index.ts"]
     }
   },
-  "include": ["**/*.ts", ".zor/**/*.ts"]
+  "include": ["**/*.ts", ".xzor/**/*.ts"]
 }

@@ -1,5 +1,5 @@
-import { type IApplication, Import, Mount, Singleton, Transient } from "@zor/runtime";
-import App from "./App.tszor";
+import { type IApplication, Import, Mount, Singleton, Transient } from "@xzor/runtime";
+import App from "./App.xzor";
 import { AuthService, Clock } from "./services/auth";
 import { DataServices } from "./services/data";
 import { type Settings } from "./services/settings";

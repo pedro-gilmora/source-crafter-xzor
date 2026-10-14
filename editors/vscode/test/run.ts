@@ -11,7 +11,7 @@ if (!tsGrammar) throw new Error("TypeScript grammar not found; set TS_GRAMMAR");
 
 const root = join(import.meta.dir, "..");
 const proc = Bun.spawnSync(
-  ["bun", "x", "vscode-tmgrammar-test", "-g", join(root, "syntaxes/tszor.tmLanguage.json"), "-g", tsGrammar, join(root, "test/*.test.tszor")],
+  ["bun", "x", "vscode-tmgrammar-test", "-g", join(root, "syntaxes/xzor.tmLanguage.json"), "-g", tsGrammar, join(root, "test/*.test.xzor")],
   { stdout: "inherit", stderr: "inherit" },
 );
 process.exit(proc.exitCode ?? 1);

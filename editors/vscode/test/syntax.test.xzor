@@ -1,21 +1,21 @@
-<!-- SYNTAX TEST "source.tszor" "tszor grammar"
+<!-- SYNTAX TEST "source.xzor" "xzor grammar"
 @page "/"
-<!-- <- keyword.control.transition.tszor
-<!-- <~---- keyword.control.directive.tszor
-<!--  ^^^ string.quoted.double.tszor
-@import Counter from "./Counter.tszor"
-<!-- <- keyword.control.transition.tszor
+<!-- <- keyword.control.transition.xzor
+<!-- <~---- keyword.control.directive.xzor
+<!--  ^^^ string.quoted.double.xzor
+@import Counter from "./Counter.xzor"
+<!-- <- keyword.control.transition.xzor
 <!-- <~------ keyword.control.import.ts
 <!--                 ^^^^^^^^^^^^^^^^^ string.quoted.double.ts
 @typeparam T extends object
-<!-- <~--------- keyword.control.directive.tszor
-<!--       ^ entity.name.type.parameter.tszor
+<!-- <~--------- keyword.control.directive.xzor
+<!--       ^ entity.name.type.parameter.xzor
 <input @bind="name" @bind:event="oninput" />
 <!--   ^^^^^ entity.other.attribute-name.html
 <!--          ^^^^ meta.embedded.expression.typescript
 @code {
-<!-- <- keyword.control.transition.tszor
-<!-- <~---- keyword.control.directive.tszor
+<!-- <- keyword.control.transition.xzor
+<!-- <~---- keyword.control.directive.xzor
 <!--  ^ meta.embedded.block.typescript punctuation.definition.block.ts
   count: number = 0;
 <!-- <~~----- meta.embedded.block.typescript variable.object.property.ts
@@ -24,18 +24,18 @@
 <!-- <~~--- meta.embedded.block.typescript entity.name.function.ts
 <!--      ^^^^ variable.language.this.ts
   card: RenderFragment = <Card title="x"><b>@n</b></Card>;
-<!--                      ^^^^ support.class.component.tszor
+<!--                      ^^^^ support.class.component.xzor
 <!--                           ^^^^^ entity.other.attribute-name.html
 <!--                                      ^ entity.name.tag.html
-<!--                                        ^ keyword.control.transition.tszor
-<!--                                                ^^^^ support.class.component.tszor
+<!--                                        ^ keyword.control.transition.xzor
+<!--                                                ^^^^ support.class.component.xzor
 <!--                                                     ^ punctuation.terminator.statement.ts
   row(): RenderFragment { return <li class="r">@this.x</li>; }
 <!--                      ^^^^^^ keyword.control.flow.ts
 <!--                              ^^ entity.name.tag.html
 <!--                                                    ^^ entity.name.tag.html
   frag = @<p/>;
-<!--     ^ keyword.control.transition.tszor
+<!--     ^ keyword.control.transition.xzor
 <!--       ^ entity.name.tag.html
   less = a < b;
 <!--       ^ keyword.operator.relational.ts
@@ -58,35 +58,35 @@
 <!-- <~--- entity.name.tag.html
 <!-- ^^^^^ entity.other.attribute-name.html
 <!--        ^ string.quoted.html
-<!--          ^ string.quoted.html keyword.control.transition.tszor
-<!--           ^^^^ variable.other.readwrite.tszor
+<!--          ^ string.quoted.html keyword.control.transition.xzor
+<!--           ^^^^ variable.other.readwrite.xzor
 <!--                 ^^^^^^^^ entity.other.attribute-name.html
 <!--                              ^^ meta.embedded.expression.typescript storage.type.function.arrow.ts
 <!--                                 ^^ entity.name.function.ts
-<!--                                           ^ keyword.control.transition.tszor
-<!--                                            ^^^^^^^^^ variable.other.readwrite.tszor
-<!--                                                       ^ keyword.control.transition.tszor
+<!--                                           ^ keyword.control.transition.xzor
+<!--                                            ^^^^^^^^^ variable.other.readwrite.xzor
+<!--                                                       ^ keyword.control.transition.xzor
 <!--                                                         ^ meta.embedded.expression.typescript variable.other.readwrite.ts
 <!--                                                           ^ keyword.operator.arithmetic.ts
-<!--                                                                 ^ - keyword.control.transition.tszor
-<!--                                                                        ^^ constant.character.escape.tszor
+<!--                                                                 ^ - keyword.control.transition.xzor
+<!--                                                                        ^^ constant.character.escape.xzor
 <!--                                                                          ^^ punctuation.definition.tag.begin.html
 <!--                                                                            ^^^ entity.name.tag.html
 <p>  <!-- note --></p>
 <!-- ^^^^^^^^^^^^^ comment.block.html
 @if (count > 1) {
-<!-- <- keyword.control.transition.tszor
-<!-- <~-- keyword.control.tszor
+<!-- <- keyword.control.transition.xzor
+<!-- <~-- keyword.control.xzor
 <!-- ^^^^^ meta.embedded.expression.typescript variable.other.readwrite.ts
 <!--       ^ keyword.operator.relational.ts
-<!--            ^ punctuation.section.block.begin.tszor
+<!--            ^ punctuation.section.block.begin.xzor
   <b>big</b>
 <!-- <~~~- entity.name.tag.html
 <!-- ^^^ - entity.name.tag.html
 } else if (count < 0) {
-<!-- <- punctuation.section.block.end.tszor
-<!-- <~~---- keyword.control.tszor
-<!--   ^^ keyword.control.tszor
+<!-- <- punctuation.section.block.end.xzor
+<!-- <~~---- keyword.control.xzor
+<!--   ^^ keyword.control.xzor
 <!--       ^^^^^ variable.other.readwrite.ts
 <!--             ^ keyword.operator.relational.ts
 }
@@ -100,81 +100,81 @@
 <!--                  ^ keyword.operator.relational.ts
 <!--                                          ^ keyword.operator.relational.ts
 else {
-<!-- <---- keyword.control.tszor
+<!-- <---- keyword.control.xzor
   <Counter step="@(2)" />
-<!-- <~~~------- support.class.component.tszor
+<!-- <~~~------- support.class.component.xzor
 <!--       ^^^^ entity.other.attribute-name.html
-<!--             ^ keyword.control.transition.tszor
+<!--             ^ keyword.control.transition.xzor
 <!--               ^ constant.numeric.decimal.ts
 }
 @for (const item of items) {
-<!-- <~--- keyword.control.tszor
+<!-- <~--- keyword.control.xzor
 <!--  ^^^^^ storage.type.ts
   <li>@item</li>
-<!--  ^ keyword.control.transition.tszor
-<!--   ^^^^ variable.other.readwrite.tszor
+<!--  ^ keyword.control.transition.xzor
+<!--   ^^^^ variable.other.readwrite.xzor
 }
 @switch (kind) {
-<!-- <~------ keyword.control.tszor
+<!-- <~------ keyword.control.xzor
   case "a":
-<!-- <~~---- keyword.control.tszor
+<!-- <~~---- keyword.control.xzor
 <!--   ^^^ string.quoted.double.ts
     in case of
-<!--   ^^^^ - keyword.control.tszor
+<!--   ^^^^ - keyword.control.xzor
     break;
-<!-- <~~~~----- keyword.control.tszor
+<!-- <~~~~----- keyword.control.xzor
   default:
-<!-- <~~------- keyword.control.tszor
+<!-- <~~------- keyword.control.xzor
 }
 <p>after</p>
 <!-- <~- entity.name.tag.html
   @slot:header { <h3>t</h3> }
-<!-- <~~- keyword.control.transition.tszor
-<!-- <~~~---- keyword.control.tszor
-<!--    ^^^^^^ entity.name.function.slot.tszor
+<!-- <~~- keyword.control.transition.xzor
+<!-- <~~~---- keyword.control.xzor
+<!--    ^^^^^^ entity.name.function.slot.xzor
 <!--              ^^ entity.name.tag.html
   @slot:item(items[i] as T, i) { @i }
-<!--    ^^^^ entity.name.function.slot.tszor
+<!--    ^^^^ entity.name.function.slot.xzor
 <!--                  ^^ keyword.control.as.ts
 <!--                     ^ entity.name.type.ts
   @slot
-<!-- <~~~---- keyword.control.tszor
+<!-- <~~~---- keyword.control.xzor
   @slot row(step: string, i) { <b>@step</b> }
-<!-- <~~~---- keyword.control.tszor
-<!--    ^^^ entity.name.function.slot.tszor
+<!-- <~~~---- keyword.control.xzor
+<!--    ^^^ entity.name.function.slot.xzor
 <!--        ^^^^ variable.parameter.ts
 <!--              ^^^^^^ support.type.primitive.ts
 <!--                            ^ entity.name.tag.html
   @slot { <i/> }
-<!-- <~~~---- keyword.control.tszor
+<!-- <~~~---- keyword.control.xzor
 <!--       ^ entity.name.tag.html
   @slot more text
-<!--    ^^^^ - entity.name.function.slot.tszor
+<!--    ^^^^ - entity.name.function.slot.xzor
   @cascade:theme(currentTheme) {
-<!-- <~~- keyword.control.transition.tszor
-<!-- <~~~------- keyword.control.tszor
-<!--       ^^^^^ variable.other.constant.cascade.tszor
+<!-- <~~- keyword.control.transition.xzor
+<!-- <~~~------- keyword.control.xzor
+<!--       ^^^^^ variable.other.constant.cascade.xzor
 <!--             ^^^^^^^^^^^^ variable.other.readwrite.ts
     <Card/>
-<!-- ^^^^ support.class.component.tszor
+<!-- ^^^^ support.class.component.xzor
   }
   @cascade:cfg(f(a, b), fixed) {
-<!--       ^^^ variable.other.constant.cascade.tszor
+<!--       ^^^ variable.other.constant.cascade.xzor
 <!--           ^ entity.name.function.ts
-<!--                    ^^^^^ keyword.other.fixed.tszor
+<!--                    ^^^^^ keyword.other.fixed.xzor
   }
   @cascade:x(a ? b : c) { <i/> }
-<!--       ^ variable.other.constant.cascade.tszor
+<!--       ^ variable.other.constant.cascade.xzor
 <!--                       ^ entity.name.tag.html
   @cascade:y (v) { <i/> }
-<!--       ^ variable.other.constant.cascade.tszor
+<!--       ^ variable.other.constant.cascade.xzor
 <!--          ^ variable.other.readwrite.ts
   @cascade: on
-<!-- <~~~------- - keyword.control.tszor
+<!-- <~~~------- - keyword.control.xzor
   @cascade x
-<!-- <~~~------- - keyword.control.tszor
+<!-- <~~~------- - keyword.control.xzor
   @cascadeX
-<!-- <~~~-------- - keyword.control.tszor
+<!-- <~~~-------- - keyword.control.xzor
 @code {
   @Cascade theme!: string;
 <!-- <~~- meta.decorator.ts punctuation.decorator.ts
@@ -184,101 +184,101 @@ else {
 <!--       ^^^^^^^ string.quoted.double.ts
 }
 @* a comment <b> *@
-<!-- <------------------- comment.block.tszor
+<!-- <------------------- comment.block.xzor
 @{ const n = 1; }
-<!-- <- keyword.control.transition.tszor
+<!-- <- keyword.control.transition.xzor
 <!-- <~~~----- storage.type.ts
 @while (n < 3) { <u/> }
-<!-- <~----- keyword.control.tszor
+<!-- <~----- keyword.control.xzor
 <!--    ^ variable.other.readwrite.ts
 <!--              ^ entity.name.tag.html
 @inherits Base<T>
-<!-- <~-------- keyword.control.directive.tszor
+<!-- <~-------- keyword.control.directive.xzor
 @implements Named
-<!-- <~---------- keyword.control.directive.tszor
+<!-- <~---------- keyword.control.directive.xzor
 @attribute sealed
-<!-- <~--------- keyword.control.directive.tszor
+<!-- <~--------- keyword.control.directive.xzor
 @inject A a // c
-<!-- <~------ keyword.control.directive.tszor
-<!--      ^ variable.other.readwrite.tszor
-<!--        ^^^^ comment.line.double-slash.tszor
+<!-- <~------ keyword.control.directive.xzor
+<!--      ^ variable.other.readwrite.xzor
+<!--        ^^^^ comment.line.double-slash.xzor
 @typeparam T @* c *@
-<!--       ^ entity.name.type.parameter.tszor
-<!--         ^^^^^^^ comment.block.tszor
+<!--       ^ entity.name.type.parameter.xzor
+<!--         ^^^^^^^ comment.block.xzor
 @typeparam T extends "a//b" | 'c@d' // c
 <!--                 ^^^^^^ string.quoted.double.ts
 <!--                          ^^^^^ string.quoted.single.ts
-<!--                                ^^^^ comment.line.double-slash.tszor
+<!--                                ^^^^ comment.line.double-slash.xzor
 @page "/a" // home
-<!--  ^^^^ string.quoted.double.tszor
-<!--       ^^^^^^^ comment.line.double-slash.tszor
+<!--  ^^^^ string.quoted.double.xzor
+<!--       ^^^^^^^ comment.line.double-slash.xzor
 @import x from "http://a" // c
 <!--           ^^^^^^^^^^ string.quoted.double.ts
-<!--                      ^^^^ comment.line.double-slash.tszor
+<!--                      ^^^^ comment.line.double-slash.xzor
 @inject IDatabase db
-<!-- <- keyword.control.transition.tszor
-<!-- <~------ keyword.control.directive.tszor
+<!-- <- keyword.control.transition.xzor
+<!-- <~------ keyword.control.directive.xzor
 <!--    ^^^^^^^^^ entity.name.type.ts
-<!--              ^^ variable.other.readwrite.tszor
+<!--              ^^ variable.other.readwrite.xzor
 @inject Promise<Map<string, number>> cache
-<!-- <~------ keyword.control.directive.tszor
+<!-- <~------ keyword.control.directive.xzor
 <!--    ^^^^^^^ entity.name.type.ts
-<!--                                 ^^^^^ variable.other.readwrite.tszor
+<!--                                 ^^^^^ variable.other.readwrite.xzor
 <p>@: Count</p>
-<!-- <~~~-- keyword.control.transition.tszor
+<!-- <~~~-- keyword.control.transition.xzor
 <a @onclick:preventDefault>x</a>
 <!-- <~~~----------------------- entity.other.attribute-name.html
 @page "/users/:id" as admin // c
-<!-- <~---- keyword.control.directive.tszor
-<!--  ^^^^^^^^^^^^ string.quoted.double.tszor
-<!--               ^^ keyword.control.as.tszor
-<!--                  ^^^^^ variable.other.constant.route.tszor
-<!--                        ^^^^ comment.line.double-slash.tszor
+<!-- <~---- keyword.control.directive.xzor
+<!--  ^^^^^^^^^^^^ string.quoted.double.xzor
+<!--               ^^ keyword.control.as.xzor
+<!--                  ^^^^^ variable.other.constant.route.xzor
+<!--                        ^^^^ comment.line.double-slash.xzor
 @page "/x" asx
-<!--       ^^^ - keyword.control.as.tszor
+<!--       ^^^ - keyword.control.as.xzor
 @ClientRoutes(route) {
-<!-- <- keyword.control.transition.tszor
-<!-- <~------------ keyword.control.directive.tszor
-<!--          ^^^^^ variable.parameter.tszor
-<!--                 ^ punctuation.section.block.begin.tszor
+<!-- <- keyword.control.transition.xzor
+<!-- <~------------ keyword.control.directive.xzor
+<!--          ^^^^^ variable.parameter.xzor
+<!--                 ^ punctuation.section.block.begin.xzor
   @admin(page) { <AdminLayout>@page</AdminLayout> }
-<!-- <~~- keyword.control.transition.tszor
-<!-- <~~~----- variable.other.constant.route.tszor
-<!--     ^^^^ variable.parameter.tszor
-<!--              ^^^^^^^^^^^ support.class.component.tszor
-<!--                          ^ keyword.control.transition.tszor
-<!--                           ^^^^ variable.other.readwrite.tszor
+<!-- <~~- keyword.control.transition.xzor
+<!-- <~~~----- variable.other.constant.route.xzor
+<!--     ^^^^ variable.parameter.xzor
+<!--              ^^^^^^^^^^^ support.class.component.xzor
+<!--                          ^ keyword.control.transition.xzor
+<!--                           ^^^^ variable.other.readwrite.xzor
   @/^\/a/i(page) {
 <!-- <~~~------- string.regexp.ts
-<!--       ^^^^ variable.parameter.tszor
+<!--       ^^^^ variable.parameter.xzor
     <p>x</p>
 <!-- ^ entity.name.tag.html
   }
-<!-- <~~- punctuation.section.block.end.tszor
+<!-- <~~- punctuation.section.block.end.xzor
   @"/x/:y" {
-<!-- <~~~------- string.quoted.double.tszor
+<!-- <~~~------- string.quoted.double.xzor
   }
   @/(?<g>[a/b]+)\w/(page?) {
 <!-- <~~~---------------- string.regexp.ts
-<!--                ^^^^^ variable.parameter.tszor
+<!--                ^^^^^ variable.parameter.xzor
   }
   @notFound { <i/> }
-<!-- <~~~-------- keyword.control.tszor
+<!-- <~~~-------- keyword.control.xzor
 <!--           ^ entity.name.tag.html
   @catch(e) { <b/> }
-<!-- <~~~----- keyword.control.tszor
-<!--     ^ variable.parameter.tszor
+<!-- <~~~----- keyword.control.xzor
+<!--     ^ variable.parameter.xzor
 <!--           ^ entity.name.tag.html
   @default(page) {
-<!-- <~~~------- keyword.control.tszor
-<!--       ^^^^ variable.parameter.tszor
+<!-- <~~~------- keyword.control.xzor
+<!--       ^^^^ variable.parameter.xzor
   }
 }
-<!-- <- punctuation.section.block.end.tszor
+<!-- <- punctuation.section.block.end.xzor
 <p>@notFound(x)</p>
-<!-- <~~~~-------- variable.other.readwrite.tszor
+<!-- <~~~~-------- variable.other.readwrite.xzor
 @ServerRoutes(route)
-<!-- <~------------ keyword.control.directive.tszor
+<!-- <~------------ keyword.control.directive.xzor
 {
-<!-- <- punctuation.section.block.begin.tszor
+<!-- <- punctuation.section.block.begin.xzor
 }

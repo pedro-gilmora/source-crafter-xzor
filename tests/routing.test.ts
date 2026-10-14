@@ -47,8 +47,8 @@ const app = `@import { href } from "./routes"
 }
 `;
 
-const main = `import { mount } from "@zor/runtime";
-import App from "./App.tszor";
+const main = `import { mount } from "@xzor/runtime";
+import App from "./App.xzor";
 
 mount(App, document.getElementById("app")!);
 `;
@@ -60,15 +60,15 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@zor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   // Bun's default tsconfig turns these on, and the generated table is code the user cannot edit.
   tsconfig.compilerOptions.noUncheckedIndexedAccess = true;
   tsconfig.compilerOptions.noPropertyAccessFromIndexSignature = true;
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
-  writeFileSync(join(dir, "Home.tszor"), home);
-  writeFileSync(join(dir, "UserPage.tszor"), userPage);
-  writeFileSync(join(dir, "AdminHome.tszor"), adminHome);
-  writeFileSync(join(dir, "App.tszor"), app);
+  writeFileSync(join(dir, "Home.xzor"), home);
+  writeFileSync(join(dir, "UserPage.xzor"), userPage);
+  writeFileSync(join(dir, "AdminHome.xzor"), adminHome);
+  writeFileSync(join(dir, "App.xzor"), app);
   writeFileSync(join(dir, "main.ts"), main);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
   const out = run.stdout.toString() + run.stderr.toString();

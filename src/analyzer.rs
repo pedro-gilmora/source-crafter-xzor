@@ -87,7 +87,7 @@ impl Analyzer {
 
     fn spawn(&self) -> Result<Proc, String> {
         // Under node_modules, `typescript` resolves from the project and the script stays out of tsconfig's `include`.
-        let script = self.root.join("node_modules").join(".cache").join("zor").join("di.ts");
+        let script = self.root.join("node_modules").join(".cache").join("xzor").join("di.ts");
         crate::build::write_if_changed(&script, DI_SCRIPT)?;
         let mut child = Command::new("bun")
             .arg(&script)

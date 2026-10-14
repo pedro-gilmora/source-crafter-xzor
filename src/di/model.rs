@@ -7,7 +7,7 @@ pub struct TypeRef {
     /// Identity: `module.ts#Export`, or the bare text for primitives and lib types.
     pub id: String,
     pub text: String,
-    /// Import path without extension (`.zor/` stripped); `None` for primitives and lib types.
+    /// Import path without extension (`.xzor/` stripped); `None` for primitives and lib types.
     pub module: Option<String>,
     pub export: Option<String>,
 }
@@ -19,7 +19,7 @@ pub struct Param {
     /// Typed `Promise<T>`: receives the unawaited promise.
     pub promise: bool,
     pub ty: TypeRef,
-    /// Project-relative file declaring the parameter (keeps `.zor/`).
+    /// Project-relative file declaring the parameter (keeps `.xzor/`).
     pub file: String,
     /// UTF-16 code-unit offset of the parameter name in `file`.
     pub at: usize,
@@ -75,7 +75,7 @@ pub struct Mount {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provider {
     pub class: TypeRef,
-    /// Real project-relative path (keeps `.zor/`).
+    /// Real project-relative path (keeps `.xzor/`).
     pub file: String,
     /// UTF-16 code-unit offset of the class name.
     pub at: usize,
@@ -244,7 +244,7 @@ fn component(j: &Json, path: &str) -> Result<Component, String> {
 mod tests {
     use super::*;
 
-    const FACTS: &str = r##"{"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.tszor.ts#default","text":"App","module":"App.tszor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.tszor.ts#default","text":"Counter","module":"Counter.tszor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".zor/Counter.tszor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
+    const FACTS: &str = r##"{"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.xzor.ts#default","text":"App","module":"App.xzor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.xzor.ts#default","text":"Counter","module":"Counter.xzor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".xzor/Counter.xzor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
 
     fn t(module: &str, name: &str) -> TypeRef {
         TypeRef { id: format!("{module}.ts#{name}"), text: name.into(), module: Some(module.into()), export: Some(name.into()) }
@@ -258,8 +258,8 @@ mod tests {
         assert_eq!((p.class.clone(), p.file.as_str(), p.at), (t("main", "Application"), "main.ts", 847));
         assert_eq!(p.imports, vec![t("services/data", "DataServices")]);
         let mount = p.mount.as_ref().unwrap();
-        assert_eq!(mount.component.id, "App.tszor.ts#default");
-        assert_eq!(mount.component.module.as_deref(), Some("App.tszor"));
+        assert_eq!(mount.component.id, "App.xzor.ts#default");
+        assert_eq!(mount.component.module.as_deref(), Some("App.xzor"));
         assert_eq!((mount.target.as_str(), mount.at), ("app", 662));
 
         let cache = &p.registrations[0];
@@ -304,7 +304,7 @@ mod tests {
 
         let c = &facts.components[0];
         assert_eq!(c.class.text, "Counter");
-        let db = Param { name: "db".into(), optional: false, promise: false, ty: t("services/data", "IDatabase"), file: ".zor/Counter.tszor.ts".into(), at: 250, bad_keys: vec![] };
+        let db = Param { name: "db".into(), optional: false, promise: false, ty: t("services/data", "IDatabase"), file: ".xzor/Counter.xzor.ts".into(), at: 250, bad_keys: vec![] };
         assert_eq!(c.injects, vec![db]);
 
         assert_eq!(facts.errors, vec![FactError { file: "services/hidden.ts".into(), at: 112, message: "Hidden must be exported to be injected".into() }]);

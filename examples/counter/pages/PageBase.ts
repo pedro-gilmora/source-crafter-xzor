@@ -1,8 +1,8 @@
-import { ComponentBase } from "@zor/runtime";
+import { ComponentBase } from "@xzor/runtime";
 
 /** The pages' common base: its members are usable as bare names in their templates. */
 export abstract class PageBase extends ComponentBase {
-  readonly siteName = "zor demo";
+  readonly siteName = "xzor demo";
   abstract get heading(): string;
 
   protected override onAfterRender(_firstRender: boolean): void {

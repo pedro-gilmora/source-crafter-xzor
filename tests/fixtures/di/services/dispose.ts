@@ -1,4 +1,4 @@
-import { ServiceProvider, Singleton } from "@zor/runtime";
+import { ServiceProvider, Singleton } from "@xzor/runtime";
 
 export class SyncSymbol {
   [Symbol.dispose](): void {}

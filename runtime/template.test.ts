@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ComponentBase, type RenderTreeBuilder, mount } from "./index";
 
-// Written the way zor emits @attributes and event modifiers.
+// Written the way xzor emits @attributes and event modifiers.
 
 class Splat extends ComponentBase {
   extra: Record<string, unknown> = { id: "a", title: "from splat", hidden: false };

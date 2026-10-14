@@ -5,7 +5,7 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 const dir = join(root, "target", "tmp-cascade");
 
-const app = `@import Badge from "./Badge.tszor"
+const app = `@import Badge from "./Badge.xzor"
 
 @code {
   theme = "dark";
@@ -32,7 +32,7 @@ const base = `@code {
 }
 `;
 
-const badge = `@import Base from "./Base.tszor"
+const badge = `@import Base from "./Base.xzor"
 @inherits Base
 
 @code {
@@ -43,8 +43,8 @@ const badge = `@import Base from "./Base.tszor"
 <span class="role">@role</span>
 `;
 
-const main = `import { mount } from "@zor/runtime";
-import App from "./App.tszor";
+const main = `import { mount } from "@xzor/runtime";
+import App from "./App.xzor";
 
 mount(App, document.getElementById("app")!);
 `;
@@ -53,16 +53,16 @@ test("a @Cascade member follows the value of its @cascade provider", async () =>
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@zor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
-  writeFileSync(join(dir, "App.tszor"), app);
-  writeFileSync(join(dir, "Base.tszor"), base);
-  writeFileSync(join(dir, "Badge.tszor"), badge);
+  writeFileSync(join(dir, "App.xzor"), app);
+  writeFileSync(join(dir, "Base.xzor"), base);
+  writeFileSync(join(dir, "Badge.xzor"), badge);
   writeFileSync(join(dir, "main.ts"), main);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
   const out = run.stdout.toString() + run.stderr.toString();
   expect(run.exitCode, out).toBe(0);
-  expect(readFileSync(join(dir, ".zor", "Badge.tszor.ts"), "utf8")).toContain(
+  expect(readFileSync(join(dir, ".xzor", "Badge.xzor.ts"), "utf8")).toContain(
     'static readonly cascades: readonly (readonly [string, string])[] = [...((Base as { cascades?: readonly (readonly [string, string])[] }).cascades ?? []), ["role", "role"]] as const;',
   );
 

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ComponentBase, type RenderFragment, type RenderTreeBuilder, mount } from "./index";
 
-// Written the way zor emits markup used as a value inside @code.
+// Written the way xzor emits markup used as a value inside @code.
 class Badge extends ComponentBase {
   text = "";
   protected override buildRenderTree(b: RenderTreeBuilder): void {

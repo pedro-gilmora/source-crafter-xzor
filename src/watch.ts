@@ -1,5 +1,5 @@
 // `bun watch.ts <root>`: prints each changed path under root, relative to it with `/` separators, one per line.
-// The first line is empty: the watch is active. Exits when stdin closes (zor holds it open).
+// The first line is empty: the watch is active. Exits when stdin closes (xzor holds it open).
 import { lstatSync, readdirSync, statSync, watch, writeSync, type FSWatcher } from "node:fs";
 
 const root = process.argv[2] ?? ".";
@@ -46,7 +46,7 @@ if (process.platform !== "linux") {
       process.exit(1);
     }
     w.on("error", (e) => {
-      // Losing the root watcher leaves nothing to report: end the script so zor says the watcher exited.
+      // Losing the root watcher leaves nothing to report: end the script so xzor says the watcher exited.
       if (dir) return drop(dir);
       writeSync(2, `${e.message}\n`);
       process.exit(1);

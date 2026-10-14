@@ -1,7 +1,7 @@
-@import Greeting from "./Greeting.tszor"
-@import MainLayout from "./layouts/MainLayout.tszor"
-@import AdminLayout from "./layouts/AdminLayout.tszor"
-@import { NavLink } from "@zor/runtime"
+@import Greeting from "./Greeting.xzor"
+@import MainLayout from "./layouts/MainLayout.xzor"
+@import AdminLayout from "./layouts/AdminLayout.xzor"
+@import { NavLink } from "@xzor/runtime"
 @import { href } from "./routes"
 @import { type Theme } from "./services/theme"
 

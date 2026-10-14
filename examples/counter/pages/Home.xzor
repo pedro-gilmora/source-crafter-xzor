@@ -1,16 +1,16 @@
 @page "/"
-@import Counter from "../Counter.tszor"
-@import Card from "../Card.tszor"
-@import List from "../List.tszor"
-@import Stepper from "../Stepper.tszor"
-@import { type RenderFragment } from "@zor/runtime"
+@import Counter from "../Counter.xzor"
+@import Card from "../Card.xzor"
+@import List from "../List.xzor"
+@import Stepper from "../Stepper.xzor"
+@import { type RenderFragment } from "@xzor/runtime"
 
 @code {
-  title = "zor demo";
+  title = "xzor demo";
   name = "world";
   total = 0;
   stepSize = 2;
-  steps: string[] = ["parse .tszor", "generate .ts", "type check", "bundle .js"];
+  steps: string[] = ["parse .xzor", "generate .ts", "type check", "bundle .js"];
   view: "steps" | "summary" | "counter" = "steps";
   nameInput?: HTMLInputElement;
   clicks?: Counter;

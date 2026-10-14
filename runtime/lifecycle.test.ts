@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ComponentBase, type RenderTreeBuilder, mount } from "./index";
 
-// Written the way zor emits lifecycle overrides, @key and @ref.
+// Written the way xzor emits lifecycle overrides, @key and @ref.
 
 const log: string[] = [];
 

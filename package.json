@@ -1,5 +1,5 @@
 {
-  "name": "rs-zor",
+  "name": "xzor",
   "private": true,
   "scripts": {
     "example": "cargo run -q -- build examples/counter",

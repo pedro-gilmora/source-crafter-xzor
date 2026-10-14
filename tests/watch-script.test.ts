@@ -35,14 +35,14 @@ async function start(root: string) {
   };
 }
 
-const tmp = () => mkdtempSync(join(tmpdir(), "zor-watch-"));
+const tmp = () => mkdtempSync(join(tmpdir(), "xzor-watch-"));
 
 test("reports a file inside a directory created after start", async () => {
   const root = tmp();
   const w = await start(root);
   mkdirSync(join(root, "a", "b"), { recursive: true });
-  writeFileSync(join(root, "a", "b", "x.tszor"), "<p/>");
-  expect(await w.until(() => w.lines().includes("a/b/x.tszor"), 3000)).toBe(true);
+  writeFileSync(join(root, "a", "b", "x.xzor"), "<p/>");
+  expect(await w.until(() => w.lines().includes("a/b/x.xzor"), 3000)).toBe(true);
 });
 
 test.skipIf(process.platform !== "linux")("does not watch inside ignored directories", async () => {

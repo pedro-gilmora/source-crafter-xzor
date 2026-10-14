@@ -1,4 +1,4 @@
-//! Language server for `.tszor`: component features handled here, TypeScript regions
+//! Language server for `.xzor`: component features handled here, TypeScript regions
 //! proxied to TypeScript 7's native server (`tsc --lsp --stdio`).
 
 pub mod features;
@@ -158,15 +158,15 @@ mod tests {
     #[test]
     fn uris() {
         if cfg!(windows) {
-            let p = uri_to_path("file:///d%3A/Code/my%20app/A.tszor").unwrap();
-            assert_eq!(p, PathBuf::from(r"d:\Code\my app\A.tszor"));
-            assert_eq!(path_to_uri(&p), "file:///d%3A/Code/my%20app/A.tszor");
+            let p = uri_to_path("file:///d%3A/Code/my%20app/A.xzor").unwrap();
+            assert_eq!(p, PathBuf::from(r"d:\Code\my app\A.xzor"));
+            assert_eq!(path_to_uri(&p), "file:///d%3A/Code/my%20app/A.xzor");
             assert_eq!(path_to_uri(Path::new(r"D:\x\y.ts")), "file:///d%3A/x/y.ts");
             assert!(same_path(Path::new(r"D:\X"), Path::new(r"d:\x")));
         } else {
-            let p = uri_to_path("file:///home/a%20b/A.tszor").unwrap();
-            assert_eq!(p, PathBuf::from("/home/a b/A.tszor"));
-            assert_eq!(path_to_uri(&p), "file:///home/a%20b/A.tszor");
+            let p = uri_to_path("file:///home/a%20b/A.xzor").unwrap();
+            assert_eq!(p, PathBuf::from("/home/a b/A.xzor"));
+            assert_eq!(path_to_uri(&p), "file:///home/a%20b/A.xzor");
         }
     }
 }

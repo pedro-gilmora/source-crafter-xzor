@@ -628,9 +628,9 @@ mod tests {
     fn component(name: &str, injects: Vec<Param>) -> Component {
         Component {
             class: TypeRef {
-                id: format!("{name}.tszor.ts#default"),
+                id: format!("{name}.xzor.ts#default"),
                 text: name.into(),
-                module: Some(format!("{name}.tszor")),
+                module: Some(format!("{name}.xzor")),
                 export: Some("default".into()),
             },
             injects,
@@ -813,7 +813,7 @@ mod tests {
         };
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI04"]);
-        assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.tszor", 0, Some("db")));
+        assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.xzor", 0, Some("db")));
         assert_eq!(d[0].param_at, None);
         assert_eq!(d[0].message, "IDatabase (injected as db in Counter) is not provided by Application");
     }
@@ -826,7 +826,7 @@ mod tests {
         };
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI04"]);
-        assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.tszor", 0, Some("db")));
+        assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.xzor", 0, Some("db")));
         assert_eq!(d[0].message, "IDatabase (injected as db in Counter) is not provided: no @Mount application");
     }
 
@@ -879,7 +879,7 @@ mod tests {
         };
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI12"]);
-        assert_eq!((d[0].file.as_str(), d[0].inject.as_deref(), d[0].param_at.as_ref()), ("Counter.tszor", Some("port"), None));
+        assert_eq!((d[0].file.as_str(), d[0].inject.as_deref(), d[0].param_at.as_ref()), ("Counter.xzor", Some("port"), None));
     }
 
     #[test]

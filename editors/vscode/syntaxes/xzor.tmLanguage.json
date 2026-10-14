@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "scopeName": "source.tszor",
-  "name": "TSZor",
+  "scopeName": "source.xzor",
+  "name": "XZor",
   "patterns": [{ "include": "#markup" }],
   "injections": {
     "L:meta.embedded.block.typescript - comment - string": {
@@ -17,10 +17,10 @@
       "patterns": [{ "include": "#code-void-element" }, { "include": "#code-element" }]
     },
     "code-void-element": {
-      "name": "meta.tag.tszor",
+      "name": "meta.tag.xzor",
       "begin": "(@)?(<)(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)(?=[\\s/>])",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
+        "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "punctuation.definition.tag.begin.html" },
         "3": { "name": "entity.name.tag.html" }
       },
@@ -31,16 +31,16 @@
     "code-element": {
       "begin": "(@)?(<)(?:([A-Z][\\w.]*)|([a-z][\\w:-]*))(?=[\\s/>])",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
+        "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "punctuation.definition.tag.begin.html" },
-        "3": { "name": "support.class.component.tszor" },
+        "3": { "name": "support.class.component.xzor" },
         "4": { "name": "entity.name.tag.html" }
       },
       "end": "(/>)|(</)(?:([A-Z][\\w.]*)|([a-z][\\w:-]*))\\s*(>)",
       "endCaptures": {
         "1": { "name": "punctuation.definition.tag.end.html" },
         "2": { "name": "punctuation.definition.tag.begin.html" },
-        "3": { "name": "support.class.component.tszor" },
+        "3": { "name": "support.class.component.xzor" },
         "4": { "name": "entity.name.tag.html" },
         "5": { "name": "punctuation.definition.tag.end.html" }
       },
@@ -100,20 +100,20 @@
       ]
     },
     "razor-comment": {
-      "name": "comment.block.tszor",
+      "name": "comment.block.xzor",
       "begin": "@\\*",
       "end": "\\*@"
     },
     "directive-comment": {
       "patterns": [
-        { "name": "comment.line.double-slash.tszor", "match": "//.*$" },
+        { "name": "comment.line.double-slash.xzor", "match": "//.*$" },
         { "include": "#razor-comment" }
       ]
     },
     "statements": {
       "comment": "@{ ... }: TypeScript statements inside the template.",
       "begin": "(@)(?=\\{)",
-      "beginCaptures": { "1": { "name": "keyword.control.transition.tszor" } },
+      "beginCaptures": { "1": { "name": "keyword.control.transition.xzor" } },
       "end": "(?<=\\})",
       "contentName": "meta.embedded.block.typescript",
       "patterns": [{ "include": "source.ts#decl-block" }]
@@ -121,8 +121,8 @@
     "class-directives": {
       "begin": "(?<![[:alnum:]])(@)(inherits|implements|attribute)\\b",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.directive.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" }
       },
       "end": "$",
       "contentName": "meta.embedded.line.typescript",
@@ -130,7 +130,7 @@
     },
     "line-text": {
       "match": "(@:)",
-      "captures": { "1": { "name": "keyword.control.transition.tszor" } }
+      "captures": { "1": { "name": "keyword.control.transition.xzor" } }
     },
     "comment": {
       "name": "comment.block.html",
@@ -143,14 +143,14 @@
       "match": "&(?:[a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);"
     },
     "escape": {
-      "name": "constant.character.escape.tszor",
+      "name": "constant.character.escape.xzor",
       "match": "@@"
     },
     "code-block": {
       "begin": "(?<![[:alnum:]])(@)(code)\\s*(?=\\{)",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.directive.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" }
       },
       "end": "(?<=\\})",
       "contentName": "meta.embedded.block.typescript",
@@ -159,29 +159,29 @@
     "page": {
       "match": "(?<![[:alnum:]])(@)(page)\\s+(\"[^\"]*\")(?:[ \\t]+(as)[ \\t]+([_$[:alpha:]][_$[:alnum:]]*))?[ \\t]*(//.*$)?",
       "captures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.directive.tszor" },
-        "3": { "name": "string.quoted.double.tszor" },
-        "4": { "name": "keyword.control.as.tszor" },
-        "5": { "name": "variable.other.constant.route.tszor" },
-        "6": { "name": "comment.line.double-slash.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" },
+        "3": { "name": "string.quoted.double.xzor" },
+        "4": { "name": "keyword.control.as.xzor" },
+        "5": { "name": "variable.other.constant.route.xzor" },
+        "6": { "name": "comment.line.double-slash.xzor" }
       }
     },
     "routes-block": {
       "comment": "@ClientRoutes(route) { sections }: only sections are recognized directly inside the braces.",
       "begin": "(?<![[:alnum:]])(@)(ClientRoutes|ServerRoutes)[ \\t]*(?=\\()",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.directive.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" }
       },
       "end": "(?<=\\})",
       "patterns": [
         { "include": "#route-params" },
         {
           "begin": "\\{",
-          "beginCaptures": { "0": { "name": "punctuation.section.block.begin.tszor" } },
+          "beginCaptures": { "0": { "name": "punctuation.section.block.begin.xzor" } },
           "end": "\\}",
-          "endCaptures": { "0": { "name": "punctuation.section.block.end.tszor" } },
+          "endCaptures": { "0": { "name": "punctuation.section.block.end.xzor" } },
           "patterns": [
             { "include": "#razor-comment" },
             { "include": "#comment" },
@@ -193,20 +193,20 @@
     "route-params": {
       "match": "(\\()[ \\t]*([_$[:alpha:]][_$[:alnum:]]*\\??)?[ \\t]*(\\))",
       "captures": {
-        "1": { "name": "punctuation.section.parens.begin.tszor" },
-        "2": { "name": "variable.parameter.tszor" },
-        "3": { "name": "punctuation.section.parens.end.tszor" }
+        "1": { "name": "punctuation.section.parens.begin.xzor" },
+        "2": { "name": "variable.parameter.xzor" },
+        "3": { "name": "punctuation.section.parens.end.xzor" }
       }
     },
     "route-section": {
       "comment": "@tag(page) { }, @/re/flags(page?) { }, @\"pattern\"(page?) { }, @notFound { }, @catch(e) { }, @default(page) { }.",
       "begin": "(?<![[:alnum:]])(@)(?=[/\"_$[:alpha:]])",
-      "beginCaptures": { "1": { "name": "keyword.control.transition.tszor" } },
+      "beginCaptures": { "1": { "name": "keyword.control.transition.xzor" } },
       "end": "(?<=\\})",
       "patterns": [
-        { "match": "\\G(notFound|catch|default)\\b", "name": "keyword.control.tszor" },
-        { "match": "\\G[_$[:alpha:]][_$[:alnum:]]*", "name": "variable.other.constant.route.tszor" },
-        { "match": "\\G\"(?:[^\"\\\\]|\\\\.)*\"", "name": "string.quoted.double.tszor" },
+        { "match": "\\G(notFound|catch|default)\\b", "name": "keyword.control.xzor" },
+        { "match": "\\G[_$[:alpha:]][_$[:alnum:]]*", "name": "variable.other.constant.route.xzor" },
+        { "match": "\\G\"(?:[^\"\\\\]|\\\\.)*\"", "name": "string.quoted.double.xzor" },
         {
           "name": "string.regexp.ts",
           "begin": "\\G/(?=(?:[^/\\\\\\[\\n]|\\\\.|\\[(?:[^\\]\\\\\\n]|\\\\.)*\\])+/)",
@@ -220,26 +220,26 @@
     "typeparam": {
       "match": "(?<![[:alnum:]])(@)(typeparam)\\s+([_$[:alpha:]][_$[:alnum:]]*)((?:\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|[^/@]|/(?!/))*)(//.*$)?",
       "captures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.directive.tszor" },
-        "3": { "name": "entity.name.type.parameter.tszor" },
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" },
+        "3": { "name": "entity.name.type.parameter.xzor" },
         "4": { "patterns": [{ "include": "source.ts#type" }] },
-        "5": { "name": "comment.line.double-slash.tszor" }
+        "5": { "name": "comment.line.double-slash.xzor" }
       }
     },
     "inject": {
       "match": "(?<![[:alnum:]])(@)(inject)\\s+(.+?)\\s+([_$[:alpha:]][_$[:alnum:]]*)[ \\t]*(?:(//.*)$|(?=@\\*)|$)",
       "captures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.directive.tszor" },
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" },
         "3": { "patterns": [{ "include": "source.ts#type" }] },
-        "4": { "name": "variable.other.readwrite.tszor" },
-        "5": { "name": "comment.line.double-slash.tszor" }
+        "4": { "name": "variable.other.readwrite.xzor" },
+        "5": { "name": "comment.line.double-slash.xzor" }
       }
     },
     "import": {
       "begin": "(?<![[:alnum:]])(@)(?=import\\b)",
-      "beginCaptures": { "1": { "name": "keyword.control.transition.tszor" } },
+      "beginCaptures": { "1": { "name": "keyword.control.transition.xzor" } },
       "end": "$",
       "contentName": "meta.embedded.line.typescript",
       "patterns": [
@@ -258,59 +258,59 @@
     "explicit": {
       "begin": "(?<![[:alnum:]])(@)(\\()",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "punctuation.section.embedded.begin.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "punctuation.section.embedded.begin.xzor" }
       },
       "end": "\\)",
-      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.tszor" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.xzor" } },
       "contentName": "meta.embedded.expression.typescript",
       "patterns": [{ "include": "source.ts#expression" }]
     },
     "implicit-call": {
       "begin": "(?<![[:alnum:]])(@)([_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.[_$[:alpha:]][_$[:alnum:]]*)*)(\\()",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "variable.other.readwrite.tszor" },
-        "3": { "name": "punctuation.section.embedded.begin.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "variable.other.readwrite.xzor" },
+        "3": { "name": "punctuation.section.embedded.begin.xzor" }
       },
       "end": "\\)",
-      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.tszor" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.xzor" } },
       "contentName": "meta.embedded.expression.typescript",
       "patterns": [{ "include": "source.ts#expression" }]
     },
     "implicit": {
       "match": "(?<![[:alnum:]])(@)([_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.[_$[:alpha:]][_$[:alnum:]]*)*)",
       "captures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "variable.other.readwrite.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "variable.other.readwrite.xzor" }
       }
     },
     "condition": {
       "begin": "\\(",
-      "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.tszor" } },
+      "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.xzor" } },
       "end": "\\)",
-      "endCaptures": { "0": { "name": "punctuation.section.parens.end.tszor" } },
+      "endCaptures": { "0": { "name": "punctuation.section.parens.end.xzor" } },
       "contentName": "meta.embedded.expression.typescript",
       "patterns": [{ "include": "source.ts" }]
     },
     "block": {
       "begin": "\\{",
-      "beginCaptures": { "0": { "name": "punctuation.section.block.begin.tszor" } },
+      "beginCaptures": { "0": { "name": "punctuation.section.block.begin.xzor" } },
       "end": "\\}",
-      "endCaptures": { "0": { "name": "punctuation.section.block.end.tszor" } },
+      "endCaptures": { "0": { "name": "punctuation.section.block.end.xzor" } },
       "patterns": [{ "include": "#markup" }]
     },
     "control": {
       "comment": "@if/@for, plus `else` chains; ends after a block that is not followed by `else` on the same line.",
       "begin": "(?:(?<![[:alnum:]])(@)(if|for|while)\\b|^\\s*(else)\\b(?=\\s*(?:if\\s*\\(|\\{)))",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.tszor" },
-        "3": { "name": "keyword.control.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.xzor" },
+        "3": { "name": "keyword.control.xzor" }
       },
       "end": "(?<=\\})(?!\\s*else\\b)",
       "patterns": [
-        { "match": "\\b(else|if)\\b", "name": "keyword.control.tszor" },
+        { "match": "\\b(else|if)\\b", "name": "keyword.control.xzor" },
         { "include": "#condition" },
         { "include": "#block" }
       ]
@@ -319,18 +319,18 @@
       "comment": "@slot:name(args): arguments are TypeScript expressions.",
       "begin": "(?<![[:alnum:]])(@)(slot)(:)([_$[:alpha:]][_$[:alnum:]]*)(?=\\()",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.tszor" },
-        "3": { "name": "punctuation.separator.slot.tszor" },
-        "4": { "name": "entity.name.function.slot.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.xzor" },
+        "3": { "name": "punctuation.separator.slot.xzor" },
+        "4": { "name": "entity.name.function.slot.xzor" }
       },
       "end": "(?<=\\))",
       "patterns": [
         {
           "begin": "\\(",
-          "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.tszor" } },
+          "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.xzor" } },
           "end": "\\)",
-          "endCaptures": { "0": { "name": "punctuation.section.parens.end.tszor" } },
+          "endCaptures": { "0": { "name": "punctuation.section.parens.end.xzor" } },
           "contentName": "meta.embedded.expression.typescript",
           "patterns": [{ "include": "source.ts#expression" }]
         }
@@ -340,25 +340,25 @@
       "comment": "@cascade:name(value[, fixed]) { body }: the value is a TypeScript expression.",
       "begin": "(?<![[:alnum:]])(@)(cascade)(:)([_$[:alpha:]][_$[:alnum:]]*)[ \\t]*(?=\\()",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.tszor" },
-        "3": { "name": "punctuation.separator.cascade.tszor" },
-        "4": { "name": "variable.other.constant.cascade.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.xzor" },
+        "3": { "name": "punctuation.separator.cascade.xzor" },
+        "4": { "name": "variable.other.constant.cascade.xzor" }
       },
       "end": "(?<=\\))",
       "patterns": [
         {
           "begin": "\\(",
-          "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.tszor" } },
+          "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.xzor" } },
           "end": "\\)",
-          "endCaptures": { "0": { "name": "punctuation.section.parens.end.tszor" } },
+          "endCaptures": { "0": { "name": "punctuation.section.parens.end.xzor" } },
           "contentName": "meta.embedded.expression.typescript",
           "patterns": [
             {
               "match": "(,)\\s*(fixed)\\b(?=\\s*\\))",
               "captures": {
                 "1": { "name": "punctuation.separator.comma.ts" },
-                "2": { "name": "keyword.other.fixed.tszor" }
+                "2": { "name": "keyword.other.fixed.xzor" }
               }
             },
             { "include": "source.ts#expression" }
@@ -370,9 +370,9 @@
       "comment": "@slot name(params) inside a component tag: a TypeScript parameter list.",
       "begin": "(?<![[:alnum:]])(@)(slot)(?:[ \\t]+([_$[:alpha:]][_$[:alnum:]]*))?[ \\t]*(?=\\()",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.tszor" },
-        "3": { "name": "entity.name.function.slot.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.xzor" },
+        "3": { "name": "entity.name.function.slot.xzor" }
       },
       "end": "(?<=\\))",
       "contentName": "meta.embedded.expression.typescript",
@@ -381,48 +381,48 @@
     "slot": {
       "match": "(?<![[:alnum:]])(@)(slot)(?:(:)([_$[:alpha:]][_$[:alnum:]]*)|[ \\t]+([_$[:alpha:]][_$[:alnum:]]*)(?=\\s*\\{))?",
       "captures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.tszor" },
-        "3": { "name": "punctuation.separator.slot.tszor" },
-        "4": { "name": "entity.name.function.slot.tszor" },
-        "5": { "name": "entity.name.function.slot.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.xzor" },
+        "3": { "name": "punctuation.separator.slot.xzor" },
+        "4": { "name": "entity.name.function.slot.xzor" },
+        "5": { "name": "entity.name.function.slot.xzor" }
       }
     },
     "switch": {
       "begin": "(?<![[:alnum:]])(@)(switch)\\b",
       "beginCaptures": {
-        "1": { "name": "keyword.control.transition.tszor" },
-        "2": { "name": "keyword.control.tszor" }
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.xzor" }
       },
       "end": "(?<=\\})",
       "patterns": [
         { "include": "#condition" },
         {
           "begin": "\\{",
-          "beginCaptures": { "0": { "name": "punctuation.section.block.begin.tszor" } },
+          "beginCaptures": { "0": { "name": "punctuation.section.block.begin.xzor" } },
           "end": "\\}",
-          "endCaptures": { "0": { "name": "punctuation.section.block.end.tszor" } },
+          "endCaptures": { "0": { "name": "punctuation.section.block.end.xzor" } },
           "patterns": [
             {
               "begin": "(?:^|(?<=:))\\s*(case)\\b",
-              "beginCaptures": { "1": { "name": "keyword.control.tszor" } },
+              "beginCaptures": { "1": { "name": "keyword.control.xzor" } },
               "end": ":",
-              "endCaptures": { "0": { "name": "punctuation.separator.case.tszor" } },
+              "endCaptures": { "0": { "name": "punctuation.separator.case.xzor" } },
               "contentName": "meta.embedded.expression.typescript",
               "patterns": [{ "include": "source.ts#expression" }]
             },
             {
               "match": "(?:^|(?<=:))\\s*(default)\\s*(:)",
               "captures": {
-                "1": { "name": "keyword.control.tszor" },
-                "2": { "name": "punctuation.separator.case.tszor" }
+                "1": { "name": "keyword.control.xzor" },
+                "2": { "name": "punctuation.separator.case.xzor" }
               }
             },
             {
               "match": "\\b(break)\\s*(;)",
               "captures": {
-                "1": { "name": "keyword.control.tszor" },
-                "2": { "name": "punctuation.terminator.statement.tszor" }
+                "1": { "name": "keyword.control.xzor" },
+                "2": { "name": "punctuation.terminator.statement.xzor" }
               }
             },
             { "include": "#markup" }
@@ -434,17 +434,17 @@
       "match": "(</)(?:([A-Z][\\w.]*)|([a-zA-Z][\\w:-]*))\\s*(>)",
       "captures": {
         "1": { "name": "punctuation.definition.tag.begin.html" },
-        "2": { "name": "support.class.component.tszor" },
+        "2": { "name": "support.class.component.xzor" },
         "3": { "name": "entity.name.tag.html" },
         "4": { "name": "punctuation.definition.tag.end.html" }
       }
     },
     "start-tag": {
-      "name": "meta.tag.tszor",
+      "name": "meta.tag.xzor",
       "begin": "(<)(?:([A-Z][\\w.]*)|([a-zA-Z][\\w:-]*))",
       "beginCaptures": {
         "1": { "name": "punctuation.definition.tag.begin.html" },
-        "2": { "name": "support.class.component.tszor" },
+        "2": { "name": "support.class.component.xzor" },
         "3": { "name": "entity.name.tag.html" }
       },
       "end": "/?>",
@@ -466,7 +466,7 @@
     "event-attribute": {
       "begin": "(@[A-Za-z][\\w:.-]*)\\s*(=)\\s*([\"'])",
       "beginCaptures": {
-        "1": { "name": "entity.other.attribute-name.html entity.other.attribute-name.event.tszor" },
+        "1": { "name": "entity.other.attribute-name.html entity.other.attribute-name.event.xzor" },
         "2": { "name": "punctuation.separator.key-value.html" },
         "3": { "name": "punctuation.definition.string.begin.html" }
       },

@@ -1,5 +1,5 @@
 // Extracts DI facts from decorated provider classes and generated components; prints one JSON document.
-// Usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...   (paths may be relative to <projectRoot>)
+// Usage: bun di.ts <projectRoot> <file.ts>... -- <component.xzor.ts>...   (paths may be relative to <projectRoot>)
 //    or: bun di.ts --serve <projectRoot>, then one {"files","components","overlays"} JSON request per stdin line.
 //
 // TypeScript 7 sync API calls (proven by the Step 0 spike):
@@ -77,7 +77,7 @@ const KINDS: Kind[] = ["ServiceProvider", "Mount", "Import", "Singleton", "Scope
 const LIFETIMES = { Singleton: "singleton", Scoped: "scoped", Transient: "transient" } as const;
 const NAMED = SymbolFlags.Class | SymbolFlags.Interface | SymbolFlags.Enum;
 const PRIMITIVE = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.BigInt | TypeFlags.ESSymbol;
-const RUNTIME = "@zor/runtime";
+const RUNTIME = "@xzor/runtime";
 
 type Loc = { sf: SourceFile; node: Node };
 type Disposal = { dispose: Dispose; optional: boolean };
@@ -116,7 +116,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     lookups.forEach((l, i) => (l.value = target(found[i])));
   };
 
-  // --- runtime decorators, by symbol identity with @zor/runtime's exports ---
+  // --- runtime decorators, by symbol identity with @xzor/runtime's exports ---
   const kinds = new Map<number, Kind>();
   for (const sf of [...sources, ...componentSources]) {
     const decl = sf.statements.find((s) => isImportDeclaration(s) && isStringLiteral(s.moduleSpecifier) && s.moduleSpecifier.text === RUNTIME);
@@ -317,7 +317,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     if (decl && program.getSourceFileMetadataByPath(decl.path)?.isDefaultLibrary) return { id: text, text, module: null, export: null };
     const fileName = decl && s.flags & NAMED ? fileOf(decl.path) : undefined;
     if (!fileName) return nonImportable(t, text, loc);
-    const file = rel(fileName).replace(/^\.zor\//, "");
+    const file = rel(fileName).replace(/^\.xzor\//, "");
     const module = file.replace(/\.(d\.)?[cm]?tsx?$/, "");
     const name = exportName(s, fileName);
     if (name === undefined) {
@@ -349,7 +349,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       error(loc, `${s.name} must be exported to be used as a factory`);
       return undefined;
     }
-    const file = rel(fileName).replace(/^\.zor\//, "");
+    const file = rel(fileName).replace(/^\.xzor\//, "");
     return { id: `${file}#${name}`, text: name, module: file.replace(/\.(d\.)?[cm]?tsx?$/, ""), export: name };
   };
 
@@ -544,7 +544,7 @@ if (args[0] === "--serve") await serve(args[1]);
 else oneShot(args);
 
 function oneShot([rootArg, ...rest]: string[]) {
-  if (!rootArg) throw new Error("usage: bun di.ts <projectRoot> <file.ts>... -- <component.tszor.ts>...  |  bun di.ts --serve <projectRoot>");
+  if (!rootArg) throw new Error("usage: bun di.ts <projectRoot> <file.ts>... -- <component.xzor.ts>...  |  bun di.ts --serve <projectRoot>");
   const root = slash(resolve(rootArg));
   const sep = rest.indexOf("--");
   const toPath = (f: string) => slash(resolve(root, f));

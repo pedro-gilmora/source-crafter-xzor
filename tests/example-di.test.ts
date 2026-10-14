@@ -69,23 +69,23 @@ test("the shell routes every kind of section", async () => {
   link("User 1").click();
   expect(location.pathname).toBe("/users/1");
   expect(one("main.main h2")).toBe("User 1");
-  expect(one(".user")).toBe("Viewing user #1 on zor demo (parameter sets: 1)");
+  expect(one(".user")).toBe("Viewing user #1 on xzor demo (parameter sets: 1)");
   expect(link("User 1").className).toBe("active");
-  expect(document.title).toBe("User 1 · zor demo");
+  expect(document.title).toBe("User 1 · xzor demo");
   expect(one(".registered")).toBe("Registered as user page");
 
   // Same pattern, new params: the instance is kept and runs onParametersSet again.
   link("Next user").click();
   expect(one("main.main h2")).toBe("User 2");
-  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 2)");
+  expect(one(".user")).toBe("Viewing user #2 on xzor demo (parameter sets: 2)");
   // `/users/:id/*` extends `/users/:id`: one route family, so the instance is still kept.
   link("Posts").click();
   expect(one(".tab")).toBe("Tab: posts");
-  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 3)");
+  expect(one(".user")).toBe("Viewing user #2 on xzor demo (parameter sets: 3)");
   // Back to the shorter route: `rest` is cleared, not left over.
   link("Profile").click();
   expect(one(".tab")).toBeUndefined();
-  expect(one(".user")).toBe("Viewing user #2 on zor demo (parameter sets: 4)");
+  expect(one(".user")).toBe("Viewing user #2 on xzor demo (parameter sets: 4)");
 
   link("Admin").click();
   expect(one(".admin .admin-home")).toBe("Welcome to the admin area.");
@@ -113,7 +113,7 @@ test("the shell routes every kind of section", async () => {
 
 test("the emitted provider disposes scoped services per scope and singletons at the root", async () => {
   const { SharedInstance } = await import("../runtime/index");
-  const { DataServices$ } = await import(join(example, ".zor", "services", "data.provider.ts"));
+  const { DataServices$ } = await import(join(example, ".xzor", "services", "data.provider.ts"));
   log.mockClear();
   const provider = DataServices$[SharedInstance];
   const scope = provider.createScope();

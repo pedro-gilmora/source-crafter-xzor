@@ -28,7 +28,7 @@ pub struct Prop {
 
 pub fn component_from_source(path: &Path, text: &str) -> Component {
     let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let name = class_name(file.strip_suffix(".tszor").unwrap_or(&file));
+    let name = class_name(file.strip_suffix(".xzor").unwrap_or(&file));
     let mut props = Vec::new();
     let mut slots = Vec::new();
     let mut tags = Vec::new();
@@ -468,7 +468,7 @@ mod tests {
 
     fn counter() -> Component {
         let src = "@code {\n  label: string = \"Count\";\n  step = 1;\n  increment() {}\n}\n<p>@label</p>";
-        component_from_source(Path::new("/app/Counter.tszor"), src)
+        component_from_source(Path::new("/app/Counter.xzor"), src)
     }
 
     #[test]
@@ -483,11 +483,11 @@ mod tests {
 
     #[test]
     fn slot_names_inside_component_tags() {
-        let card = component_from_source(Path::new("/app/Card.tszor"), "<section>@slot:header @slot:footer(1) @slot</section>");
+        let card = component_from_source(Path::new("/app/Card.xzor"), "<section>@slot:header @slot:footer(1) @slot</section>");
         assert_eq!(card.slots.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["header", "footer"]);
 
         let doc = "<Card title=\"x\">\n  <p/>\n  @slot he";
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[card.clone()]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[card.clone()]);
         assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["header"]);
 
         let doc = "<Card>\n  <div>@slot he";
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn key_and_ref_directives_complete() {
         let labels = |doc: &str, comps: &[Component]| -> Vec<String> {
-            completions(doc, doc.len(), Path::new("/app/A.tszor"), comps).into_iter().map(|c| c.label).collect()
+            completions(doc, doc.len(), Path::new("/app/A.xzor"), comps).into_iter().map(|c| c.label).collect()
         };
         assert_eq!(labels("<li @k", &[]), ["@key"]);
         assert_eq!(labels("<input @r", &[]), ["@ref"]);
@@ -526,40 +526,40 @@ mod tests {
     #[test]
     fn component_completion_adds_import() {
         let doc = "@page \"/\"\n<main>\n  <Co";
-        let items = completions(doc, doc.len(), Path::new("/app/pages/Home.tszor"), &[counter()]);
+        let items = completions(doc, doc.len(), Path::new("/app/pages/Home.xzor"), &[counter()]);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "Counter");
-        assert_eq!(items[0].extra_edit, Some(("@page \"/\"\n".len(), "@import Counter from \"../Counter.tszor\"\n".into())));
+        assert_eq!(items[0].extra_edit, Some(("@page \"/\"\n".len(), "@import Counter from \"../Counter.xzor\"\n".into())));
 
-        let doc = "@import Counter from \"./Counter.tszor\"\n<Co";
-        let items = completions(doc, doc.len(), Path::new("/app/Home.tszor"), &[counter()]);
+        let doc = "@import Counter from \"./Counter.xzor\"\n<Co";
+        let items = completions(doc, doc.len(), Path::new("/app/Home.xzor"), &[counter()]);
         assert_eq!(items[0].extra_edit, None);
     }
 
     #[test]
     fn prop_event_and_directive_completion() {
         let doc = "<Counter s";
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[counter()]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[counter()]);
         assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["step"]);
         assert_eq!(items[0].insert, "step=\"$1\"");
 
         let doc = "<button @onc";
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items[0].label, "@onclick");
 
         let doc = "<input @bi";
-        let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]).into_iter().map(|i| i.label).collect();
+        let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]).into_iter().map(|i| i.label).collect();
         assert_eq!(labels, ["@bind", "@bind:event", "@bind:after"]);
 
         let doc = "\n@i";
-        let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]).into_iter().map(|i| i.label).collect();
+        let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]).into_iter().map(|i| i.label).collect();
         assert_eq!(labels, ["if", "import", "inherits", "implements", "inject"]);
     }
 
     #[test]
     fn directive_completions_include_inject() {
         let doc = "\n@inj";
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "inject");
         assert_eq!(items[0].insert, "inject $1 $2");
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn directive_completions_include_cascade() {
         let doc = "\n@cas";
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "cascade");
         assert_eq!(items[0].insert, "cascade:$1($2) {\n\t$0\n}");
@@ -578,21 +578,21 @@ mod tests {
     #[test]
     fn routes_block_directives_complete() {
         let doc = "\n@ClientR";
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "ClientRoutes");
         assert_eq!(items[0].insert, "ClientRoutes(${1:route}) {\n\t$0\n}");
         let doc = "\n@ServerR";
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items[0].insert, "ServerRoutes(${1:route}) {\n\t$0\n}");
     }
 
     #[test]
     fn route_sections_and_tags_complete_inside_the_block() {
-        let admin = component_from_source(Path::new("/app/Users.tszor"), "@page \"/a\" as admin\n@page \"/b\" as admin\n@page \"/c\" as user\n@page \"/d\"");
+        let admin = component_from_source(Path::new("/app/Users.xzor"), "@page \"/a\" as admin\n@page \"/b\" as admin\n@page \"/c\" as user\n@page \"/d\"");
         assert_eq!(admin.tags, ["admin", "admin", "user"]);
         let labels = |doc: &str| -> Vec<String> {
-            completions(doc, doc.len(), Path::new("/app/A.tszor"), std::slice::from_ref(&admin)).into_iter().map(|c| c.label).collect()
+            completions(doc, doc.len(), Path::new("/app/A.xzor"), std::slice::from_ref(&admin)).into_iter().map(|c| c.label).collect()
         };
         assert_eq!(labels("@ClientRoutes(route) {\n  @"), ["admin", "user", "notFound", "catch", "default"]);
         assert_eq!(labels("@ServerRoutes(route)\n{\n  @a"), ["admin"]);
@@ -604,7 +604,7 @@ mod tests {
 
         let doc = "@ClientRoutes(route) {\n  @catch(e) { <b/> }\n  @de";
         assert_eq!(context(doc, doc.len()), Context::Route { prefix: "de".into(), start: doc.len() - 2 });
-        let items = completions(doc, doc.len(), Path::new("/app/A.tszor"), &[]);
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items[0].insert, "default(${1:page}) {\n\t$0\n}");
     }
 
@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn relative_imports() {
-        assert_eq!(relative_import(Path::new("/a/b"), Path::new("/a/b/C.tszor")), "./C.tszor");
-        assert_eq!(relative_import(Path::new("/a/b"), Path::new("/a/c/D.tszor")), "../c/D.tszor");
+        assert_eq!(relative_import(Path::new("/a/b"), Path::new("/a/b/C.xzor")), "./C.xzor");
+        assert_eq!(relative_import(Path::new("/a/b"), Path::new("/a/c/D.xzor")), "../c/D.xzor");
     }
 }
