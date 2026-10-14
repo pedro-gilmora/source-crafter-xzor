@@ -175,6 +175,20 @@ pub struct RoutesBlockInfo {
     pub sections: Vec<(String, usize)>,
 }
 
+/// Whether two components' routes and blocks differ for the table, ignoring where they sit in the source.
+pub fn routes_differ(a: (&[RouteInfo], Option<&RoutesBlockInfo>), b: (&[RouteInfo], Option<&RoutesBlockInfo>)) -> bool {
+    let route = |x: &RouteInfo, y: &RouteInfo| x.tag == y.tag && x.pattern == y.pattern && x.params == y.params && x.rest == y.rest;
+    let block = |x: &RoutesBlockInfo, y: &RoutesBlockInfo| {
+        x.engine == y.engine && x.sections.len() == y.sections.len() && x.sections.iter().zip(&y.sections).all(|(s, t)| s.0 == t.0)
+    };
+    a.0.len() != b.0.len()
+        || !a.0.iter().zip(b.0).all(|(x, y)| route(x, y))
+        || match (a.1, b.1) {
+            (Some(x), Some(y)) => !block(x, y),
+            (x, y) => x.is_some() != y.is_some(),
+        }
+}
+
 /// One compiled component as the project-wide route table sees it.
 pub struct Unit<'a> {
     pub source: &'a Path,
@@ -547,6 +561,16 @@ mod table_tests {
     use std::path::PathBuf;
 
     const ROOT: &str = "/proj";
+
+    #[test]
+    fn moving_route_lines_is_not_a_route_change() {
+        let at = |o: usize| RouteInfo { tag: Some("a".into()), tag_at: o, pattern: "/x".into(), pattern_at: o, params: vec![], rest: false };
+        let block = |o: usize| RoutesBlockInfo { engine: Engine::Client, at: o, sections: vec![("a".into(), o + 5)] };
+        assert!(!routes_differ((&[at(1)], Some(&block(1))), (&[at(9)], Some(&block(9)))));
+        let other = RouteInfo { pattern: "/y".into(), ..at(1) };
+        assert!(routes_differ((&[at(1)], None), (&[other], None)));
+        assert!(routes_differ((&[at(1)], None), (&[at(1)], Some(&block(1)))));
+    }
 
     #[test]
     fn table_specifier_is_relative_to_the_source_directory() {

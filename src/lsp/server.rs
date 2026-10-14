@@ -648,7 +648,11 @@ impl Server {
                 doc.version += 1;
                 // The project's table is built from the open documents, so it follows their route lines.
                 let resync = match &doc.compiled {
-                    Some(c) => c.g.routes != g.routes || c.g.routes_block != g.routes_block,
+                    // Moved route lines only matter when this document shows route errors at their old place.
+                    Some(c) => {
+                        crate::routes::routes_differ((&c.g.routes, c.g.routes_block.as_ref()), (&g.routes, g.routes_block.as_ref()))
+                            || (!doc.routes.is_empty() && (c.g.routes != g.routes || c.g.routes_block != g.routes_block))
+                    }
                     None => !g.routes.is_empty() || g.routes_block.is_some(),
                 };
                 let (gen_uri, version, code, was_open) = (doc.gen_uri.clone(), doc.version, g.code.clone(), doc.ts_open);
