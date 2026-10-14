@@ -39,7 +39,7 @@ const app = `@import { href } from "./routes"
 
 <nav>
   <a class="user-link" href="@href.UserPage({ id: 2 })">user 2</a>
-  <a class="admin-link" href="@href.AdminHome({})">admin</a>
+  <a class="admin-link" href="@href.AdminHome()">admin</a>
   <a class="missing-link" href="/nope">nope</a>
 </nav>
 @ClientRoutes(route) {

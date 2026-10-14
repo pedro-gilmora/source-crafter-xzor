@@ -10,7 +10,7 @@ const root = join(import.meta.dir, "..");
 const dir = join(root, "target", "tmp-routes");
 
 let routes: RouteEntry[];
-let href: Record<string, (p: Record<string, unknown>) => string>;
+let href: Record<string, (p?: Record<string, unknown>) => string>;
 
 beforeAll(async () => {
   const run = Bun.spawnSync(["cargo", "test", "-q", "writes_table_fixture"], { cwd: root });
@@ -67,6 +67,7 @@ test("booleans compare the decoded segment", () => {
 
 test("rest only reaches the page that declares it", () => {
   expect(entry("/docs/*").match(["docs", "a", "b"])).toEqual({});
+  expect(href.Docs()).toBe("/docs/");
   expect(href.Docs({})).toBe("/docs/");
 });
 
@@ -96,11 +97,13 @@ test("entries carry their tag and page component", () => {
 test("href encodes values and picks the route by parameter names", () => {
   expect(href.P({ id: 1 })).toBe("/p/1");
   expect(href.P({ id: 1, rest: "a b/c" })).toBe("/p/1/a%20b/c");
+  expect(href.UserPage()).toBe("/users/new");
   expect(href.UserPage({})).toBe("/users/new");
   expect(href.UserPage({ id: 42 })).toBe("/users/42");
   expect(href.UserPage({ rest: "x/y" })).toBe("/users/x/y");
   expect(href.Flags({ on: true, tab: "a" })).toBe("/f/true/a");
   expect(() => href.P({})).toThrow("no route of P matches these parameters");
+  expect(() => href.P()).toThrow("no route of P matches these parameters");
 });
 
 test("literal segments match the percent-encoded path a browser reports", () => {

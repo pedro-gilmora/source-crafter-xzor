@@ -109,7 +109,7 @@
       @if (step < steps.length) {
         <a class="button primary" href="@href.Learn({ step: step + 1 })">@steps[step] →</a>
       } else {
-        <a class="button primary" href="@href.HowItWorks({})">How it works →</a>
+        <a class="button primary" href="@href.HowItWorks()">How it works →</a>
       }
     </nav>
   </article>

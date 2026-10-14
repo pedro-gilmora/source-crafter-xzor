@@ -150,7 +150,7 @@ One `Routes.xzor` (never itself a `@page`) holds the router and the layouts:
 
 - `@page` works in any `.xzor` of the project (a `pages/` folder is only a convention). The component's class name is its file name.
 - A layout is an ordinary component with `@slot` where the page goes.
-- Typed links: `@import { href } from "./routes"` (relative path; the table is generated), then `<a href="@href.TodoPage({ id: 3 })">`.
+- Typed links: `@import { href } from "./routes"` (relative path; the table is generated), then `<a href="@href.TodoPage({ id: 3 })">`. A page without parameters needs no argument: `href.About()`.
 - `@import { NavLink } from "@source-crafter/xzor-runtime"`, then `<NavLink href="/" match="exact">Home</NavLink>`: it adds `class="active"` on its route; `match="prefix"` is the default.
 - Plain `<a href="/about">` links navigate without reloading.
 - Tag routes with `@page "/admin" as admin` and give them a layout with `@admin(page) { <AdminLayout>@page</AdminLayout> }`.

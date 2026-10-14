@@ -516,9 +516,11 @@ fn emit_href(out: &mut String, unit: &Unit, entries: &[(usize, usize)], index: u
         }
     }
     for (names, _) in &sigs {
-        let _ = writeln!(out, "function __href_{class}(p: {}): string;", params_type(local, names));
+        // A route without parameters takes no argument: `href.About()`.
+        let optional = if names.is_empty() { "?" } else { "" };
+        let _ = writeln!(out, "function __href_{class}(p{optional}: {}): string;", params_type(local, names));
     }
-    let _ = writeln!(out, "function __href_{class}(p: Record<string, unknown>): string {{");
+    let _ = writeln!(out, "function __href_{class}(p: Record<string, unknown> = {{}}): string {{");
     let _ = writeln!(out, "  let n = 0;\n  for (const k in p) if (p[k] !== undefined) n++;");
     for (names, r) in &sigs {
         let mut test = format!("n === {}", names.len());
@@ -773,7 +775,8 @@ mod table_tests {
         let (ts, diags) = generate(&pages);
         assert!(diags.is_empty(), "{diags:?}");
         assert!(!ts.contains("_rest"), "{ts}");
-        assert!(ts.contains("function __href_A(p: Record<string, never>): string;"), "{ts}");
+        assert!(ts.contains("function __href_A(p?: Record<string, never>): string;"), "{ts}");
+        assert!(ts.contains("function __href_A(p: Record<string, unknown> = {}): string {"), "{ts}");
         assert!(ts.contains("return basePath() + \"/a/\";"), "{ts}");
     }
 

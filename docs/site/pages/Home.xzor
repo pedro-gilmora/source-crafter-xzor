@@ -10,7 +10,7 @@
     The compiler turns it into a TypeScript class, TypeScript 7 checks it, and Bun bundles a small single-page app.
   </p>
   <div class="actions">
-    <a class="button primary" href="@href.Start({})">Get started</a>
+    <a class="button primary" href="@href.Start()">Get started</a>
     <a class="button" href="@href.Learn({ step: 1 })">Learn in six steps</a>
   </div>
 </section>

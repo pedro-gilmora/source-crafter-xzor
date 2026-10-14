@@ -14,7 +14,7 @@ const userPage = `@page "/users/:id" as admin
 <p>@id</p>
 `;
 
-const app = (body: string) => `@ClientRoutes(route) {
+const app = (body: string, imports = "") => `${imports}@ClientRoutes(route) {
   @default(page) {
     ${body}
     @page
@@ -22,7 +22,7 @@ const app = (body: string) => `@ClientRoutes(route) {
 }
 `;
 
-function build(name: string, body: string) {
+function build(name: string, body: string, imports = "", files: Record<string, string> = {}) {
   const dir = join(base, name);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -33,7 +33,8 @@ function build(name: string, body: string) {
   tsconfig.compilerOptions.noPropertyAccessFromIndexSignature = true;
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "UserPage.xzor"), userPage);
-  writeFileSync(join(dir, "App.xzor"), app(body));
+  writeFileSync(join(dir, "App.xzor"), app(body, imports));
+  for (const [file, text] of Object.entries(files)) writeFileSync(join(dir, file), text);
   writeFileSync(join(dir, "main.ts"), `import App from "./App.xzor";\nexport { App };\n`);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir, "--no-bundle"], { cwd: root });
   return { code: run.exitCode, out: run.stdout.toString() + run.stderr.toString() };
@@ -55,4 +56,18 @@ test("route.is does not leave params untyped for a tag of another page", () => {
   const r = build("params", `@if (route.is("admin")) { <b>@route.params.nope</b> }`);
   expect(r.code).not.toBe(0);
   expect(r.out).toMatch(/Property 'nope' does not exist/);
+});
+
+const about = `@page "/about"\n\n<p>about</p>\n`;
+const hrefImport = `@import { href } from "./routes"\n`;
+
+test("href of a page without parameters needs no argument", () => {
+  const r = build("href-optional", `<a href="@href.About()">a</a><a href="@href.About({})">b</a>`, hrefImport, { "About.xzor": about });
+  expect(r.code, r.out).toBe(0);
+});
+
+test("href of a page with parameters still requires them", () => {
+  const r = build("href-required", `<a href="@href.UserPage()">a</a>`, hrefImport, { "About.xzor": about });
+  expect(r.code).not.toBe(0);
+  expect(r.out).toMatch(/App\.xzor\(\d+,\d+\)/);
 });

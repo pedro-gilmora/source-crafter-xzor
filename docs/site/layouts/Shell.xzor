@@ -2,11 +2,11 @@
 @import { href } from "../routes"
 
 <header class="top">
-  <a class="brand" href="@href.Home({})"><span class="at">@@</span>xzor</a>
+  <a class="brand" href="@href.Home()"><span class="at">@@</span>xzor</a>
   <nav>
-    <NavLink href="@href.Start({})">Get started</NavLink>
+    <NavLink href="@href.Start()">Get started</NavLink>
     <NavLink href="@href.Learn({ step: 1 })">Learn</NavLink>
-    <NavLink href="@href.HowItWorks({})">How it works</NavLink>
+    <NavLink href="@href.HowItWorks()">How it works</NavLink>
     <a href="https://github.com/pedro-gilmora/source-crafter-xzor" rel="external">GitHub</a>
   </nav>
 </header>
