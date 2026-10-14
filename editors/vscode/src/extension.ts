@@ -10,10 +10,12 @@ function findServer(): string {
   if (configured) return configured;
   const exe = process.platform === "win32" ? "xzor.exe" : "xzor";
   for (const folder of workspace.workspaceFolders ?? []) {
-    for (const profile of ["release", "debug"]) {
-      const candidate = join(folder.uri.fsPath, "target", profile, exe);
-      if (existsSync(candidate)) return candidate;
-    }
+    // The most recent build wins, so a plain `cargo build` is picked up even when an older release binary exists.
+    const built = ["release", "debug"]
+      .map((profile) => join(folder.uri.fsPath, "target", profile, exe))
+      .filter((candidate) => existsSync(candidate))
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+    if (built) return built;
     // Installed from npm: the platform package holds the binary itself, no Node launcher in between.
     const installed = join(folder.uri.fsPath, "node_modules", "@source-crafter", `xzor-cli-${process.platform}-${process.arch}`, exe);
     if (existsSync(installed)) return installed;
