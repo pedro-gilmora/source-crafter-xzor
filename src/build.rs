@@ -431,16 +431,9 @@ fn normalize(p: &Path) -> PathBuf {
     p.components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect()
 }
 
-/// Runs the type checker and prints its output with positions mapped back to `.xzor`
-/// files. `checker` may contain `{dir}`. The default is TypeScript 7's
+/// Runs the type checker without printing: whether it passed, and its output with positions mapped back to
+/// `.xzor` files (or the launch error). `checker` may contain `{dir}`. The default is TypeScript 7's
 /// `tsc --noEmit -p <dir>`, launched through `bun x` when Bun is installed, else `npx`.
-pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result<(), String> {
-    let (ok, text) = check_output(dir, checker, compiled);
-    print!("{text}");
-    if ok { Ok(()) } else { Err("type check failed".to_string()) }
-}
-
-/// `check` without printing: whether it passed, and the mapped output (or the launch error).
 pub fn check_output(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> (bool, String) {
     match run_checker(dir, checker, compiled) {
         Ok(r) => r,
@@ -1195,7 +1188,8 @@ mod tests {
         assert!(root.join(".xzor/services/data.provider.ts").is_file());
         let entry = fs::read_to_string(root.join(".xzor/main.ts")).unwrap();
         assert!(entry.contains("Counter"), "{entry}");
-        check(&root, None, &units).unwrap();
+        let (ok, text) = check_output(&root, None, &units);
+        assert!(ok, "{text}");
         fs::remove_dir_all(&root).unwrap();
     }
 

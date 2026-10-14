@@ -90,7 +90,7 @@ fn check_runs_while_bundling() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
     let saw = stdout.find("saw bundle").unwrap_or_else(|| panic!("check did not overlap the bundle: {stdout}"));
-    assert!(saw < stdout.find("dist").unwrap(), "{stdout}");
+    assert!(saw < stdout.find("main.js").unwrap(), "{stdout}");
     fs::remove_dir_all(&root).unwrap();
 }
 
