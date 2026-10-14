@@ -9,6 +9,7 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 
 pub fn find_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
@@ -83,15 +84,47 @@ pub struct Compiled {
 /// project's `.xzor/` directory, with a source map next to each generated file.
 pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
     let sources = find_sources(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    let sources: Vec<PathBuf> = sources.into_iter().filter(|s| in_project(s)).collect();
     let mut errors = Vec::new();
     let mut compiled = Vec::new();
-    for src in sources.into_iter().filter(|s| in_project(s)) {
-        match compile_one(&src) {
+    for result in compile_many(&sources) {
+        match result {
             Ok(unit) => compiled.push(unit),
             Err(e) => errors.push(e),
         }
     }
     if errors.is_empty() { Ok(compiled) } else { Err(errors.join("\n")) }
+}
+
+/// `compile_one` over `sources` on all cores; one result per source, in the same order.
+pub fn compile_many(sources: &[PathBuf]) -> Vec<Result<Compiled, String>> {
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(sources.len());
+    if workers <= 1 {
+        return sources.iter().map(|s| compile_one(s)).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let mut slots: Vec<Option<Result<Compiled, String>>> = sources.iter().map(|_| None).collect();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(src) = sources.get(i) else { break };
+                        done.push((i, compile_one(src)));
+                    }
+                    done
+                })
+            })
+            .collect();
+        for handle in handles {
+            for (i, result) in handle.join().unwrap_or_else(|e| std::panic::resume_unwind(e)) {
+                slots[i] = Some(result);
+            }
+        }
+    });
+    slots.into_iter().flatten().collect()
 }
 
 /// Prints a unit's compile warnings to stderr (the CLI's; the LSP publishes them instead).
@@ -721,6 +754,34 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn compile_many_matches_sequential() {
+        let root = temp("compile-many");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        for i in 0..40 {
+            let body = if i == 0 { "<p/>".to_string() } else { format!("@import C{0} from \"./C{0}.xzor\"\n<C{0} />", i - 1) };
+            fs::write(root.join(format!("C{i}.xzor")), body).unwrap();
+        }
+        fs::write(root.join("Bad.xzor"), "<p>").unwrap();
+        let sources = find_sources(&root).unwrap();
+
+        let parallel = compile_many(&sources);
+        let sequential: Vec<_> = sources.iter().map(|s| compile_one(s)).collect();
+        assert_eq!(parallel.len(), sequential.len());
+        for (p, s) in parallel.iter().zip(&sequential) {
+            match (p, s) {
+                (Ok(p), Ok(s)) => {
+                    assert_eq!(p.generated.code, s.generated.code);
+                    assert_eq!(p.out, s.out);
+                }
+                (Err(p), Err(s)) => assert_eq!(p, s),
+                _ => panic!("results differ"),
+            }
+        }
+        assert_eq!(parallel.iter().filter(|r| r.is_err()).count(), 1);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -214,8 +214,9 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         let dependents = build::dependents(&units, &changed);
         recompile.extend(dependents);
         routes_due |= plan.config || !recompile.is_empty() || !plan.remove.is_empty();
-        for src in &recompile {
-            match build::compile_one(src) {
+        let results = build::compile_many(&recompile);
+        for (src, result) in recompile.iter().zip(results) {
+            match result {
                 Ok(unit) => {
                     build::print_warnings(&unit);
                     errors.remove(src);
