@@ -52,3 +52,26 @@ fn compile_ignores_mount_outside_main() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn build_prints_timings() {
+    if !has_bun() {
+        return;
+    }
+    let root = project("build-timings", &[("App.xzor", "<p/>")]);
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).args(["--no-check", "--no-bundle", "--timings"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    let line = stdout.lines().find_map(|l| l.strip_prefix("xzor: timings ")).unwrap_or_else(|| panic!("no timings line in {stdout}"));
+    let keys = ["compile", "routes", "di", "check", "bundle", "total"];
+    let fields: Vec<&str> = line.split(' ').collect();
+    assert_eq!(fields.len(), keys.len(), "{line}");
+    for (field, key) in fields.iter().zip(keys) {
+        let ms = field.strip_prefix(key).and_then(|f| f.strip_prefix('=')).and_then(|f| f.strip_suffix("ms")).unwrap_or_else(|| panic!("bad field {field}"));
+        assert!(!ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()), "{field}");
+        if key == "check" || key == "bundle" {
+            assert_eq!(ms, "0", "{field}");
+        }
+    }
+    fs::remove_dir_all(&root).unwrap();
+}

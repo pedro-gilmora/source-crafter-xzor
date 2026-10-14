@@ -16,6 +16,7 @@ USAGE:
       --no-check             Skip type checking
       --no-bundle            Skip bundling
       --watch                Rebuild when .xzor or .ts files change
+      --timings              Print how long each stage took
   xzor highlight <FILE>       Print a .xzor file with syntax colors
   xzor lsp                    Run the language server on stdio
 ";
@@ -65,7 +66,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut dir = PathBuf::from(".");
             let mut entry = "main.ts".to_string();
             let mut checker = None;
-            let (mut check, mut bundle, mut watch) = (true, true, false);
+            let (mut check, mut bundle, mut watch, mut timings) = (true, true, false, false);
             let mut it = rest.iter();
             while let Some(arg) = it.next() {
                 match arg.as_str() {
@@ -74,20 +75,29 @@ fn run(args: &[String]) -> Result<(), String> {
                     "--no-check" => check = false,
                     "--no-bundle" => bundle = false,
                     "--watch" => watch = true,
+                    "--timings" => timings = true,
                     a if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
                     a => dir = PathBuf::from(a),
                 }
             }
-            let opts = Options { dir, entry, checker, check, bundle };
+            let opts = Options { dir, entry, checker, check, bundle, timings };
             if watch {
                 return watch_loop(&opts);
             }
+            let mut t = Timings::default();
+            let start = Instant::now();
             let units = build::compile_all(&opts.dir)?;
+            t.compile = start.elapsed();
+            let start = Instant::now();
             build::write_routes(&units, &mut HashSet::new())?;
+            t.routes = start.elapsed();
             units.iter().for_each(build::print_warnings);
             println!("xzor: compiled {} component(s)", units.len());
+            let start = Instant::now();
             let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
-            finish(&opts, &units, di_entry.as_deref())?;
+            t.di = start.elapsed();
+            finish(&opts, &units, di_entry.as_deref(), &mut t)?;
+            t.print(&opts);
         }
         "highlight" => {
             let file = rest.first().ok_or("highlight needs a file")?;
@@ -112,19 +122,46 @@ struct Options {
     checker: Option<String>,
     check: bool,
     bundle: bool,
+    timings: bool,
+}
+
+#[derive(Default)]
+struct Timings {
+    compile: Duration,
+    routes: Duration,
+    di: Duration,
+    check: Duration,
+    bundle: Duration,
+}
+
+impl Timings {
+    fn print(&self, o: &Options) {
+        if o.timings {
+            let ms = |d: Duration| d.as_millis();
+            let total = self.compile + self.routes + self.di + self.check + self.bundle;
+            println!(
+                "xzor: timings compile={}ms routes={}ms di={}ms check={}ms bundle={}ms total={}ms",
+                ms(self.compile), ms(self.routes), ms(self.di), ms(self.check), ms(self.bundle), ms(total)
+            );
+        }
+    }
 }
 
 /// Type check and bundle (from the DI-generated entry when there is one).
-fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>) -> Result<(), String> {
+fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, t: &mut Timings) -> Result<(), String> {
     if o.check {
+        let start = Instant::now();
         build::check(&o.dir, o.checker.as_deref(), units)?;
+        t.check = start.elapsed();
         println!("xzor: type check passed");
     }
     if o.bundle {
+        let start = Instant::now();
         match di_entry.and_then(|p| p.strip_prefix(&o.dir).ok()) {
             Some(generated) => build::bundle(&o.dir, &generated.to_string_lossy())?,
             None => build::bundle(&o.dir, &o.entry)?,
         }
+        t.bundle = start.elapsed();
     }
     Ok(())
 }
@@ -170,6 +207,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         }
         // Components importing a changed one read its type parameters and prop kinds, and
         // inheriting ones read their base's members.
+        let compile_start = Instant::now();
         let mut recompile = plan.recompile;
         let scripts = build::changed_scripts(&batch, dir);
         let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
@@ -194,6 +232,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                 }
             }
         }
+        let timings = Timings { compile: compile_start.elapsed(), ..Default::default() };
         if plan.rebuild {
             if errors.is_empty() {
                 println!("xzor: compiled {} component(s)", recompile.len());
@@ -201,7 +240,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                 println!("xzor: compiled {} component(s), {} with errors", recompile.len(), errors.len());
             }
             let routes = (&mut routes_due, &mut routes_written);
-            if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes) {
+            if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes, timings) {
                 eprintln!("{e}");
             }
             println!("xzor: watching {} for changes (Ctrl+C to stop)", dir.display());
@@ -230,21 +269,28 @@ fn rebuild(
     di_due: &mut bool,
     di_entry: &mut Option<PathBuf>,
     (routes_due, routes_written): (&mut bool, &mut HashSet<PathBuf>),
+    mut t: Timings,
 ) -> Result<(), String> {
     if !errors.is_empty() {
         return Err(errors.values().cloned().collect::<Vec<_>>().join("\n"));
     }
     // A failed run stays due, so the next change retries it.
     if *routes_due {
+        let start = Instant::now();
         build::write_routes(units, routes_written)?;
+        t.routes = start.elapsed();
         *routes_due = false;
     }
     if *di_due {
         let mut files: Vec<PathBuf> = providers.iter().map(|p| p.strip_prefix(&o.dir).unwrap_or(p).to_path_buf()).collect();
         files.sort_unstable();
         // A failed run stays due, so the next change retries it.
+        let start = Instant::now();
         *di_entry = build::di_with(&o.dir, &o.entry, units, &files, analyzer)?;
+        t.di = start.elapsed();
         *di_due = false;
     }
-    finish(o, units, di_entry.as_deref())
+    finish(o, units, di_entry.as_deref(), &mut t)?;
+    t.print(o);
+    Ok(())
 }
