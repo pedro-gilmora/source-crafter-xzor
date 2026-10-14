@@ -62,6 +62,8 @@ export type VNode = VText | VElement | VRegion | VComponent;
 export type RouteEntry = {
   tag: string | undefined;
   pattern: string;
+  /** The page's shortest pattern this one extends: routes of one family share the page instance. */
+  family?: string;
   component: unknown;
   match: (s: string[]) => Record<string, unknown> | null;
 };
@@ -535,13 +537,13 @@ export class RenderTreeBuilder {
     this.closeRegion();
   }
 
-  // Keyed by pattern: a navigation that only changes params keeps the page instance.
+  // Keyed by route family: navigating between routes of one family (or params only) keeps the page instance.
   #addPage(entry: RouteEntry, router: Router): void {
     this.#append({
       kind: "component",
       type: entry.component as Ctor<ComponentBase>,
       props: router.params,
-      key: entry.pattern,
+      key: entry.family ?? entry.pattern,
       onError: router.onError,
       nav: router.id,
     });

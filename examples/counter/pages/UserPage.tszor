@@ -32,7 +32,7 @@
   <p class="tab">Tab: @rest</p>
 }
 <nav class="tabs">
-  <NavLink href="@href.UserPage({ id: id })" match="exact">Profile</NavLink>
-  <NavLink href="@href.UserPage({ id: id, rest: 'posts' })">Posts</NavLink>
+  <NavLink href="@href.UserPage({ id })" match="exact">Profile</NavLink>
+  <NavLink href="@href.UserPage({ id, rest: 'posts' })">Posts</NavLink>
 </nav>
 <a class="next" href="@href.UserPage({ id: id + 1 })">Next user</a>
