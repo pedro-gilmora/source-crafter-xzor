@@ -44,6 +44,8 @@ jobs:
         GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         PR_NUMBER: ${{ inputs.pr_number }}
         APPROVER: ${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || github.event.pusher.name }}
+        # El texto libre llega por el entorno: insertado en el script, una comilla lo rompe.
+        HEAD_MESSAGE: ${{ github.event.head_commit.message }}
       run: |
         if [ -n "${PR_NUMBER}" ]; then
           pr=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")
@@ -67,7 +69,7 @@ jobs:
           head_sha='${{ github.sha }}'
           head_ref='${{ github.ref_name }}'
           base_ref='${{ github.ref_name }}'
-          title=$(head -n 1 <<< '${{ github.event.head_commit.message }}')
+          title=$(head -n 1 <<< "${HEAD_MESSAGE}")
           url='${{ github.event.head_commit.url }}'
           proceed=$([ -n "${head_sha}" ] && echo true || echo false)
         fi
@@ -151,6 +153,7 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         PR_NUMBER: ${{ needs.resolve.outputs.number }}
+        TITLE: ${{ needs.resolve.outputs.title }}
       run: |
         # Los tests de la gramatica la incrustan en la de TypeScript de VS Code (1.141.1),
         # que en local se lee de la instalacion y aqui se descarga de ese mismo commit.
@@ -186,7 +189,7 @@ jobs:
         fi
 
         jq -n \
-          --arg title "${{ needs.resolve.outputs.title }}" \
+          --arg title "${TITLE}" \
           --arg sha "${{ needs.resolve.outputs.head_sha }}" \
           --arg url "${{ needs.resolve.outputs.url }}" \
           --slurpfile commits pr_commits.json \
@@ -272,6 +275,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           # RELEASE_TOKEN no lee Actions; el token del workflow si (permissions: actions: read).
           RUN_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ needs.resolve.outputs.head_ref }}
+          BASE_REF: ${{ needs.resolve.outputs.base_ref }}
       run:  |
         # Load the event payload as JSON
         $githubEvent = @{}
@@ -383,7 +388,7 @@ jobs:
 
         👤 **Triggered by:** [${{ github.triggering_actor }}](https://github.com/${{ github.triggering_actor }})
 
-        🌿 **Branch:** $(escape '${{ needs.resolve.outputs.head_ref }}') → $(escape '${{ needs.resolve.outputs.base_ref }}')
+        🌿 **Branch:** $(escape $env:HEAD_REF) → $(escape $env:BASE_REF)
 
         🔀 **Merged by:** [${{ needs.resolve.outputs.approver }}](https://github.com/${{ needs.resolve.outputs.approver }})
 
