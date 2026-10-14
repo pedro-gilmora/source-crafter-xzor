@@ -6,8 +6,6 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$test = "false",
     [Parameter(Mandatory=$false)]
-    [string]$startingYear = "2026",
-    [Parameter(Mandatory=$false)]
     [string]$specificVersion = $null,
     # Folder with one `<platform>/xzor[.exe]` per target, built by CI; empty packs the host build only.
     [Parameter(Mandatory=$false)]
@@ -19,12 +17,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# npm and the VS Code Marketplace take semver: years since the start, yy + day of year, 5-minute slot of the day.
+# Sequential: the patch after the latest @source-crafter/xzor on npm, or 0.1.0 before the first publish.
 function Get-Version {
-    $part1 = [System.DateTime]::Now.Year - [System.Int32]::Parse($startingYear)
-    $part2 = [System.DateTime]::Now.ToString('yy') + [System.DateTime]::Now.DayOfYear.ToString('000')
-    $part3 = [System.Convert]::ToUInt16([System.Math]::Floor([System.DateTime]::Now.TimeOfDay.TotalMinutes / 5))
-    return "$part1.$([System.Int32]::Parse($part2)).$part3"
+    try { $latest = (Invoke-RestMethod "https://registry.npmjs.org/@source-crafter%2Fxzor/latest").version } catch { return "0.1.0" }
+    $major, $minor, $patch = $latest.Split('.')
+    return "$major.$minor.$([int]$patch + 1)"
 }
 
 function Invoke-Step([string]$name, [scriptblock]$step) {
@@ -50,7 +47,7 @@ $stage = Join-Path $publish "stage"
 $hostTarget = "$(if ($IsWindows) { 'win32' } elseif ($IsMacOS) { 'darwin' } else { 'linux' })-$(if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' })"
 $platforms = @{ "win32-x64" = @("win32", "x64"); "linux-x64" = @("linux", "x64"); "darwin-arm64" = @("darwin", "arm64") }
 
-Write-Host "CONFIG: version = $version, clean = $clean, pack = $pack, test = $test, startingYear = $startingYear, binaries = '$binaries', repository = '$repository'
+Write-Host "CONFIG: version = $version, clean = $clean, pack = $pack, test = $test, binaries = '$binaries', repository = '$repository'
 "
 
 if ($clean -eq "true" -and (Test-Path $publish)) {

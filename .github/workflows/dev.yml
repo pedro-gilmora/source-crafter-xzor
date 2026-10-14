@@ -165,18 +165,14 @@ jobs:
         # ficheros con el modo que traiga el tarball.
         chmod +x binaries/*/xzor 2>/dev/null || true
 
-        # El evento push trae created_at como epoch, pero el de pull_request lo
-        # trae en ISO 8601: se normalizan ambas formas antes de pedir el año.
-        created_at='${{ github.event.repository.created_at }}'
-        case "$created_at" in
-          ''|*[!0-9]*) created_year=$( date -d "$created_at" +%Y ) ;;
-          *)           created_year=$( date -d "@$created_at" +%Y ) ;;
-        esac
-        # npm y el Marketplace exigen semver de tres partes y sin ceros a la izquierda:
-        # años desde la creacion . yy + dia del año . franja de 5 minutos del dia.
-        minutes=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
-        day=$(( 10#$(date +%y)$(date +%j) ))
-        version="$(( $(date --date='now' +%Y) - $created_year )).${day}.$(( minutes / 5 ))"
+        # Version secuencial: el parche siguiente al ultimo publicado en npm, o 0.1.0 si no hay ninguno.
+        latest=$(npm view @source-crafter/xzor version 2>/dev/null || true)
+        if [ -n "$latest" ]; then
+          IFS=. read -r major minor patch <<< "$latest"
+          version="${major}.${minor}.$(( patch + 1 ))"
+        else
+          version=0.1.0
+        fi
         echo "VERSION=${version}" >> $GITHUB_ENV
 
         # El evento de PR no trae head_commit ni commits: ese par solo viaja en el
@@ -216,27 +212,8 @@ jobs:
         "@
         }
 
-    - name: Detect package changes
-      # Publicar solo aporta valor si cambio el codigo que va a npm: el compilador y el runtime.
-      id: changes
-      env:
-        GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        PR_NUMBER: ${{ needs.resolve.outputs.number }}
-      run: |
-        if [ -n "${PR_NUMBER}" ]; then
-          files=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')
-        else
-          files=$(gh api "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ needs.resolve.outputs.head_sha }}" --jq '.files[].filename')
-        fi
-
-        npm=$(grep -E '^(src/|runtime/index\.ts$|npm/|Cargo\.(toml|lock)$)' <<< "$files" | head -n 1)
-        # Sin nada publicado aun, cualquier release estrena los paquetes.
-        [ -n "$npm" ] || npm view @source-crafter/xzor version > /dev/null 2>&1 || npm=unpublished
-
-        echo "npm_changes=$([ -n "$npm" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-
     - name: Publish compiler and runtime to npm
-      if: needs.resolve.outputs.release == 'true' && steps.changes.outputs.npm_changes == 'true'
+      if: needs.resolve.outputs.release == 'true'
       env:
         NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       run: |
