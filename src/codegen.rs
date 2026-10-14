@@ -272,6 +272,7 @@ pub fn generate_with(
         depth: 0,
         components,
         inline: false,
+        raw_text: false,
         props_ids: std::cell::Cell::new(0),
         route_types: std::cell::Cell::new(0),
     };
@@ -568,6 +569,8 @@ struct Gen<'p> {
     inline: bool,
     /// Next `__p<N>` name for a hoisted props object; unique across nested fragments.
     props_ids: std::cell::Cell<usize>,
+    /// Inside `<script>`/`<style>`: text is raw, so character references are not decoded.
+    raw_text: bool,
     /// Which of `Route`, `__AppRoute`, `__RouteParams` and `RenderFragment` the route sections reference (`ROUTE_*` bits).
     route_types: std::cell::Cell<u8>,
 }
@@ -638,6 +641,7 @@ impl Gen<'_> {
             depth: 0,
             components: self.components,
             inline: true,
+            raw_text: self.raw_text,
             props_ids: std::cell::Cell::new(self.props_ids.get()),
             route_types: std::cell::Cell::new(self.route_types.get()),
         };
@@ -801,7 +805,7 @@ impl Gen<'_> {
     fn value(&self, v: &AttrValue) -> M {
         match v {
             AttrValue::Empty => M::lit("true"),
-            AttrValue::Static(s) => M::lit(&js_string(s)),
+            AttrValue::Static(s) => M::lit(&js_string(&crate::entities::decode(s))),
             AttrValue::Expr(e) => self.expr(e),
             AttrValue::Interp(parts) => {
                 let mut out = M::default();
@@ -810,7 +814,7 @@ impl Gen<'_> {
                         out = out.lit_then(" + ");
                     }
                     out = match p {
-                        Part::Text(t) => out.lit_then(&js_string(t)),
+                        Part::Text(t) => out.lit_then(&js_string(&crate::entities::decode(t))),
                         Part::Expr(e) => out.lit_then("String(").add(self.expr(e)).lit_then(")"),
                     };
                 }
@@ -839,7 +843,8 @@ impl Gen<'_> {
             self.line("__b.openRegion();");
         }
         match node {
-            Node::Text(t) => self.line(&format!("__b.addText({});", js_string(t))),
+            Node::Text(t) if self.raw_text => self.line(&format!("__b.addText({});", js_string(t))),
+            Node::Text(t) => self.line(&format!("__b.addText({});", js_string(&crate::entities::decode(t)))),
             Node::Expr(e) => {
                 let line = M::lit("__b.addContent(").add(self.expr(e)).lit_then(");");
                 self.emit(line);
@@ -943,7 +948,9 @@ impl Gen<'_> {
                         _ => self.attribute(a)?,
                     }
                 }
+                let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
                 self.nodes(&el.children)?;
+                self.raw_text = raw;
                 self.line("__b.closeElement();");
             }
             Node::If {
@@ -2197,6 +2204,23 @@ mod tests {
         assert!(g.code.contains("__b.addContent(this.pick(1));"));
         for m in &g.mappings {
             assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}");
+        }
+    }
+
+    #[test]
+    fn html_entities_in_text_and_attributes_are_decoded() {
+        let child = "@code {\n  label: string = \"\";\n  n = 0;\n}\n<p/>";
+        let src = "@code { n = 1; }\n<p title=\"a &amp; b\" class=\"x &lt;@n&gt;\">&lt;b&gt; caf&eacute; &#233;&#xE9; &copy; &nbsp; &unknown; &amp;amp; 5 &amp 6</p>\n<style>a &gt; b</style>\n<Child label=\"Tom &amp; Jerry\" n=\"n\" />";
+        let g = gen_with(src, &[("Child", child)]);
+        for m in [
+            "__b.addAttribute(\"title\", \"a & b\");",
+            "__b.addAttribute(\"class\", \"x <\" + String(this.n) + \">\");",
+            "__b.addText(\"<b> café éé © \u{a0} &unknown; &amp; 5 &amp 6\");",
+            "__b.addText(\"a &gt; b\");",
+            "label: \"Tom & Jerry\"",
+            "n: this.n",
+        ] {
+            assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
         }
     }
 

@@ -30,7 +30,7 @@
   <h2>The editor</h2>
   <p>
     The extension gives you highlighting, completions, hover, go to definition and live errors, including inside the
-    <code>@@</code> expressions and the <code>@@code</code> block. Install <code>@("xzor-<version>.vsix")</code> from the
+    <code>@@</code> expressions and the <code>@@code</code> block. Install <code>xzor-&lt;version&gt;.vsix</code> from the
     <a href="https://github.com/pedro-gilmora/source-crafter-xzor/releases" rel="external">releases page</a>.
   </p>
 

@@ -192,4 +192,4 @@ export class Application implements IApplication {}
 | `<script src="main.ts">` | `<script type="module" src="./dist/main.js">` |
 | `StateHasChanged()` | `this.stateHasChanged()` |
 | TypeScript 5, `experimentalDecorators` | TypeScript 7, standard decorators |
-| `&lt;` in text | `@("<")`: HTML entities are not decoded |
+| `@("<")` to print `<` | `&lt;` (HTML character references are decoded, like in Razor) |
