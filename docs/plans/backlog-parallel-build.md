@@ -8,7 +8,7 @@ Status: done on `perf/parallel-build` ([plan](2026-10-14-parallel-build.md)): `-
 | 400 | 531 ms | 288 ms | compile 27, check 239, bundle 223 |
 | 2000 | 2,265 ms | 1,889 ms | compile 157, routes 40, check 554, bundle 1,809 |
 
-Generated output is byte-identical. Memory: xzor's own peak rises 3 to 6 MB; while tsc and Bun run together the combined peak rises by up to ~120 MB at 400 components (+12 MB at 2000, where the peaks don't coincide).
+Generated output is byte-identical. Because the bundle no longer waits for the check, `dist/` is rewritten even when the check fails; the build still exits non-zero and `xzor dev` does not reload, so deploy scripts must honor the exit code. Memory: xzor's own peak rises 3 to 6 MB; while tsc and Bun run together the combined peak rises by up to ~120 MB at 400 components (+12 MB at 2000, where the peaks don't coincide).
 
 Next, by measured cost:
 1. **Bundle at scale**: 1.8 s at 2000. `composeMaps` in `src/bundle.ts` copies and reverses a line's segments for every lookup (`lookup`); a binary search over the decoded line should remove most of it. Measure Bun.build alone versus the map composition first.

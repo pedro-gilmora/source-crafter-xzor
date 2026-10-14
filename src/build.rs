@@ -731,7 +731,7 @@ pub fn bundle(dir: &Path, entry: &str) -> Result<String, String> {
     }
     let mut cmd = Command::new("bun");
     cmd.arg(&script).arg(dir.join(entry)).arg(dir.join("dist"));
-    cmd.stderr(std::process::Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
     let output = cmd.output().map_err(|e| format!("bundle: failed to run {:?}: {e}", cmd.get_program()))?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
