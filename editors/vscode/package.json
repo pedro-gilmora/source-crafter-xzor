@@ -2,7 +2,7 @@
   "name": "xzor",
   "displayName": "XZor",
   "description": "Language support for .xzor components (xzor: Blazor-style components for TypeScript)",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "xzor",
   "license": "MIT",
   "engines": { "vscode": "^1.90.0" },
