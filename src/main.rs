@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -16,6 +16,7 @@ USAGE:
       --no-check             Skip type checking
       --no-bundle            Skip bundling
       --watch                Rebuild when .xzor or .ts files change
+      --hot                  With --watch, print `xzor: hot <id>` for each component a .xzor-only change can patch in place
       --timings              Print how long each stage took
   xzor highlight <FILE>       Print a .xzor file with syntax colors
   xzor lsp                    Run the language server on stdio
@@ -66,7 +67,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut dir = PathBuf::from(".");
             let mut entry = "main.ts".to_string();
             let mut checker = None;
-            let (mut check, mut bundle, mut watch, mut timings) = (true, true, false, false);
+            let (mut check, mut bundle, mut watch, mut timings, mut hot) = (true, true, false, false, false);
             let mut it = rest.iter();
             while let Some(arg) = it.next() {
                 match arg.as_str() {
@@ -75,12 +76,16 @@ fn run(args: &[String]) -> Result<(), String> {
                     "--no-check" => check = false,
                     "--no-bundle" => bundle = false,
                     "--watch" => watch = true,
+                    "--hot" => hot = true,
                     "--timings" => timings = true,
                     a if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
                     a => dir = PathBuf::from(a),
                 }
             }
-            let opts = Options { dir, entry, checker, check, bundle, timings };
+            if hot && !watch {
+                return Err("--hot needs --watch".to_string());
+            }
+            let opts = Options { dir, entry, checker, check, bundle, timings, hot };
             if watch {
                 return watch_loop(&opts);
             }
@@ -96,7 +101,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let start = Instant::now();
             let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
             t.di = start.elapsed();
-            finish(&opts, &units, di_entry.as_deref(), &mut t)?;
+            finish(&opts, &units, di_entry.as_deref(), &mut None, &mut t)?;
             t.print(&opts);
         }
         "highlight" => {
@@ -123,6 +128,7 @@ struct Options {
     check: bool,
     bundle: bool,
     timings: bool,
+    hot: bool,
 }
 
 struct Timings {
@@ -155,8 +161,9 @@ impl Timings {
 }
 
 /// Type check and bundle (from the DI-generated entry when there is one), running together.
-/// Bundle paths print only after a passing check: `xzor dev` reloads on them.
-fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, t: &mut Timings) -> Result<(), String> {
+/// Bundle paths print only after a passing check: `xzor dev` reloads on them. `hot` holds the ids
+/// patchable since the last success (None: not patchable); a success prints and clears it.
+fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, hot: &mut Option<BTreeSet<String>>, t: &mut Timings) -> Result<(), String> {
     let entry = match di_entry.and_then(|p| p.strip_prefix(&o.dir).ok()) {
         Some(generated) => generated.to_string_lossy().into_owned(),
         None => o.entry.clone(),
@@ -168,7 +175,7 @@ fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, t: &m
     };
     let timed_bundle = || {
         let start = Instant::now();
-        (build::bundle(&o.dir, &entry), start.elapsed())
+        (build::bundle(&o.dir, &entry, o.hot), start.elapsed())
     };
     let (checked, bundled) = match (o.check, o.bundle) {
         (true, true) => {
@@ -191,10 +198,19 @@ fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, t: &m
         }
         println!("xzor: type check passed");
     }
-    if let Some((result, elapsed)) = bundled {
-        t.bundle = elapsed;
-        print!("{}", result?);
+    let bundle_out = match bundled {
+        Some((result, elapsed)) => {
+            t.bundle = elapsed;
+            Some(result?)
+        }
+        None => None,
+    };
+    if o.hot {
+        for id in hot.replace(BTreeSet::new()).unwrap_or_default() {
+            println!("xzor: hot {id}");
+        }
     }
+    print!("{}", bundle_out.unwrap_or_default());
     Ok(())
 }
 
@@ -214,6 +230,8 @@ fn watch_loop(o: &Options) -> Result<(), String> {
     // The build root is seeded so an empty project still loses a stale table.
     let (mut routes_due, mut routes_written) = (true, HashSet::from([dir.clone()]));
     let mut batch: Vec<String> = Vec::new();
+    // Ids patchable since the last successful build; None once anything unpatchable happened.
+    let mut hot: Option<BTreeSet<String>> = None;
     loop {
         if plan.config {
             println!("xzor: project configuration changed, rebuilding everything");
@@ -242,7 +260,9 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         let compile_start = Instant::now();
         let mut recompile = plan.recompile;
         let scripts = build::changed_scripts(&batch, dir);
-        let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
+        if plan.config || plan.di || !plan.remove.is_empty() || !scripts.is_empty() {
+            hot = None;
+        }        let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
         let dependents = build::dependents(&units, &changed);
         recompile.extend(dependents);
         routes_due |= plan.config || !recompile.is_empty() || !plan.remove.is_empty();
@@ -254,8 +274,18 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                     errors.remove(src);
                     known.insert(src.clone(), build::inject_signature(&unit.generated.injects));
                     match units.iter_mut().find(|u| u.source == unit.source) {
-                        Some(slot) => *slot = unit,
-                        None => units.push(unit),
+                        Some(slot) => {
+                            if slot.generated.code != unit.generated.code {
+                                if let Some(ids) = hot.as_mut() {
+                                    ids.insert(hot_id(dir, &unit.out));
+                                }
+                            }
+                            *slot = unit;
+                        }
+                        None => {
+                            hot = None;
+                            units.push(unit);
+                        }
                     }
                 }
                 Err(e) => {
@@ -273,7 +303,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                 println!("xzor: compiled {} component(s), {} with errors", recompile.len(), errors.len());
             }
             let routes = (&mut routes_due, &mut routes_written);
-            if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes, timings) {
+            if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes, &mut hot, timings) {
                 eprintln!("{e}");
             }
             println!("xzor: watching {} for changes (Ctrl+C to stop)", dir.display());
@@ -302,6 +332,7 @@ fn rebuild(
     di_due: &mut bool,
     di_entry: &mut Option<PathBuf>,
     (routes_due, routes_written): (&mut bool, &mut HashSet<PathBuf>),
+    hot: &mut Option<BTreeSet<String>>,
     mut t: Timings,
 ) -> Result<(), String> {
     if !errors.is_empty() {
@@ -310,11 +341,14 @@ fn rebuild(
     // A failed run stays due, so the next change retries it.
     if *routes_due {
         let start = Instant::now();
-        build::write_routes(units, routes_written)?;
+        if build::write_routes(units, routes_written)? {
+            *hot = None;
+        }
         t.routes = start.elapsed();
         *routes_due = false;
     }
     if *di_due {
+        *hot = None;
         let mut files: Vec<PathBuf> = providers.iter().map(|p| p.strip_prefix(&o.dir).unwrap_or(p).to_path_buf()).collect();
         files.sort_unstable();
         // A failed run stays due, so the next change retries it.
@@ -323,7 +357,13 @@ fn rebuild(
         t.di = start.elapsed();
         *di_due = false;
     }
-    finish(o, units, di_entry.as_deref(), &mut t)?;
+    finish(o, units, di_entry.as_deref(), hot, &mut t)?;
     t.print(o);
     Ok(())
+}
+
+/// The generated file's path relative to the project root, `/`-separated.
+fn hot_id(dir: &Path, out: &Path) -> String {
+    let rel = out.strip_prefix(dir).unwrap_or(out);
+    rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
 }

@@ -149,7 +149,9 @@ pub fn compile_one(src: &Path) -> Result<Compiled, String> {
 /// Writes `<project root>/.xzor/routes.ts` per project among `units` (deleting it when the project
 /// has no pages). `written` holds the roots with a table, so one that loses all its units is cleaned.
 /// Route errors of every project fail like compile errors, as `<path>:<line>:<col>: <message>`.
-pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Result<(), String> {
+/// Returns whether any table was written or deleted.
+pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Result<bool, String> {
+    let mut changed = false;
     let mut groups: BTreeMap<PathBuf, Vec<&Compiled>> = BTreeMap::new();
     for u in units {
         groups.entry(project_root(&u.source)).or_default().push(u);
@@ -161,7 +163,7 @@ pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Resul
     for (root, group) in groups {
         let path = root.join(".xzor").join("routes.ts");
         if !group.iter().any(|u| !u.generated.routes.is_empty() || u.generated.routes_block.is_some()) {
-            let _ = fs::remove_file(&path);
+            changed |= fs::remove_file(&path).is_ok();
             written.remove(&root);
             continue;
         }
@@ -186,13 +188,13 @@ pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Resul
             .collect();
         let (table, diags) = crate::routes::table(&root, &views);
         if diags.is_empty() {
-            write_if_changed(&path, &table)?;
+            changed |= write_if_changed(&path, &table)?;
             written.insert(root);
         } else {
             errors.extend(diags.iter().map(|(file, d)| format!("{}:{d}", file.display())));
         }
     }
-    if errors.is_empty() { Ok(()) } else { Err(errors.join("\n")) }
+    if errors.is_empty() { Ok(changed) } else { Err(errors.join("\n")) }
 }
 
 fn map_path(out: &Path) -> PathBuf {
@@ -379,14 +381,16 @@ pub fn watch(root: &Path) -> Result<(Watcher, mpsc::Receiver<String>), String> {
     Ok((watcher, rx))
 }
 
-pub(crate) fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
+/// Returns whether the file was written.
+pub(crate) fn write_if_changed(path: &Path, content: &str) -> Result<bool, String> {
     if fs::read_to_string(path).ok().as_deref() == Some(content) {
-        return Ok(());
+        return Ok(false);
     }
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    fs::write(path, content).map_err(|e| format!("{}: {e}", path.display()))
+    fs::write(path, content).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(true)
 }
 
 /// `to` relative to directory `from`, with forward slashes (`fallback` when unrelated).
@@ -724,13 +728,17 @@ fn utf16_to_byte(text: &str, at: usize) -> usize {
 const BUNDLE_SCRIPT: &str = include_str!("bundle.ts");
 
 /// Bundles `entry` into `<dir>/dist`; returns the script's stdout (one output path per line).
-pub fn bundle(dir: &Path, entry: &str) -> Result<String, String> {
+/// `hot` passes `--hot` as the script's third argument.
+pub fn bundle(dir: &Path, entry: &str, hot: bool) -> Result<String, String> {
     let script = std::env::temp_dir().join(format!("xzor-bundle-{}.ts", env!("CARGO_PKG_VERSION")));
     if fs::read_to_string(&script).ok().as_deref() != Some(BUNDLE_SCRIPT) {
         fs::write(&script, BUNDLE_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
     }
     let mut cmd = Command::new("bun");
     cmd.arg(&script).arg(dir.join(entry)).arg(dir.join("dist"));
+    if hot {
+        cmd.arg("--hot");
+    }
     cmd.stderr(Stdio::inherit());
     let output = cmd.output().map_err(|e| format!("bundle: failed to run {:?}: {e}", cmd.get_program()))?;
     if output.status.success() {

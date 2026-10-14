@@ -106,3 +106,10 @@ fn failed_check_hides_bundle_paths() {
     assert!(!stdout.lines().any(|l| l.trim_end().ends_with("main.js")), "{stdout}");
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn hot_needs_watch() {
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).args(["build", "--hot"]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--hot needs --watch"));
+}

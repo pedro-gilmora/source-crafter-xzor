@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -145,3 +145,71 @@ test("renaming a member of an inherited .ts base recompiles the inheriting compo
   expect(readFileSync(join(dir, ".xzor", "D.xzor.ts"), "utf8")).toContain("addContent(title)");
   await quiet();
 }, 30_000);
+
+// `--hot` with bundling on, in its own project so the suite above keeps `--no-bundle`.
+describe("build --watch --hot", () => {
+  const hotDir = join(root, "target", "tmp-watch-hot");
+  let hotProc: ReturnType<typeof Bun.spawn>;
+  let hotOut = "";
+  let hotCursor = 0;
+
+  async function hotWait(text: string, ms = 30_000): Promise<string> {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      const at = hotOut.indexOf(text, hotCursor);
+      if (at >= 0) {
+        const seen = hotOut.slice(hotCursor, at + text.length);
+        hotCursor = at + text.length;
+        return seen;
+      }
+      await Bun.sleep(25);
+    }
+    throw new Error(`timed out waiting for "${text}". Output so far:\n${hotOut}`);
+  }
+
+  beforeAll(async () => {
+    rmSync(hotDir, { recursive: true, force: true });
+    mkdirSync(hotDir, { recursive: true });
+    const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
+    tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+    writeFileSync(join(hotDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+    writeFileSync(join(hotDir, "App.xzor"), "<p>app</p>\n");
+    writeFileSync(join(hotDir, "main.ts"), `import App from "./App.xzor";\nexport { App };\n`);
+    hotProc = Bun.spawn([exe, "build", hotDir, "--watch", "--hot"], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    for (const stream of [hotProc.stdout, hotProc.stderr] as ReadableStream<Uint8Array>[]) {
+      void (async () => {
+        const decoder = new TextDecoder();
+        for await (const chunk of stream) hotOut += decoder.decode(chunk);
+      })();
+    }
+    const first = await hotWait("watching", 60_000);
+    expect(first).toContain("type check passed");
+    expect(first).not.toContain("xzor: hot");
+  }, 120_000);
+
+  afterAll(() => {
+    hotProc?.kill();
+    rmSync(hotDir, { recursive: true, force: true });
+  });
+
+  test("hot lines for a .xzor-only change", async () => {
+    writeFileSync(join(hotDir, "App.xzor"), "<p>app2</p>\n");
+    const seen = await hotWait("watching");
+    const hot = seen.indexOf("xzor: hot .xzor/App.xzor.ts");
+    expect(hot).toBeGreaterThanOrEqual(0);
+    expect(seen.indexOf("main.js")).toBeGreaterThan(hot);
+  }, 40_000);
+
+  test("no hot lines when a .ts changes", async () => {
+    writeFileSync(join(hotDir, "main.ts"), `import App from "./App.xzor";\nexport { App };\n// touched\n`);
+    const seen = await hotWait("watching");
+    expect(seen).toContain("main.js");
+    expect(seen).not.toContain("xzor: hot");
+  }, 40_000);
+
+  test("no hot lines on a compile error", async () => {
+    writeFileSync(join(hotDir, "App.xzor"), "<p>\n");
+    const seen = await hotWait("watching");
+    expect(seen).not.toContain("xzor: hot");
+  }, 40_000);
+});
