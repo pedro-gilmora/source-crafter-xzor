@@ -80,6 +80,21 @@ test.skipIf(process.platform !== "linux")("re-watches a directory removed and re
   expect(await w.until(() => w.lines().includes("d/new.ts"), 3000)).toBe(true);
 });
 
+test.skipIf(process.platform !== "linux")("re-watches a directory recreated a moment after its removal", async () => {
+  // Bun may report the removal and drop the creation event: the watcher has to look again.
+  for (let i = 0; i < 4; i++) {
+    const root = tmp();
+    mkdirSync(join(root, "d"));
+    const w = await start(root);
+    rmSync(join(root, "d"), { recursive: true });
+    await Bun.sleep(1);
+    mkdirSync(join(root, "d"));
+    await Bun.sleep(300);
+    writeFileSync(join(root, "d", "new.ts"), "");
+    expect(await w.until(() => w.lines().includes("d/new.ts"), 3000)).toBe(true);
+  }
+});
+
 test.skipIf(process.platform !== "linux")("re-watches a renamed directory under its new name", async () => {
   const root = tmp();
   mkdirSync(join(root, "a"));

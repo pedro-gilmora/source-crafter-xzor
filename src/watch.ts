@@ -36,7 +36,15 @@ if (process.platform !== "linux") {
             add(path, true);
           }
         } catch {
-          drop(path);
+          if (watchers.has(path)) {
+            drop(path);
+            // Bun can drop the event of a directory recreated right after its removal: look again shortly.
+            setTimeout(() => {
+              try {
+                if (!watchers.has(path) && lstatSync(`${root}/${path}`).isDirectory()) (add(path, true), print(path));
+              } catch {}
+            }, 50);
+          }
         }
         print(path);
       });

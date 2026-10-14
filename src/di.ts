@@ -39,7 +39,14 @@ import type { Checker, Program, Signature, Snapshot, Symbol as Sym, Type } from 
 // On Linux and macOS the sync API reads the child's pipe fds from Node internals (`stdout._handle.fd`) that Bun lacks.
 // It gets two FIFOs instead; Windows uses a named pipe and is left alone.
 if (process.platform !== "win32") {
-  const end = (fd: number) => ({ _handle: { fd, setBlocking() {} }, pause() {}, unref() {}, destroy: () => closeSync(fd) });
+  // `close()` destroys the ends before its SIGTERM: killing first keeps tsc from seeing EOF and printing
+  // "context canceled" to the shared stderr while it shuts down.
+  const end = (fd: number, child: ChildProcess) => ({
+    _handle: { fd, setBlocking() {} },
+    pause() {},
+    unref() {},
+    destroy: () => (child.kill("SIGKILL"), closeSync(fd)),
+  });
   (globalThis as { __xzorPipes?: unknown }).__xzorPipes = (spawn: typeof import("node:child_process").spawn, exe: string, args: string[]) => {
     const dir = mkdtempSync(join(tmpdir(), "xzor-ts-"));
     const [toChild, fromChild] = [join(dir, "in"), join(dir, "out")];
@@ -54,8 +61,8 @@ if (process.platform !== "win32") {
     const child: ChildProcess = spawn(exe, args, { stdio: [childIn, childOut, "inherit"] });
     for (const fd of [childIn, childOut]) closeSync(fd);
     rmSync(dir, { recursive: true, force: true });
-    Object.defineProperty(child, "stdin", { value: end(write) });
-    Object.defineProperty(child, "stdout", { value: end(read) });
+    Object.defineProperty(child, "stdin", { value: end(write, child) });
+    Object.defineProperty(child, "stdout", { value: end(read, child) });
     return child;
   };
   Bun.plugin({

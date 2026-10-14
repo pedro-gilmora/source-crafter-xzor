@@ -264,6 +264,8 @@ jobs:
       shell: pwsh
       env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          # RELEASE_TOKEN no lee Actions; el token del workflow si (permissions: actions: read).
+          RUN_TOKEN: ${{ github.token }}
       run:  |
         # Load the event payload as JSON
         $githubEvent = @{}
@@ -363,7 +365,7 @@ jobs:
 
         # El enlace debe apuntar al job de construccion, no al de resolucion, y
         # cuando algun paso falla se ancla directamente al log de ese paso.
-        $job = ((gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --paginate --jq '[.jobs[] | select(.name == "xzor Build, Test & Deploy")] | last') -join '') | ConvertFrom-Json
+        $job = ((& { $env:GH_TOKEN = $env:RUN_TOKEN; try { gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --paginate --jq '[.jobs[] | select(.name == "xzor Build, Test & Deploy")] | last' } finally { Remove-Item Env:GH_TOKEN } }) -join '') | ConvertFrom-Json
         $jobName = $job.name
         $failedStep = @($job.steps | Where-Object { $_.conclusion -eq 'failure' })[0]
         $jobUrl = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/$($job.id)" + $(if ($failedStep) { "#step:$($failedStep.number):1" })
