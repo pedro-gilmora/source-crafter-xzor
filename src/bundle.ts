@@ -1,6 +1,6 @@
 // Bundles a xzor app with Bun. `./X.xzor` imports resolve to the generated `<project>/.xzor/<rel>/X.xzor.ts`,
 // and the bundle's source map is composed with each generated file's map so it points at the `.xzor` sources.
-// Usage: bun bundle.ts <entry> <outdir>
+// Usage: bun bundle.ts <entry> <outdir> [--hot]
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
@@ -289,7 +289,35 @@ export function stripMarkerDecorators(src: string): string {
   return copied === 0 ? src : out + src.slice(copied);
 }
 
-async function main(entry: string, outdir: string): Promise<void> {
+const IMPORT_CLAUSE = /^import\s+([^"']+?)\s+from\s*["'][^"']+["']/gm;
+const hotTranspiler = new Bun.Transpiler({ loader: "ts" });
+
+/** Local names bound by the value imports of a TypeScript source (the transpiler drops type-only ones). */
+function valueImportLocals(ts: string): string[] {
+  const locals: string[] = [];
+  for (const m of hotTranspiler.transformSync(ts).matchAll(IMPORT_CLAUSE)) {
+    const clause = m[1]!;
+    const named = /\{([^}]*)\}/.exec(clause);
+    for (const part of clause.replace(/\{[^}]*\}/, "").split(",")) {
+      const local = part.trim().replace(/^\*\s*as\s+/, "");
+      if (local) locals.push(local);
+    }
+    for (const spec of named?.[1]!.split(",") ?? []) {
+      const local = spec.trim().split(/\s+as\s+/).pop()!;
+      if (local) locals.push(local);
+    }
+  }
+  return locals;
+}
+
+/** Appends the dev registration of a generated component's default class (no existing position moves). */
+export function hotRegistration(ts: string, id: string): string {
+  const cls = /export default class (\w+)/.exec(ts)?.[1];
+  if (!cls) return ts;
+  return `${ts};globalThis.__xzorHot?.register(${JSON.stringify(id)}, ${cls}, () => ({ ${valueImportLocals(ts).join(", ")} }));`;
+}
+
+async function main(entry: string, outdir: string, hot = false): Promise<void> {
   const root = projectRoot(dirname(resolve(entry)));
   // Stripped sources by absolute path; the source map shows the originals.
   const originals = new Map<string, string>();
@@ -316,6 +344,9 @@ async function main(entry: string, outdir: string): Promise<void> {
           build.onLoad({ filter: /\.ts$/ }, (args) => {
             const path = args.path.replaceAll("\\", "/");
             const text = readFileSync(args.path, "utf8");
+            if (path.includes("/.xzor/") && hot && path.endsWith(".xzor.ts") && inProject(args.path, root)) {
+              return { contents: hotRegistration(text, relative(root, args.path).replaceAll("\\", "/")), loader: "ts" };
+            }
             if (!inProject(args.path, root) || path.includes("/node_modules/") || path.includes("/.xzor/")) return { contents: text, loader: "ts" };
             const stripped = stripMarkerDecorators(text);
             if (stripped !== text) originals.set(resolve(args.path), text);
@@ -348,7 +379,7 @@ async function main(entry: string, outdir: string): Promise<void> {
 }
 
 if (import.meta.main) {
-  const [entry, outdir] = process.argv.slice(2);
-  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir>");
-  await main(entry, outdir);
+  const [entry, outdir, flag] = process.argv.slice(2);
+  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir> [--hot]");
+  await main(entry, outdir, flag === "--hot");
 }
