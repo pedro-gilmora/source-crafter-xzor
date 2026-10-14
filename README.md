@@ -35,8 +35,7 @@ From a clone of this repo, run `.\install.ps1 my-app` or `bash install.sh my-app
 Then:
 
 ```sh
-bun run dev        # rebuilds dist/ every time you save
-bun x serve -s     # serves the app; open the printed URL
+bun run dev        # builds, rebuilds on every save and serves the app: open the printed URL
 ```
 
 <details>

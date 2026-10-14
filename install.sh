@@ -32,5 +32,4 @@ if command -v code > /dev/null; then
 fi
 
 step "Ready"
-echo "  bun run dev      rebuilds dist/ on every save"
-echo "  bun x serve -s   serves the app (open the printed URL)"
+echo "  bun run dev   builds, rebuilds on every save and serves the app (open the printed URL)"

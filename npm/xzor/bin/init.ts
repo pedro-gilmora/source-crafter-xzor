@@ -18,8 +18,10 @@ const add = (list: string[], ...items: string[]) => [...list, ...items.filter((i
 update("package.json", {}, (p) => {
   if (!p.name) Object.assign(p, { name: basename(process.cwd()).toLowerCase().replace(/[^a-z0-9._-]+/g, "-"), private: true, type: "module" });
   p.scripts ??= {};
+  // Projects set up before `xzor dev` existed get the one-command dev loop.
+  if (p.scripts.dev === "xzor build --watch") p.scripts.dev = "xzor dev";
   // A project that already has `build` (vite, tsc, ...) keeps it and gets `build:xzor`.
-  for (const [name, command] of [["build", "xzor build"], ["dev", "xzor build --watch"]]) {
+  for (const [name, command] of [["build", "xzor build"], ["dev", "xzor dev"]]) {
     if (!Object.values(p.scripts).includes(command)) p.scripts[name in p.scripts ? `${name}:xzor` : name] = command;
   }
 });

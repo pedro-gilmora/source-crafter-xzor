@@ -16,10 +16,13 @@ function binary() {
   }
 }
 
+const [command, ...rest] = process.argv.slice(2);
 const run =
-  process.argv[2] === "init"
-    ? spawnSync("bun", [join(__dirname, "init.ts"), ...process.argv.slice(3)], { stdio: "inherit" })
-    : spawnSync(binary(), process.argv.slice(2), { stdio: "inherit" });
+  command === "init"
+    ? spawnSync("bun", [join(__dirname, "init.ts"), ...rest], { stdio: "inherit" })
+    : command === "dev"
+      ? spawnSync("bun", [join(__dirname, "dev.ts"), binary(), ...rest], { stdio: "inherit" })
+      : spawnSync(binary(), process.argv.slice(2), { stdio: "inherit" });
 if (run.error) {
   console.error(`xzor: ${run.error.message}`);
   process.exit(1);

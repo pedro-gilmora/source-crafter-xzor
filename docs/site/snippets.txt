@@ -3,8 +3,7 @@ irm https://raw.githubusercontent.com/pedro-gilmora/source-crafter-xzor/main/ins
 --- install-unix | Linux / macOS · Terminal | shellscript
 curl -fsSL https://raw.githubusercontent.com/pedro-gilmora/source-crafter-xzor/main/install.sh | bash
 --- run | Terminal | shellscript
-bun run dev        # rebuilds dist/ every time you save
-bun x serve -s     # serves the app; open the printed URL
+bun run dev        # builds, rebuilds on every save and serves the app: open the printed URL
 --- manual | Terminal | shellscript
 bun add -d @source-crafter/xzor typescript@^7
 bun add @source-crafter/xzor-runtime

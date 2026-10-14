@@ -40,5 +40,4 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
 }
 
 Step "Ready"
-Write-Host "  bun run dev      rebuilds dist/ on every save"
-Write-Host "  bun x serve -s   serves the app (open the printed URL)"
+Write-Host "  bun run dev   builds, rebuilds on every save and serves the app (open the printed URL)"
