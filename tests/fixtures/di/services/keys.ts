@@ -1,4 +1,4 @@
-import { ServiceProvider, Singleton } from "@xzor/runtime";
+import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
 
 export interface IClock {
   now(): number;

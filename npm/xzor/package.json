@@ -1,17 +1,17 @@
 {
-  "name": "xzor",
+  "name": "@source-crafter/xzor",
   "version": "0.0.0",
   "description": "Compiler for .xzor components: Blazor-style components for TypeScript",
   "license": "MIT",
   "bin": { "xzor": "bin/xzor.js" },
   "files": ["bin/xzor.js"],
   "optionalDependencies": {
-    "@xzor/cli-win32-x64": "0.0.0",
-    "@xzor/cli-linux-x64": "0.0.0",
-    "@xzor/cli-darwin-arm64": "0.0.0"
+    "@source-crafter/xzor-cli-win32-x64": "0.0.0",
+    "@source-crafter/xzor-cli-linux-x64": "0.0.0",
+    "@source-crafter/xzor-cli-darwin-arm64": "0.0.0"
   },
   "peerDependencies": {
-    "@xzor/runtime": "0.0.0",
+    "@source-crafter/xzor-runtime": "0.0.0",
     "typescript": "^7.0.2"
   },
   "engines": { "bun": ">=1.4.0" }

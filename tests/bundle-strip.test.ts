@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { inProject, stripMarkerDecorators } from "../src/bundle";
 
-const IMPORT = `import { Import, Mount, Scoped, ServiceProvider, Singleton, Transient } from "@xzor/runtime";\n`;
+const IMPORT = `import { Import, Mount, Scoped, ServiceProvider, Singleton, Transient } from "@source-crafter/xzor-runtime";\n`;
 
 function expectBlanked(src: string, out: string): void {
   expect(out.length).toBe(src.length);
@@ -38,7 +38,7 @@ test("strings, templates and comments containing parentheses", () => {
 });
 
 test("aliased imports are stripped by their local name only", () => {
-  const src = `import { Singleton as Single } from "@xzor/runtime";\n@Single(A)\n@Singleton(B)\nexport class P {}\n`;
+  const src = `import { Singleton as Single } from "@source-crafter/xzor-runtime";\n@Single(A)\n@Singleton(B)\nexport class P {}\n`;
   const out = stripMarkerDecorators(src);
   expectBlanked(src, out);
   expect(out).toContain("@Singleton(B)");
@@ -54,8 +54,8 @@ test("other decorators stay, including ones on the same line", () => {
   expect(out).not.toContain("@Singleton");
 });
 
-test("files without a value import from @xzor/runtime are unchanged", () => {
-  const typeOnly = `import type { Singleton } from "@xzor/runtime";\n@Singleton(A)\nclass P {}\n`;
+test("files without a value import from @source-crafter/xzor-runtime are unchanged", () => {
+  const typeOnly = `import type { Singleton } from "@source-crafter/xzor-runtime";\n@Singleton(A)\nclass P {}\n`;
   expect(stripMarkerDecorators(typeOnly)).toBe(typeOnly);
   const other = `import { Singleton } from "./mine";\n@Singleton(A)\nclass P {}\n`;
   expect(stripMarkerDecorators(other)).toBe(other);

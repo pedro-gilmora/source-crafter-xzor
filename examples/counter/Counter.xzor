@@ -1,4 +1,4 @@
-@import { type EventCallback } from "@xzor/runtime"
+@import { type EventCallback } from "@source-crafter/xzor-runtime"
 @import { type IDatabase, type UnitOfWork } from "./services/data"
 @import { type AuthService } from "./services/auth"
 @inject IDatabase db

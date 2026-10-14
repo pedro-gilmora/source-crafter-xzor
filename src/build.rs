@@ -1062,7 +1062,7 @@ mod tests {
         fs::create_dir_all(root.join("services")).unwrap();
         let runtime = manifest.join("runtime").join("index.ts").display().to_string().replace('\\', "/");
         let tsconfig = format!(
-            r#"{{"compilerOptions":{{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ESNext","DOM"],"strict":true,"noEmit":true,"skipLibCheck":true,"rootDirs":[".",".xzor"],"paths":{{"@xzor/runtime":["{runtime}"]}}}},"include":["**/*.ts",".xzor/**/*.ts"]}}"#
+            r#"{{"compilerOptions":{{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ESNext","DOM"],"strict":true,"noEmit":true,"skipLibCheck":true,"rootDirs":[".",".xzor"],"paths":{{"@source-crafter/xzor-runtime":["{runtime}"]}}}},"include":["**/*.ts",".xzor/**/*.ts"]}}"#
         );
         fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
         for (path, text) in files {
@@ -1156,7 +1156,7 @@ mod tests {
             return;
         }
         let db = "export class Log {}\nexport class Db {\n  /* ünï 🙂 */ constructor(readonly log: Log) {}\n}\n";
-        let data = "import { ServiceProvider, Singleton } from \"@xzor/runtime\";\nimport { Db } from \"./db\";\n@ServiceProvider()\n@Singleton(Db)\nexport class DataServices {}\n";
+        let data = "import { ServiceProvider, Singleton } from \"@source-crafter/xzor-runtime\";\nimport { Db } from \"./db\";\n@ServiceProvider()\n@Singleton(Db)\nexport class DataServices {}\n";
         let root = di_project("errors", &[("services/db.ts", db), ("services/data.ts", data)]);
         let err = di(&root, "main.ts", &[]).unwrap_err();
         let expected = "services/db.ts(3,37): error ZDI02: Log (needed by Db in provider DataServices) is not registered or imported";
@@ -1169,7 +1169,7 @@ mod tests {
         if !has_bun() {
             return;
         }
-        let main = "import { Mount, ServiceProvider } from \"@xzor/runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let main = "import { Mount, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
         let data = "export interface IDatabase { readonly name: string }\n";
         let files = [("main.ts", main), ("services/data.ts", data), ("App.xzor", "<p/>"), ("Counter.xzor", COUNTER)];
         let root = di_project("injecterr", &files);
@@ -1184,7 +1184,7 @@ mod tests {
         if !has_bun() {
             return;
         }
-        let main = "import { Mount, ServiceProvider } from \"@xzor/runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let main = "import { Mount, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
         let root = di_project("mountentry", &[("app.ts", main), ("App.xzor", "<p/>")]);
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
@@ -1193,7 +1193,7 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
-    const OTHER: &str = "import { ServiceProvider, Singleton } from \"@xzor/runtime\";\nexport class Clock {}\n@ServiceProvider()\n@Singleton(Clock)\nexport class OtherServices {}\n";
+    const OTHER: &str = "import { ServiceProvider, Singleton } from \"@source-crafter/xzor-runtime\";\nexport class Clock {}\n@ServiceProvider()\n@Singleton(Clock)\nexport class OtherServices {}\n";
 
     #[test]
     fn removed_provider_output_is_pruned() {

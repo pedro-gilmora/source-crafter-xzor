@@ -1,4 +1,4 @@
-import { Import, Mount, Singleton as Single, Transient } from "@xzor/runtime";
+import { Import, Mount, Singleton as Single, Transient } from "@source-crafter/xzor-runtime";
 import App from "./App.xzor";
 import { DataServices, type IDatabase as Db } from "./services/data";
 

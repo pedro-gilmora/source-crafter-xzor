@@ -77,7 +77,7 @@ const KINDS: Kind[] = ["ServiceProvider", "Mount", "Import", "Singleton", "Scope
 const LIFETIMES = { Singleton: "singleton", Scoped: "scoped", Transient: "transient" } as const;
 const NAMED = SymbolFlags.Class | SymbolFlags.Interface | SymbolFlags.Enum;
 const PRIMITIVE = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.BigInt | TypeFlags.ESSymbol;
-const RUNTIME = "@xzor/runtime";
+const RUNTIME = "@source-crafter/xzor-runtime";
 
 type Loc = { sf: SourceFile; node: Node };
 type Disposal = { dispose: Dispose; optional: boolean };
@@ -116,7 +116,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     lookups.forEach((l, i) => (l.value = target(found[i])));
   };
 
-  // --- runtime decorators, by symbol identity with @xzor/runtime's exports ---
+  // --- runtime decorators, by symbol identity with @source-crafter/xzor-runtime's exports ---
   const kinds = new Map<number, Kind>();
   for (const sf of [...sources, ...componentSources]) {
     const decl = sf.statements.find((s) => isImportDeclaration(s) && isStringLiteral(s.moduleSpecifier) && s.moduleSpecifier.text === RUNTIME);

@@ -1,5 +1,5 @@
 {
-  "name": "@xzor/runtime",
+  "name": "@source-crafter/xzor-runtime",
   "version": "0.0.0",
   "description": "Runtime for components compiled by xzor",
   "license": "MIT",

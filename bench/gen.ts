@@ -21,14 +21,14 @@ writeFileSync(
       noEmit: true,
       skipLibCheck: true,
       rootDirs: [".", ".xzor"],
-      paths: { "@xzor/runtime": [runtime] },
+      paths: { "@source-crafter/xzor-runtime": [runtime] },
     },
     include: ["**/*.ts", ".xzor/**/*.ts"],
   }),
 );
 writeFileSync(
   join(dir, "c", "Base.ts"),
-  `import { ComponentBase } from "@xzor/runtime";\nexport abstract class Base extends ComponentBase {\n  title = "base";\n  shout(s: string) { return s.toUpperCase(); }\n}\n`,
+  `import { ComponentBase } from "@source-crafter/xzor-runtime";\nexport abstract class Base extends ComponentBase {\n  title = "base";\n  shout(s: string) { return s.toUpperCase(); }\n}\n`,
 );
 for (let i = 0; i < n; i++) {
   const deps = [i - 1, i - 2].filter((d) => d >= 0);
@@ -56,6 +56,6 @@ ${uses}
 }
 writeFileSync(
   join(dir, "main.ts"),
-  `import { mount } from "@xzor/runtime";\nimport App from "./c/C${n - 1}.xzor";\nmount(App, document.getElementById("app")!);\n`,
+  `import { mount } from "@source-crafter/xzor-runtime";\nimport App from "./c/C${n - 1}.xzor";\nmount(App, document.getElementById("app")!);\n`,
 );
 console.log(`${n} components in ${dir}`);

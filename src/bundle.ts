@@ -144,10 +144,10 @@ function tryResolve(spec: string, dir: string): string | undefined {
 
 // xzor's DI decorators are no-ops read only by the analyzer; stripping them spares the bundle the decorator helpers.
 const MARKERS = new Set(["ServiceProvider", "Mount", "Import", "Singleton", "Scoped", "Transient"]);
-const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@xzor\/runtime["']/g;
+const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@source-crafter\/xzor-runtime["']/g;
 const IDENT = /[A-Za-z_$][\w$]*/y;
 
-/** Local names bound to xzor's marker decorators by value imports from `@xzor/runtime`. */
+/** Local names bound to xzor's marker decorators by value imports from `@source-crafter/xzor-runtime`. */
 function markerLocals(src: string): Set<string> {
   const locals = new Set<string>();
   for (const m of src.matchAll(RUNTIME_IMPORT)) {
@@ -243,11 +243,11 @@ function decorator(src: string, i: number, locals: Set<string>): { end: number; 
 }
 
 /**
- * Blanks xzor's marker decorators (imported from `@xzor/runtime`, aliases included) in a TypeScript source.
+ * Blanks xzor's marker decorators (imported from `@source-crafter/xzor-runtime`, aliases included) in a TypeScript source.
  * Every character but line breaks becomes a space, so positions and source maps stay exact.
  */
 export function stripMarkerDecorators(src: string): string {
-  if (!src.includes("@xzor/runtime")) return src;
+  if (!src.includes("@source-crafter/xzor-runtime")) return src;
   const locals = markerLocals(src);
   if (locals.size === 0) return src;
   let out = "";

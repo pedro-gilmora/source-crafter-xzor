@@ -109,7 +109,7 @@ foreach ($target in $platforms.Keys | Sort-Object) {
     Copy-Item -Force $source (Join-Path $dir $exe)
     $os, $cpu = $platforms[$target]
     Stage-Package "cli-$target" $null ([pscustomobject]@{
-        name = "@xzor/cli-$target"
+        name = "@source-crafter/xzor-cli-$target"
         version = $version
         description = "The xzor compiler for $target"
         license = "MIT"
@@ -122,7 +122,7 @@ foreach ($target in $platforms.Keys | Sort-Object) {
 
 $launcher = Get-Content npm/xzor/package.json -Raw | ConvertFrom-Json
 foreach ($dep in @($launcher.optionalDependencies.PSObject.Properties.Name)) { $launcher.optionalDependencies.$dep = $version }
-$launcher.peerDependencies."@xzor/runtime" = $version
+$launcher.peerDependencies."@source-crafter/xzor-runtime" = $version
 Stage-Package "xzor" "npm/xzor" $launcher
 
 # The extension: its own manifest gets the version and repository; vsce packs from editors/vscode.

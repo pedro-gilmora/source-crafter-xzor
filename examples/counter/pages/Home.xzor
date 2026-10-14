@@ -3,7 +3,7 @@
 @import Card from "../Card.xzor"
 @import List from "../List.xzor"
 @import Stepper from "../Stepper.xzor"
-@import { type RenderFragment } from "@xzor/runtime"
+@import { type RenderFragment } from "@source-crafter/xzor-runtime"
 
 @code {
   title = "xzor demo";

@@ -1,4 +1,4 @@
-import { ComponentBase } from "@xzor/runtime";
+import { ComponentBase } from "@source-crafter/xzor-runtime";
 
 /** The pages' common base: its members are usable as bare names in their templates. */
 export abstract class PageBase extends ComponentBase {

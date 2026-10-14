@@ -42,7 +42,7 @@ beforeAll(async () => {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
   writeFileSync(join(dir, "A.xzor"), "<p>a</p>\n");
   writeFileSync(join(dir, "B.xzor"), "<p>b</p>\n");
@@ -132,7 +132,7 @@ test("a tsconfig.json change rebuilds everything", async () => {
 
 test("renaming a member of an inherited .ts base recompiles the inheriting component", async () => {
   const base = (name: string) =>
-    `import { ComponentBase } from "@xzor/runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
+    `import { ComponentBase } from "@source-crafter/xzor-runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
   writeFileSync(join(dir, "base.ts"), base("title"));
   await waitFor("watching");
   writeFileSync(join(dir, "D.xzor"), `@import { Titled } from "./base"\n@inherits Titled\n<p>@title</p>\n`);

@@ -1,4 +1,4 @@
-import { type IApplication, Import, Mount, Singleton, Transient } from "@xzor/runtime";
+import { type IApplication, Import, Mount, Singleton, Transient } from "@source-crafter/xzor-runtime";
 import App from "./App.xzor";
 import { AuthService, Clock } from "./services/auth";
 import { DataServices } from "./services/data";

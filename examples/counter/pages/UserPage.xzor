@@ -4,7 +4,7 @@
 @implements Describable
 @attribute registered("user page")
 @import { PageBase, type Describable, registered } from "./PageBase"
-@import { NavLink } from "@xzor/runtime"
+@import { NavLink } from "@source-crafter/xzor-runtime"
 @import { href } from "../routes"
 
 @code {
