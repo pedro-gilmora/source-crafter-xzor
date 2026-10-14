@@ -14,6 +14,9 @@ function findServer(): string {
       const candidate = join(folder.uri.fsPath, "target", profile, exe);
       if (existsSync(candidate)) return candidate;
     }
+    // Installed from npm: the platform package holds the binary itself, no Node launcher in between.
+    const installed = join(folder.uri.fsPath, "node_modules", "@xzor", `cli-${process.platform}-${process.arch}`, exe);
+    if (existsSync(installed)) return installed;
   }
   return "xzor";
 }
