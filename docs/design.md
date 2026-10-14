@@ -1,21 +1,21 @@
-# zor design
+# xzor design
 
 ## Goal
 
-`.tszor` is to TypeScript what `.razor` is to C#. You write a component as markup with `@` transitions plus a `@code` block. `zor` lowers it to a TypeScript class whose `buildRenderTree` calls a `RenderTreeBuilder`. The TypeScript is type-checked, then bundled to JavaScript.
+`.xzor` is to TypeScript what `.razor` is to C#. You write a component as markup with `@` transitions plus a `@code` block. `xzor` lowers it to a TypeScript class whose `buildRenderTree` calls a `RenderTreeBuilder`. The TypeScript is type-checked, then bundled to JavaScript.
 
 ```
-X.tszor --zor (Rust)--> .zor/X.tszor.ts --tsc 7--> type errors --Bun.build--> dist/*.js
+X.xzor --xzor (Rust)--> .xzor/X.xzor.ts --tsc 7--> type errors --Bun.build--> dist/*.js
 ```
 
-The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get IntelliSense through `zor lsp` (see [superpowers/specs/2026-10-11-lsp-design.md](superpowers/specs/2026-10-11-lsp-design.md)).
+The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get IntelliSense through `xzor lsp` (see [superpowers/specs/2026-10-11-lsp-design.md](superpowers/specs/2026-10-11-lsp-design.md)).
 
 ## Syntax (v0)
 
 | Syntax | Meaning |
 |---|---|
 | `@page "/route"`, `@page "/users/:id" as admin` | Route of this component (see [Routing](#routing)) |
-| `@import A from "./A.tszor"` | Verbatim ES import |
+| `@import A from "./A.xzor"` | Verbatim ES import |
 | `@code { ... }` | Class members |
 | `@name`, `@a.b(c)[0]?.d` | Implicit expression; stops at text such as `:` or `.` followed by a non-identifier |
 | `@( expr )` | Explicit expression |
@@ -25,7 +25,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@* comment *@` | A comment, removed at compile time |
 | `@{ const x = f(); <p>@x</p> @: text @x }` | Statements inside `buildRenderTree`. Variables declared there are usable later in the same scope. Markup at statement start and `@:` lines render in place, and markup used as a value becomes a `RenderFragment`. |
 | `<text>…</text>` | Renders its content only, with no wrapper element |
-| `@inherits Base<T>`, `@implements A, B`, `@attribute dec(args)` | `@dec(args)` then `export default class C extends Base<T> implements A, B`. The base must derive from `ComponentBase`. When the base resolves through an `@import` (a `.ts`, `.d.ts` or `.tszor` file, following re-exports and its own `extends` chain; a bare specifier is found in `node_modules` through `types`, `typings`, `exports` (conditions, subpaths and `*` patterns; `.js` targets read as their `.d.ts`), `index.d.ts` or `@types/<pkg>`), its instance members are usable as bare names in the template, like `@code` members. When a base in the chain can't be read, compiling warns (`could not read base class 'Base'; use this.<member> for its members`, also an LSP warning) and its members need `this.`. tsconfig `paths`, `export =` and bases that are expressions (`extends mixin(A)`) are not followed. |
+| `@inherits Base<T>`, `@implements A, B`, `@attribute dec(args)` | `@dec(args)` then `export default class C extends Base<T> implements A, B`. The base must derive from `ComponentBase`. When the base resolves through an `@import` (a `.ts`, `.d.ts` or `.xzor` file, following re-exports and its own `extends` chain; a bare specifier is found in `node_modules` through `types`, `typings`, `exports` (conditions, subpaths and `*` patterns; `.js` targets read as their `.d.ts`), `index.d.ts` or `@types/<pkg>`), its instance members are usable as bare names in the template, like `@code` members. When a base in the chain can't be read, compiling warns (`could not read base class 'Base'; use this.<member> for its members`, also an LSP warning) and its members need `this.`. tsconfig `paths`, `export =` and bases that are expressions (`extends mixin(A)`) are not followed. |
 | `@switch (v) { case a: case b: ... break; default: ... }` | Each case is block-scoped and always ends in `break` (no fall-through into a body). Stacked labels share one body. `break;` is optional. |
 | `@@`, `a@b.com` | Literal `@` |
 | `attr="text @expr"`, `attr="@expr"` | Interpolated and typed attribute values (`false`/`null` removes the attribute) |
@@ -48,9 +48,9 @@ In template expressions, free identifiers that name `@code` members are rewritte
 
 ### Markup as values (RenderFragment)
 
-Inside `@code`, markup can be used as a value, like Blazor's `RenderFragment`. It's written `<Tag …>` wherever an expression can start (after `return`, `=`, `(`, `,`, `?`, `:`, `=>`, …), or `@<Tag …>` anywhere. It compiles to `ComponentBase.fragment((__b) => { … })`, typed `RenderFragment` (alias `Renderer`, from `@zor/runtime`), so TypeScript enforces the declared return or field type. Inside this markup, names follow plain TypeScript scope (write `@this.x`). Render a fragment from the template with `@member` or `@method(args)`; it gets its own region in the diff. Text that fails to parse as markup stays TypeScript (generic arrows `<T,>(x: T) => x`, comparisons).
+Inside `@code`, markup can be used as a value, like Blazor's `RenderFragment`. It's written `<Tag …>` wherever an expression can start (after `return`, `=`, `(`, `,`, `?`, `:`, `=>`, …), or `@<Tag …>` anywhere. It compiles to `ComponentBase.fragment((__b) => { … })`, typed `RenderFragment` (alias `Renderer`, from `@xzor/runtime`), so TypeScript enforces the declared return or field type. Inside this markup, names follow plain TypeScript scope (write `@this.x`). Render a fragment from the template with `@member` or `@method(args)`; it gets its own region in the diff. Text that fails to parse as markup stays TypeScript (generic arrows `<T,>(x: T) => x`, comparisons).
 
-```tszor
+```xzor
 @code {
   cached: RenderFragment = <Summary />;
   panel(kind: Kind): RenderFragment {
@@ -67,14 +67,14 @@ Inside `@code`, markup can be used as a value, like Blazor's `RenderFragment`. I
 
 Slots work like functions. A component defines where each one renders, optionally with arguments and fallback content. The parent supplies a body, optionally taking parameters.
 
-```tszor
-<!-- Card.tszor (definition) -->
+```xzor
+<!-- Card.xzor (definition) -->
 <section>
   @slot:header { <h3>@title</h3> }      <!-- named, with fallback content -->
   @slot                                 <!-- the nameless (default) slot -->
 </section>
 
-<!-- List.tszor (definition with arguments) -->
+<!-- List.xzor (definition with arguments) -->
 @for (const item of items) {
   <li>@slot:item(item, items.indexOf(item) as number) { @item }</li>
 }
@@ -100,7 +100,7 @@ The rules:
 
 - Each name, including the nameless `default` slot, is defined at most once and filled at most once. Content outside any `@slot` fills the default slot. Filling it both ways is an error.
 - A definition compiles to `__b.addContent(this.slots.name?.(args) ?? fallbackFragment)`. A fill compiles to a lambda in `addComponent(C, props, { name: (params) => fragment })`.
-- The component class declares `declare slots: { name?: (p: T, …) => RenderFragment; … }`, so TypeScript checks slot names and parameter types, and infers untyped parameters. zor infers each argument's type at compile time:
+- The component class declares `declare slots: { name?: (p: T, …) => RenderFragment; … }`, so TypeScript checks slot names and parameter types, and infers untyped parameters. xzor infers each argument's type at compile time:
   - a member `x` or `this.x.y` becomes `this["x"]["y"]`
   - a loop variable from `const x of <member path>` becomes `…[number]`; `in` gives `string`, and `let i = 0` gives `number`
   - `expr as T` becomes `T`
@@ -113,13 +113,13 @@ The rules:
 
 A provider passes a value down to any depth without threading props. A consumer field declares what it receives.
 
-```tszor
-<!-- App.tszor -->
+```xzor
+<!-- App.xzor -->
 @cascade:theme(currentTheme) {
   <Toolbar />
 }
 
-<!-- Button.tszor -->
+<!-- Button.xzor -->
 @code {
   @Cascade theme!: string;               // by field name
   @Cascade("theme") mode!: string;       // by explicit name
@@ -135,7 +135,7 @@ A provider passes a value down to any depth without threading props. A consumer 
 
 Full design: [the routing and cascading spec](superpowers/specs/2026-10-13-routing-cascading-design.md).
 
-```tszor
+```xzor
 @page "/admin/users/:id" as admin
 @page "/users/:id/*"
 
@@ -156,7 +156,7 @@ Full design: [the routing and cascading spec](superpowers/specs/2026-10-13-routi
 - **`href.<Component>(params)`**: from `routes` (imported relatively, e.g. `import { href } from "../routes"`). One overload per `@page` of the component, typed from its props, so `href.UserProfile({ id: "x" })` is a type error when `id` is a `number`. Values are `encodeURIComponent`ed; the first of the component's patterns whose param names equal the given keys is used.
 - **`<NavLink href="/x" activeClass="active" match="prefix|exact">`**: an `<a>` that carries the class while the current path is on its `href` (resolved against the base URL, compared percent-encoded). It follows navigation by itself, so it also works outside the routes block (a nav bar beside it); it never intercepts clicks on its own.
 - **Engines**: `@ClientRoutes` is a single-page app on the History API. It intercepts `<a>` clicks that are same-origin, left-button, without modifier keys, with `target` absent or `_self`, no `download` and no `rel="external"`. `popstate` re-renders, and `navigate` uses `pushState` (`replaceState` with `replace`). `@ServerRoutes` (one page per entry, no History API) is coming in the next part.
-- **`.zor/routes.ts`**: the generated route table (matchers, `href`, `RouteTag`, `RouteParams`, `AppRoute`), written from every `@page` of the project and removed when it has none. A real `routes.ts` at the project root is reserved.
+- **`.xzor/routes.ts`**: the generated route table (matchers, `href`, `RouteTag`, `RouteParams`, `AppRoute`), written from every `@page` of the project and removed when it has none. A real `routes.ts` at the project root is reserved.
 - **Limits**: a trailing slash (`/a/`) is rejected, regex sections only work in `@ClientRoutes` (`@ServerRoutes` takes string patterns), a duplicate pattern or page component name is an error, and a `@page` component can't hold the routes block (it would render itself; keep the block in a shell component without `@page`).
 
 ## Rendering
@@ -170,11 +170,11 @@ Full design: [the routing and cascading spec](superpowers/specs/2026-10-13-routi
 
 ## Dependency injection
 
-zor resolves services at compile time and emits plain TypeScript: no reflection and no runtime container. Full design: [the DI spec](superpowers/specs/2026-10-12-di-bootstrap-design.md).
+xzor resolves services at compile time and emits plain TypeScript: no reflection and no runtime container. Full design: [the DI spec](superpowers/specs/2026-10-12-di-bootstrap-design.md).
 
 ### Providers and registrations
 
-The decorators come from `@zor/runtime` and do nothing at runtime. `@ServiceProvider()` marks a reusable provider class in any `.ts` file; zor generates `.zor/<rel>.provider.ts` with a subclass `<Name>$` that has one public getter per service.
+The decorators come from `@xzor/runtime` and do nothing at runtime. `@ServiceProvider()` marks a reusable provider class in any `.ts` file; xzor generates `.xzor/<rel>.provider.ts` with a subclass `<Name>$` that has one public getter per service.
 
 ```ts
 @ServiceProvider()
@@ -196,11 +196,11 @@ Constructor and factory parameters are resolved by key, then by type. A `?` or d
 
 ### Components: `@inject`
 
-`@inject IDatabase db` in a `.tszor` adds a constructor parameter and a `readonly db` field. The application builds such components in its generated `createComponent`. A component with `@inject` cannot declare its own `constructor` (ZDI08).
+`@inject IDatabase db` in a `.xzor` adds a constructor parameter and a `readonly db` field. The application builds such components in its generated `createComponent`. A component with `@inject` cannot declare its own `constructor` (ZDI08).
 
 ### The application: `@Mount`
 
-The entry module declares one class with `@Mount(App, "app")` plus registrations and imports. zor writes `.zor/<entry>` with the generated subclass and the `mount(App, "app", new Application$())` call, and bundles that instead of the entry. Do not call `mount()` yourself.
+The entry module declares one class with `@Mount(App, "app")` plus registrations and imports. xzor writes `.xzor/<entry>` with the generated subclass and the `mount(App, "app", new Application$())` call, and bundles that instead of the entry. Do not call `mount()` yourself.
 
 ```ts
 @Mount(App, "app")
@@ -241,24 +241,24 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 
 - The tsconfig `lib` needs `ESNext.Disposable` (for `Disposable` and `Symbol.dispose`).
 - A class cannot reference itself in its own decorators, so a keyed factory is either a public static method of another class or an exported function. It must be exported because the generated code imports it.
-- A `.tszor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.zor/main.ts`.
+- A `.xzor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.xzor/main.ts`.
 - Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
 - `@Mount` must be in the entry module (`--entry`, default `main.ts`).
-- `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.zor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
+- `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.xzor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
 - Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
 
 ## Build
 
-- Only `.tszor` files inside a tsconfig project are compiled. Each one produces `.zor/<rel>.tszor.ts` plus a v3 `.tszor.ts.map`, and files are only written when their content changes.
-- `tsc` errors are rewritten to point at `.tszor` positions.
-- The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.tszor` sources.
-- `zor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. zor recompiles only the changed `.tszor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.zor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer. `node_modules` is not watched, so an `@inherits` base in a package is only read again on such a full rebuild.
+- Only `.xzor` files inside a tsconfig project are compiled. Each one produces `.xzor/<rel>.xzor.ts` plus a v3 `.xzor.ts.map`, and files are only written when their content changes.
+- `tsc` errors are rewritten to point at `.xzor` positions.
+- The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.xzor` sources.
+- `xzor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. xzor recompiles only the changed `.xzor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.xzor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer. `node_modules` is not watched, so an `@inherits` base in a package is only read again on such a full rebuild.
 - DI analysis runs in a persistent process (`di.ts --serve`). It keeps one TypeScript 7 session per project root, so warm requests take a few milliseconds. `--watch` and the language server reuse it. It is recycled after 500 requests.
-- After stale generated files are pruned, empty folders under `.zor/` are removed.
+- After stale generated files are pruned, empty folders under `.xzor/` are removed.
 
 ## Editor
 
-- DI diagnostics appear where the problem is defined or referenced: registration decorators and constructor and factory parameters in `.ts` files, and `@inject` lines in `.tszor` files.
+- DI diagnostics appear where the problem is defined or referenced: registration decorators and constructor and factory parameters in `.ts` files, and `@inject` lines in `.xzor` files.
 - They update live. Ranges shift as you type. 300 ms after the last change, the analysis reruns with the unsaved text of open documents. Nothing is written to disk until you save.
 - The language server opens `.ts` files only for these diagnostics. Every other `.ts` feature stays with VS Code's TypeScript.
 

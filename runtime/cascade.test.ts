@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ComponentBase, type IApplication, type RenderTreeBuilder, type VRegion, mount } from "./index";
 
-// Written the way zor emits `@cascade:name(value)` providers and `@Cascade` members.
+// Written the way xzor emits `@cascade:name(value)` providers and `@Cascade` members.
 
 const host = () => document.createElement("div");
 // Components keep an empty anchor comment after their nodes; compare markup without them.

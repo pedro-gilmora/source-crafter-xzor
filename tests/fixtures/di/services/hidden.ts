@@ -1,4 +1,4 @@
-import { ServiceProvider, Transient } from "@zor/runtime";
+import { ServiceProvider, Transient } from "@xzor/runtime";
 
 class Hidden {}
 

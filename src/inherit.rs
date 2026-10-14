@@ -60,7 +60,7 @@ type Link = (PathBuf, Rc<Source>, String);
 /// Where a class is declared, after following re-exports.
 enum Decl {
     Class { file: PathBuf, src: Rc<Source>, base: Option<String>, body: std::ops::Range<usize> },
-    /// A re-exported `.tszor`, whose members come from its document rather than from a class body.
+    /// A re-exported `.xzor`, whose members come from its document rather than from a class body.
     Component { file: PathBuf, src: Rc<Source> },
 }
 
@@ -96,7 +96,7 @@ impl Chain<'_> {
             return self.package(dir, spec);
         }
         let base = normalize(&dir.join(spec));
-        let candidates = if spec.ends_with(".tszor") {
+        let candidates = if spec.ends_with(".xzor") {
             vec![base]
         } else {
             let mut c = Vec::new();
@@ -170,7 +170,7 @@ impl Chain<'_> {
 
     /// The declaration of class `name` in `file`, or in the files `file` re-exports it from.
     fn find(&mut self, file: PathBuf, src: Rc<Source>, name: &str, visited: &mut Vec<(PathBuf, String)>) -> Option<Decl> {
-        if file.extension().is_some_and(|e| e == "tszor") {
+        if file.extension().is_some_and(|e| e == "xzor") {
             return Some(Decl::Component { file, src });
         }
         if visited.iter().any(|(f, n)| *f == file && n == name) {
@@ -209,7 +209,7 @@ impl Chain<'_> {
 
     /// Adds the members of `class` in `file` to `out` and reports where the chain goes next.
     fn members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Step {
-        if file.extension().is_some_and(|e| e == "tszor") {
+        if file.extension().is_some_and(|e| e == "xzor") {
             return self.component_members(file, src, class, out);
         }
         let (file, src, base, body) = match self.find(file.to_path_buf(), src.clone(), class, &mut Vec::new()) {
@@ -239,7 +239,7 @@ impl Chain<'_> {
         }
     }
 
-    /// Adds the members a `.tszor` component declares to `out` and reports where its `@inherits` goes next.
+    /// Adds the members a `.xzor` component declares to `out` and reports where its `@inherits` goes next.
     fn component_members(&mut self, file: &Path, src: &Rc<Source>, class: &str, out: &mut HashSet<String>) -> Step {
         let dir = file.parent().unwrap_or(Path::new("."));
         let Ok((doc, _)) = crate::parser::parse(&src.text) else { return Step::Missing(class.to_string()) };
@@ -621,12 +621,12 @@ mod tests {
             *reads.borrow_mut().entry(p.to_path_buf()).or_insert(0) += 1;
             map.get(p).cloned()
         };
-        let code = crate::compile_mapped_with(main, &root.join("C.tszor"), &read).unwrap().code;
+        let code = crate::compile_mapped_with(main, &root.join("C.xzor"), &read).unwrap().code;
         (code, reads.into_inner())
     }
 
     fn compile(files: &[(&str, &str)], main: &str) -> String {
-        compile_at(files, main, "C.tszor")
+        compile_at(files, main, "C.xzor")
     }
 
     /// Compiles `main` as if it sat at `at` under `/p`.
@@ -640,10 +640,10 @@ mod tests {
         let root = Path::new("/p");
         let map: HashMap<PathBuf, String> = files.iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
         let (doc, _) = crate::parser::parse(main).unwrap();
-        base_members(&doc, &root.join("C.tszor"), &|p| map.get(p).cloned()).unresolved
+        base_members(&doc, &root.join("C.xzor"), &|p| map.get(p).cloned()).unresolved
     }
 
-    const TITLED: &str = r#"import { ComponentBase } from "@zor/runtime";
+    const TITLED: &str = r#"import { ComponentBase } from "@xzor/runtime";
 // } a stray brace in a comment
 export abstract class Titled extends ComponentBase {
   title = "}";
@@ -672,7 +672,7 @@ export class After { late = 1; }
 
     #[test]
     fn follows_a_chain_across_files() {
-        let a = "import { ComponentBase } from \"@zor/runtime\";\nexport class A extends ComponentBase { a = 1; }\n";
+        let a = "import { ComponentBase } from \"@xzor/runtime\";\nexport class A extends ComponentBase { a = 1; }\n";
         let b = "import {\n  A,\n} from './a';\nexport class B extends A { b = 2; }\nclass Local extends B { l = 3; }\nexport { Local };\n";
         let code = compile(&[("a.ts", a), ("lib/b.ts", b.replace("'./a'", "'../a'").as_str())], "@import { B } from \"./lib/b\"\n@inherits B\n<p>@a @b</p>\n");
         assert!(code.contains("this.a") && code.contains("this.b"), "{code}");
@@ -688,12 +688,12 @@ export class After { late = 1; }
         let b = "import { A } from \"./a\";\nexport class B extends A { b = 1; }\n";
         let map: std::collections::HashMap<PathBuf, String> = [("a.ts", a), ("b.ts", b)].iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
         let main = "@import { B } from \"./b\"\n@inherits B\n<p>@a</p>\n";
-        let g = crate::compile_mapped_with(main, &root.join("C.tszor"), &|p| map.get(p).cloned()).unwrap();
+        let g = crate::compile_mapped_with(main, &root.join("C.xzor"), &|p| map.get(p).cloned()).unwrap();
         for f in ["a.ts", "b", "b.ts"] {
             assert!(g.deps.contains(&root.join(f)), "{f} missing in {:?}", g.deps);
         }
         let main = "@import { Gone } from \"./gone\"\n@inherits Gone\n<p/>\n";
-        let g = crate::compile_mapped_with(main, &root.join("C.tszor"), &|_| None).unwrap();
+        let g = crate::compile_mapped_with(main, &root.join("C.xzor"), &|_| None).unwrap();
         assert!(g.deps.contains(&root.join("gone.ts")) && g.deps.contains(&root.join("gone").join("index.ts")), "{:?}", g.deps);
     }
 
@@ -731,10 +731,10 @@ export class After { late = 1; }
     }
 
     #[test]
-    fn tszor_base_contributes_its_code_members_and_chain() {
+    fn xzor_base_contributes_its_code_members_and_chain() {
         let a = "export class A { a = 1; }\n";
         let base = "@import { A } from \"./a\"\n@inherits A\n@inject Db db\n@code { shared = 1; static s = 2; }\n<p/>\n";
-        let code = compile(&[("a.ts", a), ("Base.tszor", base)], "@import Base from \"./Base.tszor\"\n@inherits Base\n<p>@shared @db @a @s</p>\n");
+        let code = compile(&[("a.ts", a), ("Base.xzor", base)], "@import Base from \"./Base.xzor\"\n@inherits Base\n<p>@shared @db @a @s</p>\n");
         for m in ["this.shared", "this.db", "this.a"] {
             assert!(code.contains(m), "{m} missing in\n{code}");
         }
@@ -812,8 +812,8 @@ export class After { late = 1; }
     #[test]
     fn a_barrel_reexporting_a_component_is_read_as_a_component() {
         let files = [
-            ("lib/Card.tszor", "@code { card = 1; }\n<p/>\n"),
-            ("lib/index.ts", "export { default as Card } from \"./Card.tszor\";\n"),
+            ("lib/Card.xzor", "@code { card = 1; }\n<p/>\n"),
+            ("lib/index.ts", "export { default as Card } from \"./Card.xzor\";\n"),
         ];
         let main = "@import { Card } from \"./lib/index\"\n@inherits Card\n<p>@card</p>\n";
         let code = compile(&files, main);
@@ -842,7 +842,7 @@ export class After { late = 1; }
         ];
         for (name, spec, member) in [("Panel", "ui", "panel"), ("Form", "ui/forms", "form"), ("Kit", "@scope/kit", "kit"), ("Legacy", "legacy", "legacy")] {
             let main = format!("@import {{ {name} }} from \"{spec}\"\n@inherits {name}\n<p>@{member}</p>\n");
-            let code = compile_at(&files, &main, "src/C.tszor");
+            let code = compile_at(&files, &main, "src/C.xzor");
             assert!(code.contains(&format!("this.{member}")), "{spec}\n{code}");
         }
     }
@@ -859,7 +859,7 @@ export class After { late = 1; }
         ];
         for (name, spec, member) in [("Sugar", "sugar", "sugar"), ("Root", "subs", "root")] {
             let main = format!("@import {{ {name} }} from \"{spec}\"\n@inherits {name}\n<p>@{member}</p>\n");
-            let code = compile_at(&files, &main, "src/C.tszor");
+            let code = compile_at(&files, &main, "src/C.xzor");
             assert!(code.contains(&format!("this.{member}")), "{spec}\n{code}");
         }
     }
@@ -879,7 +879,7 @@ export class After { late = 1; }
         ];
         for (name, spec, member) in [("Js", "cjs", "js"), ("Mjs", "esm", "mjs"), ("Cjs", "node/sub", "cjs"), ("Fall", "fall", "fall")] {
             let main = format!("@import {{ {name} }} from \"{spec}\"\n@inherits {name}\n<p>@{member}</p>\n");
-            let code = compile_at(&files, &main, "src/C.tszor");
+            let code = compile_at(&files, &main, "src/C.xzor");
             assert!(code.contains(&format!("this.{member}")), "{spec}\n{code}");
         }
     }
@@ -893,9 +893,9 @@ export class After { late = 1; }
             ("node_modules/pat/dist/grid.d.ts", "export declare class Grid { grid: number; }\n"),
         ];
         let main = "@import { Grid } from \"pat/grid\"\n@inherits Grid\n<p>@grid</p>\n";
-        assert!(compile_at(&files, main, "src/C.tszor").contains("this.grid"));
+        assert!(compile_at(&files, main, "src/C.xzor").contains("this.grid"));
         let main = "@import { Form } from \"pat/forms\"\n@inherits Form\n<p>@form @wrong</p>\n";
-        let code = compile_at(&files, main, "src/C.tszor");
+        let code = compile_at(&files, main, "src/C.xzor");
         assert!(code.contains("this.form") && !code.contains("this.wrong"), "{code}");
     }
 
@@ -907,7 +907,7 @@ export class After { late = 1; }
             ("node_modules/pat/ui/grid.d.ts", "export declare class Grid { grid: number; }\n"),
         ];
         let main = "@import { Grid } from \"pat/ui/grid\"\n@inherits Grid\n<p>@grid @wrong</p>\n";
-        let code = compile_at(&files, main, "src/C.tszor");
+        let code = compile_at(&files, main, "src/C.xzor");
         assert!(code.contains("this.grid") && !code.contains("this.wrong"), "{code}");
     }
 
@@ -915,7 +915,7 @@ export class After { late = 1; }
     fn a_package_directory_without_a_manifest_is_not_probed() {
         let root = Path::new("/p");
         let main = "@import { Pkg } from \"ui/forms\"\n@inherits Pkg\n<p/>\n";
-        let g = crate::compile_mapped_with(main, &root.join("src/C.tszor"), &|_| None).unwrap();
+        let g = crate::compile_mapped_with(main, &root.join("src/C.xzor"), &|_| None).unwrap();
         assert!(g.deps.iter().all(|d| d.file_name().is_some_and(|n| n == "package.json")), "{:?}", g.deps);
     }
 
@@ -933,7 +933,7 @@ export class After { late = 1; }
     fn without_inherits_nothing_is_read() {
         let (_, reads) = compile_in(&[("base.ts", TITLED)], "<p>@title</p>\n");
         assert!(reads.is_empty(), "{reads:?}");
-        let main = "@import { ComponentBase } from \"@zor/runtime\"\n@inherits ComponentBase\n<p>@title</p>\n";
+        let main = "@import { ComponentBase } from \"@xzor/runtime\"\n@inherits ComponentBase\n<p>@title</p>\n";
         let (_, reads) = compile_in(&[("base.ts", TITLED)], main);
         assert!(reads.is_empty(), "{reads:?}");
     }

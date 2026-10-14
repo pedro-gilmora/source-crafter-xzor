@@ -1,5 +1,5 @@
-import { Mount, Singleton } from "@zor/runtime";
-import App from "./App.tszor";
+import { Mount, Singleton } from "@xzor/runtime";
+import App from "./App.xzor";
 import { Database } from "./services";
 
 @Mount(App, "app")

@@ -29,7 +29,7 @@ test("polyfillDisposeSymbols fills missing dispose symbols and keeps native ones
   expect(typeof (Symbol as unknown as { dispose: unknown }).dispose).toBe("symbol");
 });
 
-// Written the way zor emits components that take injected services.
+// Written the way xzor emits components that take injected services.
 
 class Hello extends ComponentBase {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -101,7 +101,7 @@ test("mount accepts a selector", () => {
 });
 
 test("mount throws when the target is missing", () => {
-  expect(() => mount(Hello, "nope")).toThrow('zor: mount target "nope" not found');
+  expect(() => mount(Hello, "nope")).toThrow('xzor: mount target "nope" not found');
 });
 
 test("app builds injected components, nested and in slots", () => {
@@ -123,12 +123,12 @@ test("onStarted runs after the first render", () => {
 });
 
 test("injected component without an app throws", () => {
-  expect(() => mount(Needs, host())).toThrow("zor: Needs needs injected services (dep) but has no application");
+  expect(() => mount(Needs, host())).toThrow("xzor: Needs needs injected services (dep) but has no application");
 });
 
 test("injected component the app does not create throws", () => {
-  expect(() => mount(Needs, host(), { createComponent: () => undefined })).toThrow("zor: Needs is not registered with the application");
-  expect(() => mount(Needs, host(), {})).toThrow("zor: Needs is not registered with the application");
+  expect(() => mount(Needs, host(), { createComponent: () => undefined })).toThrow("xzor: Needs is not registered with the application");
+  expect(() => mount(Needs, host(), {})).toThrow("xzor: Needs is not registered with the application");
 });
 
 test("components without inject are built without asking the app", () => {

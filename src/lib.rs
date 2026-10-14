@@ -29,12 +29,12 @@ impl fmt::Display for Diagnostic {
     }
 }
 
-/// Compiles one `.tszor` source into a TypeScript module.
+/// Compiles one `.xzor` source into a TypeScript module.
 pub fn compile(source: &str, path: &Path) -> Result<String, Diagnostic> {
     compile_mapped(source, path).map(|g| g.code)
 }
 
-/// Like [`compile`], plus the source mappings between the `.tszor` and the generated code.
+/// Like [`compile`], plus the source mappings between the `.xzor` and the generated code.
 pub fn compile_mapped(source: &str, path: &Path) -> Result<codegen::Generated, Diagnostic> {
     compile_mapped_with(source, path, &|p| std::fs::read_to_string(p).ok())
 }
@@ -45,8 +45,8 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
         let (line, column) = line_col(source, e.offset);
         Diagnostic { message: e.message, line, column, offset: e.offset }
     })?;
-    let file_name = path.file_name().map_or_else(|| "component.tszor".into(), |n| n.to_string_lossy());
-    let stem = file_name.strip_suffix(".tszor").unwrap_or(&file_name);
+    let file_name = path.file_name().map_or_else(|| "component.xzor".into(), |n| n.to_string_lossy());
+    let stem = file_name.strip_suffix(".xzor").unwrap_or(&file_name);
     let components = imported_components(&doc, path);
     if let Some(offset) = codegen::inject_constructor(&doc) {
         let (line, column) = line_col(source, offset);
@@ -70,7 +70,7 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
     Ok(generated)
 }
 
-/// Type parameters and prop kinds of each `.tszor` component imported by `doc`, read from disk.
+/// Type parameters and prop kinds of each `.xzor` component imported by `doc`, read from disk.
 fn imported_components(doc: &ast::Document, path: &Path) -> HashMap<String, codegen::ComponentInfo> {
     let dir = path.parent().unwrap_or(Path::new("."));
     doc.imports
@@ -78,7 +78,7 @@ fn imported_components(doc: &ast::Document, path: &Path) -> HashMap<String, code
         .filter_map(|import| {
             let name = import.split_whitespace().next()?;
             let spec = import.rsplit(['"', '\'']).nth(1)?;
-            if !spec.ends_with(".tszor") || !codegen::is_identifier(name) {
+            if !spec.ends_with(".xzor") || !codegen::is_identifier(name) {
                 return None;
             }
             let text = std::fs::read_to_string(dir.join(spec)).ok()?;
@@ -108,7 +108,7 @@ mod tests {
     use super::*;
 
     fn warnings(src: &str) -> Vec<Diagnostic> {
-        compile_mapped(src, Path::new("App.tszor")).unwrap().warnings
+        compile_mapped(src, Path::new("App.xzor")).unwrap().warnings
     }
 
     #[test]
@@ -124,6 +124,6 @@ mod tests {
     #[test]
     fn no_warning_without_a_readable_chain() {
         assert!(warnings("<p/>\n").is_empty());
-        assert!(warnings("@import { ComponentBase } from \"@zor/runtime\"\n@inherits ComponentBase\n<p/>\n").is_empty());
+        assert!(warnings("@import { ComponentBase } from \"@xzor/runtime\"\n@inherits ComponentBase\n<p/>\n").is_empty());
     }
 }

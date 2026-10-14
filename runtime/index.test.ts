@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { ComponentBase, type RenderTreeBuilder, mount } from "./index";
 
-// Components below are written the way zor's codegen emits them.
+// Components below are written the way xzor's codegen emits them.
 
 let renders: Record<string, number>;
 const rendered = (key: string) => (renders[key] = (renders[key] ?? 0) + 1);

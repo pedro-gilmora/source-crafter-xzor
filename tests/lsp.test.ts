@@ -1,11 +1,11 @@
-// End-to-end: drives `zor lsp` over stdio against examples/counter, like an editor would.
+// End-to-end: drives `xzor lsp` over stdio against examples/counter, like an editor would.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dir, "..");
 const root = join(repo, "examples", "counter");
-const exe = join(repo, "target", "debug", process.platform === "win32" ? "zor.exe" : "zor");
+const exe = join(repo, "target", "debug", process.platform === "win32" ? "xzor.exe" : "xzor");
 
 const uriOf = (p: string) =>
   process.platform === "win32"
@@ -43,8 +43,8 @@ async function waitFor<T>(check: () => T | undefined, ms = 15000): Promise<T> {
   }
 }
 
-const app = join(root, "pages", "Home.tszor");
-const counter = join(root, "Counter.tszor");
+const app = join(root, "pages", "Home.xzor");
+const counter = join(root, "Counter.xzor");
 const appText = await Bun.file(app).text();
 const counterText = await Bun.file(counter).text();
 
@@ -91,7 +91,7 @@ beforeAll(async () => {
     ["completion", "hover", "definition", "references", "rename", "semanticTokens"].map((k) => [k, dynamic]),
   );
   init = await request("initialize", { processId: null, rootUri: uriOf(root), capabilities: { textDocument } });
-  // Feature providers are registered for `.tszor` only, so they don't apply to the synced `.ts` documents.
+  // Feature providers are registered for `.xzor` only, so they don't apply to the synced `.ts` documents.
   expect(init.capabilities.hoverProvider).toBeUndefined();
   expect(init.capabilities.renameProvider).toBeUndefined();
   notify("initialized", {});
@@ -104,9 +104,9 @@ beforeAll(async () => {
     "textDocument/rename",
     "textDocument/semanticTokens",
   ]);
-  expect(registrations.every((r) => JSON.stringify(r.registerOptions.documentSelector) === '[{"language":"tszor"}]')).toBe(true);
+  expect(registrations.every((r) => JSON.stringify(r.registerOptions.documentSelector) === '[{"language":"xzor"}]')).toBe(true);
   for (const [path, text] of [[counter, counterText], [app, appText]] as const) {
-    notify("textDocument/didOpen", { textDocument: { uri: uriOf(path), languageId: "tszor", version: 1, text } });
+    notify("textDocument/didOpen", { textDocument: { uri: uriOf(path), languageId: "xzor", version: 1, text } });
   }
 }, 60000);
 
@@ -162,7 +162,7 @@ test("slot names complete inside a component tag and jump to their definition", 
   expect(items.items.map((i: any) => i.label)).toEqual(["header"]);
   notify("textDocument/didChange", { textDocument: { uri: uriOf(app), version: 11 }, contentChanges: [{ text: appText }] });
 
-  const card = join(root, "Card.tszor");
+  const card = join(root, "Card.xzor");
   const cardText = await Bun.file(card).text();
   const defs = await request("textDocument/definition", {
     textDocument: { uri: uriOf(app) },
@@ -219,7 +219,7 @@ test("semantic tokens color template references like their declarations", async 
   expect(typeAt(pos(counterText, "@count</h2>", 1))).toBe("property");
 }, 20000);
 
-test("type errors land on the .tszor line", async () => {
+test("type errors land on the .xzor line", async () => {
   const text = counterText.replace('label: string = "Count";', "label: string = 42;");
   const uri = uriOf(counter);
   diagnostics.delete(uri);
@@ -234,7 +234,7 @@ test("type errors land on the .tszor line", async () => {
   notify("textDocument/didChange", { textDocument: { uri, version: 3 }, contentChanges: [{ text: counterText }] });
 }, 20000);
 
-test("find references maps template uses back to the .tszor", async () => {
+test("find references maps template uses back to the .xzor", async () => {
   const refs = await request("textDocument/references", {
     textDocument: { uri: uriOf(counter) },
     position: pos(counterText, "count: number"),
@@ -243,7 +243,7 @@ test("find references maps template uses back to the .tszor", async () => {
   const starts = refs.filter((r: any) => r.uri === uriOf(counter)).map((r: any) => r.range.start);
   expect(starts).toContainEqual(pos(counterText, "count: number"));
   expect(starts).toContainEqual(pos(counterText, "@count</h2>", 1));
-  expect(refs.every((r: any) => !r.uri.includes(".zor/"))).toBe(true);
+  expect(refs.every((r: any) => !r.uri.includes(".xzor/"))).toBe(true);
 }, 20000);
 
 test("rename edits the declaration and template uses", async () => {
@@ -258,7 +258,7 @@ test("rename edits the declaration and template uses", async () => {
   expect(starts).toContainEqual(pos(counterText, "@count</h2>", 1));
   expect(starts).toContainEqual(pos(counterText, "count >= 10"));
   expect(edits.every((e: any) => e.newText === "total")).toBe(true);
-  expect(Object.keys(edit.changes).every((u) => !u.includes(".zor/"))).toBe(true);
+  expect(Object.keys(edit.changes).every((u) => !u.includes(".xzor/"))).toBe(true);
 }, 20000);
 
 test("renaming a prop also renames its attributes in other components", async () => {
@@ -286,7 +286,7 @@ test("TypeScript features keep working while the template has a syntax error", a
 
 // Same depth below the repo as the fixture, so its tsconfig paths and `typescript` still resolve.
 const diRoot = join(repo, "target", "tmp-lsp-di", String(process.pid));
-const diCounter = join(diRoot, "Counter.tszor");
+const diCounter = join(diRoot, "Counter.xzor");
 const diMain = join(diRoot, "main.ts");
 const zdi = (uri: string) => diagnostics.get(uri)?.find((d) => d.code === "ZDI04");
 
@@ -294,20 +294,20 @@ test("@inject of an unprovided type reports ZDI04 on save, and clears when fixed
   rmSync(diRoot, { recursive: true, force: true });
   cpSync(join(repo, "tests", "fixtures", "lsp-di"), diRoot, {
     recursive: true,
-    filter: (src) => !/[\\/](\.zor|node_modules)$/.test(src),
+    filter: (src) => !/[\\/](\.xzor|node_modules)$/.test(src),
   });
   const good = await Bun.file(diCounter).text();
   const bad = good.replace("@inject Database db", "@inject Missing m");
   const uri = uriOf(diCounter);
   const save = () => notify("textDocument/didSave", { textDocument: { uri } });
   await Bun.write(diCounter, bad);
-  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: bad } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text: bad } });
   save();
   const error = await waitFor(() => zdi(uri), 30000);
   const start = pos(bad, "@inject Missing", 8);
   expect(error.range).toEqual({ start, end: { line: start.line, character: start.character + "Missing".length } });
   expect(error.severity).toBe(1);
-  expect(error.source).toBe("zor");
+  expect(error.source).toBe("xzor");
   expect(error.message).not.toContain("ZDI04");
 
   await Bun.write(diCounter, good);
@@ -322,7 +322,7 @@ test("a watched provider .ts change reruns the DI analysis", async () => {
   const changed = () =>
     notify("workspace/didChangeWatchedFiles", {
       changes: [
-        { uri: uriOf(join(diRoot, ".zor", "main.ts")), type: 2 },
+        { uri: uriOf(join(diRoot, ".xzor", "main.ts")), type: 2 },
         { uri: uriOf(diMain), type: 2 },
       ],
     });
@@ -382,11 +382,11 @@ test("an open provider .ts shows ZDI02 at the parameter without saving, and edit
   expect(code(uri, "ZDI02")).toBeUndefined();
 }, 30000);
 
-test("an unsaved @inject edit in a .tszor shows ZDI04", async () => {
+test("an unsaved @inject edit in a .xzor shows ZDI04", async () => {
   const uri = uriOf(diCounter);
   const good = await Bun.file(diCounter).text();
   const bad = good.replace("@inject Database db", "@inject Missing m");
-  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: good } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text: good } });
   notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: bad }] });
   const error = await waitFor(() => zdi(uri), 10000);
   expect(error.range.start).toEqual(pos(bad, "@inject Missing", 8));
@@ -410,23 +410,23 @@ test("feature requests on a .ts document return nothing", async () => {
   rmSync(diRoot, { recursive: true, force: true });
 }, 30000);
 
-test("an open .tszor refreshes when a base .ts anywhere in its @inherits chain changes, without saving", async () => {
+test("an open .xzor refreshes when a base .ts anywhere in its @inherits chain changes, without saving", async () => {
   const dir = join(repo, "target", "tmp-lsp-inherits", String(process.pid));
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
   const base = (name: string) =>
-    `import { ComponentBase } from "@zor/runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
+    `import { ComponentBase } from "@xzor/runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
   // D -> Mid (mid.ts) -> Titled (base.ts): D's text never mentions base.
   const mid = `import { Titled } from "./base";\nexport abstract class Mid extends Titled {}\n`;
   const text = `@import { Mid } from "./mid"\n@inherits Mid\n<p>@title</p>\n`;
-  const [basePath, midPath, comp] = [join(dir, "base.ts"), join(dir, "mid.ts"), join(dir, "D.tszor")];
+  const [basePath, midPath, comp] = [join(dir, "base.ts"), join(dir, "mid.ts"), join(dir, "D.xzor")];
   await Bun.write(basePath, base("title"));
   await Bun.write(midPath, mid);
   await Bun.write(comp, text);
   const [baseUri, uri] = [uriOf(basePath), uriOf(comp)];
   notify("textDocument/didOpen", { textDocument: { uri: baseUri, languageId: "typescript", version: 1, text: base("title") } });
-  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text } });
   const ok = await waitFor(() => diagnostics.get(uri), 20000);
   expect(ok.filter((d) => d.severity === 1)).toEqual([]);
   notify("textDocument/didChange", { textDocument: { uri: baseUri, version: 2 }, contentChanges: [{ text: base("heading") }] });
@@ -445,12 +445,12 @@ test("an @inherits base that can't be read shows a warning on the base name", as
   mkdirSync(dir, { recursive: true });
   cpSync(join(repo, "tests", "fixtures", "lsp-di", "tsconfig.json"), join(dir, "tsconfig.json"));
   const text = `@import { Base } from "pkg-missing"\n@inherits Base\n<p/>\n`;
-  const comp = join(dir, "W.tszor");
+  const comp = join(dir, "W.xzor");
   await Bun.write(comp, text);
   const uri = uriOf(comp);
-  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text } });
   const warning = await waitFor(() => diagnostics.get(uri)?.find((d) => d.severity === 2), 20000);
-  expect(warning.source).toBe("zor");
+  expect(warning.source).toBe("xzor");
   expect(warning.message).toBe("could not read base class 'Base'; use this.<member> for its members");
   const start = pos(text, "Base\n<p/>");
   expect(warning.range).toEqual({ start, end: { line: start.line, character: start.character + "Base".length } });
@@ -472,12 +472,12 @@ test("a link built with href is typed from the route table of the open documents
   const page = `@page "/users/:id"\n\n@code {\n  id = 0;\n}\n\n<p>@id</p>\n`;
   const bad = `@import { href } from "./routes"\n\n<a href="@href.UserPage({ id: "x" })">user</a>\n`;
   const good = bad.replace('{ id: "x" }', "{ id: 2 }");
-  const [pagePath, appPath] = [join(dir, "UserPage.tszor"), join(dir, "App.tszor")];
+  const [pagePath, appPath] = [join(dir, "UserPage.xzor"), join(dir, "App.xzor")];
   await Bun.write(pagePath, page);
   await Bun.write(appPath, bad);
   const uri = uriOf(appPath);
-  notify("textDocument/didOpen", { textDocument: { uri: uriOf(pagePath), languageId: "tszor", version: 1, text: page } });
-  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: bad } });
+  notify("textDocument/didOpen", { textDocument: { uri: uriOf(pagePath), languageId: "xzor", version: 1, text: page } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text: bad } });
 
   const error = await waitFor(() => diagnostics.get(uri)?.find((d) => d.severity === 1), 30000);
   expect(error.message).toContain("number");
@@ -494,17 +494,17 @@ test("a route pattern duplicated by another open document is reported on the pat
   const dir = project("dup");
   const a = `@page "/dup"\n<p>a</p>\n`;
   const b = `@page "/dup"\n<p>b</p>\n`;
-  const [aPath, bPath] = [join(dir, "A.tszor"), join(dir, "B.tszor")];
+  const [aPath, bPath] = [join(dir, "A.xzor"), join(dir, "B.xzor")];
   await Bun.write(aPath, a);
   await Bun.write(bPath, b);
   const uri = uriOf(bPath);
-  notify("textDocument/didOpen", { textDocument: { uri: uriOf(aPath), languageId: "tszor", version: 1, text: a } });
-  notify("textDocument/didOpen", { textDocument: { uri, languageId: "tszor", version: 1, text: b } });
+  notify("textDocument/didOpen", { textDocument: { uri: uriOf(aPath), languageId: "xzor", version: 1, text: a } });
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text: b } });
 
   const dup = (u: string) => diagnostics.get(u)?.find((d) => d.message.startsWith("duplicate route pattern"));
   const error = await waitFor(() => dup(uri), 30000);
-  expect(error.message).toBe('duplicate route pattern "/dup" (also in A.tszor)');
-  expect(error.source).toBe("zor");
+  expect(error.message).toBe('duplicate route pattern "/dup" (also in A.xzor)');
+  expect(error.source).toBe("xzor");
   expect(error.severity).toBe(1);
   const start = pos(b, "/dup");
   expect(error.range).toEqual({ start, end: { line: start.line, character: start.character + "/dup".length } });

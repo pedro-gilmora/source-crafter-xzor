@@ -1,5 +1,5 @@
-// Bundles a zor app with Bun. `./X.tszor` imports resolve to the generated `<project>/.zor/<rel>/X.tszor.ts`,
-// and the bundle's source map is composed with each generated file's map so it points at the `.tszor` sources.
+// Bundles a xzor app with Bun. `./X.xzor` imports resolve to the generated `<project>/.xzor/<rel>/X.xzor.ts`,
+// and the bundle's source map is composed with each generated file's map so it points at the `.xzor` sources.
 // Usage: bun bundle.ts <entry> <outdir>
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
@@ -125,13 +125,13 @@ export function inProject(path: string, root: string): boolean {
 function generatedPath(source: string): string {
   if (existsSync(`${source}.ts`)) return `${source}.ts`;
   const root = projectRoot(dirname(source));
-  return join(root, ".zor", `${relative(root, source)}.ts`);
+  return join(root, ".xzor", `${relative(root, source)}.ts`);
 }
 
-/** `rootDirs: [".", ".zor"]`: the importer's directory in the other root (sources <-> `.zor/`). */
+/** `rootDirs: [".", ".xzor"]`: the importer's directory in the other root (sources <-> `.xzor/`). */
 export function mirroredDir(dir: string, root: string): string {
-  const zor = join(root, ".zor");
-  return inProject(dir, zor) || dir === zor ? join(root, relative(zor, dir)) : join(zor, relative(root, dir));
+  const xzor = join(root, ".xzor");
+  return inProject(dir, xzor) || dir === xzor ? join(root, relative(xzor, dir)) : join(xzor, relative(root, dir));
 }
 
 function tryResolve(spec: string, dir: string): string | undefined {
@@ -142,12 +142,12 @@ function tryResolve(spec: string, dir: string): string | undefined {
   }
 }
 
-// zor's DI decorators are no-ops read only by the analyzer; stripping them spares the bundle the decorator helpers.
+// xzor's DI decorators are no-ops read only by the analyzer; stripping them spares the bundle the decorator helpers.
 const MARKERS = new Set(["ServiceProvider", "Mount", "Import", "Singleton", "Scoped", "Transient"]);
-const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@zor\/runtime["']/g;
+const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@xzor\/runtime["']/g;
 const IDENT = /[A-Za-z_$][\w$]*/y;
 
-/** Local names bound to zor's marker decorators by value imports from `@zor/runtime`. */
+/** Local names bound to xzor's marker decorators by value imports from `@xzor/runtime`. */
 function markerLocals(src: string): Set<string> {
   const locals = new Set<string>();
   for (const m of src.matchAll(RUNTIME_IMPORT)) {
@@ -243,11 +243,11 @@ function decorator(src: string, i: number, locals: Set<string>): { end: number; 
 }
 
 /**
- * Blanks zor's marker decorators (imported from `@zor/runtime`, aliases included) in a TypeScript source.
+ * Blanks xzor's marker decorators (imported from `@xzor/runtime`, aliases included) in a TypeScript source.
  * Every character but line breaks becomes a space, so positions and source maps stay exact.
  */
 export function stripMarkerDecorators(src: string): string {
-  if (!src.includes("@zor/runtime")) return src;
+  if (!src.includes("@xzor/runtime")) return src;
   const locals = markerLocals(src);
   if (locals.size === 0) return src;
   let out = "";
@@ -300,9 +300,9 @@ async function main(entry: string, outdir: string): Promise<void> {
     sourcemap: "linked",
     plugins: [
       {
-        name: "zor",
+        name: "xzor",
         setup(build) {
-          build.onResolve({ filter: /\.tszor$/ }, (args) => ({
+          build.onResolve({ filter: /\.xzor$/ }, (args) => ({
             path: generatedPath(resolve(dirname(args.importer), args.path)),
           }));
           // Like the type check's rootDirs: a relative import missing beside its importer comes from the other root.
@@ -316,7 +316,7 @@ async function main(entry: string, outdir: string): Promise<void> {
           build.onLoad({ filter: /\.ts$/ }, (args) => {
             const path = args.path.replaceAll("\\", "/");
             const text = readFileSync(args.path, "utf8");
-            if (!inProject(args.path, root) || path.includes("/node_modules/") || path.includes("/.zor/")) return { contents: text, loader: "ts" };
+            if (!inProject(args.path, root) || path.includes("/node_modules/") || path.includes("/.xzor/")) return { contents: text, loader: "ts" };
             const stripped = stripMarkerDecorators(text);
             if (stripped !== text) originals.set(resolve(args.path), text);
             return { contents: stripped, loader: "ts" };
@@ -333,7 +333,7 @@ async function main(entry: string, outdir: string): Promise<void> {
       const outer: SourceMap = JSON.parse(readFileSync(output.path, "utf8"));
       const composed = composeMaps(outer, (source) => {
         const file = resolve(mapDir, source);
-        if (!file.endsWith(".tszor.ts") || !existsSync(`${file}.map`)) return undefined;
+        if (!file.endsWith(".xzor.ts") || !existsSync(`${file}.map`)) return undefined;
         const dir = relative(mapDir, dirname(file)).replaceAll("\\", "/") || ".";
         return { map: JSON.parse(readFileSync(`${file}.map`, "utf8")), dir };
       });

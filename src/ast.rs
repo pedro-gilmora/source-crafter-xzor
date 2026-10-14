@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::Deref;
 
-/// Source text plus its byte offset in the `.tszor` file. Equality ignores the offset.
+/// Source text plus its byte offset in the `.xzor` file. Equality ignores the offset.
 #[derive(Clone, Default)]
 pub struct Src {
     pub text: String,

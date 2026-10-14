@@ -27,14 +27,14 @@ function build(name: string, body: string) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@zor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   tsconfig.compilerOptions.strict = true;
   tsconfig.compilerOptions.noUncheckedIndexedAccess = true;
   tsconfig.compilerOptions.noPropertyAccessFromIndexSignature = true;
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
-  writeFileSync(join(dir, "UserPage.tszor"), userPage);
-  writeFileSync(join(dir, "App.tszor"), app(body));
-  writeFileSync(join(dir, "main.ts"), `import App from "./App.tszor";\nexport { App };\n`);
+  writeFileSync(join(dir, "UserPage.xzor"), userPage);
+  writeFileSync(join(dir, "App.xzor"), app(body));
+  writeFileSync(join(dir, "main.ts"), `import App from "./App.xzor";\nexport { App };\n`);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir, "--no-bundle"], { cwd: root });
   return { code: run.exitCode, out: run.stdout.toString() + run.stderr.toString() };
 }
@@ -47,7 +47,7 @@ test("route.is(tag) narrows params to the tag's route", () => {
 test("route.is rejects a tag no page declares", () => {
   const r = build("typo", `@if (route.is("typo")) { <b/> }`);
   expect(r.code).not.toBe(0);
-  expect(r.out).toMatch(/App\.tszor\(\d+,\d+\)/);
+  expect(r.out).toMatch(/App\.xzor\(\d+,\d+\)/);
   expect(r.out).toContain('"typo"');
 });
 

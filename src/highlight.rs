@@ -1,4 +1,4 @@
-//! Terminal syntax coloring for `.tszor`, driven by the parser's token spans.
+//! Terminal syntax coloring for `.xzor`, driven by the parser's token spans.
 
 use crate::parser::{ParseError, TokenKind, parse};
 

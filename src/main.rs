@@ -2,22 +2,22 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
-use zor::build;
+use xzor::build;
 
 const USAGE: &str = "\
-zor - Blazor-like component compiler for TypeScript
+xzor - Blazor-like component compiler for TypeScript
 
 USAGE:
-  zor compile [PATH...]      Generate .zor/X.tszor.ts (and .map) for each .tszor in a TypeScript project (default: .)
-  zor build [DIR] [OPTIONS]  Compile, type-check and bundle DIR to JavaScript (default: .)
+  xzor compile [PATH...]      Generate .xzor/X.xzor.ts (and .map) for each .xzor in a TypeScript project (default: .)
+  xzor build [DIR] [OPTIONS]  Compile, type-check and bundle DIR to JavaScript (default: .)
       --entry <FILE>         Entry module relative to DIR (default: main.ts)
       --checker <CMD>        Type checker command; {dir} is replaced with DIR
                              (default: bun x tsc --noEmit -p {dir})
       --no-check             Skip type checking
       --no-bundle            Skip bundling
-      --watch                Rebuild when .tszor or .ts files change
-  zor highlight <FILE>       Print a .tszor file with syntax colors
-  zor lsp                    Run the language server on stdio
+      --watch                Rebuild when .xzor or .ts files change
+  xzor highlight <FILE>       Print a .xzor file with syntax colors
+  xzor lsp                    Run the language server on stdio
 ";
 
 fn main() -> ExitCode {
@@ -58,7 +58,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 }
             }
             if failed {
-                return Err("zor: DI analysis failed".to_string());
+                return Err("xzor: DI analysis failed".to_string());
             }
         }
         "build" => {
@@ -85,22 +85,22 @@ fn run(args: &[String]) -> Result<(), String> {
             let units = build::compile_all(&opts.dir)?;
             build::write_routes(&units, &mut HashSet::new())?;
             units.iter().for_each(build::print_warnings);
-            println!("zor: compiled {} component(s)", units.len());
+            println!("xzor: compiled {} component(s)", units.len());
             let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
             finish(&opts, &units, di_entry.as_deref())?;
         }
         "highlight" => {
             let file = rest.first().ok_or("highlight needs a file")?;
             let src = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
-            let out = zor::highlight::highlight_ansi(&src).map_err(|e| {
-                let (line, col) = zor::line_col(&src, e.offset);
+            let out = xzor::highlight::highlight_ansi(&src).map_err(|e| {
+                let (line, col) = xzor::line_col(&src, e.offset);
                 format!("{file}:{line}:{col}: {}", e.message)
             })?;
             print!("{out}");
         }
-        "lsp" => zor::lsp::server::run().map_err(|e| format!("lsp: {e}"))?,
+        "lsp" => xzor::lsp::server::run().map_err(|e| format!("lsp: {e}"))?,
         "-h" | "--help" | "help" => print!("{USAGE}"),
-        "-V" | "--version" => println!("zor {}", env!("CARGO_PKG_VERSION")),
+        "-V" | "--version" => println!("xzor {}", env!("CARGO_PKG_VERSION")),
         other => return Err(format!("unknown command {other}\n\n{USAGE}")),
     }
     Ok(())
@@ -118,7 +118,7 @@ struct Options {
 fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>) -> Result<(), String> {
     if o.check {
         build::check(&o.dir, o.checker.as_deref(), units)?;
-        println!("zor: type check passed");
+        println!("xzor: type check passed");
     }
     if o.bundle {
         match di_entry.and_then(|p| p.strip_prefix(&o.dir).ok()) {
@@ -147,7 +147,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
     let mut batch: Vec<String> = Vec::new();
     loop {
         if plan.config {
-            println!("zor: project configuration changed, rebuilding everything");
+            println!("xzor: project configuration changed, rebuilding everything");
             // The analyzer's TypeScript session holds the old compiler options and file set.
             analyzer = build::Analyzer::new(dir);
             let sources: Vec<PathBuf> = build::find_sources(dir).map_err(|e| format!("{}: {e}", dir.display()))?.into_iter().filter(|s| build::in_project(s)).collect();
@@ -196,18 +196,18 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         }
         if plan.rebuild {
             if errors.is_empty() {
-                println!("zor: compiled {} component(s)", recompile.len());
+                println!("xzor: compiled {} component(s)", recompile.len());
             } else {
-                println!("zor: compiled {} component(s), {} with errors", recompile.len(), errors.len());
+                println!("xzor: compiled {} component(s), {} with errors", recompile.len(), errors.len());
             }
             let routes = (&mut routes_due, &mut routes_written);
             if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes) {
                 eprintln!("{e}");
             }
-            println!("zor: watching {} for changes (Ctrl+C to stop)", dir.display());
+            println!("xzor: watching {} for changes (Ctrl+C to stop)", dir.display());
         }
         batch.clear();
-        batch.push(events.recv().map_err(|_| "zor: the file watcher exited".to_string())?);
+        batch.push(events.recv().map_err(|_| "xzor: the file watcher exited".to_string())?);
         let deadline = Instant::now() + Duration::from_millis(50);
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
             match events.recv_timeout(left) {

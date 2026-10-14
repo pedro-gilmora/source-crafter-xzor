@@ -1,4 +1,4 @@
-//! Project driver: `.tszor` -> `.zor/*.tszor.ts` (zor) -> type check -> `.js` bundle (bun).
+//! Project driver: `.xzor` -> `.xzor/*.xzor.ts` (xzor) -> type check -> `.js` bundle (bun).
 
 pub use crate::analyzer::Analyzer;
 use crate::codegen::Generated;
@@ -17,7 +17,7 @@ pub fn find_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
         out.push(root.to_path_buf());
         return Ok(out);
     }
-    walk(root, &|n| n.ends_with(".tszor"), &mut out)?;
+    walk(root, &|n| n.ends_with(".xzor"), &mut out)?;
     out.sort();
     Ok(out)
 }
@@ -48,7 +48,7 @@ pub fn project_root(source: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-/// Whether a `.tszor` belongs to a TypeScript project (a `tsconfig.json` above it).
+/// Whether a `.xzor` belongs to a TypeScript project (a `tsconfig.json` above it).
 pub fn in_project(source: &Path) -> bool {
     source.parent().is_some_and(|d| d.ancestors().any(|a| a.join("tsconfig.json").is_file()))
 }
@@ -58,7 +58,7 @@ pub fn tsconfig_root(source: &Path) -> Option<PathBuf> {
     source.parent()?.ancestors().find(|d| d.join("tsconfig.json").is_file()).map(Path::to_path_buf)
 }
 
-/// `<root>/.zor/<relative source path>.ts`, the generated TypeScript (like Blazor's `obj/`).
+/// `<root>/.xzor/<relative source path>.ts`, the generated TypeScript (like Blazor's `obj/`).
 pub fn output_path(source: &Path) -> PathBuf {
     output_path_in(&project_root(source), source)
 }
@@ -66,7 +66,7 @@ pub fn output_path(source: &Path) -> PathBuf {
 /// `output_path` for a `source` whose project root is known.
 pub fn output_path_in(root: &Path, source: &Path) -> PathBuf {
     let rel = source.strip_prefix(root).unwrap_or(source);
-    let mut p = root.join(".zor").join(rel).into_os_string();
+    let mut p = root.join(".xzor").join(rel).into_os_string();
     p.push(".ts");
     p.into()
 }
@@ -79,8 +79,8 @@ pub struct Compiled {
     pub generated: Generated,
 }
 
-/// Compiles every `.tszor` under `root` that belongs to a TypeScript project into that
-/// project's `.zor/` directory, with a source map next to each generated file.
+/// Compiles every `.xzor` under `root` that belongs to a TypeScript project into that
+/// project's `.xzor/` directory, with a source map next to each generated file.
 pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
     let sources = find_sources(root).map_err(|e| format!("{}: {e}", root.display()))?;
     let mut errors = Vec::new();
@@ -101,7 +101,7 @@ pub fn print_warnings(unit: &Compiled) {
     }
 }
 
-/// Compiles one `.tszor` into its project's `.zor/`, with its source map.
+/// Compiles one `.xzor` into its project's `.xzor/`, with its source map.
 pub fn compile_one(src: &Path) -> Result<Compiled, String> {
     let text = fs::read_to_string(src).map_err(|e| format!("{}: {e}", src.display()))?;
     let generated = crate::compile_mapped(&text, src).map_err(|d| format!("{}:{d}", src.display()))?;
@@ -113,7 +113,7 @@ pub fn compile_one(src: &Path) -> Result<Compiled, String> {
     Ok(Compiled { source: src.to_path_buf(), out, text, generated })
 }
 
-/// Writes `<project root>/.zor/routes.ts` per project among `units` (deleting it when the project
+/// Writes `<project root>/.xzor/routes.ts` per project among `units` (deleting it when the project
 /// has no pages). `written` holds the roots with a table, so one that loses all its units is cleaned.
 /// Route errors of every project fail like compile errors, as `<path>:<line>:<col>: <message>`.
 pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Result<(), String> {
@@ -126,7 +126,7 @@ pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Resul
     }
     let mut errors = Vec::new();
     for (root, group) in groups {
-        let path = root.join(".zor").join("routes.ts");
+        let path = root.join(".xzor").join("routes.ts");
         if !group.iter().any(|u| !u.generated.routes.is_empty() || u.generated.routes_block.is_some()) {
             let _ = fs::remove_file(&path);
             written.remove(&root);
@@ -136,7 +136,7 @@ pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Resul
             .iter()
             .map(|u| {
                 let name = u.source.file_name().unwrap_or_default().to_string_lossy();
-                crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name))
+                crate::codegen::class_name(name.strip_suffix(".xzor").unwrap_or(&name))
             })
             .collect();
         let views: Vec<crate::routes::Unit> = group
@@ -168,7 +168,7 @@ fn map_path(out: &Path) -> PathBuf {
     p.into()
 }
 
-/// Deletes the generated `.zor/*.tszor.ts` and `.map` of a removed `.tszor`.
+/// Deletes the generated `.xzor/*.xzor.ts` and `.map` of a removed `.xzor`.
 pub fn remove_outputs(src: &Path) {
     let out = output_path(src);
     let _ = fs::remove_file(map_path(&out));
@@ -192,7 +192,7 @@ pub struct WatchPlan {
 }
 
 fn is_source(name: &str) -> bool {
-    name.ends_with(".tszor") || name.ends_with(".ts")
+    name.ends_with(".xzor") || name.ends_with(".ts")
 }
 
 /// Whether a watched path (relative, `/`-separated) is outside the sources: our outputs, dependencies, dot-dirs.
@@ -225,11 +225,11 @@ fn watch_files(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, 
     (files, removed_dir)
 }
 
-/// Components that read something that changed: those whose text mentions a changed `.tszor` file name
+/// Components that read something that changed: those whose text mentions a changed `.xzor` file name
 /// (codegen reads imported components' type parameters and prop kinds), and those whose `@inherits`
 /// chain probed a changed file (`Generated::deps`). Excludes the changed ones themselves.
 pub fn dependents(units: &[Compiled], changed: &[&Path]) -> Vec<PathBuf> {
-    let names: Vec<_> = changed.iter().filter_map(|c| c.file_name()).map(|n| n.to_string_lossy()).filter(|n| n.ends_with(".tszor")).collect();
+    let names: Vec<_> = changed.iter().filter_map(|c| c.file_name()).map(|n| n.to_string_lossy()).filter(|n| n.ends_with(".xzor")).collect();
     let changed_norm: Vec<PathBuf> = changed.iter().map(|c| normalize(c)).collect();
     units
         .iter()
@@ -252,7 +252,7 @@ pub fn changed_scripts(paths: &[String], root: &Path) -> Vec<PathBuf> {
 }
 
 /// Decides what a batch of watched `paths` (relative to `root`) requires. `known_injects` holds the
-/// compiled `.tszor` files (by source path) with their `inject_signature`; `provider_ts` the provider `.ts` files.
+/// compiled `.xzor` files (by source path) with their `inject_signature`; `provider_ts` the provider `.ts` files.
 pub fn watch_plan(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>>, provider_ts: &HashSet<PathBuf>, root: &Path) -> WatchPlan {
     let mut plan = WatchPlan::default();
     if paths.iter().map(|p| p.replace('\\', "/")).any(|p| !watch_ignored(&p) && matches!(p.rsplit('/').next(), Some("tsconfig.json" | "package.json"))) {
@@ -262,7 +262,7 @@ pub fn watch_plan(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>
     plan.rebuild = removed_dir;
     for path in files {
         let name = path.to_string_lossy();
-        if !name.ends_with(".tszor") {
+        if !name.ends_with(".xzor") {
             plan.rebuild = true;
             // Providers import other `.ts` files, so any of them may change the generated providers.
             plan.di |= provider_ts.contains(&path)
@@ -319,9 +319,9 @@ impl Drop for Watcher {
 /// Starts watching `root`: the receiver yields each changed path, relative to `root` with `/` separators.
 /// Returns once the watch is active.
 pub fn watch(root: &Path) -> Result<(Watcher, mpsc::Receiver<String>), String> {
-    let script = root.join("node_modules").join(".cache").join("zor").join("watch.ts");
+    let script = root.join("node_modules").join(".cache").join("xzor").join("watch.ts");
     write_if_changed(&script, WATCH_SCRIPT)?;
-    // stdin stays open: the watcher exits when it closes, even if zor is killed.
+    // stdin stays open: the watcher exits when it closes, even if xzor is killed.
     let mut child = Command::new("bun")
         .arg(&script)
         .arg(root)
@@ -369,8 +369,8 @@ pub(crate) fn relative_from(from: &Path, to: &Path, fallback: &str) -> String {
     parts.join("/")
 }
 
-/// Rewrites `file(line,col): message` lines that point into generated `.zor` files so they
-/// point at the `.tszor` source instead. Paths are shown relative to `cwd` when possible.
+/// Rewrites `file(line,col): message` lines that point into generated `.xzor` files so they
+/// point at the `.xzor` source instead. Paths are shown relative to `cwd` when possible.
 pub fn map_tsc_output(output: &str, compiled: &[Compiled], cwd: &Path) -> String {
     let mut out = String::with_capacity(output.len());
     for line in output.split_inclusive('\n') {
@@ -398,7 +398,7 @@ fn normalize(p: &Path) -> PathBuf {
     p.components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect()
 }
 
-/// Runs the type checker and prints its output with positions mapped back to `.tszor`
+/// Runs the type checker and prints its output with positions mapped back to `.xzor`
 /// files. `checker` may contain `{dir}`. The default is TypeScript 7's
 /// `tsc --noEmit -p <dir>`, launched through `bun x` when Bun is installed, else `npx`.
 pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result<(), String> {
@@ -433,8 +433,8 @@ pub fn check(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Result
     if output.status.success() { Ok(()) } else { Err(format!("type check failed ({})", output.status)) }
 }
 
-/// Compile-time DI: analyzes the project's providers, writes the generated providers into `.zor/`, and returns
-/// `.zor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
+/// Compile-time DI: analyzes the project's providers, writes the generated providers into `.xzor/`, and returns
+/// `.xzor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
 /// `analyzer` belongs to `root` and may be reused across runs.
 pub fn di(root: &Path, entry: &str, compiled: &[Compiled], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, String> {
     di_with(root, entry, compiled, &provider_files(root), analyzer)
@@ -475,14 +475,14 @@ pub fn di_run(
     overlays: &[(PathBuf, String)],
     write: bool,
 ) -> Result<Option<PathBuf>, DiFailure> {
-    let zor = root.join(".zor");
+    let xzor = root.join(".xzor");
     if files.is_empty() {
         let diags = unmounted_injects(root, compiled);
         if !diags.is_empty() {
             return Err(DiFailure::Diags(diags));
         }
         if write {
-            prune(&zor, &[])?;
+            prune(&xzor, &[])?;
         }
         return Ok(None);
     }
@@ -504,7 +504,7 @@ pub fn di_run(
         return Err(DiFailure::Diags(vec![d]));
     }
     if !write {
-        return Ok(mount.map(|_| zor.join(entry)));
+        return Ok(mount.map(|_| xzor.join(entry)));
     }
     let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
     let mut written = Vec::with_capacity(resolved.len());
@@ -515,13 +515,13 @@ pub fn di_run(
         }
         done.push(file);
         let is_entry = mount.is_some() && file == entry;
-        let out = zor.join(crate::di::emit::output_name(file, is_entry));
+        let out = xzor.join(crate::di::emit::output_name(file, is_entry));
         let text = format!("{}\n{}", crate::di::emit::HEADER, crate::di::emit::emit_file(file, &resolved, is_entry));
         write_if_changed(&out, &text)?;
         written.push(out);
     }
-    prune(&zor, &written)?;
-    Ok(mount.map(|_| zor.join(entry)))
+    prune(&xzor, &written)?;
+    Ok(mount.map(|_| xzor.join(entry)))
 }
 
 /// ZDI04 for every `@inject` when no `.ts` declares an application (same message as `di::graph` without `@Mount`).
@@ -530,7 +530,7 @@ fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph
     for unit in compiled {
         let file = unit.source.strip_prefix(root).unwrap_or(&unit.source).display().to_string().replace('\\', "/");
         let name = unit.source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let class = crate::codegen::class_name(name.strip_suffix(".tszor").unwrap_or(&name));
+        let class = crate::codegen::class_name(name.strip_suffix(".xzor").unwrap_or(&name));
         for i in &unit.generated.injects {
             let message = format!("{} (injected as {} in {class}) is not provided: no @Mount application", i.ty.text, i.name.text);
             out.push(crate::di::graph::Diag { file: file.clone(), at: 0, code: "ZDI04", message, inject: Some(i.name.text.clone()), param_at: None });
@@ -539,14 +539,14 @@ fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph
     out
 }
 
-/// Deletes DI-generated files (carrying the DI header) under `zor` that were not written in this run,
-/// then the empty directories below `zor`.
-fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
-    if !zor.is_dir() {
+/// Deletes DI-generated files (carrying the DI header) under `xzor` that were not written in this run,
+/// then the empty directories below `xzor`.
+fn prune(xzor: &Path, written: &[PathBuf]) -> Result<(), String> {
+    if !xzor.is_dir() {
         return Ok(());
     }
     let mut files = Vec::new();
-    walk(zor, &|n| n.ends_with(".ts") && !n.ends_with(".tszor.ts"), &mut files).map_err(|e| format!("{}: {e}", zor.display()))?;
+    walk(xzor, &|n| n.ends_with(".ts") && !n.ends_with(".xzor.ts"), &mut files).map_err(|e| format!("{}: {e}", xzor.display()))?;
     for file in files.iter().filter(|f| !written.contains(f)) {
         let mut first = String::new();
         let generated = fs::File::open(file).is_ok_and(|f| io::BufReader::new(f).read_line(&mut first).is_ok())
@@ -555,7 +555,7 @@ fn prune(zor: &Path, written: &[PathBuf]) -> Result<(), String> {
             fs::remove_file(file).map_err(|e| format!("{}: {e}", file.display()))?;
         }
     }
-    remove_empty_dirs(zor).map(|_| ())
+    remove_empty_dirs(xzor).map(|_| ())
 }
 
 /// Removes the empty directories below `dir`, bottom-up (never `dir`); returns whether `dir` is left empty.
@@ -590,7 +590,7 @@ pub fn provider_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Project `.ts` (not `.d.ts`) and `.tszor` files under `root`, skipping outputs and dependencies.
+/// Project `.ts` (not `.d.ts`) and `.xzor` files under `root`, skipping outputs and dependencies.
 pub fn project_sources(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if root.is_dir() {
@@ -646,7 +646,7 @@ pub fn located_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[
     out
 }
 
-/// `file(line,col): error ZDInn: message` lines; positions are 1-based in the `.ts` or `.tszor` source.
+/// `file(line,col): error ZDInn: message` lines; positions are 1-based in the `.ts` or `.xzor` source.
 fn format_diags(root: &Path, diags: &[crate::di::graph::Diag], compiled: &[Compiled], cwd: &Path) -> String {
     let mut out = String::new();
     for d in diags {
@@ -684,7 +684,7 @@ fn utf16_to_byte(text: &str, at: usize) -> usize {
 const BUNDLE_SCRIPT: &str = include_str!("bundle.ts");
 
 pub fn bundle(dir: &Path, entry: &str) -> Result<(), String> {
-    let script = std::env::temp_dir().join(format!("zor-bundle-{}.ts", env!("CARGO_PKG_VERSION")));
+    let script = std::env::temp_dir().join(format!("xzor-bundle-{}.ts", env!("CARGO_PKG_VERSION")));
     if fs::read_to_string(&script).ok().as_deref() != Some(BUNDLE_SCRIPT) {
         fs::write(&script, BUNDLE_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
     }
@@ -705,19 +705,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_files_go_to_dot_zor_under_the_tsconfig_root() {
-        let root = std::env::temp_dir().join(format!("zor-build-test-{}", std::process::id()));
+    fn generated_files_go_to_dot_xzor_under_the_tsconfig_root() {
+        let root = std::env::temp_dir().join(format!("xzor-build-test-{}", std::process::id()));
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        let src = root.join("pages").join("Home.tszor");
+        let src = root.join("pages").join("Home.xzor");
 
         assert_eq!(project_root(&src), root);
-        assert_eq!(output_path(&src), root.join(".zor").join("pages").join("Home.tszor.ts"));
+        assert_eq!(output_path(&src), root.join(".xzor").join("pages").join("Home.xzor.ts"));
         fs::remove_dir_all(&root).unwrap();
     }
 
     fn temp(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("zor-{name}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("xzor-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
@@ -728,33 +728,33 @@ mod tests {
         let root = temp("projects");
         fs::create_dir_all(root.join("loose")).unwrap();
         fs::create_dir_all(root.join("app")).unwrap();
-        fs::write(root.join("loose").join("X.tszor"), "<p>@* not a project *@</p>").unwrap();
+        fs::write(root.join("loose").join("X.xzor"), "<p>@* not a project *@</p>").unwrap();
         fs::write(root.join("app").join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("app").join("A.tszor"), "<p/>").unwrap();
+        fs::write(root.join("app").join("A.xzor"), "<p/>").unwrap();
 
         let compiled = compile_all(&root).unwrap();
         assert_eq!(compiled.len(), 1);
-        assert!(compiled[0].source.ends_with("A.tszor"));
-        assert!(root.join("app/.zor/A.tszor.ts").is_file());
-        assert!(root.join("app/.zor/A.tszor.ts.map").is_file());
-        assert!(!root.join("loose/.zor").exists());
+        assert!(compiled[0].source.ends_with("A.xzor"));
+        assert!(root.join("app/.xzor/A.xzor.ts").is_file());
+        assert!(root.join("app/.xzor/A.xzor.ts.map").is_file());
+        assert!(!root.join("loose/.xzor").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn tsc_errors_point_at_the_tszor_source() {
+    fn tsc_errors_point_at_the_xzor_source() {
         let root = temp("tscmap");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("App.tszor"), "@code { n: number = 1; }\n<p>@n.foo</p>\n").unwrap();
+        fs::write(root.join("App.xzor"), "@code { n: number = 1; }\n<p>@n.foo</p>\n").unwrap();
         let compiled = compile_all(&root).unwrap();
         let c = &compiled[0];
         let at = c.generated.code.find(".foo").unwrap() + 1;
         let (line, col) = crate::lsp::position_at(&c.generated.code, at);
         let message = "error TS2339: Property 'foo' does not exist on type 'number'.";
         let absolute = format!("{}({},{}): {message}", c.out.display(), line + 1, col + 1);
-        let relative = format!(".zor/App.tszor.ts({},{}): {message}", line + 1, col + 1);
+        let relative = format!(".xzor/App.xzor.ts({},{}): {message}", line + 1, col + 1);
         let output = format!("{absolute}\n{relative}\nFound 2 errors.\n");
-        let expected = format!("App.tszor(2,7): {message}\nApp.tszor(2,7): {message}\nFound 2 errors.\n");
+        let expected = format!("App.xzor(2,7): {message}\nApp.xzor(2,7): {message}\nFound 2 errors.\n");
         assert_eq!(map_tsc_output(&output, &compiled, &root), expected);
         fs::remove_dir_all(&root).unwrap();
     }
@@ -762,15 +762,15 @@ mod tests {
     #[test]
     fn maps_tsc_output_for_relative_out() {
         let root = temp("tscrelative");
-        let source = root.join("x").join("A.tszor");
+        let source = root.join("x").join("A.xzor");
         let text = "@code { n: number = 1; }\n<p>@n.foo</p>\n".to_string();
         let generated = crate::compile_mapped(&text, &source).unwrap();
         let at = generated.code.find(".foo").unwrap() + 1;
         let (line, col) = crate::lsp::position_at(&generated.code, at);
-        let out = PathBuf::from("x").join(".zor").join("A.tszor.ts");
+        let out = PathBuf::from("x").join(".xzor").join("A.xzor.ts");
         let compiled = vec![Compiled { source, out: out.clone(), text, generated }];
         let tsc = format!("{}({},{}): error TS1: m\n", root.join(&out).display(), line + 1, col + 1);
-        assert_eq!(map_tsc_output(&tsc, &compiled, &root), "x/A.tszor(2,7): error TS1: m\n");
+        assert_eq!(map_tsc_output(&tsc, &compiled, &root), "x/A.xzor(2,7): error TS1: m\n");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -781,17 +781,17 @@ mod tests {
         fs::create_dir_all(root.join("services")).unwrap();
         fs::write(root.join("services/data.ts"), "@ServiceProvider()\nexport class S {}\n").unwrap();
         fs::write(root.join("util.ts"), "export const x = 1;\n").unwrap();
-        fs::write(root.join("Counter.tszor"), "@inject IDatabase db\n<p>a</p>\n").unwrap();
+        fs::write(root.join("Counter.xzor"), "@inject IDatabase db\n<p>a</p>\n").unwrap();
         let units = compile_all(&root).unwrap();
         let known: HashMap<PathBuf, Vec<String>> = units.iter().map(|u| (u.source.clone(), inject_signature(&u.generated.injects))).collect();
         let providers: HashSet<PathBuf> = provider_files(&root).into_iter().map(|p| root.join(p)).collect();
         let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &providers, &root);
-        let counter = root.join("Counter.tszor");
+        let counter = root.join("Counter.xzor");
 
         fs::write(&counter, "@inject IDatabase db\n<p>b</p>\n").unwrap();
-        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: false, rebuild: true, config: false });
+        assert_eq!(plan(&["Counter.xzor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: false, rebuild: true, config: false });
         fs::write(&counter, "@inject IDatabase other\n<p>b</p>\n").unwrap();
-        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: true, rebuild: true, config: false });
+        assert_eq!(plan(&["Counter.xzor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: true, rebuild: true, config: false });
 
         assert_eq!(plan(&["services/data.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
         fs::write(root.join("util.ts"), "@Mount(App, \"app\")\nexport class M {}\n").unwrap();
@@ -805,17 +805,17 @@ mod tests {
 
         // Windows separators, as `fs.watch` reports them, behave like `/`.
         assert_eq!(plan(&["services\\data.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
-        assert_eq!(plan(&[".zor\\Counter.tszor.ts", "node_modules\\x\\index.ts", "dist\\a.ts", "target\\a.ts"]), WatchPlan::default());
+        assert_eq!(plan(&[".xzor\\Counter.xzor.ts", "node_modules\\x\\index.ts", "dist\\a.ts", "target\\a.ts"]), WatchPlan::default());
 
-        fs::write(root.join("New.tszor"), "<p/>\n").unwrap();
-        assert_eq!(plan(&["New.tszor"]), WatchPlan { recompile: vec![root.join("New.tszor")], remove: vec![], di: true, rebuild: true, config: false });
+        fs::write(root.join("New.xzor"), "<p/>\n").unwrap();
+        assert_eq!(plan(&["New.xzor"]), WatchPlan { recompile: vec![root.join("New.xzor")], remove: vec![], di: true, rebuild: true, config: false });
         fs::remove_file(&counter).unwrap();
-        assert_eq!(plan(&["Counter.tszor"]), WatchPlan { recompile: vec![], remove: vec![counter.clone()], di: true, rebuild: true, config: false });
+        assert_eq!(plan(&["Counter.xzor"]), WatchPlan { recompile: vec![], remove: vec![counter.clone()], di: true, rebuild: true, config: false });
 
         // Our own outputs (and tooling folders) never trigger a rebuild, so `--watch` cannot loop.
-        fs::create_dir_all(root.join(".zor")).unwrap();
-        fs::write(root.join(".zor/Counter.tszor.ts"), "").unwrap();
-        let ignored = [".zor/Counter.tszor.ts", ".zor/X.tszor", "dist/main.js", "dist/a.ts", "target/debug/a.ts", "node_modules/x/index.ts", ".git/HEAD", ".git/a.ts", ""];
+        fs::create_dir_all(root.join(".xzor")).unwrap();
+        fs::write(root.join(".xzor/Counter.xzor.ts"), "").unwrap();
+        let ignored = [".xzor/Counter.xzor.ts", ".xzor/X.xzor", "dist/main.js", "dist/a.ts", "target/debug/a.ts", "node_modules/x/index.ts", ".git/HEAD", ".git/a.ts", ""];
         assert_eq!(plan(&ignored), WatchPlan::default());
 
         // Project configuration changes start over: everything recompiles and DI reruns on a fresh analyzer.
@@ -833,7 +833,7 @@ mod tests {
         fs::create_dir_all(root.join("services")).unwrap();
         fs::create_dir_all(root.join("lib")).unwrap();
         fs::write(root.join("services/data.ts"), "@ServiceProvider()\nexport class S {}\n").unwrap();
-        fs::write(root.join("lib/Card.tszor"), "<p/>\n").unwrap();
+        fs::write(root.join("lib/Card.xzor"), "<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
         let known: HashMap<PathBuf, Vec<String>> = units.iter().map(|u| (u.source.clone(), inject_signature(&u.generated.injects))).collect();
         let providers: HashSet<PathBuf> = provider_files(&root).into_iter().map(|p| root.join(p)).collect();
@@ -844,13 +844,13 @@ mod tests {
 
         // A newly added directory is walked.
         fs::create_dir_all(root.join("fresh/deep")).unwrap();
-        fs::write(root.join("fresh/deep/New.tszor"), "<p/>\n").unwrap();
-        let new = root.join("fresh/deep/New.tszor");
+        fs::write(root.join("fresh/deep/New.xzor"), "<p/>\n").unwrap();
+        let new = root.join("fresh/deep/New.xzor");
         assert_eq!(plan(&["fresh"]), WatchPlan { recompile: vec![new], remove: vec![], di: true, rebuild: true, config: false });
 
         // A removed directory maps to the known files under it; one with only untracked `.ts` files still rebuilds.
         fs::remove_dir_all(root.join("lib")).unwrap();
-        assert_eq!(plan(&["lib"]), WatchPlan { recompile: vec![], remove: vec![root.join("lib/Card.tszor")], di: true, rebuild: true, config: false });
+        assert_eq!(plan(&["lib"]), WatchPlan { recompile: vec![], remove: vec![root.join("lib/Card.xzor")], di: true, rebuild: true, config: false });
         let nothing_known = HashMap::new();
         let none = HashSet::new();
         let gone = vec!["scratch".to_string()];
@@ -862,14 +862,14 @@ mod tests {
     fn watch_deleting_a_never_compiled_component_clears_it() {
         let root = temp("watchstale");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        let bad = root.join("Bad.tszor");
+        let bad = root.join("Bad.xzor");
         fs::write(&bad, "<p>\n").unwrap();
         assert!(compile_one(&bad).is_err());
         // watch_loop records `known.entry(src).or_default()` on failure.
         let known: HashMap<PathBuf, Vec<String>> = HashMap::from([(bad.clone(), Vec::new())]);
         let plan = |paths: &[&str]| watch_plan(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>(), &known, &HashSet::new(), &root);
         fs::remove_file(&bad).unwrap();
-        assert_eq!(plan(&["Bad.tszor"]), WatchPlan { recompile: vec![], remove: vec![bad], di: true, rebuild: true, config: false });
+        assert_eq!(plan(&["Bad.xzor"]), WatchPlan { recompile: vec![], remove: vec![bad], di: true, rebuild: true, config: false });
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -877,14 +877,14 @@ mod tests {
     fn dependents_mention_a_changed_component() {
         let root = temp("dependents");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("Card.tszor"), "<p/>\n").unwrap();
-        fs::write(root.join("App.tszor"), "@import Card from \"./Card.tszor\"\n<Card/>\n").unwrap();
-        fs::write(root.join("Other.tszor"), "<p/>\n").unwrap();
+        fs::write(root.join("Card.xzor"), "<p/>\n").unwrap();
+        fs::write(root.join("App.xzor"), "@import Card from \"./Card.xzor\"\n<Card/>\n").unwrap();
+        fs::write(root.join("Other.xzor"), "<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
-        let (card, other) = (root.join("Card.tszor"), root.join("Other.tszor"));
-        assert_eq!(dependents(&units, &[card.as_path()]), vec![root.join("App.tszor")]);
+        let (card, other) = (root.join("Card.xzor"), root.join("Other.xzor"));
+        assert_eq!(dependents(&units, &[card.as_path()]), vec![root.join("App.xzor")]);
         // Two changes mentioned by the same unit list it once; changed units are excluded.
-        assert_eq!(dependents(&units, &[card.as_path(), other.as_path()]), vec![root.join("App.tszor")]);
+        assert_eq!(dependents(&units, &[card.as_path(), other.as_path()]), vec![root.join("App.xzor")]);
         assert!(dependents(&units, &[other.as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
@@ -893,13 +893,13 @@ mod tests {
     fn dependents_cover_inherited_ts_bases() {
         let root = temp("dependents-ts");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("App.tszor"), "@import { Titled } from \"./base\"\n@inherits Titled\n<p/>\n").unwrap();
-        fs::write(root.join("Dir.tszor"), "@import { Titled } from \"./shared\"\n@inherits Titled\n<p/>\n").unwrap();
-        fs::write(root.join("Plain.tszor"), "<p>base</p>\n").unwrap();
+        fs::write(root.join("App.xzor"), "@import { Titled } from \"./base\"\n@inherits Titled\n<p/>\n").unwrap();
+        fs::write(root.join("Dir.xzor"), "@import { Titled } from \"./shared\"\n@inherits Titled\n<p/>\n").unwrap();
+        fs::write(root.join("Plain.xzor"), "<p>base</p>\n").unwrap();
         let units = compile_all(&root).unwrap();
-        assert_eq!(dependents(&units, &[root.join("base.ts").as_path()]), vec![root.join("App.tszor")]);
-        assert_eq!(dependents(&units, &[root.join("shared").join("index.ts").as_path()]), vec![root.join("Dir.tszor")]);
-        assert_eq!(dependents(&units, &[root.join("base.d.ts").as_path()]), vec![root.join("App.tszor")]);
+        assert_eq!(dependents(&units, &[root.join("base.ts").as_path()]), vec![root.join("App.xzor")]);
+        assert_eq!(dependents(&units, &[root.join("shared").join("index.ts").as_path()]), vec![root.join("Dir.xzor")]);
+        assert_eq!(dependents(&units, &[root.join("base.d.ts").as_path()]), vec![root.join("App.xzor")]);
         assert!(dependents(&units, &[root.join("base.js").as_path()]).is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
@@ -907,7 +907,7 @@ mod tests {
     #[test]
     fn changed_scripts_keep_declaration_files() {
         let root = Path::new("/p");
-        let paths: Vec<String> = ["base.d.ts", "a.ts", "b.tsx", "C.tszor", "node_modules/x/i.d.ts", ".zor/C.tszor.ts"].iter().map(|p| p.to_string()).collect();
+        let paths: Vec<String> = ["base.d.ts", "a.ts", "b.tsx", "C.xzor", "node_modules/x/i.d.ts", ".xzor/C.xzor.ts"].iter().map(|p| p.to_string()).collect();
         assert_eq!(changed_scripts(&paths, root), vec![root.join("base.d.ts"), root.join("a.ts"), root.join("b.tsx")]);
     }
 
@@ -917,11 +917,11 @@ mod tests {
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
         fs::write(root.join("a.ts"), "export class A { a = 1; }\n").unwrap();
         fs::write(root.join("b.ts"), "import { A } from \"./a\";\nexport class B extends A { b = 1; }\n").unwrap();
-        fs::write(root.join("C.tszor"), "@import { B } from \"./b\"\n@inherits B\n<p/>\n").unwrap();
+        fs::write(root.join("C.xzor"), "@import { B } from \"./b\"\n@inherits B\n<p/>\n").unwrap();
         // Mentions `a` and `@inherits` but never reaches a.ts.
-        fs::write(root.join("D.tszor"), "@import { Pkg } from \"pkg\"\n@inherits Pkg\n<p>a</p>\n").unwrap();
+        fs::write(root.join("D.xzor"), "@import { Pkg } from \"pkg\"\n@inherits Pkg\n<p>a</p>\n").unwrap();
         let units = compile_all(&root).unwrap();
-        let c = vec![root.join("C.tszor")];
+        let c = vec![root.join("C.xzor")];
         assert_eq!(dependents(&units, &[root.join("a.ts").as_path()]), c);
         assert_eq!(dependents(&units, &[root.join("b.ts").as_path()]), c);
         assert!(dependents(&units, &[root.join("zzz.ts").as_path()]).is_empty());
@@ -932,14 +932,14 @@ mod tests {
     fn compile_one_writes_only_its_outputs() {
         let root = temp("compileone");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("A.tszor"), "<p/>").unwrap();
-        fs::write(root.join("B.tszor"), "<p/>").unwrap();
-        let unit = compile_one(&root.join("A.tszor")).unwrap();
-        assert_eq!(unit.out, root.join(".zor").join("A.tszor.ts"));
-        assert!(root.join(".zor/A.tszor.ts").is_file() && root.join(".zor/A.tszor.ts.map").is_file());
-        assert!(!root.join(".zor/B.tszor.ts").exists() && !root.join(".zor/B.tszor.ts.map").exists());
-        remove_outputs(&root.join("A.tszor"));
-        assert!(!root.join(".zor/A.tszor.ts").exists() && !root.join(".zor/A.tszor.ts.map").exists());
+        fs::write(root.join("A.xzor"), "<p/>").unwrap();
+        fs::write(root.join("B.xzor"), "<p/>").unwrap();
+        let unit = compile_one(&root.join("A.xzor")).unwrap();
+        assert_eq!(unit.out, root.join(".xzor").join("A.xzor.ts"));
+        assert!(root.join(".xzor/A.xzor.ts").is_file() && root.join(".xzor/A.xzor.ts.map").is_file());
+        assert!(!root.join(".xzor/B.xzor.ts").exists() && !root.join(".xzor/B.xzor.ts.map").exists());
+        remove_outputs(&root.join("A.xzor"));
+        assert!(!root.join(".xzor/A.xzor.ts").exists() && !root.join(".xzor/A.xzor.ts.map").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -947,18 +947,18 @@ mod tests {
     fn write_routes_writes_and_removes() {
         let root = temp("routes-write");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("A.tszor"), "@page \"/a\"\n<p/>").unwrap();
-        fs::write(root.join("B.tszor"), "@page \"/b/:id\"\n<p/>").unwrap();
+        fs::write(root.join("A.xzor"), "@page \"/a\"\n<p/>").unwrap();
+        fs::write(root.join("B.xzor"), "@page \"/b/:id\"\n<p/>").unwrap();
         let units = compile_all(&root).unwrap();
         write_routes(&units, &mut HashSet::new()).unwrap();
-        let table = fs::read_to_string(root.join(".zor/routes.ts")).unwrap();
+        let table = fs::read_to_string(root.join(".xzor/routes.ts")).unwrap();
         assert!(table.contains("\"/a\"") && table.contains("\"/b/:id\""), "{table}");
 
-        fs::write(root.join("A.tszor"), "<p/>").unwrap();
-        fs::write(root.join("B.tszor"), "<p/>").unwrap();
+        fs::write(root.join("A.xzor"), "<p/>").unwrap();
+        fs::write(root.join("B.xzor"), "<p/>").unwrap();
         let units = compile_all(&root).unwrap();
         write_routes(&units, &mut HashSet::new()).unwrap();
-        assert!(!root.join(".zor/routes.ts").exists());
+        assert!(!root.join(".xzor/routes.ts").exists());
         write_routes(&units, &mut HashSet::new()).unwrap();
         fs::remove_dir_all(&root).unwrap();
     }
@@ -969,15 +969,15 @@ mod tests {
         for app in ["app1", "app2"] {
             fs::create_dir_all(root.join(app)).unwrap();
             fs::write(root.join(app).join("tsconfig.json"), "{}").unwrap();
-            fs::write(root.join(app).join("Home.tszor"), "@page \"/x\"\n<p/>").unwrap();
+            fs::write(root.join(app).join("Home.xzor"), "@page \"/x\"\n<p/>").unwrap();
         }
         let units = compile_all(&root).unwrap();
         write_routes(&units, &mut HashSet::new()).unwrap();
         for app in ["app1", "app2"] {
-            let table = fs::read_to_string(root.join(app).join(".zor/routes.ts")).unwrap();
-            assert!(table.contains("from \"./Home.tszor\""), "{table}");
+            let table = fs::read_to_string(root.join(app).join(".xzor/routes.ts")).unwrap();
+            assert!(table.contains("from \"./Home.xzor\""), "{table}");
         }
-        assert!(!root.join(".zor/routes.ts").exists());
+        assert!(!root.join(".xzor/routes.ts").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -986,12 +986,12 @@ mod tests {
         let root = temp("routes-subdir");
         fs::create_dir_all(root.join("pages")).unwrap();
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("pages/Home.tszor"), "@page \"/\"\n<p/>").unwrap();
+        fs::write(root.join("pages/Home.xzor"), "@page \"/\"\n<p/>").unwrap();
         let units = compile_all(&root.join("pages")).unwrap();
         write_routes(&units, &mut HashSet::new()).unwrap();
-        let table = fs::read_to_string(root.join(".zor/routes.ts")).unwrap();
-        assert!(table.contains("from \"./pages/Home.tszor\""), "{table}");
-        assert!(!root.join("pages/.zor").exists());
+        let table = fs::read_to_string(root.join(".xzor/routes.ts")).unwrap();
+        assert!(table.contains("from \"./pages/Home.xzor\""), "{table}");
+        assert!(!root.join("pages/.xzor").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -999,10 +999,10 @@ mod tests {
     fn compiling_a_single_file_does_not_treat_it_as_a_directory() {
         let root = temp("routes-file");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("Y.tszor"), "@page \"/y\"\n<p/>").unwrap();
-        let units = compile_all(&root.join("Y.tszor")).unwrap();
+        fs::write(root.join("Y.xzor"), "@page \"/y\"\n<p/>").unwrap();
+        let units = compile_all(&root.join("Y.xzor")).unwrap();
         write_routes(&units, &mut HashSet::new()).unwrap();
-        assert!(root.join(".zor/routes.ts").is_file());
+        assert!(root.join(".xzor/routes.ts").is_file());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1012,8 +1012,8 @@ mod tests {
         for app in ["app1", "app2"] {
             fs::create_dir_all(root.join(app)).unwrap();
             fs::write(root.join(app).join("tsconfig.json"), "{}").unwrap();
-            fs::write(root.join(app).join("A.tszor"), "@page \"/x\"\n<p/>").unwrap();
-            fs::write(root.join(app).join("B.tszor"), "@page \"/x\"\n<p/>").unwrap();
+            fs::write(root.join(app).join("A.xzor"), "@page \"/x\"\n<p/>").unwrap();
+            fs::write(root.join(app).join("B.xzor"), "@page \"/x\"\n<p/>").unwrap();
         }
         let units = compile_all(&root).unwrap();
         let e = write_routes(&units, &mut HashSet::new()).unwrap_err();
@@ -1025,12 +1025,12 @@ mod tests {
     fn a_root_that_lost_all_its_units_loses_its_table() {
         let root = temp("routes-stale");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("A.tszor"), "@page \"/a\"\n<p/>").unwrap();
+        fs::write(root.join("A.xzor"), "@page \"/a\"\n<p/>").unwrap();
         let mut written = HashSet::new();
         write_routes(&compile_all(&root).unwrap(), &mut written).unwrap();
-        assert!(root.join(".zor/routes.ts").is_file());
+        assert!(root.join(".xzor/routes.ts").is_file());
         write_routes(&[], &mut written).unwrap();
-        assert!(!root.join(".zor/routes.ts").exists() && written.is_empty());
+        assert!(!root.join(".xzor/routes.ts").exists() && written.is_empty());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1038,11 +1038,11 @@ mod tests {
     fn table_errors_fail_the_build() {
         let root = temp("routes-dup");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
-        fs::write(root.join("A.tszor"), "@page \"/x\"\n<p/>").unwrap();
-        fs::write(root.join("B.tszor"), "@page \"/x\"\n<p/>").unwrap();
+        fs::write(root.join("A.xzor"), "@page \"/x\"\n<p/>").unwrap();
+        fs::write(root.join("B.xzor"), "@page \"/x\"\n<p/>").unwrap();
         let units = compile_all(&root).unwrap();
         let e = write_routes(&units, &mut HashSet::new()).unwrap_err();
-        assert!(e.contains("B.tszor:1:8: duplicate route pattern \"/x\" (also in A.tszor)"), "{e}");
+        assert!(e.contains("B.xzor:1:8: duplicate route pattern \"/x\" (also in A.xzor)"), "{e}");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1062,7 +1062,7 @@ mod tests {
         fs::create_dir_all(root.join("services")).unwrap();
         let runtime = manifest.join("runtime").join("index.ts").display().to_string().replace('\\', "/");
         let tsconfig = format!(
-            r#"{{"compilerOptions":{{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ESNext","DOM"],"strict":true,"noEmit":true,"skipLibCheck":true,"rootDirs":[".",".zor"],"paths":{{"@zor/runtime":["{runtime}"]}}}},"include":["**/*.ts",".zor/**/*.ts"]}}"#
+            r#"{{"compilerOptions":{{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ESNext","DOM"],"strict":true,"noEmit":true,"skipLibCheck":true,"rootDirs":[".",".xzor"],"paths":{{"@xzor/runtime":["{runtime}"]}}}},"include":["**/*.ts",".xzor/**/*.ts"]}}"#
         );
         fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
         for (path, text) in files {
@@ -1091,8 +1091,8 @@ mod tests {
         let root = di_project("nomount", &[("main.ts", "console.log(1);\n"), ("services/data.ts", &data)]);
         let units = compile_all(&root).unwrap();
         assert_eq!(di(&root, "main.ts", &units), Ok(None));
-        assert!(!root.join(".zor/main.ts").exists());
-        assert!(root.join(".zor/services/data.provider.ts").is_file());
+        assert!(!root.join(".xzor/main.ts").exists());
+        assert!(root.join(".xzor/services/data.provider.ts").is_file());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
         assert_eq!(di(&root, "main.ts", &[]), Ok(None));
-        assert!(!root.join(".zor").exists());
+        assert!(!root.join(".xzor").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1112,13 +1112,13 @@ mod tests {
             return;
         }
         let (main, data) = (fixture("main.ts"), fixture("services/data.ts"));
-        let app = "@import Counter from \"./Counter.tszor\"\n<div><Counter /></div>\n";
-        let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.tszor", app), ("Counter.tszor", COUNTER)];
+        let app = "@import Counter from \"./Counter.xzor\"\n<div><Counter /></div>\n";
+        let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.xzor", app), ("Counter.xzor", COUNTER)];
         let root = di_project("mount", &files);
         let units = compile_all(&root).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(Some(root.join(".zor").join("main.ts"))));
-        assert!(root.join(".zor/services/data.provider.ts").is_file());
-        let entry = fs::read_to_string(root.join(".zor/main.ts")).unwrap();
+        assert_eq!(di(&root, "main.ts", &units), Ok(Some(root.join(".xzor").join("main.ts"))));
+        assert!(root.join(".xzor/services/data.provider.ts").is_file());
+        let entry = fs::read_to_string(root.join(".xzor/main.ts")).unwrap();
         assert!(entry.contains("Counter"), "{entry}");
         check(&root, None, &units).unwrap();
         fs::remove_dir_all(&root).unwrap();
@@ -1130,11 +1130,11 @@ mod tests {
             return;
         }
         let data = fixture("services/data.ts");
-        let files = [("main.ts", "console.log(1);\n"), ("services/data.ts", &*data), ("Counter.tszor", COUNTER)];
+        let files = [("main.ts", "console.log(1);\n"), ("services/data.ts", &*data), ("Counter.xzor", COUNTER)];
         let root = di_project("injectnomount", &files);
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
-        assert!(err.lines().any(|l| l.ends_with("Counter.tszor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided: no @Mount application")), "{err}");
+        assert!(err.lines().any(|l| l.ends_with("Counter.xzor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided: no @Mount application")), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1143,10 +1143,10 @@ mod tests {
         let root = temp("injectnoapp");
         fs::write(root.join("tsconfig.json"), "{}").unwrap();
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
-        fs::write(root.join("Page.tszor"), "@inject Clock clock\n<p/>\n").unwrap();
+        fs::write(root.join("Page.xzor"), "@inject Clock clock\n<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
-        assert!(err.lines().any(|l| l.ends_with("Page.tszor(1,15): error ZDI04: Clock (injected as clock in Page) is not provided: no @Mount application")), "{err}");
+        assert!(err.lines().any(|l| l.ends_with("Page.xzor(1,15): error ZDI04: Clock (injected as clock in Page) is not provided: no @Mount application")), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1156,7 +1156,7 @@ mod tests {
             return;
         }
         let db = "export class Log {}\nexport class Db {\n  /* ünï 🙂 */ constructor(readonly log: Log) {}\n}\n";
-        let data = "import { ServiceProvider, Singleton } from \"@zor/runtime\";\nimport { Db } from \"./db\";\n@ServiceProvider()\n@Singleton(Db)\nexport class DataServices {}\n";
+        let data = "import { ServiceProvider, Singleton } from \"@xzor/runtime\";\nimport { Db } from \"./db\";\n@ServiceProvider()\n@Singleton(Db)\nexport class DataServices {}\n";
         let root = di_project("errors", &[("services/db.ts", db), ("services/data.ts", data)]);
         let err = di(&root, "main.ts", &[]).unwrap_err();
         let expected = "services/db.ts(3,37): error ZDI02: Log (needed by Db in provider DataServices) is not registered or imported";
@@ -1165,17 +1165,17 @@ mod tests {
     }
 
     #[test]
-    fn inject_errors_point_at_the_tszor() {
+    fn inject_errors_point_at_the_xzor() {
         if !has_bun() {
             return;
         }
-        let main = "import { Mount, ServiceProvider } from \"@zor/runtime\";\nimport App from \"./App.tszor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let main = "import { Mount, ServiceProvider } from \"@xzor/runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
         let data = "export interface IDatabase { readonly name: string }\n";
-        let files = [("main.ts", main), ("services/data.ts", data), ("App.tszor", "<p/>"), ("Counter.tszor", COUNTER)];
+        let files = [("main.ts", main), ("services/data.ts", data), ("App.xzor", "<p/>"), ("Counter.xzor", COUNTER)];
         let root = di_project("injecterr", &files);
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
-        assert!(err.lines().any(|l| l.ends_with("Counter.tszor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided by Application")), "{err}");
+        assert!(err.lines().any(|l| l.ends_with("Counter.xzor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided by Application")), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1184,16 +1184,16 @@ mod tests {
         if !has_bun() {
             return;
         }
-        let main = "import { Mount, ServiceProvider } from \"@zor/runtime\";\nimport App from \"./App.tszor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
-        let root = di_project("mountentry", &[("app.ts", main), ("App.tszor", "<p/>")]);
+        let main = "import { Mount, ServiceProvider } from \"@xzor/runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let root = di_project("mountentry", &[("app.ts", main), ("App.xzor", "<p/>")]);
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
         assert!(err.lines().any(|l| l.ends_with("app.ts(3,1): error ZDI07: @Mount must be declared in the entry module main.ts")), "{err}");
-        assert!(!root.join(".zor/app.ts").exists());
+        assert!(!root.join(".xzor/app.ts").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
-    const OTHER: &str = "import { ServiceProvider, Singleton } from \"@zor/runtime\";\nexport class Clock {}\n@ServiceProvider()\n@Singleton(Clock)\nexport class OtherServices {}\n";
+    const OTHER: &str = "import { ServiceProvider, Singleton } from \"@xzor/runtime\";\nexport class Clock {}\n@ServiceProvider()\n@Singleton(Clock)\nexport class OtherServices {}\n";
 
     #[test]
     fn removed_provider_output_is_pruned() {
@@ -1203,12 +1203,12 @@ mod tests {
         let data = fixture("services/data.ts");
         let root = di_project("prune", &[("main.ts", "console.log(1);\n"), ("services/data.ts", &data), ("services/other.ts", OTHER)]);
         let units = compile_all(&root).unwrap();
-        fs::create_dir_all(root.join(".zor")).unwrap();
-        fs::write(root.join(".zor/keep.ts"), "export {};\n").unwrap();
+        fs::create_dir_all(root.join(".xzor")).unwrap();
+        fs::write(root.join(".xzor/keep.ts"), "export {};\n").unwrap();
         // One analyzer across the runs, as `--watch` and the LSP use it.
         let mut analyzer = Analyzer::new(&root);
         assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
-        let (data_out, other_out) = (root.join(".zor/services/data.provider.ts"), root.join(".zor/services/other.provider.ts"));
+        let (data_out, other_out) = (root.join(".xzor/services/data.provider.ts"), root.join(".xzor/services/other.provider.ts"));
         assert!(data_out.is_file() && other_out.is_file());
         assert!(fs::read_to_string(&other_out).unwrap().starts_with(crate::di::emit::HEADER));
 
@@ -1220,8 +1220,8 @@ mod tests {
         fs::remove_file(root.join("services/data.ts")).unwrap();
         assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
         assert!(!data_out.exists());
-        assert!(!root.join(".zor/services").exists());
-        assert!(root.join(".zor/keep.ts").is_file());
+        assert!(!root.join(".xzor/services").exists());
+        assert!(root.join(".xzor/keep.ts").is_file());
         drop(analyzer);
         fs::remove_dir_all(&root).unwrap();
     }
@@ -1232,22 +1232,22 @@ mod tests {
             return;
         }
         let (main, data) = (fixture("main.ts"), fixture("services/data.ts"));
-        let app = "@import Counter from \"./Counter.tszor\"\n<div><Counter /></div>\n";
-        let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.tszor", app), ("Counter.tszor", COUNTER)];
+        let app = "@import Counter from \"./Counter.xzor\"\n<div><Counter /></div>\n";
+        let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.xzor", app), ("Counter.xzor", COUNTER)];
         let root = di_project("unmount", &files);
         let units = compile_all(&root).unwrap();
         let mut analyzer = Analyzer::new(&root);
-        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(Some(root.join(".zor").join("main.ts"))));
-        assert!(root.join(".zor/main.ts").is_file());
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(Some(root.join(".xzor").join("main.ts"))));
+        assert!(root.join(".xzor/main.ts").is_file());
 
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
         // Without @Mount, @inject would be ZDI04.
-        fs::write(root.join("Counter.tszor"), "<p/>\n").unwrap();
+        fs::write(root.join("Counter.xzor"), "<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
         assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
-        assert!(!root.join(".zor/main.ts").exists());
-        assert!(root.join(".zor/services/data.provider.ts").is_file());
-        assert!(root.join(".zor/App.tszor.ts").is_file());
+        assert!(!root.join(".xzor/main.ts").exists());
+        assert!(root.join(".xzor/services/data.provider.ts").is_file());
+        assert!(root.join(".xzor/App.xzor.ts").is_file());
         drop(analyzer);
         fs::remove_dir_all(&root).unwrap();
     }
@@ -1323,27 +1323,27 @@ mod tests {
     #[test]
     fn prune_removes_empty_dirs() {
         let root = temp("prunedirs");
-        let zor = root.join(".zor");
-        fs::create_dir_all(zor.join("a/b")).unwrap();
-        fs::create_dir_all(zor.join("c")).unwrap();
-        fs::create_dir_all(zor.join("d")).unwrap();
-        fs::write(zor.join("c/x.provider.ts"), format!("{}\nexport {{}};\n", crate::di::emit::HEADER)).unwrap();
-        fs::write(zor.join("d/keep.ts"), "export {};\n").unwrap();
-        prune(&zor, &[]).unwrap();
-        assert!(!zor.join("a").exists() && !zor.join("c").exists());
-        assert!(zor.join("d/keep.ts").is_file());
-        fs::remove_dir_all(zor.join("d")).unwrap();
-        prune(&zor, &[]).unwrap();
-        assert!(zor.is_dir());
+        let xzor = root.join(".xzor");
+        fs::create_dir_all(xzor.join("a/b")).unwrap();
+        fs::create_dir_all(xzor.join("c")).unwrap();
+        fs::create_dir_all(xzor.join("d")).unwrap();
+        fs::write(xzor.join("c/x.provider.ts"), format!("{}\nexport {{}};\n", crate::di::emit::HEADER)).unwrap();
+        fs::write(xzor.join("d/keep.ts"), "export {};\n").unwrap();
+        prune(&xzor, &[]).unwrap();
+        assert!(!xzor.join("a").exists() && !xzor.join("c").exists());
+        assert!(xzor.join("d/keep.ts").is_file());
+        fs::remove_dir_all(xzor.join("d")).unwrap();
+        prune(&xzor, &[]).unwrap();
+        assert!(xzor.is_dir());
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn component_without_a_unit_falls_back_to_the_start() {
         let root = temp("fallback");
-        let diag = |inject: Option<&str>| crate::di::graph::Diag { file: "Missing.tszor".into(), at: 0, code: "ZDI04", message: "nope".into(), inject: inject.map(String::from), param_at: None };
+        let diag = |inject: Option<&str>| crate::di::graph::Diag { file: "Missing.xzor".into(), at: 0, code: "ZDI04", message: "nope".into(), inject: inject.map(String::from), param_at: None };
         let out = format_diags(&root, &[diag(Some("db"))], &[], &root);
-        assert_eq!(out, "Missing.tszor(1,1): error ZDI04: nope");
+        assert_eq!(out, "Missing.xzor(1,1): error ZDI04: nope");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1352,11 +1352,11 @@ mod tests {
         let root = temp("outside");
         let other = temp("outside-other");
         fs::write(other.join("tsconfig.json"), "{}").unwrap();
-        fs::write(other.join("C.tszor"), "@inject Thing t\n<p/>\n").unwrap();
+        fs::write(other.join("C.xzor"), "@inject Thing t\n<p/>\n").unwrap();
         fs::write(root.join("p.ts"), "@ServiceProvider()\nexport class P {}\n").unwrap();
         let units = compile_all(&other).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
-        assert!(err.contains("C.tszor") && err.contains("outside"), "{err}");
+        assert!(err.contains("C.xzor") && err.contains("outside"), "{err}");
         fs::remove_dir_all(&root).unwrap();
         fs::remove_dir_all(&other).unwrap();
     }

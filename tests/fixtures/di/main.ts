@@ -1,5 +1,5 @@
-import { Import, Mount, Singleton as Single, Transient } from "@zor/runtime";
-import App from "./App.tszor";
+import { Import, Mount, Singleton as Single, Transient } from "@xzor/runtime";
+import App from "./App.xzor";
 import { DataServices, type IDatabase as Db } from "./services/data";
 
 export class Cache {}

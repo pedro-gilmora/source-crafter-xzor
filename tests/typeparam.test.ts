@@ -19,7 +19,7 @@ const list = `@typeparam T
 </ul>
 `;
 
-const host = (body: string) => `@import List from "./List.tszor"
+const host = (body: string) => `@import List from "./List.xzor"
 
 @code {
   names: string[] = ["a", "b"];
@@ -36,11 +36,11 @@ function build(name: string, body: string) {
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
   // The example's relative `paths` entry does not reach the runtime from here.
-  tsconfig.compilerOptions.paths = { "@zor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@xzor/runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
-  writeFileSync(join(dir, "List.tszor"), list);
-  writeFileSync(join(dir, "Host.tszor"), host(body));
-  writeFileSync(join(dir, "main.ts"), `import Host from "./Host.tszor";\nexport { Host };\n`);
+  writeFileSync(join(dir, "List.xzor"), list);
+  writeFileSync(join(dir, "Host.xzor"), host(body));
+  writeFileSync(join(dir, "main.ts"), `import Host from "./Host.xzor";\nexport { Host };\n`);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir, "--no-bundle"], { cwd: root });
   return { code: run.exitCode, out: run.stdout.toString() + run.stderr.toString() };
 }
@@ -50,9 +50,9 @@ test("a generic component infers its type parameter from props, including slot p
   expect(r.code, r.out).toBe(0);
 });
 
-test("a slot body that misuses the inferred type fails at the .tszor line", () => {
+test("a slot body that misuses the inferred type fails at the .xzor line", () => {
   const r = build("bad", "@{ const n: number = x; }");
   expect(r.code).not.toBe(0);
-  expect(r.out).toMatch(/Host\.tszor\(\d+,\d+\)/);
+  expect(r.out).toMatch(/Host\.xzor\(\d+,\d+\)/);
   expect(r.out).toContain("Type 'string' is not assignable to type 'number'");
 });

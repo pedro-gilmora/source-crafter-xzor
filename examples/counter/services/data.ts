@@ -1,4 +1,4 @@
-import { Scoped, ServiceProvider, Singleton } from "@zor/runtime";
+import { Scoped, ServiceProvider, Singleton } from "@xzor/runtime";
 
 export interface ILogger {
   log(message: string): void;

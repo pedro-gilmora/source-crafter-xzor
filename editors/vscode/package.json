@@ -1,39 +1,39 @@
 {
-  "name": "tszor",
-  "displayName": "TSZor",
-  "description": "Language support for .tszor components (zor: Blazor-style components for TypeScript)",
-  "version": "0.3.0",
-  "publisher": "rs-zor",
+  "name": "xzor",
+  "displayName": "XZor",
+  "description": "Language support for .xzor components (xzor: Blazor-style components for TypeScript)",
+  "version": "0.4.0",
+  "publisher": "xzor",
   "license": "MIT",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Programming Languages"],
   "main": "./out/extension.js",
-  "activationEvents": ["onLanguage:tszor"],
+  "activationEvents": ["onLanguage:xzor"],
   "contributes": {
-    "commands": [{ "command": "tszor.restartServer", "title": "Restart Server", "category": "TSZor" }],
+    "commands": [{ "command": "xzor.restartServer", "title": "Restart Server", "category": "XZor" }],
     "configuration": {
-      "title": "TSZor",
+      "title": "XZor",
       "properties": {
-        "tszor.serverPath": {
+        "xzor.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the zor executable. Defaults to target/{release,debug}/zor in the workspace, then zor on PATH."
+          "description": "Path to the xzor executable. Defaults to target/{release,debug}/xzor in the workspace, then xzor on PATH."
         }
       }
     },
     "languages": [
       {
-        "id": "tszor",
-        "aliases": ["TSZor", "tszor"],
-        "extensions": [".tszor"],
+        "id": "xzor",
+        "aliases": ["XZor", "xzor"],
+        "extensions": [".xzor"],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "tszor",
-        "scopeName": "source.tszor",
-        "path": "./syntaxes/tszor.tmLanguage.json",
+        "language": "xzor",
+        "scopeName": "source.xzor",
+        "path": "./syntaxes/xzor.tmLanguage.json",
         "embeddedLanguages": {
           "meta.embedded.block.typescript": "typescript",
           "meta.embedded.expression.typescript": "typescript",
