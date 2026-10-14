@@ -48,6 +48,53 @@ const V2 = `class C extends ComponentBase {
 }
 return C;`;
 
+test("a new reference field is not shared between instances", () => {
+  const { host, hot } = setup();
+  const C = counter();
+  class List extends ComponentBase {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addComponent(C, {});
+      b.addComponent(C, {});
+    }
+  }
+  hot.register(ID, C, () => ({ ComponentBase }));
+  const seen: any[] = ((globalThis as any).__seen = []);
+  const code = `class C extends ComponentBase {
+    n = 0;
+    items = [];
+    buildRenderTree(__b) { globalThis.__seen.push(this); __b.addContent(this.items.length); }
+  }
+  return C;`;
+  mount(List, host);
+  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase"] }])).toBe(true);
+  const [a, b] = [...new Set(seen)];
+  expect(a.items).toEqual([]);
+  expect(a.items).not.toBe(b.items);
+  delete (globalThis as any).__seen;
+});
+
+test("members deleted by an edit are removed", () => {
+  const { host, hot } = setup();
+  class Quiet extends ComponentBase {
+    n = 0;
+    protected override shouldRender(): boolean {
+      return false;
+    }
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addText("old");
+    }
+  }
+  hot.register(ID, Quiet, () => ({ ComponentBase }));
+  mount(Quiet, host);
+  const code = `class Quiet extends ComponentBase {
+    n = 0;
+    buildRenderTree(__b) { __b.addText("new"); }
+  }
+  return Quiet;`;
+  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase"] }])).toBe(true);
+  expect(host.textContent).toBe("new");
+});
+
 test("installHot publishes the registry on the target", () => {
   const { target, hot } = setup();
   expect(target.__xzorHot).toBe(hot);

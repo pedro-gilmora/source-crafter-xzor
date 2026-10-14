@@ -16,7 +16,7 @@ export type HotRegistry = {
 
 type Entry = { cls: Function; imports: () => Record<string, unknown> };
 type Instance = { stateHasChanged(): void };
-type Patch = { cls: Function; fresh: Function; probe: Record<string, unknown> | undefined };
+type Patch = { cls: Function; fresh: Function; fields: string[] };
 
 // `#private` names are per class body: the new methods could not reach the live instances' fields.
 const PRIVATE = /(^|[^\w$"'`])#[A-Za-z_$]/;
@@ -24,9 +24,19 @@ const WRAPPED = "__xzorHotWrapped";
 const STATICS = new Set(["length", "name", "prototype"]);
 
 const copyOwn = (from: object, to: object, skip: (key: string | symbol) => boolean): void => {
+  // A member the edit deleted must go too, or e.g. a removed `shouldRender` keeps running.
+  for (const key of Reflect.ownKeys(to)) if (!skip(key) && !Object.hasOwn(from, key)) delete (to as any)[key];
   for (const key of Reflect.ownKeys(from)) {
     if (skip(key)) continue;
     Object.defineProperty(to, key, Object.getOwnPropertyDescriptor(from, key)!);
+  }
+};
+
+const construct = (cls: Function): Record<string, unknown> | undefined => {
+  try {
+    return new (cls as new () => Record<string, unknown>)();
+  } catch {
+    return undefined;
   }
 };
 
@@ -61,17 +71,14 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
     if (!entry || PRIVATE.test(update.code)) return undefined;
     try {
       const bindings = entry.imports();
-      if (update.imports?.some((name) => !(name in bindings))) return undefined;
+      if (update.imports?.some((name) => !Object.hasOwn(bindings, name))) return undefined;
       const names = Object.keys(bindings);
       const fresh = new Function(...names, update.code)(...names.map((n) => bindings[n]));
       if (typeof fresh !== "function") return undefined;
       if (Object.getPrototypeOf(fresh) !== Object.getPrototypeOf(entry.cls)) return undefined;
-      let probe: Record<string, unknown> | undefined;
       // The new field initializers; a component that needs constructor arguments contributes none.
-      try {
-        probe = new fresh();
-      } catch {}
-      return { cls: entry.cls, fresh, probe };
+      const probe = construct(fresh);
+      return { cls: entry.cls, fresh, fields: probe ? Object.keys(probe) : [] };
     } catch {
       return undefined;
     }
@@ -93,10 +100,13 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
       // A re-render mounts children, which registers them; the snapshot keeps this loop finite.
       for (const instance of [...live]) {
         let patched = false;
-        for (const { cls, probe } of patches) {
+        for (const { cls, fresh, fields } of patches) {
           if (!(instance instanceof (cls as new () => Instance))) continue;
           patched = true;
-          if (probe) for (const key of Object.keys(probe)) if (!(key in instance)) (instance as any)[key] = probe[key];
+          const missing = fields.filter((key) => !(key in instance));
+          // One probe per instance, so a new `items = []` is not shared between instances.
+          const probe = missing.length ? construct(fresh) : undefined;
+          if (probe) for (const key of missing) (instance as any)[key] = probe[key];
         }
         if (patched) instance.stateHasChanged();
       }
