@@ -1643,6 +1643,28 @@ fn map_semantic_tokens(c: &Compiled, text: &str, result: &Json) -> Json {
         let (src_line, src_ch) = position_at(text, at);
         tokens.push([src_line, src_ch, t[2], t[3], t[4]]);
     }
+    // Closing component tags have no generated code: they take the token of a same-named tag TypeScript colored.
+    if let Ok((_, marks)) = crate::parser::parse(text) {
+        let names: Vec<(usize, usize, &str)> = marks
+            .iter()
+            .filter(|m| m.kind == crate::parser::TokenKind::ComponentName)
+            .map(|m| {
+                let (l, ch) = position_at(text, m.start);
+                (l, ch, &text[m.start..m.end])
+            })
+            .collect();
+        let mut colored: HashMap<&str, [usize; 2]> = HashMap::new();
+        for &(l, ch, name) in &names {
+            if let Some(t) = tokens.iter().find(|t| t[0] == l && t[1] == ch && t[2] == name.len()) {
+                colored.entry(name).or_insert([t[3], t[4]]);
+            }
+        }
+        for &(l, ch, name) in &names {
+            if let Some(&[ty, mods]) = colored.get(name).filter(|_| !tokens.iter().any(|t| t[0] == l && t[1] == ch)) {
+                tokens.push([l, ch, name.len(), ty, mods]);
+            }
+        }
+    }
     tokens.sort();
     tokens.dedup_by(|a, b| a[0] == b[0] && a[1] == b[1]);
     let mut out = Vec::with_capacity(tokens.len() * 5);

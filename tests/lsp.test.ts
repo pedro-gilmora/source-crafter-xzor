@@ -217,6 +217,19 @@ test("semantic tokens color template references like their declarations", async 
   expect(typeAt(pos(counterText, "increment() {"))).toBe("method");
   expect(typeAt(pos(counterText, '@onclick="increment"', 10))).toBe("method");
   expect(typeAt(pos(counterText, "@count</h2>", 1))).toBe("property");
+
+  // A closing component tag is colored like its opening tag.
+  const appTokens = await request("textDocument/semanticTokens/full", { textDocument: { uri: uriOf(app) } });
+  const appTypes = new Map<string, string>();
+  for (let i = 0, l = 0, c = 0; i < appTokens.data.length; i += 5) {
+    const [dl, dc, , type] = appTokens.data.slice(i, i + 5);
+    l += dl;
+    c = dl === 0 ? c + dc : dc;
+    appTypes.set(`${l}:${c}`, legend.tokenTypes[type]);
+  }
+  const appType = (p: { line: number; character: number }) => appTypes.get(`${p.line}:${p.character}`);
+  expect(appType(pos(appText, "<List", 1))).toBe("class");
+  expect(appType(pos(appText, "</List>", 2))).toBe("class");
 }, 20000);
 
 test("type errors land on the .xzor line", async () => {
