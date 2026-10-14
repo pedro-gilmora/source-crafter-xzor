@@ -102,7 +102,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
     - name: Get source code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         ref: ${{ needs.resolve.outputs.head_sha }}
 
@@ -113,7 +113,7 @@ jobs:
       run: cargo build --release --locked
 
     - name: Upload binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.target }}
         path: target/release/${{ matrix.exe }}
@@ -129,7 +129,7 @@ jobs:
 
     steps:
     - name: Get source code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         # El evento apunta al merge base, no al codigo integrado: hay que pedir
         # explicitamente la cabeza de la PR recien fusionada.
@@ -144,7 +144,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Get compiler binaries
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         # Cada artefacto queda en binaries/<plataforma>/, que es lo que espera Package.ps1.
         path: binaries
@@ -230,6 +230,8 @@ jobs:
         fi
 
         npm=$(grep -E '^(src/|runtime/index\.ts$|npm/|Cargo\.(toml|lock)$)' <<< "$files" | head -n 1)
+        # Sin nada publicado aun, cualquier release estrena los paquetes.
+        [ -n "$npm" ] || npm view @source-crafter/xzor version > /dev/null 2>&1 || npm=unpublished
 
         echo "npm_changes=$([ -n "$npm" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
