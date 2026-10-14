@@ -153,8 +153,11 @@ function onLinkClick(e: MouseEvent): void {
   browserNavigation.navigate(url.href, false);
 }
 
+// Renders read the current URL every time; it is only parsed again once the address changed.
+let currentUrl: URL | undefined;
+
 const browserNavigation: Navigation = {
-  current: () => new URL(location.href),
+  current: () => (currentUrl?.href === location.href ? currentUrl : (currentUrl = new URL(location.href))),
   navigate(url, replace) {
     const href = new URL(url, document.baseURI).href;
     if (replace) history.replaceState(null, "", href);
@@ -901,7 +904,8 @@ function createComponent(v: VComponent, app: IApplication | undefined, scope: Ca
         const latest = mounted.latest;
         mounted.latest = undefined;
         if (latest) fail(latest, err);
-        else rethrow(err);
+        // A routed page we already left: its failure is stale, like any other.
+        else if (!v.onError) rethrow(err);
       },
     );
     return [mounted.anchor];

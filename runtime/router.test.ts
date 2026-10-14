@@ -683,6 +683,30 @@ test("a failure from the page we navigated away from is not shown on the new rou
   expect(r.html()).toBe("<aside><u>1</u></aside>");
 });
 
+test("a page the application fails to build after we left is dropped, not reported", async () => {
+  const memory = nav("/boom");
+  let failBuild: ((err: unknown) => void) | undefined;
+  const app: IApplication = { createComponent: () => new Promise((_resolve, reject) => (failBuild = reject)) };
+  const r = routed(caught, { table: breaking(InjectedPage), app });
+  memory.go("/users/1");
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+
+  const errors: unknown[] = [];
+  const onError = (e: ErrorEvent) => {
+    errors.push(e.error);
+    e.preventDefault();
+  };
+  window.addEventListener("error", onError);
+  process.on("uncaughtException", onError as never);
+  failBuild!(new Error("di late"));
+  await tick();
+  await tick();
+  window.removeEventListener("error", onError);
+  process.off("uncaughtException", onError as never);
+  expect(errors).toEqual([]);
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+});
+
 test("a page kept across a query-only navigation still reports its failure", async () => {
   const memory = nav("/boom");
   const r = routed(caught, { table: breaking(SlowPage) });
