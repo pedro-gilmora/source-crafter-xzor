@@ -21,6 +21,24 @@
 
   <h2>Run it</h2>
   <Code name="run" />
+  <p>
+    Save a <code>.xzor</code> file and the open page shows the change at once. Only the components you changed are
+    patched, and they keep their state (field values, focus, scroll). Any other change reloads the page. A
+    <code>#private</code> member, a new import or a changed base class also reload, and arrow-function fields keep their old
+    code until a reload.
+  </p>
+
+  <h2>Installable and offline (PWA)</h2>
+  <p>
+    Put a <code>manifest.webmanifest</code> next to <code>index.html</code>, with a 192x192 and a 512x512 icon, and link it
+    with <code>&lt;link rel="manifest" href="manifest.webmanifest"&gt;</code>.
+  </p>
+  <Code name="manifest" />
+  <p>
+    <code>xzor build</code> then writes <code>sw.js</code> beside <code>index.html</code> and registers it. <code>xzor init</code>
+    puts <code>sw.js</code> in <code>.gitignore</code>; deploy it with the app. Offline, a page load falls back to the cached app,
+    and a new version arrives on the next load after you deploy. Nothing is cached in <code>xzor dev</code>.
+  </p>
 
   <h2>Prefer to do it by hand?</h2>
   <Code name="manual" />

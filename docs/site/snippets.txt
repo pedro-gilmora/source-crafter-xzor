@@ -124,3 +124,17 @@ export class Application implements IApplication {}
 <small>Connected to @db.name</small>
 --- pipeline | How a component is built | shellscript
 Counter.xzor  →  xzor  →  .xzor/Counter.xzor.ts  →  tsc  →  Bun  →  dist/main.js
+--- manifest | manifest.webmanifest | json
+{
+  "name": "My app",
+  "short_name": "App",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0e1a",
+  "theme_color": "#0b0e1a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

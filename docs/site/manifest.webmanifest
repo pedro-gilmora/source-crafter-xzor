@@ -1,0 +1,14 @@
+{
+  "name": "xzor · Blazor-style components for TypeScript",
+  "short_name": "xzor",
+  "description": "Write components the Blazor way. Ship plain, typed TypeScript.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0e1a",
+  "theme_color": "#0b0e1a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

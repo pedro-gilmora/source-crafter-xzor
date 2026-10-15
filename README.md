@@ -278,6 +278,40 @@ xzor reads your types and generates the plain `new Database(new ConsoleLogger())
 
 ---
 
+## Develop with hot reload, ship as a PWA
+
+### Hot reload in `xzor dev`
+
+Save a `.xzor` file and the open page shows the change at once. Only the components you changed are patched, and they keep their state (field values, focus, scroll). Any other change reloads the page. A `#private` member, a new import or a changed base class also reload, and arrow-function fields keep their old code until a reload. A failed build keeps the last working page.
+
+### Installable and offline
+
+An app with a `manifest.webmanifest` next to its `index.html` becomes a PWA after `xzor build`:
+
+1. Add the manifest, a 192x192 and a 512x512 icon, and `<link rel="manifest" href="manifest.webmanifest">` in `index.html`.
+2. Run `xzor build`. It writes `sw.js` beside `index.html` and registers it from the bundle. `xzor init` puts `sw.js` in `.gitignore`; deploy it with the app.
+3. Offline, a page load falls back to the cached app. After you deploy a new version, it arrives on the next load.
+
+```json
+{
+  "name": "My app",
+  "short_name": "App",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0e1a",
+  "theme_color": "#0b0e1a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+```
+
+The build warns (never fails) when the manifest has no name, no `display`, a missing icon file or no 192/512 icon. Nothing is cached in `xzor dev`. Without a manifest, the build is the same as before.
+
+---
+
 ## See it all together
 
 [`examples/counter`](examples/counter) is a small app that uses every feature above: `Routes.xzor`, layouts, an admin area, typed links, an error page, async settings and scoped services. Build it with `cargo run -- build examples/counter`.
