@@ -728,8 +728,8 @@ fn utf16_to_byte(text: &str, at: usize) -> usize {
 const BUNDLE_SCRIPT: &str = include_str!("bundle.ts");
 
 /// Bundles `entry` into `<dir>/dist`; returns the script's stdout (one output path per line).
-/// `hot` passes `--hot` as the script's third argument.
-pub fn bundle(dir: &Path, entry: &str, hot: bool) -> Result<String, String> {
+/// `hot` passes `--hot`; `watch` passes `--watch`, which keeps the script from touching `sw.js`.
+pub fn bundle(dir: &Path, entry: &str, hot: bool, watch: bool) -> Result<String, String> {
     let script = std::env::temp_dir().join(format!("xzor-bundle-{}.ts", env!("CARGO_PKG_VERSION")));
     if fs::read_to_string(&script).ok().as_deref() != Some(BUNDLE_SCRIPT) {
         fs::write(&script, BUNDLE_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
@@ -738,6 +738,9 @@ pub fn bundle(dir: &Path, entry: &str, hot: bool) -> Result<String, String> {
     cmd.arg(&script).arg(dir.join(entry)).arg(dir.join("dist"));
     if hot {
         cmd.arg("--hot");
+    }
+    if watch {
+        cmd.arg("--watch");
     }
     cmd.stderr(Stdio::inherit());
     let output = cmd.output().map_err(|e| format!("bundle: failed to run {:?}: {e}", cmd.get_program()))?;

@@ -86,7 +86,7 @@ fn run(args: &[String]) -> Result<(), String> {
             if hot && !watch {
                 return Err("--hot needs --watch".to_string());
             }
-            let opts = Options { dir, entry, checker, check, bundle, timings, hot };
+            let opts = Options { dir, entry, checker, check, bundle, timings, hot, watch };
             if watch {
                 return watch_loop(&opts);
             }
@@ -130,6 +130,7 @@ struct Options {
     bundle: bool,
     timings: bool,
     hot: bool,
+    watch: bool,
 }
 
 struct Timings {
@@ -176,7 +177,7 @@ fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, hot: 
     };
     let timed_bundle = || {
         let start = Instant::now();
-        (build::bundle(&o.dir, &entry, o.hot), start.elapsed())
+        (build::bundle(&o.dir, &entry, o.hot, o.watch), start.elapsed())
     };
     let (checked, bundled) = match (o.check, o.bundle) {
         (true, true) => {
