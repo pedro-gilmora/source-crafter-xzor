@@ -546,7 +546,9 @@ function modelFields(src: string, head: ClassHead, untracked: Set<string>): { fi
       if (typeEnd < 0) return undefined;
       k = typeEnd;
     }
-    const end = skipMember(src, k, head.close);
+    // A bare `id` (no type, no initializer, no `;`) ends at its own line, not at the next member.
+    const bare = typeStart < 0 && !"=;(<".includes(src[k] ?? "");
+    const end = skipMember(src, bare ? flagEnd : k, head.close);
     if (end < 0) return undefined;
     if (src[k] === "(" || src[k] === "<") {
       if (name === "constructor") hasCtor = true;

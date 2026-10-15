@@ -122,6 +122,15 @@ test("fields without a semicolon end where the next member starts", () => {
   expect(out).toContain(`static { Model.$define(this, ["id", "name", "kind", "children", "clientId"]); } }`);
 });
 
+test("a bare field without a type or semicolon ends at its own line", () => {
+  const src = `${IMPORT}export class Bare extends Model {\n  id\n  name: string = ""\n}\n`;
+  const out = trackModelFields(src);
+  expect(out.split("\n")).toHaveLength(src.split("\n").length);
+  expect(out).toContain(`  #id; get id() { return this.#id; }`);
+  expect(out).toContain(`  #name: string = ""; get name(): string { return this.#name; }`);
+  expect(out).toContain(`Model.$define(this, ["id", "name"])`);
+});
+
 test("a model class that is not rewritten says so on stderr", () => {
   const errors: string[] = [];
   const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => void errors.push(args.join(" ")));
