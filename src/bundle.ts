@@ -413,7 +413,7 @@ export function serviceWorker(version: string, files: string[]): string {
 const CACHE = ${JSON.stringify(`xzor-${version}`)};
 const FILES = ${JSON.stringify(files)};
 
-// skipWaiting and clients.claim are safe: asset names are unhashed and the whole set is versioned together.
+// A new version takes over at once; a page opened under the old one gets the new files on its next load.
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));
 });
