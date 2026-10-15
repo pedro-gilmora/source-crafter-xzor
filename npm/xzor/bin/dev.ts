@@ -7,7 +7,8 @@ import { join, resolve, sep } from "node:path";
 const transpiler = new Bun.Transpiler({ loader: "ts" });
 const IMPORT_CLAUSE = /^import\s+([^"']+?)\s+from\s*["'][^"']+["']/gm;
 
-/** Local names bound by the value imports of a transpiled module (the transpiler drops the type-only ones). */
+/** Local names bound by the value imports of a transpiled module (the transpiler drops the type-only ones).
+ *  Mirrors `valueImportLocals` in src/bundle.ts; tests/dev-hot.test.ts keeps them in step. */
 function importLocals(js: string): string[] {
   const locals: string[] = [];
   for (const m of js.matchAll(IMPORT_CLAUSE)) {
@@ -58,7 +59,7 @@ if (import.meta.main) {
     queued.clear();
     const reload = unpatchable || ids.length === 0;
     unpatchable = false;
-    if (reload) return send("reload");
+    if (reload || ids.some((id) => !resolve(root, id).startsWith(root + sep))) return send("reload");
     try {
       const hot = await Promise.all(ids.map(async (id) => ({ id, ...prepareModule(await Bun.file(resolve(root, id)).text()) })));
       send(JSON.stringify({ hot }));

@@ -292,8 +292,9 @@ export function stripMarkerDecorators(src: string): string {
 const IMPORT_CLAUSE = /^import\s+([^"']+?)\s+from\s*["'][^"']+["']/gm;
 const hotTranspiler = new Bun.Transpiler({ loader: "ts" });
 
-/** Local names bound by the value imports of a TypeScript source (the transpiler drops type-only ones). */
-function valueImportLocals(ts: string): string[] {
+/** Local names bound by the value imports of a TypeScript source (the transpiler drops type-only ones).
+ *  Mirrored by `importLocals` in npm/xzor/bin/dev.ts; tests/dev-hot.test.ts keeps them in step. */
+export function valueImportLocals(ts: string): string[] {
   const locals: string[] = [];
   for (const m of hotTranspiler.transformSync(ts).matchAll(IMPORT_CLAUSE)) {
     const clause = m[1]!;
