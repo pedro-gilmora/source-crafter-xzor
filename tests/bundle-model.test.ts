@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -94,9 +94,62 @@ test("untracked, static, readonly, declare, accessor, private and function membe
     expect(out).toContain(member);
 });
 
+const ASI = `${IMPORT}
+export class Project extends Model {
+  id: number;
+  name: string
+  kind:
+    | "a"
+    | "b"
+  children?: Project[]
+  @Ignore
+  clientId: string
+  greet(): string {
+    return this.name;
+  }
+}
+`;
+
+test("fields without a semicolon end where the next member starts", () => {
+  const out = trackModelFields(ASI);
+  expect(out.split("\n")).toHaveLength(ASI.split("\n").length);
+  expect(out).toContain(`  #id: number; get id(): number { return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(0, p); }\n`);
+  expect(out).toContain(`  #name: string; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(1, p); }\n`);
+  expect(out).toContain(`  #kind:\n    | "a"\n    | "b"; get kind(): | "a" | "b" { return this.#kind; } set kind(v: | "a" | "b") { const p = this.#kind; if (Model.same(p, v)) return; this.#kind = v; this.$changed(2, p); }\n`);
+  expect(out).toContain(`  #children: Project[] | undefined; get children(): Project[] | undefined { return this.#children; }`);
+  expect(out).toContain(`\n         \n  #clientId: string; @Ignore get clientId(): string { return this.#clientId; }`);
+  expect(out).toContain(`  greet(): string {\n    return this.name;\n  }\n`);
+  expect(out).toContain(`static { Model.$define(this, ["id", "name", "kind", "children", "clientId"]); } }`);
+});
+
+test("a model class that is not rewritten says so on stderr", () => {
+  const errors: string[] = [];
+  const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => void errors.push(args.join(" ")));
+  try {
+    const indirect = `${IMPORT}export class Base extends Model {\n  x = 1;\n}\nexport class Child extends Base {\n  y = 2;\n}\n`;
+    const out = trackModelFields(indirect, "src/models.ts");
+    expect(out).toContain(`static { Model.$define(this, ["x"]); } }`);
+    expect(out).toContain("  y = 2;");
+    expect(errors).toEqual(["xzor: src/models.ts:5: Child is not tracked: it extends Base; only direct subclasses of Model are tracked"]);
+
+    errors.length = 0;
+    const unclosed = `${IMPORT}export class Bad extends Model {\n  x = 1;\n`;
+    expect(trackModelFields(unclosed, "src/bad.ts")).toBe(unclosed);
+    expect(errors).toEqual(["xzor: src/bad.ts:2: Bad is not tracked: its body is not closed"]);
+
+    errors.length = 0;
+    trackModelFields(`${IMPORT}export default class extends Model {\n  x = 1;\n}\n`, "src/anon.ts");
+    expect(errors).toEqual(["xzor: src/anon.ts:2: an anonymous class gets no constructor: name the class or call this.assign(data) in its constructor"]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 test("a class extending another Model, or a file with no model class, is untouched", () => {
   const other = `${IMPORT}class Other {}\nexport class A extends Other {\n  x = 1;\n}\n`;
   expect(trackModelFields(other)).toBe(other);
+  const noExtends = `${IMPORT}export class G {\n  x = 1;\n}\n`;
+  expect(trackModelFields(noExtends)).toBe(noExtends);
   const plain = `export class B {\n  x = 1;\n}\n`;
   expect(trackModelFields(plain)).toBe(plain);
   const elsewhere = `import { Model } from "./model";\nexport class C extends Model {\n  x = 1;\n}\n`;
@@ -139,6 +192,7 @@ const MAIN = `import { Model, State } from "@source-crafter/xzor-runtime/model";
 export class Worker extends Model {
   name = "";
   hours = 0;
+  rate: number = 1
 }
 
 export { State };
@@ -178,6 +232,7 @@ test("a bundled model tracks its changes, and the map still points at the origin
   const { Worker, State } = await import(pathToFileURL(join(dir, "dist", "main.js")).href);
   const worker = new Worker({ name: "Ada", hours: 2 });
   expect(worker.name).toBe("Ada");
+  expect(worker.rate).toBe(1);
   expect(worker.state).toBe(State.Unchanged);
   expect(worker.hasChanges).toBe(false);
 

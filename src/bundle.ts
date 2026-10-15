@@ -293,6 +293,10 @@ const MODEL = "@source-crafter/xzor-runtime/model";
 const MODEL_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@source-crafter\/xzor-runtime\/model["']/g;
 const MODIFIERS = new Set(["public", "protected", "private", "override", "static", "declare", "readonly", "abstract", "accessor", "async", "get", "set"]);
 const ACCESS = new Set(["public", "protected", "private", "override"]);
+// Tokens that continue a member across a line break, at the end of the line or at the start of the next.
+const CONT_END = ".|&,=(:[`+-*?<";
+const CONT_START = ".|&,=(`+-*?>";
+const CONT_WORDS = new Set(["extends", "keyof", "typeof", "infer", "in", "of", "is", "as", "instanceof"]);
 const NO_LOCALS = new Set<string>();
 
 type Field = {
@@ -306,6 +310,7 @@ type Field = {
   typeStart: number;
   typeEnd: number;
   end: number;
+  semi: boolean;
 };
 
 type ClassHead = { name: string; model: string; open: number; close: number };
@@ -337,21 +342,49 @@ function skipTrivia(src: string, i: number): number {
   }
 }
 
-function startsName(src: string, i: number): boolean {
-  const c = src[i];
-  return c !== undefined && /[A-Za-z_$#[*'"0-9]/.test(c);
+function isWord(code: number): boolean {
+  return (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 95 || code === 36;
 }
 
-/** The end of the member starting at `i`: after its `;`, or after a method body. */
+function startsName(src: string, i: number): boolean {
+  const c = src.charCodeAt(i);
+  // A name, `#private`, `[computed]`, `*generator` or a string name.
+  return isWord(c) || c === 35 || c === 91 || c === 42 || c === 39 || c === 34;
+}
+
+/** Automatic semicolon insertion: at the line break `nl`, whether a member whose text ends at `last` is complete. */
+function memberEnds(src: string, last: number, nl: number, limit: number): boolean {
+  const prev = last > 0 ? src[last - 1]! : "\n";
+  if (prev === ">" && src[last - 2] === "=") return false;
+  if (CONT_END.includes(prev)) return false;
+  let w = last;
+  while (w > 0 && isWord(src.charCodeAt(w - 1))) w--;
+  if (w < last && CONT_WORDS.has(src.slice(w, last))) return false;
+  const j = skipTrivia(src, nl + 1);
+  if (j >= limit) return true;
+  if (CONT_START.includes(src[j]!)) return false;
+  IDENT.lastIndex = j;
+  const m = IDENT.exec(src);
+  return !m || !CONT_WORDS.has(m[0]);
+}
+
+/** The end of the member starting at `i`: after its `;`, after a method body, or where ASI ends it. */
 function skipMember(src: string, i: number, limit: number): number {
   let assigned = false;
+  let last = i;
   while (i < limit) {
+    const c = src[i]!;
+    if (c === "\n") {
+      if (memberEnds(src, last, i, limit)) return last;
+      i++;
+      continue;
+    }
     const lit = skipLiteral(src, i);
     if (lit >= 0) {
+      if (c !== "/") last = lit;
       i = lit;
       continue;
     }
-    const c = src[i]!;
     if (c === ";") return i + 1;
     if (c === "(" || c === "[" || c === "{") {
       const end = skipBalanced(src, i, c, c === "(" ? ")" : c === "[" ? "]" : "}");
@@ -361,6 +394,7 @@ function skipMember(src: string, i: number, limit: number): number {
         return src[after] === ";" ? after + 1 : end;
       }
       i = end;
+      last = end;
       continue;
     }
     if (c === "}") return i;
@@ -369,39 +403,50 @@ function skipMember(src: string, i: number, limit: number): number {
       const end = skipBalanced(src, i, "<", ">");
       if (end > 0 && src[skipTrivia(src, end)] === "(") {
         i = end;
+        last = end;
         continue;
       }
     }
     if (c === "=" && src[i + 1] !== "=" && src[i + 1] !== ">" && !"=!<>+-*/%&|^".includes(src[i - 1]!)) assigned = true;
     i++;
+    if (c !== " " && c !== "\t" && c !== "\r") last = i;
   }
   return -1;
 }
 
-/** The end of a field's type annotation: the top-level `=` or `;` after it. */
+/** The end of a field's type annotation: the top-level `=` or `;` after it, or where ASI ends the field. */
 function annotationEnd(src: string, i: number, limit: number): number {
+  let last = i;
   while (i < limit) {
+    const c = src[i]!;
+    if (c === "\n") {
+      if (memberEnds(src, last, i, limit)) return last;
+      i++;
+      continue;
+    }
     const lit = skipLiteral(src, i);
     if (lit >= 0) {
+      if (c !== "/") last = lit;
       i = lit;
       continue;
     }
-    const c = src[i]!;
     if (c === ";" || c === "}") return i;
     if (c === "(" || c === "[" || c === "{") {
       const end = skipBalanced(src, i, c, c === "(" ? ")" : c === "[" ? "]" : "}");
       if (end < 0) return -1;
       i = end;
+      last = end;
       continue;
     }
     if (c === "=" && src[i + 1] !== ">") return i;
     i++;
+    if (c !== " " && c !== "\t" && c !== "\r") last = i;
   }
   return -1;
 }
 
-/** `class [N] extends <local bound to Model> {`, with the body's braces. */
-function classHead(src: string, i: number, locals: Set<string>): ClassHead | undefined {
+/** `class [N] extends B`, with the body's `{`, or -1 for a head this scanner does not understand. */
+function classHead(src: string, i: number): { name: string; base: string; open: number } | undefined {
   let j = skipTrivia(src, i + 5);
   let name = "";
   IDENT.lastIndex = j;
@@ -419,28 +464,26 @@ function classHead(src: string, i: number, locals: Set<string>): ClassHead | und
   j = skipTrivia(src, j + 7);
   IDENT.lastIndex = j;
   m = IDENT.exec(src);
-  if (!m || !locals.has(m[0])) return undefined;
-  const model = m[0];
-  j = skipTrivia(src, j + model.length);
+  if (!m) return undefined;
+  const base = m[0];
+  j = skipTrivia(src, j + base.length);
   if (src[j] === "<") {
     const end = skipBalanced(src, j, "<", ">");
-    if (end < 0) return undefined;
+    if (end < 0) return { name, base, open: -1 };
     j = skipTrivia(src, end);
   }
   if (src.startsWith("implements", j)) {
     while (j < src.length && src[j] !== "{") {
       if (src[j] === "<") {
         const end = skipBalanced(src, j, "<", ">");
-        if (end < 0) return undefined;
+        if (end < 0) return { name, base, open: -1 };
         j = end;
         continue;
       }
       j++;
     }
   }
-  if (src[j] !== "{") return undefined;
-  const end = skipBalanced(src, j, "{", "}");
-  return end < 0 ? undefined : { name, model, open: j, close: end - 1 };
+  return { name, base, open: src[j] === "{" ? j : -1 };
 }
 
 /** The fields to rewrite, or `undefined` for a body this scanner does not understand. */
@@ -449,7 +492,6 @@ function modelFields(src: string, head: ClassHead, untracked: Set<string>): { fi
   let hasCtor = false;
   let i = skipTrivia(src, head.open + 1);
   while (i < head.close) {
-    const start = i;
     let decStart = -1;
     let decEnd = -1;
     let skip = false;
@@ -481,7 +523,7 @@ function modelFields(src: string, head: ClassHead, untracked: Set<string>): { fi
     IDENT.lastIndex = i;
     const named = IDENT.exec(src);
     if (skip || !named) {
-      i = skipMember(src, start, head.close);
+      i = skipMember(src, i, head.close);
       if (i < 0) return undefined;
       i = skipTrivia(src, i);
       continue;
@@ -511,9 +553,7 @@ function modelFields(src: string, head: ClassHead, untracked: Set<string>): { fi
       i = skipTrivia(src, end);
       continue;
     }
-    // Fields are rewritten only when they end with the semicolon this scanner looks for.
-    if (src[end - 1] !== ";") return undefined;
-    fields.push({ decStart, decEnd, access, nameStart, name, flag, flagEnd, typeStart, typeEnd, end });
+    fields.push({ decStart, decEnd, access, nameStart, name, flag, flagEnd, typeStart, typeEnd, end, semi: src[end - 1] === ";" });
     i = skipTrivia(src, end);
   }
   return { fields, hasCtor };
@@ -523,12 +563,17 @@ function modelFields(src: string, head: ClassHead, untracked: Set<string>): { fi
  * Every plain field of a direct `Model` subclass (v1: only direct ones) becomes a `#private` slot
  * with a getter and a setter that report the change, plus a `$define` static block and, unless the
  * class writes its own, a constructor. Lines never move: generated text goes on the field's last
- * line, and the modifiers it takes over are blanked, so source maps stay exact.
+ * line, and the modifiers it takes over are blanked, so source maps stay exact. A model class this
+ * scanner cannot rewrite is left alone, with a warning naming `file`.
  */
-export function trackModelFields(src: string): string {
+export function trackModelFields(src: string, file?: string): string {
   if (!src.includes(MODEL)) return src;
   const { model, untracked } = modelLocals(src);
   if (model.size === 0) return src;
+  const locals = [...model].map((name) => name.replace(/[$]/g, "\\$")).join("|");
+  if (!new RegExp(`\\bextends\\s+(?:${locals})\\b`).test(src)) return src;
+  // The model locals plus the classes extending them, so an indirect subclass is reported.
+  const models = new Set(model);
   let out = "";
   let copied = 0;
   let i = 0;
@@ -539,18 +584,37 @@ export function trackModelFields(src: string): string {
       continue;
     }
     if (src.startsWith("class", i) && !/[\w$]/.test(src[i - 1] ?? " ") && !/[\w$]/.test(src[i + 5] ?? " ")) {
-      const head = classHead(src, i, model);
-      const found = head && modelFields(src, head, untracked);
-      if (head && found) {
-        out += src.slice(copied, head.open + 1) + classBody(src, head, found.fields, found.hasCtor);
-        copied = head.close + 1;
-        i = copied;
-        continue;
+      const head = classHead(src, i);
+      if (head && models.has(head.base)) {
+        if (head.name) models.add(head.name);
+        const name = head.name || "an anonymous class";
+        if (!model.has(head.base)) {
+          warn(src, i, file, `${name} is not tracked: it extends ${head.base}; only direct subclasses of ${[...model][0]} are tracked`);
+        } else {
+          const close = head.open < 0 ? -1 : skipBalanced(src, head.open, "{", "}") - 1;
+          const full: ClassHead = { name: head.name, model: head.base, open: head.open, close };
+          const found = close > 0 ? modelFields(src, full, untracked) : undefined;
+          if (found) {
+            if (!head.name && !found.hasCtor) warn(src, i, file, `${name} gets no constructor: name the class or call this.assign(data) in its constructor`);
+            out += src.slice(copied, full.open + 1) + classBody(src, full, found.fields, found.hasCtor);
+            copied = full.close + 1;
+            i = copied;
+            continue;
+          }
+          const reason = head.open < 0 ? "its declaration could not be parsed" : close < 0 ? "its body is not closed" : "a member could not be parsed";
+          warn(src, i, file, `${name} is not tracked: ${reason}`);
+        }
       }
     }
     i++;
   }
   return copied === 0 ? src : out + src.slice(copied);
+}
+
+function warn(src: string, at: number, file: string | undefined, message: string): void {
+  let line = 1;
+  for (let i = 0; i < at; i++) if (src.charCodeAt(i) === 10) line++;
+  console.error(`xzor: ${file ?? "<source>"}:${line}: ${message}`);
 }
 
 function blank(text: string): string {
@@ -578,6 +642,7 @@ function classBody(src: string, head: ClassHead, fields: Field[], hasCtor: boole
     const access = field.access.map(([start, end]) => `${src.slice(start, end)} `).join("");
     const decorators = field.decStart < 0 ? "" : `${src.slice(field.decStart, field.decEnd).replace(/\s+/g, " ")} `;
     out += src.slice(copied, field.end);
+    if (!field.semi) out += ";";
     out += ` ${decorators}${access}get ${field.name}()${type && `: ${type}`} { return this.#${field.name}; }`;
     out += ` ${access}set ${field.name}(v${type && `: ${type}`}) { const p = this.#${field.name}; if (${head.model}.same(p, v)) return; this.#${field.name} = v; this.$changed(${index}, p); }`;
     copied = field.end;
@@ -800,7 +865,7 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
               return { contents: hotRegistration(text, relative(root, args.path).replaceAll("\\", "/")), loader: "ts" };
             }
             if (!inProject(args.path, root) || path.includes("/node_modules/") || path.includes("/.xzor/")) return { contents: text, loader: "ts" };
-            const rewritten = trackModelFields(stripMarkerDecorators(text));
+            const rewritten = trackModelFields(stripMarkerDecorators(text), relative(root, args.path).replaceAll("\\", "/"));
             if (rewritten !== text) originals.set(resolve(args.path), text);
             return { contents: rewritten, loader: "ts" };
           });
