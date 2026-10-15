@@ -73,6 +73,37 @@ test("the precache list holds the app shell, local page assets and non-map outpu
   ]);
 });
 
+test("the precache list skips root-absolute refs, escapes and data- attributes", () => {
+  const index = readFileSync(join(dir, "index.html"), "utf8");
+  writeFileSync(join(dir, "abs.css"), "a{}");
+  writeFileSync(join(dir, "data.png"), "d");
+  writeFileSync(join(dir, "index.html"), `${index}<link href="/abs.css">\n<link href="icons/../styles.css">\n<img data-src="data.png" data-href="data.png">\n<img\nsrc="data.png">\n<img src="../outside.png">\n`);
+  try {
+    const files = precacheList(dir, []);
+    expect(files).not.toContain("abs.css");
+    expect(files).not.toContain("/abs.css");
+    expect(files.filter((f) => f === "styles.css")).toHaveLength(1);
+    expect(files.filter((f) => f === "data.png")).toHaveLength(1);
+    expect(files.some((f) => f.includes("..") || f.startsWith("/"))).toBe(false);
+  } finally {
+    writeFileSync(join(dir, "index.html"), index);
+    rmSync(join(dir, "abs.css"));
+    rmSync(join(dir, "data.png"));
+  }
+});
+
+test("data- attributes alone precache nothing", () => {
+  const index = readFileSync(join(dir, "index.html"), "utf8");
+  writeFileSync(join(dir, "data.png"), "d");
+  writeFileSync(join(dir, "index.html"), `${index}<img data-src="data.png" data-href="data.png">\n`);
+  try {
+    expect(precacheList(dir, [])).not.toContain("data.png");
+  } finally {
+    writeFileSync(join(dir, "index.html"), index);
+    rmSync(join(dir, "data.png"));
+  }
+});
+
 test("the precache list tolerates a missing manifest", () => {
   expect(precacheList(dir, [])).toContain("index.html");
 });
@@ -83,6 +114,7 @@ test("the worker carries its version and file list", () => {
   expect(src).toContain(`"xzor-abc"`);
   expect(src).toContain(`["./","index.html"]`);
   expect(src).toContain("ignoreVary");
+  expect(src).toContain(`cache: "reload"`);
 });
 
 test("renaming an asset with the same bytes changes the version", () => {
@@ -112,7 +144,9 @@ test("a manifest makes the bundle install a service worker, and removing it undo
   const { out } = bundle();
   const worker = readFileSync(join(dir, "sw.js"), "utf8");
   expect(worker.startsWith(HEADER)).toBe(true);
-  expect(readFileSync(join(dir, "dist", "main.js"), "utf8")).toEndWith(`${REGISTRATION}\n`);
+  const built = readFileSync(join(dir, "dist", "main.js"), "utf8");
+  expect(built).toMatch(/\/\/# sourceMappingURL=main\.js\.map\n?$/);
+  expect(built).toContain(`${REGISTRATION}\n//# sourceMappingURL=`);
   // `xzor dev` reloads on the printed output paths; the worker is not one of them.
   expect(out).not.toContain("sw.js");
 

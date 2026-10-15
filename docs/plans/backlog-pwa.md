@@ -1,6 +1,12 @@
 # PWA support (backlog)
 
-Status: proposed, not started.
+Status: partly done on `feat/pwa` ([plan](2026-10-14-pwa.md)).
+
+- Done: the worker (step 3), the docs site as first user (step 5), and the manifest check.
+- Replaced: `@Pwa(...)` by the standard `manifest.webmanifest` next to `index.html`.
+- Left: step 1 (hashed asset names), step 4 (update prompt), and the Playwright end-to-end test (verified by hand instead).
+
+## Original proposal
 
 Goal: an xzor app can be installed and keeps working offline, configured in one place and generated at build time like DI and routing. Nothing is added to apps that don't ask for it.
 
