@@ -28,5 +28,8 @@ Subagent (general-purpose):
     Report, in at most 25 lines:
     - a table: n, base ms, head ms, base peak MB, head peak MB, for each measured command
     - findings, each Critical / Important / Minor with file:line and the measured or reasoned cost
+    - enhancements: for the hottest path you measured, up to 3 concrete code changes (file:line, the
+      change in one or two lines, and the gain you measured by trying it in a scratch copy or expect
+      with reasoning); never edit the checkout itself
     - verdict: APPROVED, or CHANGES NEEDED with the findings that block
 ```
