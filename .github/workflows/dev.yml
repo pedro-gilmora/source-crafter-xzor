@@ -249,14 +249,18 @@ jobs:
 
         # A version already in the store (a rerun) counts as published instead of failing the release.
         if [ -n "$VSCE_PAT" ]; then
-          if output=$(bun x @vscode/vsce publish --packagePath "$vsix" -p "$VSCE_PAT" 2>&1) || grep -q "already exists" <<< "$output"; then
+          output=$(bun x @vscode/vsce publish --packagePath "$vsix" -p "$VSCE_PAT" 2>&1) && ok=1 || ok=0
+          echo "$output"
+          if [ $ok = 1 ] || grep -qF "$id@${{ env.VERSION }} already exists" <<< "$output"; then
             jq -nc --arg p "$id" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "marketplace"}' >> packages.jsonl
           else
             echo -e "VS Code Marketplace errors for $id:\n$output\n" >> errors.log
           fi
         fi
         if [ -n "$OVSX_PAT" ]; then
-          if output=$(bun x ovsx publish "$vsix" -p "$OVSX_PAT" 2>&1) || grep -q "is already published" <<< "$output"; then
+          output=$(bun x ovsx publish "$vsix" -p "$OVSX_PAT" 2>&1) && ok=1 || ok=0
+          echo "$output"
+          if [ $ok = 1 ] || grep -qF "is already published" <<< "$output"; then
             jq -nc --arg p "$id" --arg v "${{ env.VERSION }}" '{package: $p, version: $v, registry: "openvsx"}' >> packages.jsonl
           else
             echo -e "Open VSX errors for $id:\n$output\n" >> errors.log

@@ -59,6 +59,8 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
                 $profiles = @((Get-Content $storage -Raw | ConvertFrom-Json).userDataProfiles | Where-Object { $_.location -notlike 'builtin/*' } | ForEach-Object name)
             }
             $env:NODE_NO_WARNINGS = "1"
+            # Before 0.1.9 the extension's id was xzor.xzor; two copies would both start a language server.
+            foreach ($name in @($null) + $profiles) { code @codeArgs $(if ($name) { '--profile', $name }) --uninstall-extension xzor.xzor 2>$null | Out-Null }
             code @codeArgs --install-extension $vsix.FullName --force
             foreach ($name in $profiles) { code @codeArgs --profile $name --install-extension $vsix.FullName --force }
             Write-Host "Installed $($vsix.Name) in the default profile$(if ($profiles) { ' and ' + ($profiles -join ', ') }). Reload VS Code (Developer: Reload Window) to use it."
