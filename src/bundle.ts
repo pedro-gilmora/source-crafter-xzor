@@ -348,6 +348,9 @@ function manifestIcons(manifest: Manifest | Error): { src?: unknown; sizes?: unk
   return Array.isArray(icons) ? icons : [];
 }
 
+// A root-absolute icon (`/icons/x.png`) is the project's own file when the app is served from the domain root.
+const iconAsset = (src: string, root: string) => localAsset(src.startsWith("/") && !src.startsWith("//") ? src.slice(1) : src, root);
+
 /** The problems of a web manifest, reported as warnings; an empty list means it is usable. */
 export function checkManifest(text: string, root: string, parsed = parseManifest(text)): string[] {
   if (parsed instanceof Error) return [`invalid JSON: ${parsed.message}`];
@@ -360,7 +363,7 @@ export function checkManifest(text: string, root: string, parsed = parseManifest
   }
   for (const icon of icons) {
     const src = icon?.src;
-    if (typeof src === "string" && !src.startsWith("//") && !SCHEME.test(src) && !localAsset(src, root)) problems.push(`icon not found: ${src}`);
+    if (typeof src === "string" && !src.startsWith("//") && !SCHEME.test(src) && !iconAsset(src, root)) problems.push(`icon not found: ${src}`);
   }
   return problems;
 }
@@ -383,7 +386,7 @@ export function precacheList(root: string, outputs: string[], manifest = readMan
     }
   }
   for (const icon of manifestIcons(manifest)) {
-    const asset = typeof icon?.src === "string" ? localAsset(icon.src, root) : undefined;
+    const asset = typeof icon?.src === "string" ? iconAsset(icon.src, root) : undefined;
     if (asset) files.add(asset);
   }
   for (const output of outputs) {

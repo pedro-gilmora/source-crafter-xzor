@@ -60,6 +60,13 @@ test("an icon that is not on disk is reported", () => {
   expect(problems).toContain("icons/missing.png");
 });
 
+test("root-absolute icons are the project's files", () => {
+  const rooted = MANIFEST.replaceAll('"icons/', '"/icons/');
+  expect(checkManifest(rooted, dir)).toEqual([]);
+  writeFileSync(join(dir, "manifest.webmanifest"), rooted);
+  expect(precacheList(dir, [])).toContain("icons/512.png");
+});
+
 test("the precache list holds the app shell, local page assets and non-map outputs", () => {
   writeFileSync(join(dir, "manifest.webmanifest"), MANIFEST);
   expect(precacheList(dir, [join(dir, "dist", "main.js"), join(dir, "dist", "main.js.map")])).toEqual([
