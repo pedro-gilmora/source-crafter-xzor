@@ -1,0 +1,204 @@
+import { afterAll, expect, test } from "bun:test";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { decodeMappings, trackModelFields } from "../src/bundle";
+
+const repo = join(import.meta.dir, "..");
+// Same depth below the repo as examples/counter, so module resolution matches a real project.
+const dir = join(repo, "target", `tmp-model-${process.pid}`);
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+const IMPORT = `import { Ignore, Model, Persist, Untracked } from "@source-crafter/xzor-runtime/model";\n`;
+
+const WORKER = `${IMPORT}
+export class Worker extends Model {
+  name: string = "";
+  @Ignore hours: number = 0;
+
+  @Persist get payment(): number {
+    return this.hours * 10;
+  }
+}
+`;
+
+const WORKER_OUT = `${IMPORT}
+export class Worker extends Model { constructor(data?: object) { super(data); if (new.target === Worker) this.assign(data); }
+  #name: string = ""; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+          #hours: number = 0; @Ignore get hours(): number { return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
+
+  @Persist get payment(): number {
+    return this.hours * 10;
+  }
+static { Model.\$define(this, ["name", "hours"]); } }
+`;
+
+test("every field of a model class becomes a private slot with a getter and a setter", () => {
+  const out = trackModelFields(WORKER);
+  expect(out).toBe(WORKER_OUT);
+  expect(out.split("\n")).toHaveLength(WORKER.split("\n").length);
+});
+
+const SHAPES = `${IMPORT}
+export class Odd extends Model {
+  get = 1;
+  static = 2;
+  note?: string;
+  id!: number;
+  config = {
+    a: 1,
+  };
+  calc = (x: number) => x * 2;
+  private hidden = "";
+  @Untracked plain = 0;
+  static total = 0;
+  readonly fixed = 1;
+  declare injected: string;
+  accessor auto = 0;
+  #secret = 1;
+  [key: string]: unknown;
+  generic<T = string>(v: T): T { return v; }
+  method(): number { return this.get; }
+  get computed(): number { return this.id; }
+}
+`;
+
+test("keyword-ish names, multi-line and arrow initializers, optional and definite fields", () => {
+  const out = trackModelFields(SHAPES);
+  expect(out.split("\n")).toHaveLength(SHAPES.split("\n").length);
+  expect(out).toContain(`  #get = 1; get get() { return this.#get; } set get(v) { const p = this.#get; if (Model.same(p, v)) return; this.#get = v; this.$changed(0, p); }\n`);
+  expect(out).toContain(`  #static = 2; get static() { return this.#static; } set static(v) { const p = this.#static; if (Model.same(p, v)) return; this.#static = v; this.$changed(1, p); }\n`);
+  expect(out).toContain(`  #note: string | undefined; get note(): string | undefined { return this.#note; } set note(v: string | undefined) { const p = this.#note; if (Model.same(p, v)) return; this.#note = v; this.$changed(2, p); }\n`);
+  expect(out).toContain(`  #id!: number; get id(): number { return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(3, p); }\n`);
+  expect(out).toContain(`  #config = {\n    a: 1,\n  }; get config() { return this.#config; } set config(v) { const p = this.#config; if (Model.same(p, v)) return; this.#config = v; this.$changed(4, p); }\n`);
+  expect(out).toContain(`  #calc = (x: number) => x * 2; get calc() { return this.#calc; } set calc(v) { const p = this.#calc; if (Model.same(p, v)) return; this.#calc = v; this.$changed(5, p); }\n`);
+  // The access modifier moves to the accessors: TypeScript forbids one on a `#private` field.
+  expect(out).toContain(`          #hidden = ""; private get hidden() { return this.#hidden; } private set hidden(v) { const p = this.#hidden; if (Model.same(p, v)) return; this.#hidden = v; this.$changed(6, p); }\n`);
+  expect(out).toContain(`static { Model.$define(this, ["get", "static", "note", "id", "config", "calc", "hidden"]); } }\n`);
+});
+
+test("untracked, static, readonly, declare, accessor, private and function members are left alone", () => {
+  const out = trackModelFields(SHAPES);
+  for (const member of [
+    "  @Untracked plain = 0;\n",
+    "  static total = 0;\n",
+    "  readonly fixed = 1;\n",
+    "  declare injected: string;\n",
+    "  accessor auto = 0;\n",
+    "  #secret = 1;\n",
+    "  [key: string]: unknown;\n",
+    "  generic<T = string>(v: T): T { return v; }\n",
+    "  method(): number { return this.get; }\n",
+    "  get computed(): number { return this.id; }\n",
+  ])
+    expect(out).toContain(member);
+});
+
+test("a class extending another Model, or a file with no model class, is untouched", () => {
+  const other = `${IMPORT}class Other {}\nexport class A extends Other {\n  x = 1;\n}\n`;
+  expect(trackModelFields(other)).toBe(other);
+  const plain = `export class B {\n  x = 1;\n}\n`;
+  expect(trackModelFields(plain)).toBe(plain);
+  const elsewhere = `import { Model } from "./model";\nexport class C extends Model {\n  x = 1;\n}\n`;
+  expect(trackModelFields(elsewhere)).toBe(elsewhere);
+  const typeOnly = `import type { Model } from "@source-crafter/xzor-runtime/model";\nexport class D extends (Model as never) {\n  x = 1;\n}\n`;
+  expect(trackModelFields(typeOnly)).toBe(typeOnly);
+});
+
+test("an aliased import names the base in the generated code", () => {
+  const src = `import { Model as Base } from "@source-crafter/xzor-runtime/model";\nexport class E extends Base {\n  x = 1;\n}\n`;
+  const out = trackModelFields(src);
+  expect(out).toContain(`if (Base.same(p, v)) return;`);
+  expect(out).toContain(`static { Base.$define(this, ["x"]); } }`);
+  expect(out).toContain(`if (new.target === E) this.assign(data); }`);
+});
+
+test("a class with its own constructor keeps it, and an anonymous one gets none", () => {
+  const own = `${IMPORT}export class F extends Model {\n  constructor(name: string) {\n    super({ name });\n  }\n  x = 1;\n}\n`;
+  const out = trackModelFields(own);
+  expect(out).not.toContain("constructor(data?: object)");
+  expect(out).toContain(`static { Model.$define(this, ["x"]); } }`);
+  const anon = `${IMPORT}export default class extends Model {\n  x = 1;\n}\n`;
+  const outAnon = trackModelFields(anon);
+  expect(outAnon).not.toContain("constructor(");
+  expect(outAnon).toContain(`#x = 1; get x() { return this.#x; }`);
+});
+
+test("a decorator on its own line moves to the getter without moving a line", () => {
+  const src = `${IMPORT}export class G extends Model implements Record<string, unknown> {\n  [key: string]: unknown;\n  @Ignore\n  hours: number = 0;\n  static { console.log("ready"); }\n}\n`;
+  const out = trackModelFields(src);
+  expect(out.split("\n")).toHaveLength(src.split("\n").length);
+  expect(out).toContain(`\n         \n  #hours: number = 0; @Ignore get hours(): number { return this.#hours; }`);
+  expect(out).toContain(`  static { console.log("ready"); }\n`);
+  expect(out).toContain(`static { Model.$define(this, ["hours"]); } }`);
+});
+
+// A real project, bundled by src/bundle.ts and run.
+const MAIN = `import { Model, State } from "@source-crafter/xzor-runtime/model";
+
+export class Worker extends Model {
+  name = "";
+  hours = 0;
+}
+
+export { State };
+`;
+
+function project(): void {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const paths = {
+    "@source-crafter/xzor-runtime/model": [join(repo, "runtime", "model.ts").replaceAll("\\", "/")],
+  };
+  writeFileSync(
+    join(dir, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "ESNext",
+        moduleResolution: "bundler",
+        lib: ["ES2022", "DOM"],
+        strict: true,
+        noEmit: true,
+        skipLibCheck: true,
+        paths,
+      },
+      include: ["**/*.ts"],
+      exclude: ["dist"],
+    }),
+  );
+  writeFileSync(join(dir, "main.ts"), MAIN);
+}
+
+test("a bundled model tracks its changes, and the map still points at the original source", async () => {
+  project();
+  const run = Bun.spawnSync(["bun", join(repo, "src", "bundle.ts"), join(dir, "main.ts"), join(dir, "dist")], { cwd: repo });
+  expect(run.exitCode, run.stderr.toString()).toBe(0);
+
+  const { Worker, State } = await import(pathToFileURL(join(dir, "dist", "main.js")).href);
+  const worker = new Worker({ name: "Ada", hours: 2 });
+  expect(worker.name).toBe("Ada");
+  expect(worker.state).toBe(State.Unchanged);
+  expect(worker.hasChanges).toBe(false);
+
+  worker.hours = 3;
+  expect(worker.state).toBe(State.Modified);
+  expect(worker.changes).toMatchObject({ hours: 3 });
+
+  worker.revertChanges();
+  expect(worker.hours).toBe(2);
+  expect(worker.state).toBe(State.Unchanged);
+
+  const map = JSON.parse(readFileSync(join(dir, "dist", "main.js.map"), "utf8"));
+  const source = map.sources.findIndex((s: string) => s.endsWith("main.ts"));
+  expect(map.sourcesContent[source]).toBe(MAIN);
+  const line = MAIN.split("\n").indexOf("  hours = 0;");
+  const mapped = decodeMappings(map.mappings).flat();
+  expect(mapped.some((seg) => seg.length >= 4 && seg[1] === source && seg[2] === line)).toBe(true);
+}, 120_000);
+
+test("the original source type-checks against the runtime", () => {
+  project();
+  const run = Bun.spawnSync(["bun", "x", "tsc", "--noEmit", "--pretty", "false", "-p", dir], { cwd: repo });
+  expect(run.exitCode, run.stdout.toString() + run.stderr.toString()).toBe(0);
+}, 120_000);
