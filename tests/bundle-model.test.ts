@@ -186,6 +186,49 @@ test("a cycle between relative modules ends the search", () => {
   expect(trackModelFields(src, "src/c.ts", (spec) => files[spec])).toBe(src);
 });
 
+test("a base shared by many files is read and parsed once when the cache is shared", () => {
+  let reads = 0;
+  const resolve = (): string | undefined => (reads++, `${IMPORT}export default class Worker extends Model {\n  name = "";\n}\n`);
+  const cache = new Map();
+  for (const file of ["a", "b"]) {
+    const src = `import Worker from "./worker";\nexport class ${file.toUpperCase()} extends Worker {\n  x = 1;\n}\n`;
+    expect(trackModelFields(src, `src/${file}.ts`, resolve, cache)).toContain(`this.#at = Worker.$define(this, ["x"])`);
+  }
+  expect(reads).toBe(1);
+});
+
+test("a file that does not extend a model gets no warning and comes back identical", () => {
+  const errors: string[] = [];
+  const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => void errors.push(args.join(" ")));
+  try {
+    let reads = 0;
+    const resolve = (): string | undefined => (reads++, undefined);
+    const panel = `import { helper } from "./helper";\nimport { Component } from "preact";\nclass Panel extends Component {\n  x = helper;\n}\n`;
+    expect(trackModelFields(panel, "src/panel.ts", resolve)).toBe(panel);
+    const plain = `import { x } from "./x";\nclass A extends Object {\n  y = x;\n}\n`;
+    expect(trackModelFields(plain, "src/a.ts", resolve)).toBe(plain);
+    expect(reads).toBe(0);
+    const thing = `import { Component } from "preact";\nexport class Thing extends Component {}\n`;
+    const chained = `import { Thing } from "./thing";\nclass P extends Thing {\n  x = 1;\n}\n`;
+    expect(trackModelFields(chained, "src/p.ts", () => thing)).toBe(chained);
+    expect(errors).toEqual([]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("a class extending a namespace member warns instead of being skipped silently", () => {
+  const errors: string[] = [];
+  const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => void errors.push(args.join(" ")));
+  try {
+    const src = `${IMPORT}import * as ns from "./models";\nexport class X extends ns.Worker {\n  y = 1;\n}\n`;
+    expect(trackModelFields(src, "src/x.ts", () => WORKER)).toBe(src);
+    expect(errors).toEqual([`xzor: src/x.ts:3: X is not tracked: its base ns comes from "./models" and could not be followed`]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 test("a model class that is not rewritten says so on stderr", () => {
   const errors: string[] = [];
   const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => void errors.push(args.join(" ")));
@@ -379,6 +422,33 @@ test("a model deriving from one in another file tracks both levels", async () =>
   lead.revertChanges();
   expect([lead.hours, lead.team]).toEqual([2, 3]);
   expect(lead.hasState(State.Unchanged)).toBe(true);
+}, 120_000);
+
+test("a derived model's private offset never collides with a field or a private of that name", async () => {
+  project();
+  const src = `${IMPORT}export class Base extends Model {\n  id = 1;\n}\nexport class Entry extends Base {\n  at = 5;\n  #at$ = 3;\n  get hidden() { return this.#at$; }\n}\nexport class Other extends Base {\n  #at = 7;\n  n = 1;\n  get hidden() { return this.#at; }\n}\n`;
+  writeFileSync(join(dir, "entry.ts"), src);
+  const run = Bun.spawnSync(["bun", join(repo, "src", "bundle.ts"), join(dir, "entry.ts"), join(dir, "dist")], { cwd: repo });
+  expect(run.exitCode, run.stderr.toString()).toBe(0);
+  const { Entry, Other } = await import(pathToFileURL(join(dir, "dist", "entry.js")).href);
+  const entry = new Entry({ id: 2, at: 9 });
+  expect([entry.id, entry.at, entry.hidden]).toEqual([2, 9, 3]);
+  const seen: string[] = [];
+  entry.addEventListener("change", (e: { property: string }) => void seen.push(e.property));
+  entry.at = 4;
+  entry.id = 6;
+  expect(seen).toEqual(["at", "id"]);
+  const other = new Other({ id: 1, n: 8 });
+  expect([other.n, other.hidden]).toEqual([8, 7]);
+}, 120_000);
+
+test("a base the bundle does not rewrite is reported, not followed", () => {
+  project();
+  writeFileSync(join(dir, "base.tsx"), `${IMPORT}export class Base extends Model {\n  id = 1;\n}\n`);
+  writeFileSync(join(dir, "derived.ts"), `import { Base } from "./base";\nexport class Derived extends Base {\n  x = 2;\n}\nconsole.log(new Derived().x);\n`);
+  const run = Bun.spawnSync(["bun", join(repo, "src", "bundle.ts"), join(dir, "derived.ts"), join(dir, "dist")], { cwd: repo });
+  expect(run.exitCode, run.stderr.toString()).toBe(0);
+  expect(run.stderr.toString()).toContain(`derived.ts:2: Derived is not tracked: its base Base comes from "./base" and could not be followed`);
 }, 120_000);
 
 test("the original source type-checks against the runtime", () => {

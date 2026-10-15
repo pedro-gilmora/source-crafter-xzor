@@ -267,7 +267,7 @@ export class Worker extends Model {
 
 - `hours = 0` becomes a `#hours` slot plus a getter and a setter. The getter reports the read to the component that is rendering. The setter does nothing when the new value is the same (`Model.same`) and otherwise calls `$changed`.
 - The class gets `static { Model.$define(this, ["name", "hours"]); }`, which lists its tracked fields. A subclass's fields come after its base's.
-- If the class has no constructor, it gets `constructor(data?) { super(data); if (new.target === X) this.assign(data); }`. A hand-written constructor must call `this.assign(data)` itself.
+- If the class has no constructor, it gets `constructor(data?) { super(data); if (new.target === X) this.assign(data); }`. A hand-written constructor must call `this.assign(data)` itself. In a middle level of a hierarchy that makes the most derived instance assign twice (correct, but slower), so prefer leaving constructors to the build.
 - `static`, `readonly`, `declare`, `abstract`, `accessor` and `#private` fields, methods, getters and `@Untracked` fields stay plain. A model class the scanner can't rewrite (a base that is not `Model`, an odd member) is left alone, with a warning on stderr.
 - The decorators keep working on the original members: `@Validate`, `@Persist` and `@Ignore` are collected before `$define`.
 

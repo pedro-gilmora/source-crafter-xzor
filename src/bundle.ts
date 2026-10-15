@@ -122,6 +122,12 @@ export function inProject(path: string, root: string): boolean {
   return rel !== "" && !/^\.\.(?:[\\/]|$)/.test(rel) && !isAbsolute(rel);
 }
 
+/** Whether the bundle rewrites `path`'s models: a project `.ts` file outside `.xzor/` and `node_modules/`. */
+function rewritable(path: string, root: string): boolean {
+  const p = path.replaceAll("\\", "/");
+  return p.endsWith(".ts") && inProject(path, root) && !p.includes("/node_modules/") && !p.includes("/.xzor/");
+}
+
 function generatedPath(source: string): string {
   if (existsSync(`${source}.ts`)) return `${source}.ts`;
   const root = projectRoot(dirname(source));
@@ -340,8 +346,9 @@ function modelLocals(src: string): { model: Set<string>; untracked: Set<string> 
 export type ModelResolver = (spec: string, from: string) => string | undefined;
 
 type Imported = { spec: string; name: string };
-type FileModels = { model: Set<string>; untracked: Set<string>; bases: Map<string, string>; imports: Map<string, Imported> };
-// `files` caches one analysis per resolved path for the whole call; `open` stops import cycles.
+type Imports = { model: Set<string>; untracked: Set<string>; imports: Map<string, Imported> };
+type FileModels = Imports & { bases: Map<string, string> };
+// `files` caches one analysis per resolved path (shared across a build); `open` stops import cycles.
 type Scope = { resolve: ModelResolver | undefined; files: Map<string, FileModels | undefined>; open: Set<string> };
 
 function isClassToken(src: string, i: number): boolean {
@@ -361,11 +368,13 @@ function skipBack(src: string, i: number): number {
   return i;
 }
 
-/** What a file says about models: the runtime locals, every class's base, and the names its imports bind. */
-function fileModels(src: string): FileModels {
+const NAMESPACE_IMPORT = /\bimport\s+\*\s+as\s+([\w$]+)\s+from\s*["']([^"']+)["']/g;
+
+/** The runtime locals and the names a file's imports bind (a namespace import binds `*`). */
+function fileImports(src: string): Imports {
   const { model, untracked } = modelLocals(src);
-  const bases = new Map<string, string>();
   const imports = new Map<string, Imported>();
+  for (const m of src.matchAll(NAMESPACE_IMPORT)) imports.set(m[1]!, { spec: m[2]!, name: "*" });
   for (const m of src.matchAll(BINDING_IMPORT)) {
     if (m[1]) continue;
     const spec = m[4]!;
@@ -377,6 +386,12 @@ function fileModels(src: string): FileModels {
       imports.set(as === "as" && alias ? alias : name!, { spec, name: name! });
     }
   }
+  return { model, untracked, imports };
+}
+
+/** `head` plus every class's base. */
+function fileModels(src: string, head: Imports = fileImports(src)): FileModels {
+  const bases = new Map<string, string>();
   let i = 0;
   while (i < src.length) {
     const lit = skipLiteral(src, i);
@@ -393,7 +408,7 @@ function fileModels(src: string): FileModels {
     }
     i++;
   }
-  return { model, untracked, bases, imports };
+  return { ...head, bases };
 }
 
 /** Whether `name` in `file` is a model class; the import that could not be followed when it may be one. */
@@ -407,7 +422,7 @@ function modelOf(info: FileModels, file: string, name: string, scope: Scope): bo
     if (base !== undefined) return modelOf(info, file, base, scope);
     const imported = info.imports.get(name);
     if (!imported) return false;
-    if (!imported.spec.startsWith(".")) return imported;
+    if (imported.name === "*" || !imported.spec.startsWith(".")) return imported;
     const path = join(dirname(file), imported.spec).replaceAll("\\", "/");
     let other = scope.files.get(path);
     if (other === undefined && !scope.files.has(path)) {
@@ -421,6 +436,13 @@ function modelOf(info: FileModels, file: string, name: string, scope: Scope): bo
   }
 }
 
+/** Whether some class extends a name bound by a relative import, which the resolver could follow. */
+function extendsRelative(src: string, head: Imports, resolve: ModelResolver | undefined): boolean {
+  if (!resolve) return false;
+  for (const m of src.matchAll(/\bextends\s+([\w$]+)/g)) if (head.imports.get(m[1]!)?.spec.startsWith(".")) return true;
+  return false;
+}
+
 /**
  * Every plain field of a model class — one extending the runtime `Model`, or another model of the
  * same file or of a relative module — becomes a `#private` slot with a getter that reports the read
@@ -429,12 +451,12 @@ function modelOf(info: FileModels, file: string, name: string, scope: Scope): bo
  * line, and the modifiers it takes over are blanked, so source maps stay exact. A model class this
  * scanner cannot rewrite is left alone, with a warning naming `file`.
  */
-export function trackModelFields(src: string, file?: string, resolve?: ModelResolver): string {
+export function trackModelFields(src: string, file?: string, resolve?: ModelResolver, files: Map<string, FileModels | undefined> = new Map()): string {
   if (!src.includes("extends")) return src;
-  const info = fileModels(src);
-  const relatives = resolve !== undefined && [...info.imports.values()].some((i) => i.spec.startsWith("."));
-  if (info.model.size === 0 && !relatives) return src;
-  const scope: Scope = { resolve, files: new Map(), open: new Set() };
+  const head = fileImports(src);
+  if (head.model.size === 0 && !extendsRelative(src, head, resolve)) return src;
+  const info = fileModels(src, head);
+  const scope: Scope = { resolve, files, open: new Set() };
   const from = file ?? "";
   let out = "";
   let copied = 0;
@@ -452,7 +474,10 @@ export function trackModelFields(src: string, file?: string, resolve?: ModelReso
         const name = head.name || "an anonymous class";
         const derived = !info.model.has(head.base);
         if (kind !== true) {
-          warn(src, i, file, `${name} is not tracked: its base ${head.base} comes from "${kind.spec}" and could not be followed`);
+          // A package base only matters to a file that uses the model runtime.
+          if (kind.spec.startsWith(".") || [...info.imports.values()].some((i) => i.spec === MODEL)) {
+            warn(src, i, file, `${name} is not tracked: its base ${head.base} comes from "${kind.spec}" and could not be followed`);
+          }
         } else if (derived && !head.name) {
           warn(src, i, file, `${name} is not tracked: name it, so its fields can follow ${head.base}'s`);
         } else {
@@ -717,7 +742,8 @@ function classBody(src: string, head: ClassHead, fields: Field[], hasCtor: boole
   const names = fields.map((field) => JSON.stringify(field.name)).join(", ");
   // A derived class's fields continue after its base's, a count only the base knows: `$define` returns it.
   // The call stays in a static block, which runs after the member decorators `$define` takes over.
-  const at = derived ? `${head.name}.#at + ` : "";
+  const slot = derived ? privateName(src.slice(head.open, head.close), fields) : "";
+  const at = derived ? `${head.name}.#${slot} + ` : "";
   let out = hasCtor || !head.name ? "" : ` constructor(data?: object) { super(data); if (new.target === ${head.name}) this.assign(data); }`;
   let copied = head.open + 1;
   fields.forEach((field, index) => {
@@ -743,8 +769,15 @@ function classBody(src: string, head: ClassHead, fields: Field[], hasCtor: boole
     out += ` ${access}set ${field.name}(v${type && `: ${type}`}) { const p = this.#${field.name}; if (${head.model}.same(p, v)) return; this.#${field.name} = v; this.$changed(${at}${index}, p); }`;
     copied = field.end;
   });
-  const define = `static { ${derived ? "this.#at = " : ""}${head.model}.$define(this, [${names}]); } `;
-  return `${out}${src.slice(copied, head.close)}${derived ? "static #at = 0; " : ""}${define}}`;
+  const define = `static { ${derived ? `this.#${slot} = ` : ""}${head.model}.$define(this, [${names}]); } `;
+  return `${out}${src.slice(copied, head.close)}${derived ? `static #${slot} = 0; ` : ""}${define}}`;
+}
+
+/** `at`, else `at$`, `at$$`...: not a tracked field (its slot is `#name`) and not a `#name` the class declares. */
+function privateName(body: string, fields: Field[]): string {
+  let name = "at";
+  while (fields.some((f) => f.name === name) || new RegExp(`#${name.replaceAll("$", "\\$")}(?![\\w$])`).test(body)) name += "$";
+  return name;
 }
 
 const IMPORT_CLAUSE = /^import\s+([^"']+?)\s+from\s*["'][^"']+["']/gm;
@@ -936,10 +969,11 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
   const originals = new Map<string, string>();
   // Sources of the modules a model's `extends` is followed into, read once each.
   const bases = new Map<string, string | undefined>();
+  const models = new Map<string, FileModels | undefined>();
   const readBase = (spec: string, from: string): string | undefined => {
     const dir = dirname(resolve(root, from));
     const path = tryResolve(spec, dir) ?? tryResolve(spec, mirroredDir(dir, root));
-    if (!path || !inProject(path, root)) return undefined;
+    if (!path || !rewritable(path, root)) return undefined;
     if (!bases.has(path)) bases.set(path, existsSync(path) ? readFileSync(path, "utf8") : undefined);
     return bases.get(path);
   };
@@ -969,8 +1003,8 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
             if (path.includes("/.xzor/") && hot && path.endsWith(".xzor.ts") && inProject(args.path, root)) {
               return { contents: hotRegistration(text, relative(root, args.path).replaceAll("\\", "/")), loader: "ts" };
             }
-            if (!inProject(args.path, root) || path.includes("/node_modules/") || path.includes("/.xzor/")) return { contents: text, loader: "ts" };
-            const rewritten = trackModelFields(stripMarkerDecorators(text), relative(root, args.path).replaceAll("\\", "/"), readBase);
+            if (!rewritable(args.path, root)) return { contents: text, loader: "ts" };
+            const rewritten = trackModelFields(stripMarkerDecorators(text), relative(root, args.path).replaceAll("\\", "/"), readBase, models);
             if (rewritten !== text) originals.set(resolve(args.path), text);
             return { contents: rewritten, loader: "ts" };
           });
