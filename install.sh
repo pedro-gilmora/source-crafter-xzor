@@ -38,11 +38,13 @@ if command -v code > /dev/null; then
       profiles=$(bun -e 'const s = await Bun.file(process.argv[1]).json(); for (const p of s.userDataProfiles ?? []) if (!String(p.location).startsWith("builtin/")) console.log(p.name)' "$storage" 2> /dev/null || true)
     fi
     export NODE_NO_WARNINGS=1
-    # Before 0.1.9 the extension's id was xzor.xzor; two copies would both start a language server.
-    code --uninstall-extension xzor.xzor > /dev/null 2>&1 || true
-    while IFS= read -r name; do
-      [ -n "$name" ] && { code --profile "$name" --uninstall-extension xzor.xzor > /dev/null 2>&1 || true; }
-    done <<< "$profiles"
+    # Earlier ids of this extension (xzor.xzor, PedroGilMora.xzor); two copies would both start a language server.
+    for old in xzor.xzor PedroGilMora.xzor; do
+      code --uninstall-extension "$old" > /dev/null 2>&1 || true
+      while IFS= read -r name; do
+        [ -n "$name" ] && { code --profile "$name" --uninstall-extension "$old" > /dev/null 2>&1 || true; }
+      done <<< "$profiles"
+    done
     code --install-extension "$vsix" --force
     while IFS= read -r name; do
       [ -n "$name" ] && code --profile "$name" --install-extension "$vsix" --force
