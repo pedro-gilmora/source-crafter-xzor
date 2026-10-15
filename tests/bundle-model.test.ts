@@ -131,15 +131,79 @@ test("a bare field without a type or semicolon ends at its own line", () => {
   expect(out).toContain(`Model.$define(this, ["id", "name"])`);
 });
 
+const DERIVED = `${IMPORT}
+export class Worker extends Model {
+  name = "";
+  hours = 0;
+  rate = 1;
+}
+
+export class Manager extends Worker {
+  team = 0;
+  bonus = 0;
+}
+`;
+
+test("a class extending a model of the same file continues its base's field indexes", () => {
+  const out = trackModelFields(DERIVED, "src/models.ts");
+  expect(out.split("\n")).toHaveLength(DERIVED.split("\n").length);
+  // A direct subclass of Model always starts at 0, so its indexes stay literal.
+  expect(out).toContain(`static { Model.$define(this, ["name", "hours", "rate"]); } }`);
+  expect(out).toContain(`export class Manager extends Worker { constructor(data?: object) { super(data); if (new.target === Manager) this.assign(data); }`);
+  expect(out).toContain(`  #team = 0; get team() { Worker.$reader?.(this, Manager.#at + 0); return this.#team; } set team(v) { const p = this.#team; if (Worker.same(p, v)) return; this.#team = v; this.$changed(Manager.#at + 0, p); }\n`);
+  expect(out).toContain(`  #bonus = 0; get bonus() { Worker.$reader?.(this, Manager.#at + 1); return this.#bonus; }`);
+  expect(out).toContain(`static #at = 0; static { this.#at = Worker.$define(this, ["team", "bonus"]); } }\n`);
+});
+
+test("a base declared after its subclass is still followed", () => {
+  const src = `${IMPORT}export class Manager extends Worker {\n  team = 0;\n}\nexport class Worker extends Model {\n  name = "";\n}\n`;
+  const out = trackModelFields(src, "src/models.ts");
+  expect(out).toContain(`static { this.#at = Worker.$define(this, ["team"]); } }`);
+  expect(out).toContain(`static { Model.$define(this, ["name"]); } }`);
+});
+
+test("a base in a relative module is read through the resolver", () => {
+  const files: Record<string, string> = {
+    "./worker": `${IMPORT}export default class Worker extends Model {\n  name = "";\n}\n`,
+    "./team": `export { Lead } from "./lead";\n`,
+    "./lead": `import Worker from "./worker";\nexport class Lead extends Worker {}\n`,
+  };
+  const seen: string[] = [];
+  const resolve = (spec: string, from: string): string | undefined => {
+    seen.push(`${from}:${spec}`);
+    return files[spec];
+  };
+  const src = `import Worker from "./worker";\nimport { Lead } from "./team";\nexport class Manager extends Worker {\n  team = 0;\n}\nexport class Senior extends Lead {\n  level = 0;\n}\n`;
+  const out = trackModelFields(src, "src/manager.ts", resolve);
+  expect(out).toContain(`static { this.#at = Worker.$define(this, ["team"]); } }`);
+  expect(out).toContain(`static { this.#at = Lead.$define(this, ["level"]); } }`);
+  expect(seen.filter((s) => s.endsWith("./worker"))).toHaveLength(1); // read once, cached per resolved path
+});
+
+test("a cycle between relative modules ends the search", () => {
+  const files: Record<string, string> = { "./b": `import { A } from "./a";\nexport class B extends A {}\n`, "./a": `import { B } from "./b";\nexport class A extends B {}\n` };
+  const src = `import { A } from "./a";\nimport { Model } from "@source-crafter/xzor-runtime/model";\nexport class C extends A {\n  x = 1;\n}\n`;
+  expect(trackModelFields(src, "src/c.ts", (spec) => files[spec])).toBe(src);
+});
+
 test("a model class that is not rewritten says so on stderr", () => {
   const errors: string[] = [];
   const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => void errors.push(args.join(" ")));
   try {
-    const indirect = `${IMPORT}export class Base extends Model {\n  x = 1;\n}\nexport class Child extends Base {\n  y = 2;\n}\n`;
-    const out = trackModelFields(indirect, "src/models.ts");
-    expect(out).toContain(`static { Model.$define(this, ["x"]); } }`);
+    const unreadable = `import { Worker } from "./worker";\nexport class Manager extends Worker {\n  team = 0;\n}\n`;
+    expect(trackModelFields(unreadable, "src/manager.ts", () => undefined)).toBe(unreadable);
+    expect(errors).toEqual([`xzor: src/manager.ts:2: Manager is not tracked: its base Worker comes from "./worker" and could not be followed`]);
+
+    errors.length = 0;
+    const packaged = `${IMPORT}import { Base } from "@acme/models";\nexport class Manager extends Base {\n  team = 0;\n}\n`;
+    expect(trackModelFields(packaged, "src/manager.ts")).toBe(packaged);
+    expect(errors).toEqual([`xzor: src/manager.ts:3: Manager is not tracked: its base Base comes from "@acme/models" and could not be followed`]);
+
+    errors.length = 0;
+    const anon = `${IMPORT}export class Worker extends Model {\n  x = 1;\n}\nexport default class extends Worker {\n  y = 2;\n}\n`;
+    const out = trackModelFields(anon, "src/models.ts");
     expect(out).toContain("  y = 2;");
-    expect(errors).toEqual(["xzor: src/models.ts:5: Child is not tracked: it extends Base; only direct subclasses of Model are tracked"]);
+    expect(errors).toEqual(["xzor: src/models.ts:5: an anonymous class is not tracked: name it, so its fields can follow Worker's"]);
 
     errors.length = 0;
     const unclosed = `${IMPORT}export class Bad extends Model {\n  x = 1;\n`;
@@ -209,6 +273,25 @@ export class Contact extends Model {
 }
 
 export { State };
+export { Lead } from "./lead";
+`;
+
+const STAFF = `import { Model } from "@source-crafter/xzor-runtime/model";
+
+export class Staff extends Model {
+  name = "";
+  hours = 0;
+  rate = 1;
+}
+`;
+
+const LEAD = `import { Ignore } from "@source-crafter/xzor-runtime/model";
+import { Staff } from "./staff";
+
+export class Lead extends Staff {
+  team = 0;
+  @Ignore bonus = 0;
+}
 `;
 
 function project(): void {
@@ -235,6 +318,8 @@ function project(): void {
     }),
   );
   writeFileSync(join(dir, "main.ts"), MAIN);
+  writeFileSync(join(dir, "staff.ts"), STAFF);
+  writeFileSync(join(dir, "lead.ts"), LEAD);
 }
 
 test("a bundled model tracks its changes, and the map still points at the original source", async () => {
@@ -270,6 +355,30 @@ test("a bundled model tracks its changes, and the map still points at the origin
   const line = MAIN.split("\n").indexOf("  hours = 0;");
   const mapped = decodeMappings(map.mappings).flat();
   expect(mapped.some((seg) => seg.length >= 4 && seg[1] === source && seg[2] === line)).toBe(true);
+}, 120_000);
+
+test("a model deriving from one in another file tracks both levels", async () => {
+  project();
+  const run = Bun.spawnSync(["bun", join(repo, "src", "bundle.ts"), join(dir, "main.ts"), join(dir, "dist")], { cwd: repo });
+  expect(run.exitCode, run.stderr.toString()).toBe(0);
+
+  const { Lead, State } = await import(pathToFileURL(join(dir, "dist", "main.js")).href);
+  const lead = new Lead({ name: "Ada", hours: 2, team: 3 });
+  expect([lead.name, lead.hours, lead.rate, lead.team, lead.bonus]).toEqual(["Ada", 2, 1, 3, 0]);
+  expect(lead.hasState(State.Unchanged)).toBe(true);
+  expect(lead.hasChanges).toBe(false);
+
+  const seen: string[] = [];
+  lead.addEventListener("change", (e: { property: string }) => void seen.push(e.property));
+  lead.team = 4;
+  lead.hours = 5;
+  expect(seen).toEqual(["team", "hours"]);
+  expect(lead.changes).toMatchObject({ team: 4, hours: 5 });
+  expect(lead.toJSON()).not.toHaveProperty("bonus");
+
+  lead.revertChanges();
+  expect([lead.hours, lead.team]).toEqual([2, 3]);
+  expect(lead.hasState(State.Unchanged)).toBe(true);
 }, 120_000);
 
 test("the original source type-checks against the runtime", () => {

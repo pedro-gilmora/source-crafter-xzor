@@ -108,8 +108,8 @@ export abstract class Model extends EventTarget {
     this.#state = state ?? (data ? State.Unchanged : State.Detached);
   }
 
-  /** @internal Records the tracked fields of a class, after the ones it inherits. */
-  static $define(cls: Function, names: string[]): void {
+  /** @internal Records the tracked fields of a class, after the ones it inherits; returns where they start. */
+  static $define(cls: Function, names: string[]): number {
     const base = (cls as unknown as Record<symbol, Meta | undefined>)[meta];
     const all = base ? base.names.concat(names) : names;
     const own: Meta = {
@@ -136,6 +136,7 @@ export abstract class Model extends EventTarget {
       pendingIgnored = undefined;
     }
     Object.defineProperty(cls, meta, { value: own });
+    return base ? base.names.length : 0;
   }
 
   /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */

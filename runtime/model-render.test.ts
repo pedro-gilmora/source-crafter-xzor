@@ -27,6 +27,11 @@ class Sheet extends Model { constructor(data?: object) { super(data); this.assig
   #rows = new EntitySet<Row>(); get rows(): EntitySet<Row> { Model.$reader?.(this, 0); return this.#rows; } set rows(v: EntitySet<Row>) { const p = this.#rows; if (Model.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
 static { Model.$define(this, ["rows"]); } }
 
+// A derived model: its fields continue after its base's, at the offset `$define` returns.
+class Chore extends Row { constructor(data?: object) { super(data); if (new.target === Chore) this.assign(data); }
+  #done = false; get done(): boolean { Row.$reader?.(this, Chore.#at + 0); return this.#done; } set done(v: boolean) { const p = this.#done; if (Row.same(p, v)) return; this.#done = v; this.$changed(Chore.#at + 0, p); }
+static #at = 0; static { this.#at = Row.$define(this, ["done"]); } }
+
 let row: Row;
 let sheet: Sheet;
 let host: HTMLElement;
@@ -160,6 +165,17 @@ class Writer extends ComponentBase {
     this.count++;
     row.hours = this.count;
     b.addContent(row.label);
+  }
+}
+
+let chore: Chore;
+
+class ChoreView extends ComponentBase {
+  count = 0;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    b.addContent(`${chore.label} ${chore.done}`);
   }
 }
 
@@ -330,6 +346,22 @@ test("a change to a property no component read renders nothing", async () => {
   row.note = "x";
   await tick();
   expect(pay.count).toBe(1);
+});
+
+test("a component reading a derived field re-renders when it changes", async () => {
+  chore = new Chore({ label: "a", done: false });
+  const view = show(ChoreView);
+  expect(host.textContent).toBe("a false");
+  chore.done = true;
+  await tick();
+  expect(view.count).toBe(2);
+  expect(host.textContent).toBe("a true");
+  chore.label = "b";
+  await tick();
+  expect(view.count).toBe(3);
+  chore.note = "ignored";
+  await tick();
+  expect(view.count).toBe(3);
 });
 
 test("a component that stops showing a model stops re-rendering on its changes", async () => {
