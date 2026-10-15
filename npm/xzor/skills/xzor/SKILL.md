@@ -179,6 +179,44 @@ export class Application implements IApplication {}
 - Never call `mount()` yourself and don't give an `@inject` component a `constructor`.
 - Missing, ambiguous or cyclic services are build errors.
 
+## Models (state that tracks its changes)
+
+Use a model for data that is edited and then saved: a form, a row of a table, anything where you need "what changed", "undo" or "is it valid". For plain UI state, keep using `@code` fields.
+
+```ts
+// models/worker.ts
+import { Model, Persist, Validate, minValue, required } from "@source-crafter/xzor-runtime/model";
+
+export class Worker extends Model {
+  @Validate(required) name = "";
+  @Validate(minValue(0)) hours = 0;
+  @Persist get payment() { return this.hours * 20; }   // sent with the fields
+}
+```
+
+```xzor
+@import { EntitySet } from "@source-crafter/xzor-runtime/model"
+@import { Worker } from "../models/worker"
+@code {
+  team = EntitySet.track(Worker, [{ name: "Ada", hours: 8 }]);
+}
+@for (const w of team.view) {
+  <input type="number" @bind="w.hours" @bind:event="oninput" /> @w.payment
+  <small>@(w.errors.hours?.[0])</small>
+  <button @onclick="() => team.delete(w)">Delete</button>
+}
+<button @onclick="() => team.revertChanges()" disabled="@(!team.hasChanges)">Revert</button>
+<button @onclick="() => team.confirmChanges()" disabled="@(team.hasErrors)">Save</button>
+```
+
+- Write plain fields. The build turns them into tracked ones, and warns on stderr when a class is not tracked: fix every warning.
+- Extend `Model` directly: a class that extends another model is not tracked (v1). Build one with `new Worker(data)` (state Unchanged) or `new Worker()` (Detached; the first edit makes it Added). If you write a constructor, call `this.assign(data)` in it.
+- A component that reads a model while it renders draws again when that value changes, even if the change comes from a service or a timer. Do not call `stateHasChanged()` for models.
+- `state` (`State.Detached | Unchanged | Added | Deleted | Modified`, from `.../model`), `changes` (what to send to the server, `null` if nothing), `revertChanges()`, `confirmChanges(serverValues?)`, `markDeleted()`, `hasErrors`, `errors` (messages per field, filled after the first edit), `hasValidChanges`.
+- Decorators: `@Validate(...)`, `@Persist` (a getter sent with the fields), `@Ignore` (kept out of `changes`), `@Untracked` (a plain field). Validators: `required`, `email`, `phone`, `maxLength`, `minLength`, `requiredIdValue`, `nonZero`, `minValue`, `maxValue`.
+- `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed.
+- Needs `"ESNext.Decorators"` in the tsconfig `lib`. Not supported: plain object graphs with cycles, one set held by two models.
+
 ## Hot reload and PWA
 
 - `xzor dev` hot reload: saving a `.xzor` patches the changed components in the open page and keeps their state; other changes reload. A `#private` member, a new import or a changed base class reload too, and arrow-function fields keep old code until a reload.

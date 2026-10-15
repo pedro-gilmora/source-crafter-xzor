@@ -312,9 +312,42 @@ The build warns (never fails) when the manifest is not valid JSON, has no `name`
 
 ---
 
+## Trackable models
+
+A model is a class that knows what changed in it. Extend `Model` and write plain fields. The build makes each field watch itself.
+
+**`models/worker.ts`**
+
+```ts
+import { Model, Persist, Validate, maxValue, minValue, required } from "@source-crafter/xzor-runtime/model";
+
+export class Worker extends Model {
+  @Validate(required) name = "";
+  @Validate(minValue(0), maxValue(24)) hours = 0;
+  @Persist get payment() { return this.hours * 20; }    // sent to the server with the fields
+}
+```
+
+```ts
+const ada = new Worker({ name: "Ada", hours: 8 });   // built from server data: Unchanged
+ada.hours = 10;
+ada.state;          // State.Modified
+ada.changes;        // { state: 16, name: "Ada", hours: 10, payment: 200 }
+ada.revertChanges();  // back to 8; or ada.confirmChanges() after saving
+```
+
+- **Components update by themselves.** A component that reads `ada.hours` while it renders draws again when that value changes, from anywhere: a service, a timer or another component. Several changes in a row draw once.
+- **Checks.** `@Validate(...)` fields fill `errors` (messages per field) and `hasErrors`. `hasValidChanges` tells you when it is safe to save.
+- **Lists.** `EntitySet.track(Worker, items)` is an array of models. `delete(item)`, `view` (without deleted ones), `changes`, `hasErrors`, `revertChanges()` and `confirmChanges()` work on the whole list.
+- **Limits.** The class must extend `Model` directly. `set[i] = x` is not noticed (use `push`, `splice`, ...). Add `"ESNext.Decorators"` to `lib` in `tsconfig.json`.
+
+See [`examples/counter/pages/Team.xzor`](examples/counter/pages/Team.xzor).
+
+---
+
 ## See it all together
 
-[`examples/counter`](examples/counter) is a small app that uses every feature above: `Routes.xzor`, layouts, an admin area, typed links, an error page, async settings and scoped services. Build it with `cargo run -- build examples/counter`.
+[`examples/counter`](examples/counter) is a small app that uses every feature above: `Routes.xzor`, layouts, an admin area, typed links, an error page, async settings, scoped services and a team page with trackable models. Build it with `cargo run -- build examples/counter`.
 
 When you need the details, see the full reference: [docs/design.md](docs/design.md).
 

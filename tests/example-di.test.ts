@@ -111,6 +111,10 @@ test("the shell routes every kind of section", async () => {
   expect(document.querySelector("#app main.main")?.className).toBe("main dark");
 });
 
+test("the Team page's model is bundled with its tracked fields", async () => {
+  expect(await Bun.file(bundle).text()).toContain("$define");
+});
+
 test("the emitted provider disposes scoped services per scope and singletons at the root", async () => {
   const { SharedInstance } = await import("../runtime/index");
   const { DataServices$ } = await import(join(example, ".xzor", "services", "data.provider.ts"));

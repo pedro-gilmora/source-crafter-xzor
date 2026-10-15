@@ -249,6 +249,68 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.xzor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
 - Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
 
+## Models
+
+A model is a class that tracks its own changes, validates itself and tells the components that read it when it changes. It comes from `@source-crafter/xzor-runtime/model` (`runtime/model.ts`, `runtime/entity-set.ts`). Importing that entry is what turns on the component updates.
+
+```ts
+export class Worker extends Model {
+  name = "";
+  @Validate(minValue(0)) hours = 0;
+  @Persist get payment() { return this.hours * 20; }
+}
+```
+
+### What the build generates
+
+`src/bundle.ts` (`trackModelFields`) rewrites every plain field of a class that directly extends `Model`:
+
+- `hours = 0` becomes a `#hours` slot plus a getter and a setter. The getter reports the read to the component that is rendering. The setter does nothing when the new value is the same (`Model.same`) and otherwise calls `$changed`.
+- The class gets `static { Model.$define(this, ["name", "hours"]); }`, which lists its tracked fields. A subclass's fields come after its base's.
+- If the class has no constructor, it gets `constructor(data?) { super(data); if (new.target === X) this.assign(data); }`. A hand-written constructor must call `this.assign(data)` itself.
+- `static`, `readonly`, `declare`, `abstract`, `accessor` and `#private` fields, methods, getters and `@Untracked` fields stay plain. A model class the scanner can't rewrite (a base that is not `Model`, an odd member) is left alone, with a warning on stderr.
+- The decorators keep working on the original members: `@Validate`, `@Persist` and `@Ignore` are collected before `$define`.
+
+### How components update
+
+While a component renders, every tracked getter it reads records "this component read property N of this model". The component keeps one subscription per model, with a bit per property, and rebuilds them on each render. When a property changes, the model asks each subscribed component whether it read that property. If it did, the component is queued, and queued components render once, in a microtask. A component that already rendered after the change (its own event handler did) is skipped.
+
+This works for changes from anywhere: a service, a timer, another component. Computed getters work through the fields they read. A manual `model.dispatchEvent(new ModelChangeEvent(name, value, previous))` also re-renders the readers of `name`. Writes made during a render don't subscribe the renderer.
+
+Models are also `EventTarget`s: `change` (a `ModelChangeEvent` with `property`, `value`, `previous`) and `state` events. A model nobody watches builds no event.
+
+### State, changes and validation
+
+| Member | Meaning |
+|---|---|
+| `state` | `State.Detached` (1, built with no data), `Unchanged` (2, built from data), `Added` (4), `Deleted` (8) or `Modified` (16). A first edit moves Detached to Added and Unchanged to Modified. |
+| `hasState(flags)`, `markAdded()`, `markModified()`, `markUnchanged()`, `markDeleted()` | Test and set the state. |
+| `hasChanges`, `changes` | `changes` is `null` or `{ state, ...fields }`: every serializable field plus the nested models and sets that changed. `@Persist` getters are included, `@Ignore` members are not. `toJSON()` gives every field. |
+| `revertChanges()` | Puts the original values back. Added goes back to Detached, Deleted and Modified to Unchanged. |
+| `confirmChanges(values?)` | After saving: the current values become the originals, optionally replaced by the server's. Added and Modified become Unchanged. |
+| `@Validate(...validators)`, `errors`, `hasErrors`, `hasValidChanges` | A validator returns `true` or a message. `errors` lists the messages per validated field, but only after the model changed. A Detached or Deleted model has no errors. |
+
+Validators: `required`, `email`, `phone`, `maxLength(n)`, `minLength(n)`, `requiredIdValue`, `nonZero`, `minValue(n)`, `maxValue(n)`. `isLike(a, b)` compares with the same rule as the setter: dates by time, arrays and plain objects by content, models by identity.
+
+### EntitySet
+
+`EntitySet.track(Worker, items)` builds an array of models from server data. Its mutating methods (`push`, `splice`, `sort`, ...) keep the list it started with, so it can put it back.
+
+- `delete(...items)`: Added items leave the list, the others become Deleted, Detached ones are left alone.
+- `view`: the items that are not Deleted.
+- `hasChanges`, `changes` (the items that changed), `hasErrors`.
+- `revertChanges()`: restores the list and every item. `confirmChanges(serverItems?)` drops Deleted items and confirms the rest.
+
+A set held by a model field tells the model when it is mutated, so components that read the field draw again.
+
+### Limits
+
+- Only direct subclasses of `Model` are tracked (v1).
+- `set[i] = x` and `set.length = n` are not noticed. Use the methods.
+- A set shared by two models notifies only the last one.
+- `changes`, `same` and `isLike` don't support plain object graphs with cycles.
+- The tsconfig `lib` needs `ESNext.Decorators`.
+
 ## Build
 
 - Only `.xzor` files inside a tsconfig project are compiled. Each one produces `.xzor/<rel>.xzor.ts` plus a v3 `.xzor.ts.map`, and files are only written when their content changes.

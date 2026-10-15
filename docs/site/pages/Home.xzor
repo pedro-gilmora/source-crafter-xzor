@@ -11,7 +11,7 @@
   </p>
   <div class="actions">
     <a class="button primary" href="@href.Start()">Get started</a>
-    <a class="button" href="@href.Learn({ step: 1 })">Learn in six steps</a>
+    <a class="button" href="@href.Learn({ step: 1 })">Learn in seven steps</a>
   </div>
 </section>
 

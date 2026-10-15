@@ -12,6 +12,7 @@
     "Cascading values",
     "Pages and routing",
     "Services",
+    "Models",
   ];
 
   get title(): string {
@@ -99,6 +100,18 @@
         <p>Ask for one with <code>@@inject</code>:</p>
         <Code name="inject" />
         <p>xzor reads your types and generates the plain <code>new Database(new ConsoleLogger())</code> code. A missing service, an ambiguous one or a dependency cycle is a build error with a clear message. Async factories, keyed services and disposal work too.</p>
+        break;
+      case 7:
+        <p>A model is a class that knows what changed in it. Extend <code>Model</code> and write plain fields: the build makes each one watch itself.</p>
+        <Code name="model-worker" />
+        <p>Use it in a page. A component that reads a model draws again when the value changes, even if a service or a timer changed it.</p>
+        <Code name="model-use" />
+        <ul>
+          <li><code>state</code> tells if a model is new, changed or deleted. <code>changes</code> is what to send to the server, and <code>null</code> when nothing changed.</li>
+          <li><code>revertChanges()</code> undoes the edits. <code>confirmChanges()</code> accepts them after you save.</li>
+          <li><code>errors</code> and <code>hasErrors</code> come from the <code>@@Validate</code> checks.</li>
+          <li>A model must extend <code>Model</code> directly, and the tsconfig <code>lib</code> needs <code>"ESNext.Decorators"</code>.</li>
+        </ul>
         break;
     }
 

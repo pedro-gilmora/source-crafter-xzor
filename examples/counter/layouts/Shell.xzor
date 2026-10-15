@@ -16,6 +16,7 @@
     <NavLink href="/" match="exact">Home</NavLink>
     <NavLink href="@href.UserPage({ id: 1 })">User 1</NavLink>
     <NavLink href="@href.AdminHome()">Admin</NavLink>
+    <NavLink href="/team">Team</NavLink>
     <NavLink href="/legal/terms">Terms</NavLink>
     <NavLink href="/old-pricing">Old link</NavLink>
     <NavLink href="/boom">Broken page</NavLink>

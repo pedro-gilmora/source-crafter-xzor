@@ -52,5 +52,5 @@
     <a href="https://github.com/pedro-gilmora/source-crafter-xzor/releases" rel="external">releases page</a>.
   </p>
 
-  <a class="button primary" href="@href.Learn({ step: 1 })">Next: learn it in six steps</a>
+  <a class="button primary" href="@href.Learn({ step: 1 })">Next: learn it in seven steps</a>
 </section>

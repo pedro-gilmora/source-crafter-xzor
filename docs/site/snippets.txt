@@ -122,6 +122,29 @@ export class Application implements IApplication {}
 @inject IDatabase db
 
 <small>Connected to @db.name</small>
+--- model-worker | models/worker.ts | typescript
+import { Model, Persist, Validate, minValue, required } from "@source-crafter/xzor-runtime/model";
+
+export class Worker extends Model {
+  @Validate(required) name = "";
+  @Validate(minValue(0)) hours = 0;
+  @Persist get payment() { return this.hours * 20; }    // sent to the server with the fields
+}
+--- model-use | Team.xzor | xzor
+@import { EntitySet } from "@source-crafter/xzor-runtime/model"
+@import { Worker } from "../models/worker"
+
+@code {
+  team = EntitySet.track(Worker, [{ name: "Ada", hours: 8 }]);
+}
+
+@for (const w of team.view) {
+  <input type="number" @bind="w.hours" @bind:event="oninput" />
+  <small>@(w.errors.hours?.[0])</small>
+  <button @onclick="() => team.delete(w)">Delete</button>
+}
+<button @onclick="() => team.revertChanges()" disabled="@(!team.hasChanges)">Revert</button>
+<button @onclick="() => team.confirmChanges()" disabled="@(team.hasErrors)">Save</button>
 --- pipeline | How a component is built | shellscript
 Counter.xzor  →  xzor  →  .xzor/Counter.xzor.ts  →  tsc  →  Bun  →  dist/main.js
 --- manifest | manifest.webmanifest | json

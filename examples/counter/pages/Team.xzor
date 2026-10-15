@@ -1,0 +1,52 @@
+@page "/team"
+@import { EntitySet } from "@source-crafter/xzor-runtime/model"
+@import { Worker } from "../models/worker"
+
+@code {
+  team = EntitySet.track(Worker, [
+    { name: "Ada", hours: 8, tax: 10 },
+    { name: "Linus", hours: 6, tax: 15 },
+  ]);
+  saved = "";
+
+  add() {
+    this.team.push(new Worker().markAdded());
+  }
+
+  save() {
+    this.saved = JSON.stringify(this.team.changes, null, 2);
+    this.team.confirmChanges();
+  }
+
+  // Runs outside an event handler: the page still re-renders, because it read these models.
+  plusOneHour() {
+    setTimeout(() => {
+      for (const worker of this.team.view) worker.hours += 1;
+    }, 500);
+  }
+}
+
+<div class="team">
+  <h2>Team</h2>
+  @for (const worker of team.view) {
+    <div class="worker" @key="worker">
+      <input class="name" @bind="worker.name" @bind:event="oninput" />
+      <input class="hours" type="number" @bind="worker.hours" @bind:event="oninput" />
+      <input class="tax" type="number" @bind="worker.tax" @bind:event="oninput" />
+      <span class="payment">@worker.payment.toFixed(2)</span>
+      <button class="delete" @onclick="() => team.delete(worker)">Delete</button>
+      @for (const [field, messages] of Object.entries(worker.errors)) {
+        @if (messages.length > 0) {
+          <small class="error">@field: @messages[0]</small>
+        }
+      }
+    </div>
+  }
+  <button class="add" @onclick="add">Add</button>
+  <button class="revert" @onclick="() => team.revertChanges()" disabled="@(!team.hasChanges)">Revert</button>
+  <button class="save" @onclick="save" disabled="@(!team.hasChanges || team.hasErrors)">Save</button>
+  <button class="plus" @onclick="plusOneHour">+1 hour to everyone</button>
+  @if (saved) {
+    <pre class="saved">@saved</pre>
+  }
+</div>
