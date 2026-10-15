@@ -10,6 +10,8 @@
 //
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
 
+export { EntitySet } from "./entity-set";
+
 export enum State {
   /** Created on the client and never sent. */
   Detached = 1,
@@ -290,16 +292,19 @@ export abstract class Model extends EventTarget {
    * initialized once its own initializers have run.
    */
   protected assign(data?: object): this {
-    if (!data) return this;
-    const tracked = metaOf(this).tracked;
-    const source = data as Record<string, unknown>;
+    const names = metaOf(this).names;
     const target = this as unknown as Record<string, unknown>;
-    silent++;
-    try {
-      for (const name in source) if (tracked.has(name)) target[name] = source[name];
-    } finally {
-      silent--;
+    if (data) {
+      const tracked = metaOf(this).tracked;
+      const source = data as Record<string, unknown>;
+      silent++;
+      try {
+        for (const name in source) if (tracked.has(name)) target[name] = source[name];
+      } finally {
+        silent--;
+      }
     }
+    for (let i = 0; i < names.length; i++) attach(target[names[i]!], this, i);
     return this;
   }
 
@@ -359,7 +364,16 @@ export abstract class Model extends EventTarget {
     if (!(name in originals)) originals[name] = previous;
     if ((this.#state & State.Detached) !== 0) this.state = State.Added;
     else if ((this.#state & State.Unchanged) !== 0) this.state = State.Modified;
-    this.#emit(name, (this as unknown as Record<string, unknown>)[name], previous);
+    const value = (this as unknown as Record<string, unknown>)[name];
+    attach(value, this, index);
+    this.#emit(name, value, previous);
+  }
+
+  /** @internal A set on a tracked field was mutated: it keeps its own state, the model only tells its listeners. */
+  $touched(index: number): void {
+    const name = metaOf(this).names[index]!;
+    const value = (this as unknown as Record<string, unknown>)[name];
+    this.#emit(name, value, value);
   }
 
   // Listeners run outside silent mode, so their own writes are tracked.
@@ -418,6 +432,14 @@ export function Untracked(_value: undefined, _context: ClassFieldDecoratorContex
 /** @see Model.same */
 export function isLike(a: unknown, b: unknown): boolean {
   return Model.same(a, b);
+}
+
+// A set on a tracked field learns which model and property hold it.
+function attach(value: unknown, owner: Model, index: number): void {
+  if (value !== null && typeof value === "object") {
+    const set = value as { $own?: (owner: Model, index: number) => void };
+    if (typeof set.$own === "function") set.$own(owner, index);
+  }
 }
 
 // Models and sets answer `hasChanges`, `changes`, `revertChanges` and `confirmChanges` themselves.

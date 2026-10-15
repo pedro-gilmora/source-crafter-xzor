@@ -9,7 +9,7 @@ class Address extends Model { constructor(data?: object) { super(data); this.ass
   #zip = ""; get zip(): string { return this.#zip; } set zip(v: string) { const p = this.#zip; if (Model.same(p, v)) return; this.#zip = v; this.$changed(1, p); }
 static { Model.$define(this, ["city", "zip"]); } }
 
-class Worker extends Model { constructor(data?: object) { super(data); this.assign(data); }
+class Worker extends Model { constructor(data?: object) { super(data); if (new.target === Worker) this.assign(data); }
   #name = ""; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
   #hours = 0; get hours(): number { return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
   #hired: Date | null = null; get hired(): Date | null { return this.#hired; } set hired(v: Date | null) { const p = this.#hired; if (Model.same(p, v)) return; this.#hired = v; this.$changed(2, p); }
@@ -343,7 +343,7 @@ test("isLike compares primitives, dates, arrays, plain objects and models", () =
 });
 
 test("a subclass tracks its own fields and the inherited ones", () => {
-  class Manager extends Worker {
+  class Manager extends Worker { constructor(data?: object) { super(data); if (new.target === Manager) this.assign(data); }
     #reports = 0; get reports(): number { return this.#reports; } set reports(v: number) { const p = this.#reports; if (Model.same(p, v)) return; this.#reports = v; this.$changed(6, p); }
   static { Model.$define(this, ["reports"]); } }
 
