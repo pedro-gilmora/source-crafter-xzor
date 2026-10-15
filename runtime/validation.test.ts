@@ -149,6 +149,36 @@ test("hasValidChanges needs changes and no errors", () => {
   expect(worker.hasValidChanges).toBe(false);
 });
 
+test("hasValidChanges skips the validators of an unchanged model", () => {
+  let calls = 0;
+  const counted: Validator = () => (calls++, true);
+  class Counted extends Model { constructor(data?: object) { super(data); this.assign(data); }
+    #n = 0; @Validate(counted) get n(): number { return this.#n; } set n(v: number) { const p = this.#n; if (Model.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+  static { Model.$define(this, ["n"]); } }
+  const row = new Counted({ n: 1 });
+  expect(row.hasValidChanges).toBe(false);
+  expect(calls).toBe(0);
+  row.n = 2;
+  expect(row.hasValidChanges).toBe(true);
+  expect(calls).toBe(1);
+});
+
+function took(run: () => void): number {
+  const start = performance.now();
+  run();
+  return performance.now() - start;
+}
+
+test("adversarial phone and e-mail values fail fast", () => {
+  const bad = "1".repeat(30) + "!";
+  expect(took(() => expect(phone(bad)).toBe("Field should be a valid phone"))).toBeLessThan(50);
+  const host = "a@" + "a.".repeat(30) + "!";
+  expect(took(() => expect(email(host)).toBe("Field should be a valid e-mail"))).toBeLessThan(50);
+  expect(email("a@b..com")).toBe("Field should be a valid e-mail");
+  expect(email("a@b.com")).toBe(true);
+  expect(email("a".repeat(250) + "@b.co")).toBe("Field should be a valid e-mail");
+});
+
 test("the validators say pass with true and fail with the message", () => {
   expect(required("a")).toBe(true);
   expect(required(0)).toBe(true);

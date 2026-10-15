@@ -40,7 +40,7 @@ type Meta = {
   tracked: Set<string>;
   persisted: string[];
   ignored: Set<string>;
-  validators: Map<string, Validator[]>;
+  validators: [string, Validator[]][];
   serialized?: string[];
 };
 
@@ -56,7 +56,7 @@ type Watch = {
 };
 
 const meta = Symbol("xzor.model.meta");
-const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), validators: new Map(), serialized: [] };
+const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), validators: [], serialized: [] };
 
 // A class's member decorators all run before its `$define`, which takes these over.
 let pendingPersist: string[] | undefined;
@@ -99,14 +99,13 @@ export abstract class Model extends EventTarget {
       tracked: new Set(all),
       persisted: base ? base.persisted.slice() : [],
       ignored: new Set(base?.ignored),
-      validators: new Map(),
+      validators: base ? base.validators.map(([name, list]) => [name, list.slice()]) : [],
     };
-    if (base) for (const [name, list] of base.validators) own.validators.set(name, list.slice());
     if (pendingValidators) {
       for (const [name, list] of pendingValidators) {
-        const known = own.validators.get(name);
-        if (known) known.push(...list);
-        else own.validators.set(name, list);
+        const known = own.validators.find((entry) => entry[0] === name);
+        if (known) known[1].push(...list);
+        else own.validators.push([name, list]);
       }
       pendingValidators = undefined;
     }
@@ -165,8 +164,10 @@ export abstract class Model extends EventTarget {
     if ((this.#state & (State.Detached | State.Deleted)) !== 0) return false;
     const own = metaOf(this);
     const values = this as unknown as Record<string, unknown>;
-    for (const [name, list] of own.validators)
+    for (let i = 0; i < own.validators.length; i++) {
+      const [name, list] = own.validators[i];
       for (const validate of list) if (typeof validate(values[name], this) === "string") return true;
+    }
     for (const name of own.names) if (valueHasErrors(values[name])) return true;
     return false;
   }
@@ -177,7 +178,9 @@ export abstract class Model extends EventTarget {
     if ((this.#state & (State.Detached | State.Deleted)) !== 0) return result;
     if (this.#originals === undefined && (this.#state & (State.Added | State.Modified)) === 0) return result;
     const values = this as unknown as Record<string, unknown>;
-    for (const [name, list] of metaOf(this).validators) {
+    const validators = metaOf(this).validators;
+    for (let i = 0; i < validators.length; i++) {
+      const [name, list] = validators[i];
       const messages = (result[name] = [] as string[]);
       for (const validate of list) {
         const message = validate(values[name], this);
@@ -188,7 +191,7 @@ export abstract class Model extends EventTarget {
   }
 
   get hasValidChanges(): boolean {
-    return !this.hasErrors && this.hasChanges;
+    return this.hasChanges && !this.hasErrors;
   }
 
   /** What to send to the server: every primitive plus the nested models and sets that changed, or `null`. */
@@ -462,12 +465,14 @@ function revertValue(value: unknown): void {
 export const required = (value: any): true | string =>
   value !== undefined && value !== null && (typeof value !== "string" || value.trim() !== "") ? true : "Field is required";
 
-// Same pattern as the original e-mail validator.
-const emailTest = /^((([a-z]|\d|[!#$%&'*+\-\/=?^_`{|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+(\.([a-z]|\d|[!#$%&'*+\-\/=?^_`{|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+)*)|((\x22)(((([\x20\x09])*(\x0d\x0a))?([\x20\x09])+)?(([\x01-\x08\x0b\x0c\x0e-\x1f\x7f]|\x21|[\x23-\x5b]|[\x5d-\x7e]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(\\([\x01-\x09\x0b\x0c\x0d-\x7f]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF]))))*((([\x20\x09])*(\x0d\x0a))?([\x20\x09])+)?(\x22)))@((([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.)+(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.?$/;
+// The original e-mail pattern, minus `.` inside domain labels so it cannot backtrack exponentially.
+const emailTest = /^((([a-z]|\d|[!#$%&'*+\-\/=?^_`{|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+(\.([a-z]|\d|[!#$%&'*+\-\/=?^_`{|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+)*)|((\x22)(((([\x20\x09])*(\x0d\x0a))?([\x20\x09])+)?(([\x01-\x08\x0b\x0c\x0e-\x1f\x7f]|\x21|[\x23-\x5b]|[\x5d-\x7e]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(\\([\x01-\x09\x0b\x0c\x0d-\x7f]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF]))))*((([\x20\x09])*(\x0d\x0a))?([\x20\x09])+)?(\x22)))@((([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.)+(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.?$/;
 
-export const email: Validator = (value) => (emailTest.test(value ?? "") ? true : "Field should be a valid e-mail");
+export const email: Validator = (value) =>
+  (value ?? "").length <= 254 && emailTest.test(value ?? "") ? true : "Field should be a valid e-mail";
 
-const phoneTest = /^(\+\s?)?((?<!\+.*)\(\+?\d+([\s\-.]?\d+)?\)|\d+)([\s\-.]?(\(\d+([\s\-.]?\d+)?\)|\d+))*(\s?(x|ext\.?)\s?\d+)?$/i;
+// Written so each digit has one way to match, to avoid backtracking.
+const phoneTest = /^(\+\s?)?((?<!\+.*)\(\+?\d+([\s\-.]?\d+)?\)|\d)(?:\d|[\s\-.]\d|[\s\-.]?\(\d+(?:[\s\-.]?\d+)?\))*(\s?(x|ext\.?)\s?\d+)?$/i;
 
 /** A missing phone is valid: pair it with `required`. */
 export function isValidPhone(value: string | null | undefined): boolean {
