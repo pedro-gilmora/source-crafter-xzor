@@ -22,9 +22,9 @@ import {
 const validNumber: Validator = (v, model) => model.state === State.Detached || v > 0 || "Field should be > 0";
 
 class Worker extends Model { constructor(data?: object) { super(data); this.assign(data); }
-  #name = ""; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-  #hours = 0; @Validate(validNumber) get hours(): number { return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
-  #tax = 0; @Validate(validNumber) get tax(): number { return this.#tax; } set tax(v: number) { const p = this.#tax; if (Model.same(p, v)) return; this.#tax = v; this.$changed(2, p); }
+  #name = ""; get name(): string { Model.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+  #hours = 0; @Validate(validNumber) get hours(): number { Model.$reader?.(this, 1); return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
+  #tax = 0; @Validate(validNumber) get tax(): number { Model.$reader?.(this, 2); return this.#tax; } set tax(v: number) { const p = this.#tax; if (Model.same(p, v)) return; this.#tax = v; this.$changed(2, p); }
 
   @Persist get payment(): number {
     return this.hours * this.tax;
@@ -32,18 +32,18 @@ class Worker extends Model { constructor(data?: object) { super(data); this.assi
 static { Model.$define(this, ["name", "hours", "tax"]); } }
 
 class Order extends Model { constructor(data?: object) { super(data); this.assign(data); }
-  #worker = new Worker(); get worker(): Worker { return this.#worker; } set worker(v: Worker) { const p = this.#worker; if (Model.same(p, v)) return; this.#worker = v; this.$changed(0, p); }
-  #crew: Worker[] = []; get crew(): Worker[] { return this.#crew; } set crew(v: Worker[]) { const p = this.#crew; if (Model.same(p, v)) return; this.#crew = v; this.$changed(1, p); }
-  #dates: Record<string, Date> = {}; get dates(): Record<string, Date> { return this.#dates; } set dates(v: Record<string, Date>) { const p = this.#dates; if (Model.same(p, v)) return; this.#dates = v; this.$changed(2, p); }
+  #worker = new Worker(); get worker(): Worker { Model.$reader?.(this, 0); return this.#worker; } set worker(v: Worker) { const p = this.#worker; if (Model.same(p, v)) return; this.#worker = v; this.$changed(0, p); }
+  #crew: Worker[] = []; get crew(): Worker[] { Model.$reader?.(this, 1); return this.#crew; } set crew(v: Worker[]) { const p = this.#crew; if (Model.same(p, v)) return; this.#crew = v; this.$changed(1, p); }
+  #dates: Record<string, Date> = {}; get dates(): Record<string, Date> { Model.$reader?.(this, 2); return this.#dates; } set dates(v: Record<string, Date>) { const p = this.#dates; if (Model.same(p, v)) return; this.#dates = v; this.$changed(2, p); }
 static { Model.$define(this, ["worker", "crew", "dates"]); } }
 
 // Decorators on one getter run bottom to top, so `maxValue` reports before `minValue`.
 class Gauge extends Model { constructor(data?: object) { super(data); if (new.target === Gauge) this.assign(data); }
-  #level = 0; @Validate(minValue(5)) @Validate(maxValue(3)) get level(): number { return this.#level; } set level(v: number) { const p = this.#level; if (Model.same(p, v)) return; this.#level = v; this.$changed(0, p); }
+  #level = 0; @Validate(minValue(5)) @Validate(maxValue(3)) get level(): number { Model.$reader?.(this, 0); return this.#level; } set level(v: number) { const p = this.#level; if (Model.same(p, v)) return; this.#level = v; this.$changed(0, p); }
 static { Model.$define(this, ["level"]); } }
 
 class Strict extends Gauge { constructor(data?: object) { super(data); if (new.target === Strict) this.assign(data); }
-  #label = ""; @Validate(required) get label(): string { return this.#label; } set label(v: string) { const p = this.#label; if (Model.same(p, v)) return; this.#label = v; this.$changed(1, p); }
+  #label = ""; @Validate(required) get label(): string { Model.$reader?.(this, 1); return this.#label; } set label(v: string) { const p = this.#label; if (Model.same(p, v)) return; this.#label = v; this.$changed(1, p); }
 static { Model.$define(this, ["label"]); } }
 
 test("a Detached model has no errors, even with invalid values", () => {
@@ -93,7 +93,7 @@ test("a validator receives the value and the model", () => {
   const seen: unknown[][] = [];
   const spy: Validator = (v, m) => (seen.push([v, m]), true);
   class Spy extends Model { constructor(data?: object) { super(data); this.assign(data); }
-    #x = 7; @Validate(spy) get x(): number { return this.#x; } set x(v: number) { const p = this.#x; if (Model.same(p, v)) return; this.#x = v; this.$changed(0, p); }
+    #x = 7; @Validate(spy) get x(): number { Model.$reader?.(this, 0); return this.#x; } set x(v: number) { const p = this.#x; if (Model.same(p, v)) return; this.#x = v; this.$changed(0, p); }
   static { Model.$define(this, ["x"]); } }
   const model = new Spy({});
   void model.hasErrors;
@@ -153,7 +153,7 @@ test("hasValidChanges skips the validators of an unchanged model", () => {
   let calls = 0;
   const counted: Validator = () => (calls++, true);
   class Counted extends Model { constructor(data?: object) { super(data); this.assign(data); }
-    #n = 0; @Validate(counted) get n(): number { return this.#n; } set n(v: number) { const p = this.#n; if (Model.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    #n = 0; @Validate(counted) get n(): number { Model.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Model.same(p, v)) return; this.#n = v; this.$changed(0, p); }
   static { Model.$define(this, ["n"]); } }
   const row = new Counted({ n: 1 });
   expect(row.hasValidChanges).toBe(false);

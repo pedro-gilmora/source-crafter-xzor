@@ -5,12 +5,12 @@ import { EntitySet, Model, ModelChangeEvent, State, Validate, required } from ".
 // package entry, so a cycle between `model.ts` and `entity-set.ts` would break these tests.
 
 class Task extends Model { constructor(data?: object) { super(data); this.assign(data); }
-  #title = ""; @Validate(required) get title(): string { return this.#title; } set title(v: string) { const p = this.#title; if (Model.same(p, v)) return; this.#title = v; this.$changed(0, p); }
+  #title = ""; @Validate(required) get title(): string { Model.$reader?.(this, 0); return this.#title; } set title(v: string) { const p = this.#title; if (Model.same(p, v)) return; this.#title = v; this.$changed(0, p); }
 static { Model.$define(this, ["title"]); } }
 
 class Board extends Model { constructor(data?: object) { super(data); this.assign(data); }
-  #name = ""; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-  #items = new EntitySet<Task>(); get items(): EntitySet<Task> { return this.#items; } set items(v: EntitySet<Task>) { const p = this.#items; if (Model.same(p, v)) return; this.#items = v; this.$changed(1, p); }
+  #name = ""; get name(): string { Model.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+  #items = new EntitySet<Task>(); get items(): EntitySet<Task> { Model.$reader?.(this, 1); return this.#items; } set items(v: EntitySet<Task>) { const p = this.#items; if (Model.same(p, v)) return; this.#items = v; this.$changed(1, p); }
 static { Model.$define(this, ["name", "items"]); } }
 
 test("a tracked set holds the server items unchanged", () => {

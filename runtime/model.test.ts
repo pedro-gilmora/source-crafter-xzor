@@ -5,17 +5,17 @@ import { Ignore, Model, ModelChangeEvent, Persist, State, Untracked, isLike } fr
 // getter and a setter on the prototype, a `$define` static block and a constructor (Task 2 emits these).
 
 class Address extends Model { constructor(data?: object) { super(data); this.assign(data); }
-  #city = ""; get city(): string { return this.#city; } set city(v: string) { const p = this.#city; if (Model.same(p, v)) return; this.#city = v; this.$changed(0, p); }
-  #zip = ""; get zip(): string { return this.#zip; } set zip(v: string) { const p = this.#zip; if (Model.same(p, v)) return; this.#zip = v; this.$changed(1, p); }
+  #city = ""; get city(): string { Model.$reader?.(this, 0); return this.#city; } set city(v: string) { const p = this.#city; if (Model.same(p, v)) return; this.#city = v; this.$changed(0, p); }
+  #zip = ""; get zip(): string { Model.$reader?.(this, 1); return this.#zip; } set zip(v: string) { const p = this.#zip; if (Model.same(p, v)) return; this.#zip = v; this.$changed(1, p); }
 static { Model.$define(this, ["city", "zip"]); } }
 
 class Worker extends Model { constructor(data?: object) { super(data); this.assign(data); }
-  #name = ""; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-  #hours = 0; get hours(): number { return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
-  #hired: Date | null = null; get hired(): Date | null { return this.#hired; } set hired(v: Date | null) { const p = this.#hired; if (Model.same(p, v)) return; this.#hired = v; this.$changed(2, p); }
-  #tags: string[] = []; get tags(): string[] { return this.#tags; } set tags(v: string[]) { const p = this.#tags; if (Model.same(p, v)) return; this.#tags = v; this.$changed(3, p); }
-  #secret = ""; @Ignore get secret(): string { return this.#secret; } set secret(v: string) { const p = this.#secret; if (Model.same(p, v)) return; this.#secret = v; this.$changed(4, p); }
-  #address = new Address(); get address(): Address { return this.#address; } set address(v: Address) { const p = this.#address; if (Model.same(p, v)) return; this.#address = v; this.$changed(5, p); }
+  #name = ""; get name(): string { Model.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+  #hours = 0; get hours(): number { Model.$reader?.(this, 1); return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
+  #hired: Date | null = null; get hired(): Date | null { Model.$reader?.(this, 2); return this.#hired; } set hired(v: Date | null) { const p = this.#hired; if (Model.same(p, v)) return; this.#hired = v; this.$changed(2, p); }
+  #tags: string[] = []; get tags(): string[] { Model.$reader?.(this, 3); return this.#tags; } set tags(v: string[]) { const p = this.#tags; if (Model.same(p, v)) return; this.#tags = v; this.$changed(3, p); }
+  #secret = ""; @Ignore get secret(): string { Model.$reader?.(this, 4); return this.#secret; } set secret(v: string) { const p = this.#secret; if (Model.same(p, v)) return; this.#secret = v; this.$changed(4, p); }
+  #address = new Address(); get address(): Address { Model.$reader?.(this, 5); return this.#address; } set address(v: Address) { const p = this.#address; if (Model.same(p, v)) return; this.#address = v; this.$changed(5, p); }
   @Untracked note = "";
 
   @Persist get payment(): number {
@@ -25,8 +25,8 @@ static { Model.$define(this, ["name", "hours", "hired", "tags", "secret", "addre
 
 // Fields named like `Object.prototype` members must not be confused with it.
 class Odd extends Model { constructor(data?: object) { super(data); this.assign(data); }
-  #toString = ""; get toString(): string { return this.#toString; } set toString(v: string) { const p = this.#toString; if (Model.same(p, v)) return; this.#toString = v; this.$changed(0, p); }
-  #hasOwnProperty = ""; get hasOwnProperty(): string { return this.#hasOwnProperty; } set hasOwnProperty(v: string) { const p = this.#hasOwnProperty; if (Model.same(p, v)) return; this.#hasOwnProperty = v; this.$changed(1, p); }
+  #toString = ""; get toString(): string { Model.$reader?.(this, 0); return this.#toString; } set toString(v: string) { const p = this.#toString; if (Model.same(p, v)) return; this.#toString = v; this.$changed(0, p); }
+  #hasOwnProperty = ""; get hasOwnProperty(): string { Model.$reader?.(this, 1); return this.#hasOwnProperty; } set hasOwnProperty(v: string) { const p = this.#hasOwnProperty; if (Model.same(p, v)) return; this.#hasOwnProperty = v; this.$changed(1, p); }
 static { Model.$define(this, ["toString", "hasOwnProperty"]); } }
 
 test("a model built without data is Detached and its first change makes it Added", () => {
@@ -344,7 +344,7 @@ test("isLike compares primitives, dates, arrays, plain objects and models", () =
 
 test("a subclass tracks its own fields and the inherited ones", () => {
   class Manager extends Worker { constructor(data?: object) { super(data); this.assign(data); }
-    #reports = 0; get reports(): number { return this.#reports; } set reports(v: number) { const p = this.#reports; if (Model.same(p, v)) return; this.#reports = v; this.$changed(6, p); }
+    #reports = 0; get reports(): number { Model.$reader?.(this, 6); return this.#reports; } set reports(v: number) { const p = this.#reports; if (Model.same(p, v)) return; this.#reports = v; this.$changed(6, p); }
   static { Model.$define(this, ["reports"]); } }
 
   const manager = new Manager({ name: "Ada" });
@@ -359,7 +359,7 @@ test("a subclass tracks its own fields and the inherited ones", () => {
 
 test("an unguarded base constructor does not throw before the subclass fields exist", () => {
   class Manager extends Worker { constructor(data?: object) { super(data); this.assign(data); }
-    #reports = 0; get reports(): number { return this.#reports; } set reports(v: number) { const p = this.#reports; if (Model.same(p, v)) return; this.#reports = v; this.$changed(6, p); }
+    #reports = 0; get reports(): number { Model.$reader?.(this, 6); return this.#reports; } set reports(v: number) { const p = this.#reports; if (Model.same(p, v)) return; this.#reports = v; this.$changed(6, p); }
   static { Model.$define(this, ["reports"]); } }
 
   const manager = new Manager({ name: "Ada", hours: 4, reports: 3 });

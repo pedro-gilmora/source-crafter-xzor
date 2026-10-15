@@ -663,9 +663,31 @@ function removeAttr(el: Element, name: string): void {
   if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = false;
 }
 
+/** What `@source-crafter/xzor-runtime/model` installs to learn which models a render read. */
+export type RenderObserver = {
+  begin(component: ComponentBase): void;
+  end(component: ComponentBase): void;
+  dispose(component: ComponentBase): void;
+};
+
+let observer: RenderObserver | undefined;
+
+/** @internal Set by the model entry; the renderer costs one null check while none is installed. */
+export function setRenderObserver(o: RenderObserver | undefined): void {
+  observer = o;
+}
+
 function render(component: ComponentBase): VNode[] {
   const builder = new RenderTreeBuilder(component);
-  hooks(component).buildRenderTree(builder);
+  if (observer === undefined) hooks(component).buildRenderTree(builder);
+  else {
+    observer.begin(component);
+    try {
+      hooks(component).buildRenderTree(builder);
+    } finally {
+      observer.end(component);
+    }
+  }
   return builder.nodes;
 }
 
@@ -1014,6 +1036,7 @@ function dispose(v: VNode): void {
 }
 
 function disposeInstance(c: ComponentBase): void {
+  observer?.dispose(c);
   (c as Routed)[ROUTER]?.off?.();
   hooks(c).dispose();
   const d = c as unknown as Record<symbol, (() => unknown) | undefined>;

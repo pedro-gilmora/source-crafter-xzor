@@ -24,8 +24,8 @@ export class Worker extends Model {
 
 const WORKER_OUT = `${IMPORT}
 export class Worker extends Model { constructor(data?: object) { super(data); if (new.target === Worker) this.assign(data); }
-  #name: string = ""; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-          #hours: number = 0; @Ignore get hours(): number { return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
+  #name: string = ""; get name(): string { Model.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+          #hours: number = 0; @Ignore get hours(): number { Model.$reader?.(this, 1); return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
 
   @Persist get payment(): number {
     return this.hours * 10;
@@ -66,14 +66,14 @@ export class Odd extends Model {
 test("keyword-ish names, multi-line and arrow initializers, optional and definite fields", () => {
   const out = trackModelFields(SHAPES);
   expect(out.split("\n")).toHaveLength(SHAPES.split("\n").length);
-  expect(out).toContain(`  #get = 1; get get() { return this.#get; } set get(v) { const p = this.#get; if (Model.same(p, v)) return; this.#get = v; this.$changed(0, p); }\n`);
-  expect(out).toContain(`  #static = 2; get static() { return this.#static; } set static(v) { const p = this.#static; if (Model.same(p, v)) return; this.#static = v; this.$changed(1, p); }\n`);
-  expect(out).toContain(`  #note: string | undefined; get note(): string | undefined { return this.#note; } set note(v: string | undefined) { const p = this.#note; if (Model.same(p, v)) return; this.#note = v; this.$changed(2, p); }\n`);
-  expect(out).toContain(`  #id!: number; get id(): number { return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(3, p); }\n`);
-  expect(out).toContain(`  #config = {\n    a: 1,\n  }; get config() { return this.#config; } set config(v) { const p = this.#config; if (Model.same(p, v)) return; this.#config = v; this.$changed(4, p); }\n`);
-  expect(out).toContain(`  #calc = (x: number) => x * 2; get calc() { return this.#calc; } set calc(v) { const p = this.#calc; if (Model.same(p, v)) return; this.#calc = v; this.$changed(5, p); }\n`);
+  expect(out).toContain(`  #get = 1; get get() { Model.$reader?.(this, 0); return this.#get; } set get(v) { const p = this.#get; if (Model.same(p, v)) return; this.#get = v; this.$changed(0, p); }\n`);
+  expect(out).toContain(`  #static = 2; get static() { Model.$reader?.(this, 1); return this.#static; } set static(v) { const p = this.#static; if (Model.same(p, v)) return; this.#static = v; this.$changed(1, p); }\n`);
+  expect(out).toContain(`  #note: string | undefined; get note(): string | undefined { Model.$reader?.(this, 2); return this.#note; } set note(v: string | undefined) { const p = this.#note; if (Model.same(p, v)) return; this.#note = v; this.$changed(2, p); }\n`);
+  expect(out).toContain(`  #id!: number; get id(): number { Model.$reader?.(this, 3); return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(3, p); }\n`);
+  expect(out).toContain(`  #config = {\n    a: 1,\n  }; get config() { Model.$reader?.(this, 4); return this.#config; } set config(v) { const p = this.#config; if (Model.same(p, v)) return; this.#config = v; this.$changed(4, p); }\n`);
+  expect(out).toContain(`  #calc = (x: number) => x * 2; get calc() { Model.$reader?.(this, 5); return this.#calc; } set calc(v) { const p = this.#calc; if (Model.same(p, v)) return; this.#calc = v; this.$changed(5, p); }\n`);
   // The access modifier moves to the accessors: TypeScript forbids one on a `#private` field.
-  expect(out).toContain(`          #hidden = ""; private get hidden() { return this.#hidden; } private set hidden(v) { const p = this.#hidden; if (Model.same(p, v)) return; this.#hidden = v; this.$changed(6, p); }\n`);
+  expect(out).toContain(`          #hidden = ""; private get hidden() { Model.$reader?.(this, 6); return this.#hidden; } private set hidden(v) { const p = this.#hidden; if (Model.same(p, v)) return; this.#hidden = v; this.$changed(6, p); }\n`);
   expect(out).toContain(`static { Model.$define(this, ["get", "static", "note", "id", "config", "calc", "hidden"]); } }\n`);
 });
 
@@ -113,11 +113,11 @@ export class Project extends Model {
 test("fields without a semicolon end where the next member starts", () => {
   const out = trackModelFields(ASI);
   expect(out.split("\n")).toHaveLength(ASI.split("\n").length);
-  expect(out).toContain(`  #id: number; get id(): number { return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(0, p); }\n`);
-  expect(out).toContain(`  #name: string; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(1, p); }\n`);
-  expect(out).toContain(`  #kind:\n    | "a"\n    | "b"; get kind(): | "a" | "b" { return this.#kind; } set kind(v: | "a" | "b") { const p = this.#kind; if (Model.same(p, v)) return; this.#kind = v; this.$changed(2, p); }\n`);
-  expect(out).toContain(`  #children: Project[] | undefined; get children(): Project[] | undefined { return this.#children; }`);
-  expect(out).toContain(`\n         \n  #clientId: string; @Ignore get clientId(): string { return this.#clientId; }`);
+  expect(out).toContain(`  #id: number; get id(): number { Model.$reader?.(this, 0); return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(0, p); }\n`);
+  expect(out).toContain(`  #name: string; get name(): string { Model.$reader?.(this, 1); return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(1, p); }\n`);
+  expect(out).toContain(`  #kind:\n    | "a"\n    | "b"; get kind(): | "a" | "b" { Model.$reader?.(this, 2); return this.#kind; } set kind(v: | "a" | "b") { const p = this.#kind; if (Model.same(p, v)) return; this.#kind = v; this.$changed(2, p); }\n`);
+  expect(out).toContain(`  #children: Project[] | undefined; get children(): Project[] | undefined { Model.$reader?.(this, 3); return this.#children; }`);
+  expect(out).toContain(`\n         \n  #clientId: string; @Ignore get clientId(): string { Model.$reader?.(this, 4); return this.#clientId; }`);
   expect(out).toContain(`  greet(): string {\n    return this.name;\n  }\n`);
   expect(out).toContain(`static { Model.$define(this, ["id", "name", "kind", "children", "clientId"]); } }`);
 });
@@ -126,8 +126,8 @@ test("a bare field without a type or semicolon ends at its own line", () => {
   const src = `${IMPORT}export class Bare extends Model {\n  id\n  name: string = ""\n}\n`;
   const out = trackModelFields(src);
   expect(out.split("\n")).toHaveLength(src.split("\n").length);
-  expect(out).toContain(`  #id; get id() { return this.#id; }`);
-  expect(out).toContain(`  #name: string = ""; get name(): string { return this.#name; }`);
+  expect(out).toContain(`  #id; get id() { Model.$reader?.(this, 0); return this.#id; }`);
+  expect(out).toContain(`  #name: string = ""; get name(): string { Model.$reader?.(this, 1); return this.#name; }`);
   expect(out).toContain(`Model.$define(this, ["id", "name"])`);
 });
 
@@ -183,14 +183,14 @@ test("a class with its own constructor keeps it, and an anonymous one gets none"
   const anon = `${IMPORT}export default class extends Model {\n  x = 1;\n}\n`;
   const outAnon = trackModelFields(anon);
   expect(outAnon).not.toContain("constructor(");
-  expect(outAnon).toContain(`#x = 1; get x() { return this.#x; }`);
+  expect(outAnon).toContain(`#x = 1; get x() { Model.$reader?.(this, 0); return this.#x; }`);
 });
 
 test("a decorator on its own line moves to the getter without moving a line", () => {
   const src = `${IMPORT}export class G extends Model implements Record<string, unknown> {\n  [key: string]: unknown;\n  @Ignore\n  hours: number = 0;\n  static { console.log("ready"); }\n}\n`;
   const out = trackModelFields(src);
   expect(out.split("\n")).toHaveLength(src.split("\n").length);
-  expect(out).toContain(`\n         \n  #hours: number = 0; @Ignore get hours(): number { return this.#hours; }`);
+  expect(out).toContain(`\n         \n  #hours: number = 0; @Ignore get hours(): number { Model.$reader?.(this, 0); return this.#hours; }`);
   expect(out).toContain(`  static { console.log("ready"); }\n`);
   expect(out).toContain(`static { Model.$define(this, ["hours"]); } }`);
 });

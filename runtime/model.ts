@@ -4,11 +4,14 @@
 // hand looks like:
 //
 //   class Worker extends Model { constructor(data?: object) { super(data); this.assign(data); }
-//     #hours = 0; get hours() { return this.#hours; }
+//     #hours = 0; get hours() { Model.$reader?.(this, 0); return this.#hours; }
 //     set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(0, p); }
 //   static { Model.$define(this, ["hours"]); } }
 //
+// Importing this module also makes the components that read a model re-render when it changes.
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
+
+import { setRenderObserver, type ComponentBase } from "./index";
 
 export { EntitySet } from "./entity-set";
 
@@ -82,6 +85,9 @@ function captureOf(options: AddEventListenerOptions | EventListenerOptions | boo
 }
 
 export abstract class Model extends EventTarget {
+  /** @internal Set only while a component renders, so a tracked getter can report what it read. */
+  static $reader: ((model: Model, index: number) => void) | undefined;
+
   #state: State;
   #originals: Record<string, unknown> | undefined;
   #watched: Watch[] | undefined;
@@ -529,3 +535,114 @@ export const minValue = (min: number, inclusive = true): Validator => (value) =>
 
 export const maxValue = (max: number, inclusive = true): Validator => (value) =>
   (inclusive ? value <= max : value < max) ? true : `Field must be less than ${inclusive ? "or equal to" : ""} ${max}`;
+
+// Re-rendering: while a component renders, every tracked getter it reads reports itself here. The
+// component keeps one listener per model it read, with a bitmask of the properties (a field past
+// the 31st counts as "any"), rebuilt on every render; a change it covers queues one re-render.
+
+/** One (component, model) pair; it is its own `change` listener, so no closure is allocated. */
+type Dep = {
+  model: Model;
+  owner: Reads;
+  mask: number;
+  epoch: number;
+  handleEvent(event: Event): void;
+};
+
+/** What one component read, kept on the instance under `reads`. */
+type Reads = {
+  component: ComponentBase;
+  deps: Map<Model, Dep>;
+  epoch: number;
+  renders: number;
+  /** `renders` when the component was queued, or -1 when it is not. */
+  at: number;
+};
+
+const reads = Symbol("xzor.model.reads");
+
+type Reader = Record<symbol, Reads | undefined>;
+
+const readsOf = (c: ComponentBase): Reads | undefined => (c as unknown as Reader)[reads];
+
+const stack: ComponentBase[] = [];
+const queued: Reads[] = [];
+let current: ComponentBase | undefined;
+let currentReads: Reads | undefined;
+
+const bitOf = (index: number): number => (index < 31 ? 1 << index : -1);
+
+function read(model: Model, index: number): void {
+  let own = currentReads;
+  if (own === undefined) {
+    own = currentReads = { component: current!, deps: new Map(), epoch: 1, renders: 1, at: -1 };
+    (current as unknown as Reader)[reads] = own;
+  }
+  let dep = own.deps.get(model);
+  if (dep === undefined) {
+    dep = { model, owner: own, mask: 0, epoch: own.epoch, handleEvent: changed };
+    own.deps.set(model, dep);
+    model.addEventListener("change", dep);
+  } else if (dep.epoch !== own.epoch) {
+    dep.epoch = own.epoch;
+    dep.mask = 0;
+  }
+  dep.mask |= bitOf(index);
+}
+
+function changed(this: Dep, event: Event): void {
+  const index = metaOf(this.model).names.indexOf((event as ModelChangeEvent).property);
+  if (index < 0 || (this.mask & bitOf(index)) === 0) return;
+  const own = this.owner;
+  if (own.at < 0) {
+    queued.push(own);
+    if (queued.length === 1) queueMicrotask(flush);
+  }
+  // Marking again moves the render this change waits for past one that already happened.
+  own.at = own.renders;
+}
+
+// A component that already rendered after it was queued (its own event handler did it) is skipped.
+function flush(): void {
+  for (const own of queued.splice(0)) {
+    const at = own.at;
+    own.at = -1;
+    if (own.renders === at) own.component.stateHasChanged();
+  }
+}
+
+setRenderObserver({
+  begin(component: ComponentBase): void {
+    stack.push(component);
+    current = component;
+    const own = (currentReads = readsOf(component));
+    if (own !== undefined) {
+      own.epoch++;
+      own.renders++;
+    }
+    Model.$reader = read;
+  },
+
+  end(_component: ComponentBase): void {
+    const own = currentReads;
+    if (own !== undefined)
+      for (const dep of own.deps.values())
+        if (dep.epoch !== own.epoch) {
+          dep.model.removeEventListener("change", dep);
+          own.deps.delete(dep.model);
+        }
+    stack.pop();
+    current = stack[stack.length - 1];
+    currentReads = current === undefined ? undefined : readsOf(current);
+    if (current === undefined) Model.$reader = undefined;
+  },
+
+  dispose(component: ComponentBase): void {
+    const own = readsOf(component);
+    if (own === undefined) return;
+    for (const dep of own.deps.values()) dep.model.removeEventListener("change", dep);
+    own.deps.clear();
+    own.renders++; // drops a queued re-render
+  },
+});
+

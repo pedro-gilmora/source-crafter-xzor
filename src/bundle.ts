@@ -563,10 +563,10 @@ function modelFields(src: string, head: ClassHead, untracked: Set<string>): { fi
 
 /**
  * Every plain field of a direct `Model` subclass (v1: only direct ones) becomes a `#private` slot
- * with a getter and a setter that report the change, plus a `$define` static block and, unless the
- * class writes its own, a constructor. Lines never move: generated text goes on the field's last
- * line, and the modifiers it takes over are blanked, so source maps stay exact. A model class this
- * scanner cannot rewrite is left alone, with a warning naming `file`.
+ * with a getter that reports the read and a setter that reports the change, plus a `$define` static
+ * block and, unless the class writes its own, a constructor. Lines never move: generated text goes
+ * on the field's last line, and the modifiers it takes over are blanked, so source maps stay exact.
+ * A model class this scanner cannot rewrite is left alone, with a warning naming `file`.
  */
 export function trackModelFields(src: string, file?: string): string {
   if (!src.includes(MODEL)) return src;
@@ -645,7 +645,7 @@ function classBody(src: string, head: ClassHead, fields: Field[], hasCtor: boole
     const decorators = field.decStart < 0 ? "" : `${src.slice(field.decStart, field.decEnd).replace(/\s+/g, " ")} `;
     out += src.slice(copied, field.end);
     if (!field.semi) out += ";";
-    out += ` ${decorators}${access}get ${field.name}()${type && `: ${type}`} { return this.#${field.name}; }`;
+    out += ` ${decorators}${access}get ${field.name}()${type && `: ${type}`} { ${head.model}.$reader?.(this, ${index}); return this.#${field.name}; }`;
     out += ` ${access}set ${field.name}(v${type && `: ${type}`}) { const p = this.#${field.name}; if (${head.model}.same(p, v)) return; this.#${field.name} = v; this.$changed(${index}, p); }`;
     copied = field.end;
   });
