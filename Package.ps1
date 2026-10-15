@@ -85,9 +85,9 @@ function Stage-Package([string]$name, [string]$from, $manifest) {
 
 # Runtime: JavaScript plus declarations, so tsc in user projects doesn't check its source under their settings.
 $runtimeOut = Join-Path $stage "runtime-build"
-Invoke-Step "Building the runtime" { bun build runtime/index.ts --outdir $runtimeOut --target browser --format esm --sourcemap=linked }
+Invoke-Step "Building the runtime" { bun build runtime/index.ts runtime/model.ts --outdir $runtimeOut --splitting --target browser --format esm --sourcemap=linked }
 Invoke-Step "Emitting the runtime declarations" {
-    bun x tsc runtime/index.ts --declaration --emitDeclarationOnly --outDir $runtimeOut --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM,ESNext.Disposable --strict --skipLibCheck
+    bun x tsc runtime/index.ts runtime/model.ts --declaration --emitDeclarationOnly --outDir $runtimeOut --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM,ESNext.Disposable,ESNext.Decorators --strict --skipLibCheck
 }
 $runtime = Get-Content npm/runtime/package.json -Raw | ConvertFrom-Json
 Stage-Package "runtime" $runtimeOut $runtime

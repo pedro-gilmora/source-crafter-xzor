@@ -30,7 +30,7 @@ update("tsconfig.json", { compilerOptions: { target: "ES2022", strict: true, noE
   const o = (t.compilerOptions ??= {});
   o.module ??= "ESNext";
   o.moduleResolution ??= "bundler";
-  o.lib = add(o.lib ?? [o.target ?? "ES2022"], "ESNext.Disposable", "DOM");
+  o.lib = add(o.lib ?? [o.target ?? "ES2022"], "ESNext.Disposable", "ESNext.Decorators", "DOM");
   // `import X from "./X.xzor"` resolves to the generated .xzor/X.xzor.ts.
   o.rootDirs = add(o.rootDirs ?? [], ".", ".xzor");
   t.include = add(t.include ?? ["**/*.ts"], ".xzor/**/*.ts");
