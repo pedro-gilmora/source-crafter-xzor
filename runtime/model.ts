@@ -397,13 +397,23 @@ export abstract class Model extends EventTarget {
   /** @internal A set on a tracked field was mutated: it keeps its own state, the model only tells its listeners. */
   $touched(index: number): void {
     const name = metaOf(this).names[index]!;
+    const reader = Model.$reader;
+    Model.$reader = undefined;
     const value = (this as unknown as Record<string, unknown>)[name];
+    Model.$reader = reader;
     this.#emit(name, value, value, index);
   }
 
   // Listeners run outside silent mode, so their own writes are tracked.
   #emit(name: string, value: unknown, previous: unknown, index?: number): void {
-    if (!this.#listens("change")) return;
+    if (!this.#hasListener("change")) {
+      // Only rendering components watch: notify them without building an event.
+      const subs = this.#subs;
+      if (subs === undefined || subs.length === 0) return;
+      const at = index ?? metaOf(this).names.indexOf(name);
+      for (let i = 0; i < subs.length; i++) changed(subs[i]!, at);
+      return;
+    }
     const depth = silent;
     silent = 0;
     try {
@@ -423,7 +433,7 @@ export abstract class Model extends EventTarget {
   /** @internal Drops a dep by swapping the last one into its slot. */
   $unwatch(dep: Dep): void {
     const subs = this.#subs;
-    if (subs === undefined) return;
+    if (subs === undefined || subs.length === 0) return;
     const last = subs.pop()!;
     if (last !== dep) {
       subs[dep.slot] = last;
@@ -445,6 +455,10 @@ export abstract class Model extends EventTarget {
   // A model nobody watches never allocates an event.
   #listens(type: string): boolean {
     if (type === "change" && this.#subs !== undefined && this.#subs.length !== 0) return true;
+    return this.#hasListener(type);
+  }
+
+  #hasListener(type: string): boolean {
     const watched = this.#watched;
     if (watched === undefined) return false;
     for (let i = 0; i < watched.length; i++) if (watched[i]!.type === type) return true;
