@@ -176,6 +176,7 @@ test("adversarial phone and e-mail values fail fast", () => {
   expect(took(() => expect(email(host)).toBe("Field should be a valid e-mail"))).toBeLessThan(50);
   expect(email("a@b..com")).toBe("Field should be a valid e-mail");
   expect(email("a@b.com")).toBe(true);
+  expect(email("John.Doe@Example.COM")).toBe(true);
   expect(email("a".repeat(250) + "@b.co")).toBe("Field should be a valid e-mail");
 });
 
