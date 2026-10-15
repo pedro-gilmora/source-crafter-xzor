@@ -163,7 +163,14 @@ export abstract class Model extends EventTarget {
     this.#state = value;
     const subs = this.#subs;
     if (subs !== undefined) for (let i = 0; i < subs.length; i++) changed(subs[i]!, stateIndex);
-    if (this.#listens("state")) this.dispatchEvent(new Event("state"));
+    if (!this.#listens("state")) return;
+    const depth = silent;
+    silent = 0;
+    try {
+      this.dispatchEvent(new Event("state"));
+    } finally {
+      silent = depth;
+    }
   }
 
   hasState(flags: number): boolean {

@@ -163,7 +163,7 @@ class Writer extends ComponentBase {
   }
 }
 
-// 41 tracked fields, as the bundle would rewrite them, to reach past the 31st.
+// 41 tracked fields, as the bundle would rewrite them, to reach past the 30th.
 const wideNames = Array.from({ length: 41 }, (_, i) => `f${i}`);
 
 class Wide extends Model {
@@ -460,7 +460,7 @@ test("a manual change event re-renders the readers of that property", async () =
   expect(pay.count).toBe(2);
 });
 
-test("a field past the 31st re-renders its own readers only", async () => {
+test("a field past the 30th re-renders its own readers only", async () => {
   const both = show(Both);
   expect(both.near.count).toBe(1);
   wide.f35 = 1;
