@@ -8,27 +8,32 @@ const exe = join(root, "target", "debug", process.platform === "win32" ? "xzor.e
 
 let proc: ReturnType<typeof Bun.spawn>;
 let output = "";
-// Lines seen so far; `waitFor` consumes up to and including its match.
-let cursor = 0;
 
 async function pump(stream: ReadableStream<Uint8Array>) {
   const decoder = new TextDecoder();
   for await (const chunk of stream) output += decoder.decode(chunk);
 }
 
-async function waitFor(text: string, ms = 20_000): Promise<string> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const at = output.indexOf(text, cursor);
-    if (at >= 0) {
-      const seen = output.slice(cursor, at + text.length);
-      cursor = at + text.length;
-      return seen;
+/** A waiter over a growing output; each call consumes up to and including its match. */
+function waiter(get: () => string, defaultMs: number) {
+  let cursor = 0;
+  return async (text: string, ms = defaultMs): Promise<string> => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      const out = get();
+      const at = out.indexOf(text, cursor);
+      if (at >= 0) {
+        const seen = out.slice(cursor, at + text.length);
+        cursor = at + text.length;
+        return seen;
+      }
+      await Bun.sleep(25);
     }
-    await Bun.sleep(25);
-  }
-  throw new Error(`timed out waiting for "${text}". Output so far:\n${output}`);
+    throw new Error(`timed out waiting for "${text}". Output so far:\n${get()}`);
+  };
 }
+
+const waitFor = waiter(() => output, 20_000);
 
 /** Lets in-flight events settle, then asserts nothing else was printed (no rebuild loop). */
 async function quiet(ms = 1500) {
@@ -151,21 +156,9 @@ describe("build --watch --hot", () => {
   const hotDir = join(root, "target", "tmp-watch-hot");
   let hotProc: ReturnType<typeof Bun.spawn>;
   let hotOut = "";
-  let hotCursor = 0;
-
-  async function hotWait(text: string, ms = 30_000): Promise<string> {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
-      const at = hotOut.indexOf(text, hotCursor);
-      if (at >= 0) {
-        const seen = hotOut.slice(hotCursor, at + text.length);
-        hotCursor = at + text.length;
-        return seen;
-      }
-      await Bun.sleep(25);
-    }
-    throw new Error(`timed out waiting for "${text}". Output so far:\n${hotOut}`);
-  }
+  const hotWait = waiter(() => hotOut, 30_000);
+  const hotIds = (seen: string) => [...seen.matchAll(/^xzor: hot (\S+)\s*$/gm)].map((m) => m[1]);
+  const bareMarker = (seen: string) => /^xzor: hot\s*$/m.test(seen);
 
   beforeAll(async () => {
     rmSync(hotDir, { recursive: true, force: true });
@@ -210,6 +203,52 @@ describe("build --watch --hot", () => {
   test("no hot lines on a compile error", async () => {
     writeFileSync(join(hotDir, "App.xzor"), "<p>\n");
     const seen = await hotWait("watching");
+    expect(seen).not.toContain("xzor: hot");
+  }, 40_000);
+
+  test("fixing a compile error prints the hot line for the edited component", async () => {
+    writeFileSync(join(hotDir, "App.xzor"), "<p>fixed</p>\n");
+    const seen = await hotWait("watching");
+    expect(hotIds(seen)).toEqual([".xzor/App.xzor.ts"]);
+    expect(seen.indexOf("main.js")).toBeGreaterThan(seen.indexOf("xzor: hot"));
+  }, 40_000);
+
+  test("a save that leaves the generated code identical prints the bare marker and no id", async () => {
+    const generated = join(hotDir, ".xzor", "App.xzor.ts");
+    const before = readFileSync(generated, "utf8");
+    writeFileSync(join(hotDir, "App.xzor"), "<p>fixed</p>\n\n\n");
+    const seen = await hotWait("watching");
+    expect(readFileSync(generated, "utf8")).toBe(before);
+    expect(bareMarker(seen)).toBe(true);
+    expect(hotIds(seen)).toEqual([]);
+    expect(seen.indexOf("main.js")).toBeGreaterThan(seen.indexOf("xzor: hot"));
+  }, 40_000);
+
+  test("a parent and a child changed in one batch print both ids", async () => {
+    writeFileSync(join(hotDir, "Child.xzor"), "<i>c</i>\n");
+    writeFileSync(join(hotDir, "Parent.xzor"), `@import Child from "./Child.xzor"\n<Child />\n`);
+    const added = await hotWait("watching");
+    expect(added).toContain("type check passed");
+    expect(added).not.toContain("xzor: hot");
+
+    writeFileSync(join(hotDir, "Child.xzor"), "<i>c2</i>\n");
+    writeFileSync(join(hotDir, "Parent.xzor"), `@import Child from "./Child.xzor"\n<div><Child /></div>\n`);
+    const seen = await hotWait("watching");
+    expect(hotIds(seen).sort()).toEqual([".xzor/Child.xzor.ts", ".xzor/Parent.xzor.ts"]);
+  }, 60_000);
+
+  test("adding a .xzor file prints no hot lines", async () => {
+    writeFileSync(join(hotDir, "Extra.xzor"), "<p>extra</p>\n");
+    const seen = await hotWait("watching");
+    expect(seen).toContain("main.js");
+    expect(seen).not.toContain("xzor: hot");
+  }, 40_000);
+
+  test("a routes change prints no hot lines", async () => {
+    writeFileSync(join(hotDir, "Extra.xzor"), `@page "/extra"\n<p>extra</p>\n`);
+    const seen = await hotWait("watching");
+    expect(readFileSync(join(hotDir, ".xzor", "routes.ts"), "utf8")).toContain(`"/extra"`);
+    expect(seen).toContain("main.js");
     expect(seen).not.toContain("xzor: hot");
   }, 40_000);
 });

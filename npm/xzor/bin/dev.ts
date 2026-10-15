@@ -1,6 +1,6 @@
 // `xzor dev`, run by the launcher under Bun: `xzor build --watch --hot`, a static server with the SPA fallback,
-// and live reload: after each build open pages patch the components the edit changed, or reload when nothing
-// could be patched. Tests import `prepareModule`; the server only runs when this file is the entry.
+// and live reload: after each build open pages patch the components the edit changed, stay as they are when the
+// edit changed no generated code, or reload when nothing could be patched. Tests import `prepareModule`; the server only runs when this file is the entry.
 // argv: <xzor binary> [build options...]
 import { join, resolve, sep } from "node:path";
 
@@ -49,16 +49,19 @@ if (import.meta.main) {
   };
 
   let pending: ReturnType<typeof setTimeout> | undefined;
-  // Ids to patch at the next flush, the ones the running build printed, and whether anything was unpatchable.
+  // Ids to patch at the next flush, the ones the running build printed, whether it printed the bare no-change
+  // marker, and whether anything was unpatchable.
   const queued = new Set<string>();
   let printed: string[] = [];
+  let noChange = false;
   let unpatchable = false;
 
   const flush = async () => {
     const ids = [...queued];
     queued.clear();
-    const reload = unpatchable || ids.length === 0;
+    const reload = unpatchable;
     unpatchable = false;
+    if (!reload && ids.length === 0) return;
     if (reload || ids.some((id) => !resolve(root, id).startsWith(root + sep))) return send("reload");
     try {
       const hot = await Promise.all(ids.map(async (id) => ({ id, ...prepareModule(await Bun.file(resolve(root, id)).text()) })));
@@ -70,8 +73,9 @@ if (import.meta.main) {
   // A written bundle (`.../dist/x.js`) ends a successful build; the `xzor: hot` lines before it name what it patches.
   const built = () => {
     if (printed.length) for (const id of printed) queued.add(id);
-    else unpatchable = true;
+    else if (!noChange) unpatchable = true;
     printed = [];
+    noChange = false;
     clearTimeout(pending);
     pending = setTimeout(flush, 50);
   };
@@ -87,6 +91,7 @@ if (import.meta.main) {
       for (const line of lines) {
         const hot = /^xzor: hot (.+?)\s*$/.exec(line);
         if (hot) printed.push(hot[1]!);
+        else if (/^xzor: hot\s*$/.test(line)) noChange = true;
         else if (/[\\/]dist[\\/][^\\/]+\.js\s*$/.test(line)) built();
       }
     }

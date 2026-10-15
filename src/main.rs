@@ -17,6 +17,7 @@ USAGE:
       --no-bundle            Skip bundling
       --watch                Rebuild when .xzor or .ts files change
       --hot                  With --watch, print `xzor: hot <id>` for each component a .xzor-only change can patch in place
+                             (a bare `xzor: hot` when such a change altered no generated code)
       --timings              Print how long each stage took
   xzor highlight <FILE>       Print a .xzor file with syntax colors
   xzor lsp                    Run the language server on stdio
@@ -206,8 +207,11 @@ fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, hot: 
         None => None,
     };
     if o.hot {
-        for id in hot.replace(BTreeSet::new()).unwrap_or_default() {
-            println!("xzor: hot {id}");
+        // `Some` and empty: patchable, but no generated code changed; a bare `xzor: hot` tells `xzor dev` to send nothing.
+        match hot.replace(BTreeSet::new()) {
+            Some(ids) if ids.is_empty() => println!("xzor: hot"),
+            Some(ids) => ids.iter().for_each(|id| println!("xzor: hot {id}")),
+            None => {}
         }
     }
     print!("{}", bundle_out.unwrap_or_default());
