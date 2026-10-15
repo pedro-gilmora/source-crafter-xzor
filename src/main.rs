@@ -264,7 +264,8 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         let compile_start = Instant::now();
         let mut recompile = plan.recompile;
         let scripts = build::changed_scripts(&batch, dir);
-        if plan.config || plan.di || !plan.remove.is_empty() || !scripts.is_empty() {
+        // The last condition is a rebuild caused by no `.xzor` file, e.g. a removed folder of scripts.
+        if plan.config || plan.di || !plan.remove.is_empty() || !scripts.is_empty() || (plan.rebuild && recompile.is_empty()) {
             hot = None;
         }
         let changed: Vec<&Path> = recompile.iter().chain(&plan.remove).chain(&scripts).map(PathBuf::as_path).collect();
