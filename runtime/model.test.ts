@@ -1,36 +1,33 @@
 import { expect, spyOn, test } from "bun:test";
-import { __track, Ignore, Model, ModelChangeEvent, Persist, State, Untracked, isLike } from "./model";
+import { Ignore, Model, ModelChangeEvent, Persist, State, Untracked, isLike } from "./model";
 
-// Written the way the bundle rewrites a model class (Task 2 turns plain fields into these accessors).
+// Written the way the bundle rewrites a model class: every field becomes a `#private` slot with a
+// getter and a setter on the prototype, a `$define` static block and a constructor (Task 2 emits these).
 
-class Address extends Model {
-  @__track accessor city = "";
-  @__track accessor zip = "";
+class Address extends Model { constructor(data?: object) { super(data); this.assign(data); }
+  #city = ""; get city(): string { return this.#city; } set city(v: string) { const p = this.#city; if (Model.same(p, v)) return; this.#city = v; this.$changed(0, p); }
+  #zip = ""; get zip(): string { return this.#zip; } set zip(v: string) { const p = this.#zip; if (Model.same(p, v)) return; this.#zip = v; this.$changed(1, p); }
+static { Model.$define(this, ["city", "zip"]); } }
 
-  constructor(data?: Partial<Address>) {
-    super(data);
-    this.assign(data);
-  }
-}
-
-class Worker extends Model {
-  @__track accessor name = "";
-  @__track accessor hours = 0;
-  @__track accessor hired: Date | null = null;
-  @__track accessor tags: string[] = [];
-  @Ignore @__track accessor secret = "";
-  @__track accessor address = new Address();
+class Worker extends Model { constructor(data?: object) { super(data); this.assign(data); }
+  #name = ""; get name(): string { return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+  #hours = 0; get hours(): number { return this.#hours; } set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(1, p); }
+  #hired: Date | null = null; get hired(): Date | null { return this.#hired; } set hired(v: Date | null) { const p = this.#hired; if (Model.same(p, v)) return; this.#hired = v; this.$changed(2, p); }
+  #tags: string[] = []; get tags(): string[] { return this.#tags; } set tags(v: string[]) { const p = this.#tags; if (Model.same(p, v)) return; this.#tags = v; this.$changed(3, p); }
+  #secret = ""; @Ignore get secret(): string { return this.#secret; } set secret(v: string) { const p = this.#secret; if (Model.same(p, v)) return; this.#secret = v; this.$changed(4, p); }
+  #address = new Address(); get address(): Address { return this.#address; } set address(v: Address) { const p = this.#address; if (Model.same(p, v)) return; this.#address = v; this.$changed(5, p); }
   @Untracked note = "";
 
   @Persist get payment(): number {
     return this.hours * 10;
   }
+static { Model.$define(this, ["name", "hours", "hired", "tags", "secret", "address"]); } }
 
-  constructor(data?: Partial<Worker>) {
-    super(data);
-    this.assign(data);
-  }
-}
+// Fields named like `Object.prototype` members must not be confused with it.
+class Odd extends Model { constructor(data?: object) { super(data); this.assign(data); }
+  #toString = ""; get toString(): string { return this.#toString; } set toString(v: string) { const p = this.#toString; if (Model.same(p, v)) return; this.#toString = v; this.$changed(0, p); }
+  #hasOwnProperty = ""; get hasOwnProperty(): string { return this.#hasOwnProperty; } set hasOwnProperty(v: string) { const p = this.#hasOwnProperty; if (Model.same(p, v)) return; this.#hasOwnProperty = v; this.$changed(1, p); }
+static { Model.$define(this, ["toString", "hasOwnProperty"]); } }
 
 test("a model built without data is Detached and its first change makes it Added", () => {
   const worker = new Worker();
@@ -104,6 +101,74 @@ test("a change listener receives the property, the value and the previous value"
   expect(dispatch).not.toHaveBeenCalled();
 });
 
+test("adding the same listener twice counts it once", () => {
+  const worker = new Worker({ name: "Ada" });
+  let seen = 0;
+  const listener = () => seen++;
+  worker.addEventListener("change", listener);
+  worker.addEventListener("change", listener);
+
+  worker.name = "Grace";
+  expect(seen).toBe(1);
+
+  worker.removeEventListener("change", listener);
+  const dispatch = spyOn(worker, "dispatchEvent");
+  worker.name = "Hedy";
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test("removing a listener that was never added changes nothing", () => {
+  const worker = new Worker({ name: "Ada" });
+  let seen = 0;
+  const listener = () => seen++;
+  worker.addEventListener("change", listener);
+
+  worker.removeEventListener("change", () => {});
+  worker.removeEventListener("state", listener);
+
+  worker.name = "Grace";
+  expect(seen).toBe(1);
+});
+
+test("a once listener stops counting after it has fired", () => {
+  const worker = new Worker({ name: "Ada" });
+  let seen = 0;
+  worker.addEventListener("change", () => seen++, { once: true });
+
+  worker.name = "Grace";
+  expect(seen).toBe(1);
+
+  const dispatch = spyOn(worker, "dispatchEvent");
+  worker.name = "Hedy";
+  expect(seen).toBe(1);
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test("an aborted signal stops the listener counting", () => {
+  const worker = new Worker({ name: "Ada" });
+  const controller = new AbortController();
+  let seen = 0;
+  worker.addEventListener("change", () => seen++, { signal: controller.signal });
+
+  worker.name = "Grace";
+  expect(seen).toBe(1);
+  controller.abort();
+
+  const dispatch = spyOn(worker, "dispatchEvent");
+  worker.name = "Hedy";
+  expect(seen).toBe(1);
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test("a listener added with an already aborted signal is not counted", () => {
+  const worker = new Worker({ name: "Ada" });
+  worker.addEventListener("change", () => {}, { signal: AbortSignal.abort() });
+
+  const dispatch = spyOn(worker, "dispatchEvent");
+  worker.name = "Grace";
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
 test("the state event fires when the state moves", () => {
   const worker = new Worker({ name: "Ada" });
   let states = 0;
@@ -130,6 +195,29 @@ test("an untracked field stays a plain field", () => {
   worker.note = "nothing to see";
   expect(worker.state).toBe(State.Unchanged);
   expect(worker.changes).toBeNull();
+});
+
+test("assign only takes the tracked fields of the class", () => {
+  const data = JSON.parse('{"__proto__":{"polluted":true},"constructor":1,"note":"x","name":"Ada"}');
+  const worker = new Worker(data);
+
+  expect(worker.name).toBe("Ada");
+  expect(worker.note).toBe("");
+  expect(worker.state).toBe(State.Unchanged);
+  expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  expect((Worker as unknown as Record<string, unknown>).polluted).toBeUndefined();
+});
+
+test("fields named like Object.prototype members are tracked and serialized", () => {
+  const odd = new Odd({ toString: "a", hasOwnProperty: "b" });
+  odd.toString = "c";
+
+  expect(odd.state).toBe(State.Modified);
+  expect(odd.toJSON()).toEqual({ state: State.Modified, toString: "c", hasOwnProperty: "b" });
+  expect(odd.changes).toEqual({ state: State.Modified, toString: "c", hasOwnProperty: "b" });
+
+  odd.revertChanges();
+  expect(odd.toJSON()).toEqual({ state: State.Unchanged, toString: "a", hasOwnProperty: "b" });
 });
 
 test("revertChanges restores the values and the state", () => {
@@ -237,6 +325,7 @@ test("isLike compares primitives, dates, arrays, plain objects and models", () =
   expect(isLike([1, 2], [1, 2, 3])).toBe(false);
   expect(isLike({ a: 1, b: { c: 2 } }, { a: 1, b: { c: 2 } })).toBe(true);
   expect(isLike({ a: 1 }, { a: 1, b: 2 })).toBe(false);
+  expect(Model.same(1, 1)).toBe(true);
 
   const address = new Address({ city: "Paris" });
   expect(isLike(address, address)).toBe(true);
@@ -245,8 +334,8 @@ test("isLike compares primitives, dates, arrays, plain objects and models", () =
 
 test("a subclass tracks its own fields and the inherited ones", () => {
   class Manager extends Worker {
-    @__track accessor reports = 0;
-  }
+    #reports = 0; get reports(): number { return this.#reports; } set reports(v: number) { const p = this.#reports; if (Model.same(p, v)) return; this.#reports = v; this.$changed(6, p); }
+  static { Model.$define(this, ["reports"]); } }
 
   const manager = new Manager({ name: "Ada" });
   manager.reports = 3;
