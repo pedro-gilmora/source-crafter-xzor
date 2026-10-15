@@ -40,8 +40,12 @@ type Meta = {
   tracked: Set<string>;
   persisted: string[];
   ignored: Set<string>;
+  validators: Map<string, Validator[]>;
   serialized?: string[];
 };
+
+/** `true` when the value is valid, otherwise the message. */
+export type Validator = (value: any, model: any) => true | string;
 
 /** One registration, kept only for `change` and `state` so a model knows whether it is watched. */
 type Watch = {
@@ -52,11 +56,12 @@ type Watch = {
 };
 
 const meta = Symbol("xzor.model.meta");
-const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), serialized: [] };
+const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), validators: new Map(), serialized: [] };
 
 // A class's member decorators all run before its `$define`, which takes these over.
 let pendingPersist: string[] | undefined;
 let pendingIgnored: string[] | undefined;
+let pendingValidators: [string, Validator[]][] | undefined;
 
 // Writes made by `assign`, `revertChanges` and `confirmChanges` are not changes.
 let silent = 0;
@@ -94,7 +99,17 @@ export abstract class Model extends EventTarget {
       tracked: new Set(all),
       persisted: base ? base.persisted.slice() : [],
       ignored: new Set(base?.ignored),
+      validators: new Map(),
     };
+    if (base) for (const [name, list] of base.validators) own.validators.set(name, list.slice());
+    if (pendingValidators) {
+      for (const [name, list] of pendingValidators) {
+        const known = own.validators.get(name);
+        if (known) known.push(...list);
+        else own.validators.set(name, list);
+      }
+      pendingValidators = undefined;
+    }
     if (pendingPersist) {
       for (const name of pendingPersist) own.persisted.push(name);
       pendingPersist = undefined;
@@ -143,6 +158,37 @@ export abstract class Model extends EventTarget {
     for (const name of metaOf(this).names)
       if (valueHasChanges((this as unknown as Record<string, unknown>)[name])) return true;
     return false;
+  }
+
+  /** False while Detached or Deleted; otherwise whether a validator fails here or in a nested model or set. */
+  get hasErrors(): boolean {
+    if ((this.#state & (State.Detached | State.Deleted)) !== 0) return false;
+    const own = metaOf(this);
+    const values = this as unknown as Record<string, unknown>;
+    for (const [name, list] of own.validators)
+      for (const validate of list) if (typeof validate(values[name], this) === "string") return true;
+    for (const name of own.names) if (valueHasErrors(values[name])) return true;
+    return false;
+  }
+
+  /** The failures of every validated field, but only once this model changed: a fresh one shows none. */
+  get errors(): Record<string, string[]> {
+    const result = Object.create(null) as Record<string, string[]>;
+    if ((this.#state & (State.Detached | State.Deleted)) !== 0) return result;
+    if (this.#originals === undefined && (this.#state & (State.Added | State.Modified)) === 0) return result;
+    const values = this as unknown as Record<string, unknown>;
+    for (const [name, list] of metaOf(this).validators) {
+      const messages = (result[name] = [] as string[]);
+      for (const validate of list) {
+        const message = validate(values[name], this);
+        if (typeof message === "string") messages.push(message);
+      }
+    }
+    return result;
+  }
+
+  get hasValidChanges(): boolean {
+    return !this.hasErrors && this.hasChanges;
   }
 
   /** What to send to the server: every primitive plus the nested models and sets that changed, or `null`. */
@@ -346,6 +392,15 @@ export function Persist<T extends Model, V>(_getter: () => V, context: ClassGett
   (pendingPersist ??= []).push(context.name as string);
 }
 
+/** Checks the field with these validators; several `@Validate` on one field add up. */
+export function Validate(
+  ...validators: Validator[]
+): (_member: unknown, context: ClassGetterDecoratorContext | ClassFieldDecoratorContext) => void {
+  return (_member, context) => {
+    (pendingValidators ??= []).push([context.name as string, validators]);
+  };
+}
+
 /** Keeps a member out of `changes` and `toJSON`. */
 export function Ignore(
   _member: unknown,
@@ -369,6 +424,14 @@ function valueHasChanges(value: unknown): boolean {
   if (typeof changes === "boolean") return changes;
   if (Array.isArray(value)) return value.some(valueHasChanges);
   return Object.values(value).some(valueHasChanges);
+}
+
+function valueHasErrors(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || value instanceof Date) return false;
+  const errors = (value as { hasErrors?: unknown }).hasErrors;
+  if (typeof errors === "boolean") return errors;
+  if (Array.isArray(value)) return value.some(valueHasErrors);
+  return Object.values(value).some(valueHasErrors);
 }
 
 function isSerializable(value: unknown): boolean {
@@ -395,3 +458,36 @@ function revertValue(value: unknown): void {
     if (owner.hasChanges) owner.revertChanges();
   } else if (Array.isArray(value)) value.forEach(revertValue);
 }
+
+export const required = (value: any): true | string =>
+  value !== undefined && value !== null && (typeof value !== "string" || value.trim() !== "") ? true : "Field is required";
+
+// Same pattern as the original e-mail validator.
+const emailTest = /^((([a-z]|\d|[!#$%&'*+\-\/=?^_`{|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+(\.([a-z]|\d|[!#$%&'*+\-\/=?^_`{|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+)*)|((\x22)(((([\x20\x09])*(\x0d\x0a))?([\x20\x09])+)?(([\x01-\x08\x0b\x0c\x0e-\x1f\x7f]|\x21|[\x23-\x5b]|[\x5d-\x7e]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(\\([\x01-\x09\x0b\x0c\x0d-\x7f]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF]))))*((([\x20\x09])*(\x0d\x0a))?([\x20\x09])+)?(\x22)))@((([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.)+(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.?$/;
+
+export const email: Validator = (value) => (emailTest.test(value ?? "") ? true : "Field should be a valid e-mail");
+
+const phoneTest = /^(\+\s?)?((?<!\+.*)\(\+?\d+([\s\-.]?\d+)?\)|\d+)([\s\-.]?(\(\d+([\s\-.]?\d+)?\)|\d+))*(\s?(x|ext\.?)\s?\d+)?$/i;
+
+/** A missing phone is valid: pair it with `required`. */
+export function isValidPhone(value: string | null | undefined): boolean {
+  return value == null || phoneTest.test(value);
+}
+
+export const phone: Validator = (value) => (isValidPhone(value ?? null) ? true : "Field should be a valid phone");
+
+export const maxLength = (length: number): Validator => (value) =>
+  `${value}`.length <= length ? true : `Field length is limited to ${length}`;
+
+export const minLength = (length: number): Validator => (value) =>
+  `${value}`.length >= length ? true : `Field min length is ${length} characters`;
+
+export const requiredIdValue: Validator = (value) => (required(value) === true && value > 0 ? true : "Field is required");
+
+export const nonZero: Validator = (value) => (value > 0 ? true : "Value must be greater than 0");
+
+export const minValue = (min: number, inclusive = true): Validator => (value) =>
+  (inclusive ? value >= min : value > min) ? true : `Field must be greater than ${inclusive ? "or equal to" : ""} ${min}`;
+
+export const maxValue = (max: number, inclusive = true): Validator => (value) =>
+  (inclusive ? value <= max : value < max) ? true : `Field must be less than ${inclusive ? "or equal to" : ""} ${max}`;

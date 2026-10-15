@@ -196,12 +196,16 @@ test("a decorator on its own line moves to the getter without moving a line", ()
 });
 
 // A real project, bundled by src/bundle.ts and run.
-const MAIN = `import { Model, State } from "@source-crafter/xzor-runtime/model";
+const MAIN = `import { Model, State, Validate, required } from "@source-crafter/xzor-runtime/model";
 
 export class Worker extends Model {
   name = "";
   hours = 0;
   rate: number = 1
+}
+
+export class Contact extends Model {
+  @Validate(required) name = "";
 }
 
 export { State };
@@ -252,6 +256,13 @@ test("a bundled model tracks its changes, and the map still points at the origin
   worker.revertChanges();
   expect(worker.hours).toBe(2);
   expect(worker.state).toBe(State.Unchanged);
+
+  const { Contact } = await import(pathToFileURL(join(dir, "dist", "main.js")).href);
+  const contact = new Contact({ name: "Ada" });
+  expect(contact.hasErrors).toBe(false);
+  contact.name = " ";
+  expect(contact.hasErrors).toBe(true);
+  expect(contact.errors).toEqual({ name: ["Field is required"] });
 
   const map = JSON.parse(readFileSync(join(dir, "dist", "main.js.map"), "utf8"));
   const source = map.sources.findIndex((s: string) => s.endsWith("main.ts"));
