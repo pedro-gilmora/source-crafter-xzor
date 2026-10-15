@@ -332,27 +332,29 @@ function localAsset(ref: string, root: string): string | undefined {
   return existsSync(file) && statSync(file).isFile() ? path : undefined;
 }
 
-function manifestIcons(text: string): { src?: unknown; sizes?: unknown }[] {
-  let icons: unknown;
+type Manifest = Record<string, unknown> | null;
+
+/** The parsed manifest, or the parse error. */
+function parseManifest(text: string): Manifest | Error {
   try {
-    icons = (JSON.parse(text) as { icons?: unknown } | null)?.icons;
-  } catch {
-    return [];
+    return JSON.parse(text);
+  } catch (e) {
+    return e as Error;
   }
+}
+
+function manifestIcons(manifest: Manifest | Error): { src?: unknown; sizes?: unknown }[] {
+  const icons = manifest instanceof Error ? undefined : manifest?.icons;
   return Array.isArray(icons) ? icons : [];
 }
 
 /** The problems of a web manifest, reported as warnings; an empty list means it is usable. */
-export function checkManifest(text: string, root: string): string[] {
-  let manifest: Record<string, unknown>;
-  try {
-    manifest = JSON.parse(text);
-  } catch (e) {
-    return [`invalid JSON: ${(e as Error).message}`];
-  }
+export function checkManifest(text: string, root: string, parsed = parseManifest(text)): string[] {
+  if (parsed instanceof Error) return [`invalid JSON: ${parsed.message}`];
+  const manifest = parsed;
   const problems: string[] = [];
   for (const field of ["name", "short_name", "display"]) if (!manifest?.[field]) problems.push(`missing "${field}"`);
-  const icons = manifestIcons(text);
+  const icons = manifestIcons(manifest);
   for (const size of ["192x192", "512x512"]) {
     if (!icons.some((i) => typeof i?.sizes === "string" && i.sizes.split(/\s+/).includes(size))) problems.push(`no icon with "sizes" ${size}`);
   }
@@ -363,8 +365,14 @@ export function checkManifest(text: string, root: string): string[] {
   return problems;
 }
 
+/** The project's manifest; a missing one has no icons. */
+function readManifest(root: string): Manifest | Error {
+  const path = join(root, MANIFEST);
+  return existsSync(path) ? parseManifest(readFileSync(path, "utf8")) : null;
+}
+
 /** The files the worker precaches: the app shell, the local assets `index.html` and the manifest point at, and the outputs. */
-export function precacheList(root: string, outputs: string[]): string[] {
+export function precacheList(root: string, outputs: string[], manifest = readManifest(root)): string[] {
   const files = new Set(["./", MANIFEST]);
   const index = join(root, "index.html");
   if (existsSync(index)) {
@@ -374,7 +382,7 @@ export function precacheList(root: string, outputs: string[]): string[] {
       if (asset) files.add(asset);
     }
   }
-  for (const icon of manifestIcons(readFileSync(join(root, MANIFEST), "utf8"))) {
+  for (const icon of manifestIcons(manifest)) {
     const asset = typeof icon?.src === "string" ? localAsset(icon.src, root) : undefined;
     if (asset) files.add(asset);
   }
@@ -386,13 +394,15 @@ export function precacheList(root: string, outputs: string[]): string[] {
   return [...files].sort();
 }
 
-/** Hex hash of the precached contents in list order: a rebuild with no change keeps the cache name. */
-function precacheVersion(root: string, files: string[]): string {
+/** Hex hash of the precached paths and contents in list order: a rebuild with no change keeps the cache name. `known` holds contents already in memory. */
+export function precacheVersion(root: string, files: string[], known: Map<string, string>): string {
   let hash = 0n;
   for (const file of files) {
     const path = join(root, file);
-    if (file.endsWith("/") || !existsSync(path)) continue;
-    hash = BigInt(Bun.hash(readFileSync(path), hash));
+    const text = known.get(file);
+    if (text === undefined && (file.endsWith("/") || !existsSync(path))) continue;
+    hash = BigInt(Bun.hash(file, hash));
+    hash = BigInt(Bun.hash(text ?? readFileSync(path), hash));
   }
   return hash.toString(16);
 }
@@ -403,6 +413,7 @@ export function serviceWorker(version: string, files: string[]): string {
 const CACHE = ${JSON.stringify(`xzor-${version}`)};
 const FILES = ${JSON.stringify(files)};
 
+// skipWaiting and clients.claim are safe: asset names are unhashed and the whole set is versioned together.
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));
 });
@@ -421,10 +432,10 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
   if (request.mode === "navigate") {
     const shell = new URL("index.html", self.registration.scope).href;
-    event.respondWith(fetch(request).catch(() => caches.match(shell).then((hit) => hit ?? Response.error())));
+    event.respondWith(fetch(request).catch(() => caches.open(CACHE).then((cache) => cache.match(shell, { ignoreVary: true })).then((hit) => hit ?? Response.error())));
     return;
   }
-  event.respondWith(caches.match(request).then((hit) => hit ?? fetch(request)));
+  event.respondWith(caches.open(CACHE).then((cache) => cache.match(request, { ignoreVary: true })).then((hit) => hit ?? fetch(request)));
 });
 `;
 }
@@ -439,16 +450,22 @@ function writeServiceWorker(root: string, outputs: string[], entryOutput: string
     if (existsSync(worker) && readFileSync(worker, "utf8").startsWith(SW_HEADER)) rmSync(worker);
     return;
   }
-  for (const problem of checkManifest(readFileSync(join(root, MANIFEST), "utf8"), root)) console.error(`xzor: ${MANIFEST}: ${problem}`);
+  const text = readFileSync(join(root, MANIFEST), "utf8");
+  const manifest = parseManifest(text);
+  for (const problem of checkManifest(text, root, manifest)) console.error(`xzor: ${MANIFEST}: ${problem}`);
+  // Contents already in memory, so the worker version does not re-read the bundle just written.
+  const known = new Map<string, string>();
   if (entryOutput) {
     const rel = relative(dirname(entryOutput), root).replaceAll("\\", "/") || ".";
     const bundle = readFileSync(entryOutput, "utf8");
     const line = `if ("serviceWorker" in navigator) navigator.serviceWorker.register(new URL(${JSON.stringify(`${rel}/sw.js`)}, import.meta.url));\n`;
     // Appended, so every mapped position in the bundle stays where its source map says.
-    writeFileSync(entryOutput, bundle.endsWith("\n") ? bundle + line : `${bundle}\n${line}`);
+    const full = bundle.endsWith("\n") ? bundle + line : `${bundle}\n${line}`;
+    writeFileSync(entryOutput, full);
+    known.set(relative(root, entryOutput).replaceAll("\\", "/"), full);
   }
-  const files = precacheList(root, outputs);
-  writeFileSync(worker, serviceWorker(precacheVersion(root, files), files));
+  const files = precacheList(root, outputs, manifest);
+  writeFileSync(worker, serviceWorker(precacheVersion(root, files, known), files));
 }
 
 async function main(entry: string, outdir: string, hot = false, watch = false): Promise<void> {

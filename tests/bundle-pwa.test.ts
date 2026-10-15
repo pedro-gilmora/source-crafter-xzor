@@ -1,7 +1,7 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkManifest, precacheList, serviceWorker } from "../src/bundle";
+import { checkManifest, precacheList, precacheVersion, serviceWorker } from "../src/bundle";
 
 const repo = join(import.meta.dir, "..");
 // Same depth below the repo as examples/counter, so module resolution matches a real project.
@@ -24,6 +24,12 @@ writeFileSync(
 );
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+// Each test starts without a manifest, worker or build output.
+beforeEach(() => {
+  for (const f of ["manifest.webmanifest", "sw.js"]) rmSync(join(dir, f), { force: true });
+  rmSync(join(dir, "dist"), { recursive: true, force: true });
+});
 
 const bundle = (...extra: string[]) => {
   const run = Bun.spawnSync(["bun", join(repo, "src", "bundle.ts"), join(dir, "main.ts"), join(dir, "dist"), ...extra], { cwd: repo });
@@ -65,7 +71,10 @@ test("the precache list holds the app shell, local page assets and non-map outpu
     "manifest.webmanifest",
     "styles.css",
   ]);
-  rmSync(join(dir, "manifest.webmanifest"));
+});
+
+test("the precache list tolerates a missing manifest", () => {
+  expect(precacheList(dir, [])).toContain("index.html");
 });
 
 test("the worker carries its version and file list", () => {
@@ -73,6 +82,25 @@ test("the worker carries its version and file list", () => {
   expect(src.startsWith(HEADER)).toBe(true);
   expect(src).toContain(`"xzor-abc"`);
   expect(src).toContain(`["./","index.html"]`);
+  expect(src).toContain("ignoreVary");
+});
+
+test("renaming an asset with the same bytes changes the version", () => {
+  writeFileSync(join(dir, "a.bin"), "same");
+  writeFileSync(join(dir, "b.bin"), "same");
+  expect(precacheVersion(dir, ["a.bin"], new Map())).not.toBe(precacheVersion(dir, ["b.bin"], new Map()));
+  expect(precacheVersion(dir, ["a.bin"], new Map())).toBe(precacheVersion(dir, ["a.bin"], new Map()));
+  rmSync(join(dir, "a.bin"));
+  rmSync(join(dir, "b.bin"));
+});
+
+test("the bundle's worker version covers the entry bundle with its registration line", () => {
+  writeFileSync(join(dir, "manifest.webmanifest"), MANIFEST);
+  bundle();
+  const entry = readFileSync(join(dir, "dist", "main.js"), "utf8");
+  const files = precacheList(dir, [join(dir, "dist", "main.js")]);
+  const version = readFileSync(join(dir, "sw.js"), "utf8").match(/"xzor-([0-9a-f]+)"/)![1];
+  expect(precacheVersion(dir, files, new Map([["dist/main.js", entry]]))).toBe(version);
 });
 
 test("a manifest makes the bundle install a service worker, and removing it undoes that", () => {
@@ -121,6 +149,4 @@ test("a broken manifest warns but still builds", () => {
   const { err } = bundle();
   expect(err).toContain("xzor: manifest.webmanifest:");
   expect(readFileSync(join(dir, "sw.js"), "utf8").startsWith(HEADER)).toBe(true);
-  rmSync(join(dir, "manifest.webmanifest"));
-  bundle();
 }, 60_000);
