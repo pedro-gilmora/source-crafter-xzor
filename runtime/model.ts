@@ -63,6 +63,9 @@ type Watch = {
   wrapped?: EventListener;
 };
 
+/** The "field" index a read or a change of `state` reports. */
+const stateIndex = -1;
+
 const meta = Symbol("xzor.model.meta");
 const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), validators: [], serialized: [] };
 
@@ -138,7 +141,7 @@ export abstract class Model extends EventTarget {
     if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
     if (a instanceof Date || b instanceof Date)
       return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
-    if (a instanceof Model || b instanceof Model) return false;
+    if (a instanceof Model || b instanceof Model || "$own" in a || "$own" in b) return false;
     if (Array.isArray(a) || Array.isArray(b)) {
       if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
       return a.every((value, i) => Model.same(value, b[i]));
@@ -151,20 +154,25 @@ export abstract class Model extends EventTarget {
   }
 
   get state(): State {
+    Model.$reader?.(this, stateIndex);
     return this.#state;
   }
 
   set state(value: State) {
     if (value === this.#state) return;
     this.#state = value;
+    const subs = this.#subs;
+    if (subs !== undefined) for (let i = 0; i < subs.length; i++) changed(subs[i]!, stateIndex);
     if (this.#listens("state")) this.dispatchEvent(new Event("state"));
   }
 
   hasState(flags: number): boolean {
+    Model.$reader?.(this, stateIndex);
     return (this.#state & flags) !== 0;
   }
 
   get hasChanges(): boolean {
+    Model.$reader?.(this, stateIndex);
     if ((this.#state & Changed) !== 0) return true;
     for (const name of metaOf(this).names)
       if (valueHasChanges((this as unknown as Record<string, unknown>)[name])) return true;
@@ -173,6 +181,7 @@ export abstract class Model extends EventTarget {
 
   /** False while Detached or Deleted; otherwise whether a validator fails here or in a nested model or set. */
   get hasErrors(): boolean {
+    Model.$reader?.(this, stateIndex);
     if ((this.#state & (State.Detached | State.Deleted)) !== 0) return false;
     const own = metaOf(this);
     const values = this as unknown as Record<string, unknown>;
@@ -187,6 +196,7 @@ export abstract class Model extends EventTarget {
   /** The failures of every validated field, but only once this model changed: a fresh one shows none. */
   get errors(): Record<string, string[]> {
     const result = Object.create(null) as Record<string, string[]>;
+    Model.$reader?.(this, stateIndex);
     if ((this.#state & (State.Detached | State.Deleted)) !== 0) return result;
     if (this.#originals === undefined && (this.#state & (State.Added | State.Modified)) === 0) return result;
     const values = this as unknown as Record<string, unknown>;
@@ -320,12 +330,19 @@ export abstract class Model extends EventTarget {
         silent--;
       }
     }
-    for (let i = 0; i < names.length; i++)
-      try {
-        attach(target[names[i]!], this, i);
-      } catch (error) {
-        if (!(error instanceof TypeError)) throw error;
-      }
+    // Reading the fields back must not subscribe a component that is rendering.
+    const reader = Model.$reader;
+    Model.$reader = undefined;
+    try {
+      for (let i = 0; i < names.length; i++)
+        try {
+          attach(target[names[i]!], this, i);
+        } catch (error) {
+          if (!(error instanceof TypeError)) throw error;
+        }
+    } finally {
+      Model.$reader = reader;
+    }
     return this;
   }
 
@@ -583,14 +600,14 @@ export const requiredIdValue: Validator = (value) => (required(value) === true &
 export const nonZero: Validator = (value) => (value > 0 ? true : "Value must be greater than 0");
 
 export const minValue = (min: number, inclusive = true): Validator => (value) =>
-  (inclusive ? value >= min : value > min) ? true : `Field must be greater than ${inclusive ? "or equal to" : ""} ${min}`;
+  (inclusive ? value >= min : value > min) ? true : `Field must be greater than ${inclusive ? "or equal to " : ""}${min}`;
 
 export const maxValue = (max: number, inclusive = true): Validator => (value) =>
-  (inclusive ? value <= max : value < max) ? true : `Field must be less than ${inclusive ? "or equal to" : ""} ${max}`;
+  (inclusive ? value <= max : value < max) ? true : `Field must be less than ${inclusive ? "or equal to " : ""}${max}`;
 
 // Re-rendering: while a component renders, every tracked getter it reads reports itself here. The
-// component keeps one dep per model it read, with a bitmask of the properties (every field past the
-// 30th shares one bit), rebuilt on every render; a change it covers queues one re-render.
+// component keeps one dep per model it read, with a bitmask of the properties (every field from the
+// 30th on shares one bit, and `state` has its own), rebuilt on every render; a change it covers queues one re-render.
 
 /** One (component, model) pair, held by the model in its own subscriber list. */
 type Dep = {
@@ -628,8 +645,8 @@ const queued: Reads[] = [];
 let current: ComponentBase | undefined;
 let currentReads: Reads | undefined;
 
-// Fields from the 31st on share the top bit: they re-render each other's readers, nobody else's.
-const bitOf = (index: number): number => (index < 31 ? 1 << index : 1 << 31);
+// Fields from the 30th on share bit 30: they re-render each other's readers, nobody else's. Bit 31 is `state`.
+const bitOf = (index: number): number => (index === stateIndex ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
 
 function subscribe(own: Reads, model: Model): Dep {
   const dep: Dep = { model, owner: own, mask: 0, epoch: own.epoch, slot: 0 };

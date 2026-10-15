@@ -8,7 +8,7 @@ import {
   type RouteTable,
   mount,
 } from "./index";
-import { EntitySet, Model, ModelChangeEvent, Persist } from "./model";
+import { EntitySet, Model, ModelChangeEvent, Persist, State } from "./model";
 
 // Models are written the way the bundle rewrites them (Task 2), components the way codegen emits them.
 
@@ -375,6 +375,82 @@ test("an EntitySet mutation re-renders the components reading that property", as
   expect(grid.count).toBe(2);
   expect(views.length).toBe(2);
   expect(host.textContent).toBe("ab");
+});
+
+class StateView extends ComponentBase {
+  count = 0;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    b.addContent(row.state);
+  }
+}
+
+class SetView extends ComponentBase {
+  count = 0;
+  set = new EntitySet<Row>();
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    b.addContent(this.set.view.length);
+  }
+}
+
+class Dirty extends ComponentBase {
+  count = 0;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    b.addContent(row.hasChanges ? "dirty" : "clean");
+  }
+}
+
+let made: Row | undefined;
+
+class Maker extends ComponentBase {
+  count = 0;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    made = new Row({ label: "x" });
+    b.addContent("m");
+  }
+}
+
+test("a state change alone re-renders the readers of state", async () => {
+  const view = show(StateView);
+  row.markModified();
+  await tick();
+  expect(view.count).toBe(2);
+  expect(host.textContent).toBe(String(State.Modified));
+});
+
+test("markDeleted outside a handler re-renders a component showing a set's view", async () => {
+  const view = show(SetView);
+  view.set.push(row);
+  view.stateHasChanged();
+  expect(host.textContent).toBe("1");
+  row.markDeleted();
+  await tick();
+  expect(view.count).toBe(3);
+  expect(host.textContent).toBe("0");
+});
+
+test("confirmChanges with no field change re-renders a component showing hasChanges", async () => {
+  row.markModified();
+  const dirty = show(Dirty);
+  expect(host.textContent).toBe("dirty");
+  row.confirmChanges();
+  await tick();
+  expect(dirty.count).toBe(2);
+  expect(host.textContent).toBe("clean");
+});
+
+test("a model built during a render does not subscribe the renderer", async () => {
+  const maker = show(Maker);
+  made!.label = "y";
+  await tick();
+  expect(maker.count).toBe(1);
 });
 
 test("a manual change event re-renders the readers of that property", async () => {

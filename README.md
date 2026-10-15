@@ -339,7 +339,7 @@ ada.revertChanges();  // back to 8; or ada.confirmChanges() after saving
 - **Components update by themselves.** A component that reads `ada.hours` while it renders draws again when that value changes, from anywhere: a service, a timer or another component. Several changes in a row draw once.
 - **Checks.** `@Validate(...)` fields fill `errors` (messages per field) and `hasErrors`. `hasValidChanges` tells you when it is safe to save.
 - **Lists.** `EntitySet.track(Worker, items)` is an array of models. `delete(item)`, `view` (without deleted ones), `changes`, `hasErrors`, `revertChanges()` and `confirmChanges()` work on the whole list.
-- **Limits.** The class must extend `Model` directly. `set[i] = x` is not noticed (use `push`, `splice`, ...). Add `"ESNext.Decorators"` to `lib` in `tsconfig.json`.
+- **Limits.** The class must extend `Model` directly. `set[i] = x` is not noticed (use `push`, `splice`, ...). An EntitySet held directly by a component re-renders on changes made in that component's event handlers only; to see list changes from timers or services, keep the list in a model field. Add `"ESNext.Decorators"` to `lib` in `tsconfig.json`.
 
 See [`examples/counter/pages/Team.xzor`](examples/counter/pages/Team.xzor).
 

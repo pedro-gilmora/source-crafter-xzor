@@ -208,11 +208,11 @@ test("the validators say pass with true and fail with the message", () => {
 
   expect(minValue(5)(5)).toBe(true);
   expect(minValue(5)(4)).toBe("Field must be greater than or equal to 5");
-  expect(minValue(5, false)(5)).toBe("Field must be greater than  5");
+  expect(minValue(5, false)(5)).toBe("Field must be greater than 5");
   expect(minValue(5, false)(6)).toBe(true);
 
   expect(maxValue(5)(5)).toBe(true);
   expect(maxValue(5)(6)).toBe("Field must be less than or equal to 5");
-  expect(maxValue(5, false)(5)).toBe("Field must be less than  5");
+  expect(maxValue(5, false)(5)).toBe("Field must be less than 5");
   expect(maxValue(5, false)(4)).toBe(true);
 });

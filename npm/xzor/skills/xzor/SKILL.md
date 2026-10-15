@@ -214,7 +214,7 @@ export class Worker extends Model {
 - A component that reads a model while it renders draws again when that value changes, even if the change comes from a service or a timer. Do not call `stateHasChanged()` for models.
 - `state` (`State.Detached | Unchanged | Added | Deleted | Modified`, from `.../model`), `changes` (what to send to the server, `null` if nothing), `revertChanges()`, `confirmChanges(serverValues?)`, `markDeleted()`, `hasErrors`, `errors` (messages per field, filled after the first edit), `hasValidChanges`.
 - Decorators: `@Validate(...)`, `@Persist` (a getter sent with the fields), `@Ignore` (kept out of `changes`), `@Untracked` (a plain field). Validators: `required`, `email`, `phone`, `maxLength`, `minLength`, `requiredIdValue`, `nonZero`, `minValue`, `maxValue`.
-- `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed.
+- `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed. An EntitySet held directly by a component re-renders on changes made in that component's event handlers only; to see list changes from timers or services, keep the list in a model field.
 - Needs `"ESNext.Decorators"` in the tsconfig `lib`. Not supported: plain object graphs with cycles, one set held by two models.
 
 ## Hot reload and PWA

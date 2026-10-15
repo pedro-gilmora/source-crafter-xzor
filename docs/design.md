@@ -308,6 +308,7 @@ A set held by a model field tells the model when it is mutated, so components th
 - Only direct subclasses of `Model` are tracked (v1).
 - `set[i] = x` and `set.length = n` are not noticed. Use the methods.
 - A set shared by two models notifies only the last one.
+- An EntitySet held directly by a component re-renders on changes made in that component's event handlers only; to see list changes from timers or services, keep the list in a model field.
 - `changes`, `same` and `isLike` don't support plain object graphs with cycles.
 - The tsconfig `lib` needs `ESNext.Decorators`.
 

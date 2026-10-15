@@ -13,6 +13,17 @@ class Board extends Model { constructor(data?: object) { super(data); this.assig
   #items = new EntitySet<Task>(); get items(): EntitySet<Task> { Model.$reader?.(this, 1); return this.#items; } set items(v: EntitySet<Task>) { const p = this.#items; if (Model.same(p, v)) return; this.#items = v; this.$changed(1, p); }
 static { Model.$define(this, ["name", "items"]); } }
 
+test("assigning a new empty set to a field holding an empty set stores it and attaches its owner", () => {
+  const board = new Board({ name: "b" });
+  const set = new EntitySet<Task>();
+  board.items = set;
+  expect(board.items).toBe(set);
+  const seen: string[] = [];
+  board.addEventListener("change", (e) => seen.push((e as ModelChangeEvent).property));
+  set.push(new Task());
+  expect(seen).toEqual(["items"]);
+});
+
 test("a tracked set holds the server items unchanged", () => {
   const set = EntitySet.track(Task, [{ title: "a" }, { title: "b" }]);
 
