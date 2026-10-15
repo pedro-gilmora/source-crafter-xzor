@@ -96,7 +96,7 @@ Revised after review: tracking is what a model *is*, so there is no per-field de
 
 **Files:** Create `runtime/entity-set.ts`; test `runtime/entity-set.test.ts`.
 
-- `class EntitySet<T extends Model> extends Array<T>` (`static [Symbol.species] = Array`), `static of(type, items)`, `delete(...items)`, `view`, `hasChanges`, `changes`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`; mutating methods (`push`, `splice`, `pop`, `shift`, `unshift`, `sort`, `reverse`) notify the owning model's `change` (the set knows its owner and property when assigned to a tracked field). Index assignment `set[i] = x` is not observed (documented).
+- `class EntitySet<T extends Model> extends Array<T>` (`static [Symbol.species] = Array`), `static track(type, items)`, `delete(...items)`, `view`, `hasChanges`, `changes`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`; mutating methods (`push`, `splice`, `pop`, `shift`, `unshift`, `sort`, `reverse`) notify the owning model's `change` (the set knows its owner and property when assigned to a tracked field). Index assignment `set[i] = x` is not observed (documented).
 - [ ] Tests mirror `trackChanges`: delete of Added vs Unchanged items, `view`, revert, confirm with `null` removals, nested `changes`. Implement, `bun test`, commit `feat: EntitySet`.
 
 ### Task 5: Re-rendering components

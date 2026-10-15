@@ -189,3 +189,47 @@ test("an untouched set tells nothing", () => {
 
   expect(seen).toEqual([]);
 });
+
+test("confirmChanges handles 10k items with 1k nulls", () => {
+  const set = EntitySet.track(Task, Array.from({ length: 10000 }, (_, i) => ({ title: `t${i}` })));
+  set[1]!.title = "x";
+  const server = set.map((_, i) => (i % 10 === 0 ? null : { title: `s${i}` }));
+
+  set.confirmChanges(server);
+
+  expect(set.length).toBe(9000);
+  expect(set[0]!.title).toBe("s1");
+  expect(set[8999]!.title).toBe("s9999");
+  expect(set.hasChanges).toBe(false);
+});
+
+test("confirmChanges leaves the items past a shorter server list as they are", () => {
+  const set = EntitySet.track(Task, [{ title: "a" }, { title: "b" }, { title: "c" }]);
+  set.delete(set[2]!);
+
+  set.confirmChanges([{ title: "A" }]);
+
+  expect(set.map((item) => item.title)).toEqual(["A", "b", "c"]);
+  expect(set[2]!.state).toBe(State.Deleted);
+});
+
+test("push takes one item or many, and track builds the set without a snapshot", () => {
+  const set = EntitySet.track(Task, [{ title: "a" }]);
+  expect(set.push(new Task())).toBe(2);
+  expect(set.push(new Task(), new Task())).toBe(4);
+  set.revertChanges();
+  expect(set.length).toBe(1);
+});
+
+test("splice that removes and inserts nothing tells nobody", () => {
+  const board = new Board();
+  board.items.push(new Task({ title: "a" }));
+  const seen: string[] = [];
+  board.addEventListener("change", (event) => seen.push((event as ModelChangeEvent).property));
+
+  expect(board.items.splice(1)).toEqual([]);
+  expect(board.items.splice(0, 0)).toEqual([]);
+  expect(seen).toEqual([]);
+  expect(board.items.splice(0, 1).length).toBe(1);
+  expect(seen).toEqual(["items"]);
+});

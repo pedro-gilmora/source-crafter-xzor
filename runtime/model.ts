@@ -288,8 +288,8 @@ export abstract class Model extends EventTarget {
 
   /**
    * Writes construction data without tracking it, taking only the tracked fields of the class.
-   * Call it last in the most derived constructor: the fields a subclass declares are only
-   * initialized once its own initializers have run.
+   * A base constructor may call it before a subclass's fields exist: those are skipped, and the
+   * subclass's own `assign` sets them.
    */
   protected assign(data?: object): this {
     const names = metaOf(this).names;
@@ -299,12 +299,23 @@ export abstract class Model extends EventTarget {
       const source = data as Record<string, unknown>;
       silent++;
       try {
-        for (const name in source) if (tracked.has(name)) target[name] = source[name];
+        for (const name in source)
+          if (tracked.has(name))
+            try {
+              target[name] = source[name];
+            } catch (error) {
+              if (!(error instanceof TypeError)) throw error; // a subclass slot, not installed yet
+            }
       } finally {
         silent--;
       }
     }
-    for (let i = 0; i < names.length; i++) attach(target[names[i]!], this, i);
+    for (let i = 0; i < names.length; i++)
+      try {
+        attach(target[names[i]!], this, i);
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+      }
     return this;
   }
 

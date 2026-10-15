@@ -1,7 +1,8 @@
 // A tracked list of models: the items keep their own state, and the set keeps the list it started
 // from, so it can put it back. On a tracked field it tells its model when it is mutated, without
 // touching the model's own state. `set[i] = x` and `set.length = n` are not observed; the methods
-// below are. `map`, `filter` and `slice` give plain arrays.
+// below are. `map`, `filter` and `slice` give plain arrays. A set assigned to two models notifies
+// only the last one. `new EntitySet(n)` (holes) is not supported: use `EntitySet.track`.
 
 import { State, type Model } from "./model";
 
@@ -13,8 +14,7 @@ export class EntitySet<T extends Model> extends Array<T> {
   /** Builds a set from server data: `Array.of` and `Array.from` keep their own meaning. */
   static track<T extends Model>(type: new (data?: object) => T, items?: Iterable<object>): EntitySet<T> {
     const set = new EntitySet<T>();
-    if (items) for (const item of items) set.push(new type(item));
-    set.#original = undefined;
+    if (items) for (const item of items) Array.prototype.push.call(set, new type(item));
     return set;
   }
 
@@ -91,28 +91,40 @@ export class EntitySet<T extends Model> extends Array<T> {
     return this;
   }
 
-  /** Takes the list the server confirmed: a `null` at an index drops that item, as do the deleted ones. */
+  /**
+   * Takes the list the server confirmed: a `null` at an index drops that item, as do the deleted ones.
+   * Items past the end of a shorter server list are left exactly as they are.
+   */
   confirmChanges(items?: readonly (object | null)[]): this {
     let touched = this.#original !== undefined;
-    let i = items ? items.length : this.length;
-    while (i--) {
-      if (i >= this.length) continue;
-      const item = this[i]!;
-      const confirmed = items?.[i];
-      if (confirmed === null || item.hasState(State.Deleted)) {
-        super.splice(i, 1);
-        touched = true;
-      } else item.confirmChanges(confirmed);
+    const length = this.length;
+    const limit = items ? Math.min(items.length, length) : length;
+    let w = 0;
+    for (let r = 0; r < length; r++) {
+      const item = this[r]!;
+      if (r < limit) {
+        const confirmed = items?.[r];
+        if (confirmed === null || item.hasState(State.Deleted)) continue;
+        item.confirmChanges(confirmed);
+      }
+      this[w++] = item;
+    }
+    if (w !== length) {
+      this.length = w;
+      touched = true;
     }
     this.#original = undefined;
     if (touched) this.#notify();
     return this;
   }
 
-  override push(...items: T[]): number {
-    if (items.length !== 0) {
+  override push(...items: T[]): number;
+  override push(item?: T): number {
+    const count = arguments.length;
+    if (count !== 0) {
       this.#snapshot();
-      super.push(...items);
+      if (count === 1) super.push(item!);
+      else super.push(...(Array.prototype.slice.call(arguments) as T[]));
       this.#notify();
     }
     return this.length;
@@ -144,6 +156,11 @@ export class EntitySet<T extends Model> extends Array<T> {
   }
 
   override splice(start: number, deleteCount?: number, ...items: T[]): T[] {
+    if (items.length === 0) {
+      const length = this.length;
+      const from = start < 0 ? Math.max(length + start, 0) : Math.min(start, length);
+      if (from >= length || (deleteCount !== undefined && deleteCount <= 0)) return [];
+    }
     this.#snapshot();
     const removed =
       deleteCount === undefined && items.length === 0 ? super.splice(start) : super.splice(start, deleteCount!, ...items);
