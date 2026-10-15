@@ -1,81 +1,150 @@
-// `xzor dev`, run by the launcher under Bun: `xzor build --watch`, a static server with the SPA fallback,
-// and live reload: open pages reload after each successful build.
+// `xzor dev`, run by the launcher under Bun: `xzor build --watch --hot`, a static server with the SPA fallback,
+// and live reload: after each build open pages patch the components the edit changed, or reload when nothing
+// could be patched. Tests import `prepareModule`; the server only runs when this file is the entry.
 // argv: <xzor binary> [build options...]
-import { resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 
-const [exe, ...args] = process.argv.slice(2);
-const root = process.cwd();
-const watch = Bun.spawn([exe!, "build", "--watch", ...args], { stdio: ["inherit", "pipe", "inherit"] });
+const transpiler = new Bun.Transpiler({ loader: "ts" });
+const IMPORT_CLAUSE = /^import\s+([^"']+?)\s+from\s*["'][^"']+["']/gm;
 
-// Pages listening for rebuilds (Server-Sent Events).
-const clients = new Set<ReadableStreamDefaultController<string>>();
-let pending: ReturnType<typeof setTimeout> | undefined;
-const reload = () => {
-  clearTimeout(pending);
-  pending = setTimeout(() => {
-    for (const c of clients) c.enqueue("data: reload\n\n");
-  }, 50);
-};
-
-// The build output passes through; a written bundle (`.../dist/x.js`) means a successful build.
-void (async () => {
-  const decoder = new TextDecoder();
-  let rest = "";
-  for await (const chunk of watch.stdout) {
-    process.stdout.write(chunk);
-    const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
-    rest = lines.pop()!;
-    if (lines.some((l) => /[\\/]dist[\\/][^\\/]+\.js\s*$/.test(l))) reload();
+/** Local names bound by the value imports of a transpiled module (the transpiler drops the type-only ones). */
+function importLocals(js: string): string[] {
+  const locals: string[] = [];
+  for (const m of js.matchAll(IMPORT_CLAUSE)) {
+    const clause = m[1]!;
+    const named = /\{([^}]*)\}/.exec(clause);
+    for (const part of clause.replace(/\{[^}]*\}/, "").split(",")) {
+      const local = part.trim().replace(/^\*\s*as\s+/, "");
+      if (local) locals.push(local);
+    }
+    for (const spec of named?.[1]!.split(",") ?? []) {
+      const local = spec.trim().split(/\s+as\s+/).pop()!;
+      if (local) locals.push(local);
+    }
   }
-})();
-
-const client = `<script>new EventSource("/__xzor/reload").onmessage = () => location.reload();</script>`;
-// Never cached, so a reload always gets the latest build.
-const headers = { "Cache-Control": "no-store" };
-const html = async (file: string) =>
-  new Response((await Bun.file(file).text()).replace(/<\/body>/i, `${client}</body>`), { headers: { ...headers, "Content-Type": "text/html;charset=utf-8" } });
-
-const fetch = async (req: Request) => {
-  const { pathname } = new URL(req.url);
-  if (pathname === "/__xzor/reload") {
-    let self: ReadableStreamDefaultController<string>;
-    const stream = new ReadableStream<string>({
-      start(c) {
-        self = c;
-        clients.add(c);
-        c.enqueue(": connected\n\n");
-      },
-      cancel() {
-        clients.delete(self);
-      },
-    });
-    return new Response(stream, { headers: { ...headers, "Content-Type": "text/event-stream" } });
-  }
-  const path = resolve(root, "." + decodeURIComponent(pathname));
-  if (path.startsWith(root + sep)) {
-    const file = Bun.file(path);
-    if (await file.exists()) return path.endsWith(".html") ? html(path) : new Response(file, { headers });
-  }
-  // Unknown paths are client routes: the app routes them itself.
-  return html(resolve(root, "index.html"));
-};
-// No idle timeout: the reload stream stays open for as long as the page does.
-const listen = (port: number) => Bun.serve({ port, fetch, idleTimeout: 0 });
-let server;
-try {
-  server = listen(Number(process.env.PORT) || 3000);
-} catch {
-  server = listen(0);
+  return locals;
 }
-console.log(`xzor: serving http://localhost:${server.port}/ with live reload (Ctrl+C to stop)`);
 
-const stop = () => {
-  watch.kill();
+/** A generated component's module as the hot client evaluates it: no imports, no exports, returning its class. */
+export function prepareModule(ts: string): { code: string; imports: string[] } {
+  const js = transpiler.transformSync(ts);
+  const cls = /^export default class (\w+)/m.exec(js)?.[1];
+  const body = js
+    .replace(/^import\s.*$/gm, "")
+    .replace(/^export default (class)/m, "$1")
+    .replace(/^export\s+/gm, "");
+  return { code: cls ? `${body}\nreturn ${cls};` : body, imports: importLocals(js) };
+}
+
+if (import.meta.main) {
+  const [exe, ...args] = process.argv.slice(2);
+  const root = process.cwd();
+  const watch = Bun.spawn([exe!, "build", "--watch", "--hot", ...args], { stdio: ["inherit", "pipe", "inherit"] });
+
+  // Pages listening for rebuilds (Server-Sent Events).
+  const clients = new Set<ReadableStreamDefaultController<string>>();
+  const send = (data: string) => {
+    for (const c of clients) c.enqueue(`data: ${data}\n\n`);
+  };
+
+  let pending: ReturnType<typeof setTimeout> | undefined;
+  // Ids to patch at the next flush, the ones the running build printed, and whether anything was unpatchable.
+  const queued = new Set<string>();
+  let printed: string[] = [];
+  let unpatchable = false;
+
+  const flush = async () => {
+    const ids = [...queued];
+    queued.clear();
+    const reload = unpatchable || ids.length === 0;
+    unpatchable = false;
+    if (reload) return send("reload");
+    try {
+      const hot = await Promise.all(ids.map(async (id) => ({ id, ...prepareModule(await Bun.file(resolve(root, id)).text()) })));
+      send(JSON.stringify({ hot }));
+    } catch {
+      send("reload");
+    }
+  };
+  // A written bundle (`.../dist/x.js`) ends a successful build; the `xzor: hot` lines before it name what it patches.
+  const built = () => {
+    if (printed.length) for (const id of printed) queued.add(id);
+    else unpatchable = true;
+    printed = [];
+    clearTimeout(pending);
+    pending = setTimeout(flush, 50);
+  };
+
+  // The build output passes through.
+  void (async () => {
+    const decoder = new TextDecoder();
+    let rest = "";
+    for await (const chunk of watch.stdout) {
+      process.stdout.write(chunk);
+      const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+      rest = lines.pop()!;
+      for (const line of lines) {
+        const hot = /^xzor: hot (.+?)\s*$/.exec(line);
+        if (hot) printed.push(hot[1]!);
+        else if (/[\\/]dist[\\/][^\\/]+\.js\s*$/.test(line)) built();
+      }
+    }
+  })();
+
+  const build = await Bun.build({ entrypoints: [join(import.meta.dir, "hot-client.ts")], format: "iife", target: "browser" });
+  const hotClient = await build.outputs[0]!.text();
+  // A classic script right after `<head>`: the registry must exist before the app's module scripts run.
+  const client = `<script src="/__xzor/hot.js"></script>`;
+  const inject = (text: string) =>
+    /<head[^>]*>/i.test(text) ? text.replace(/<head[^>]*>/i, (head) => head + client) : text.replace(/<script/i, `${client}<script`);
+  // Never cached, so a reload always gets the latest build.
+  const headers = { "Cache-Control": "no-store" };
+  const html = async (file: string) =>
+    new Response(inject(await Bun.file(file).text()), { headers: { ...headers, "Content-Type": "text/html;charset=utf-8" } });
+
+  const fetch = async (req: Request) => {
+    const { pathname } = new URL(req.url);
+    if (pathname === "/__xzor/hot.js") return new Response(hotClient, { headers: { ...headers, "Content-Type": "text/javascript;charset=utf-8" } });
+    if (pathname === "/__xzor/reload") {
+      let self: ReadableStreamDefaultController<string>;
+      const stream = new ReadableStream<string>({
+        start(c) {
+          self = c;
+          clients.add(c);
+          c.enqueue(": connected\n\n");
+        },
+        cancel() {
+          clients.delete(self);
+        },
+      });
+      return new Response(stream, { headers: { ...headers, "Content-Type": "text/event-stream" } });
+    }
+    const path = resolve(root, "." + decodeURIComponent(pathname));
+    if (path.startsWith(root + sep)) {
+      const file = Bun.file(path);
+      if (await file.exists()) return path.endsWith(".html") ? html(path) : new Response(file, { headers });
+    }
+    // Unknown paths are client routes: the app routes them itself.
+    return html(resolve(root, "index.html"));
+  };
+  // No idle timeout: the reload stream stays open for as long as the page does.
+  const listen = (port: number) => Bun.serve({ port, fetch, idleTimeout: 0 });
+  let server;
+  try {
+    server = listen(Number(process.env.PORT) || 3000);
+  } catch {
+    server = listen(0);
+  }
+  console.log(`xzor: serving http://localhost:${server.port}/ with live reload (Ctrl+C to stop)`);
+
+  const stop = () => {
+    watch.kill();
+    server.stop(true);
+    process.exit(0);
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  await watch.exited;
   server.stop(true);
-  process.exit(0);
-};
-process.on("SIGINT", stop);
-process.on("SIGTERM", stop);
-await watch.exited;
-server.stop(true);
-process.exit(watch.exitCode ?? 0);
+  process.exit(watch.exitCode ?? 0);
+}
