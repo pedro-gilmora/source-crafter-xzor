@@ -37,6 +37,15 @@ export function prepareModule(ts: string): { code: string; imports: string[] } {
   return { code: cls ? `${body}\nreturn ${cls};` : body, imports: importLocals(js) };
 }
 
+/** Served at `/sw.js` in dev: replaces a production worker, which would serve stale files, and reloads its pages uncontrolled. */
+export const RETIRE_WORKER = `self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil((async () => {
+  for (const k of await caches.keys()) if (k.startsWith("xzor-")) await caches.delete(k);
+  await self.registration.unregister();
+  for (const c of await self.clients.matchAll({ type: "window" })) c.navigate(c.url);
+})()));
+`;
+
 if (import.meta.main) {
   const [exe, ...args] = process.argv.slice(2);
   const root = process.cwd();
@@ -111,6 +120,7 @@ if (import.meta.main) {
   const fetch = async (req: Request) => {
     const { pathname } = new URL(req.url);
     if (pathname === "/__xzor/hot.js") return new Response(hotClient, { headers: { ...headers, "Content-Type": "text/javascript;charset=utf-8" } });
+    if (pathname === "/sw.js") return new Response(RETIRE_WORKER, { headers: { ...headers, "Content-Type": "text/javascript;charset=utf-8" } });
     if (pathname === "/__xzor/reload") {
       let self: ReadableStreamDefaultController<string>;
       const stream = new ReadableStream<string>({

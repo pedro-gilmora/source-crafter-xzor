@@ -38,9 +38,9 @@ update("tsconfig.json", { compilerOptions: { target: "ES2022", strict: true, noE
 
 const ignore = existsSync(".gitignore") ? readFileSync(".gitignore", "utf8") : "";
 const lines = ignore.split(/\r?\n/).map((l) => l.trim().replace(/^\//, "").replace(/\/$/, ""));
-const missing = ["node_modules", ".xzor", "dist"].filter((l) => !lines.includes(l));
+const missing = ["node_modules/", ".xzor/", "dist/", "sw.js"].filter((l) => !lines.includes(l.replace(/\/$/, "")));
 if (missing.length) {
-  appendFileSync(".gitignore", (ignore && !ignore.endsWith("\n") ? "\n" : "") + missing.map((l) => `${l}/\n`).join(""));
+  appendFileSync(".gitignore", (ignore && !ignore.endsWith("\n") ? "\n" : "") + missing.map((l) => `${l}\n`).join(""));
   console.log(`  .gitignore: ${ignore ? "updated" : "created"}`);
 }
 
