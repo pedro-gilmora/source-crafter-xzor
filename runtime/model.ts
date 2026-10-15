@@ -327,7 +327,7 @@ export abstract class Model extends EventTarget {
     if (data) {
       const tracked = metaOf(this).tracked;
       const source = data as Record<string, unknown>;
-      if (source.$$ !== undefined) this.#state = source.$$ as State;
+      if (source.$$ != null) this.#state = source.$$ as State;
       silent++;
       try {
         for (const name in source)

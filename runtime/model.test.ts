@@ -55,6 +55,12 @@ test("a model built with data is Unchanged, keeps the data out of the changes, a
 test("the state comes from the data when it carries one", () => {
   expect(new Worker({ $$: State.Added })[StateKey]).toBe(State.Added);
   expect(new Worker({ $$: State.Added, name: "Ada" }).name).toBe("Ada");
+  // Server JSON may carry a null state: the model is still tracked.
+  const fromServer = new Worker({ $$: null, name: "Ada" });
+  expect(fromServer.hasState(State.Unchanged)).toBe(true);
+  fromServer.name = "Grace";
+  expect(fromServer.hasState(State.Modified)).toBe(true);
+  expect(Object.keys(fromServer)).not.toContain("$$");
   expect(new Worker({ state: State.Added })[StateKey]).toBe(State.Unchanged);
 });
 
