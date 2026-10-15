@@ -246,16 +246,16 @@ test("a bundled model tracks its changes, and the map still points at the origin
   const worker = new Worker({ name: "Ada", hours: 2 });
   expect(worker.name).toBe("Ada");
   expect(worker.rate).toBe(1);
-  expect(worker.state).toBe(State.Unchanged);
+  expect(worker.hasState(State.Unchanged)).toBe(true);
   expect(worker.hasChanges).toBe(false);
 
   worker.hours = 3;
-  expect(worker.state).toBe(State.Modified);
+  expect(worker.hasState(State.Modified)).toBe(true);
   expect(worker.changes).toMatchObject({ hours: 3 });
 
   worker.revertChanges();
   expect(worker.hours).toBe(2);
-  expect(worker.state).toBe(State.Unchanged);
+  expect(worker.hasState(State.Unchanged)).toBe(true);
 
   const { Contact } = await import(pathToFileURL(join(dir, "dist", "main.js")).href);
   const contact = new Contact({ name: "Ada" });

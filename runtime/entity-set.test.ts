@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { EntitySet, Model, ModelChangeEvent, State, Validate, required } from "./model";
+import { EntitySet, Model, ModelChangeEvent, State, StateKey, Validate, required } from "./model";
 
 // Written the way the bundle rewrites a model class (see model.test.ts), and importing only the
 // package entry, so a cycle between `model.ts` and `entity-set.ts` would break these tests.
@@ -29,7 +29,7 @@ test("a tracked set holds the server items unchanged", () => {
 
   expect(set.length).toBe(2);
   expect(set[0]).toBeInstanceOf(Task);
-  expect(set[0]!.state).toBe(State.Unchanged);
+  expect(set[0]![StateKey]).toBe(State.Unchanged);
   expect(set.hasChanges).toBe(false);
   expect(set.changes).toEqual([]);
 });
@@ -47,11 +47,11 @@ test("delete removes Added items, marks the others Deleted and leaves Detached o
 
   set.delete(detached);
   expect(set.length).toBe(2);
-  expect(detached.state).toBe(State.Detached);
+  expect(detached[StateKey]).toBe(State.Detached);
 
   set.delete(set[0]!);
   expect(set.length).toBe(2);
-  expect(set[0]!.state).toBe(State.Deleted);
+  expect(set[0]![StateKey]).toBe(State.Deleted);
 });
 
 test("view leaves out the deleted items", () => {
@@ -76,7 +76,7 @@ test("a mutated set has changes, and lists only the items that changed", () => {
 
   set[0]!.title = "A";
   expect(set.hasChanges).toBe(true);
-  expect(set.changes).toEqual([{ state: State.Modified, title: "A" }]);
+  expect(set.changes).toEqual([{ $$: State.Modified, title: "A" }]);
 
   const other = EntitySet.track(Task, [{ title: "a" }]);
   other.push(new Task({ title: "b" }));
@@ -95,7 +95,7 @@ test("revertChanges puts the list and the items back", () => {
 
   set.revertChanges();
   expect(set.map((item) => item.title)).toEqual(["a", "b"]);
-  expect(set[0]!.state).toBe(State.Unchanged);
+  expect(set[0]![StateKey]).toBe(State.Unchanged);
   expect(set.hasChanges).toBe(false);
 });
 
@@ -117,7 +117,7 @@ test("confirmChanges drops the deleted items and the ones the server sent as nul
   set.confirmChanges([{ title: "A!" }, null, { title: "c" }]);
 
   expect(set.map((item) => item.title)).toEqual(["A!"]);
-  expect(set[0]!.state).toBe(State.Unchanged);
+  expect(set[0]![StateKey]).toBe(State.Unchanged);
   expect(set.hasChanges).toBe(false);
 });
 
@@ -140,9 +140,9 @@ test("a set on a model field reports its changes and its errors through the mode
   // A mutated set does not move the model's own state: the items track theirs.
   expect(board.hasChanges).toBe(true);
   expect(board.changes).toEqual({
-    state: State.Unchanged,
+    $$: State.Unchanged,
     name: "work",
-    items: [{ state: State.Modified, title: "B" }],
+    items: [{ $$: State.Modified, title: "B" }],
   });
 
   expect(board.hasErrors).toBe(false);
@@ -221,7 +221,7 @@ test("confirmChanges leaves the items past a shorter server list as they are", (
   set.confirmChanges([{ title: "A" }]);
 
   expect(set.map((item) => item.title)).toEqual(["A", "b", "c"]);
-  expect(set[2]!.state).toBe(State.Deleted);
+  expect(set[2]![StateKey]).toBe(State.Deleted);
 });
 
 test("push takes one item or many, and track builds the set without a snapshot", () => {

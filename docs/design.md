@@ -283,9 +283,8 @@ Models are also `EventTarget`s: `change` (a `ModelChangeEvent` with `property`, 
 
 | Member | Meaning |
 |---|---|
-| `state` | `State.Detached` (1, built with no data), `Unchanged` (2, built from data), `Added` (4), `Deleted` (8) or `Modified` (16). A first edit moves Detached to Added and Unchanged to Modified. |
-| `hasState(flags)`, `markAdded()`, `markModified()`, `markUnchanged()`, `markDeleted()` | Test and set the state. |
-| `hasChanges`, `changes` | `changes` is `null` or `{ state, ...fields }`: every serializable field plus the nested models and sets that changed. `@Persist` getters are included, `@Ignore` members are not. `toJSON()` gives every field. |
+| `hasState(flags)`, `markAdded()`, `markModified()`, `markUnchanged()`, `markDeleted()` | Test and set the state: `State.Detached` (1, built with no data), `Unchanged` (2, built from data), `Added` (4), `Deleted` (8) or `Modified` (16). A first edit moves Detached to Added and Unchanged to Modified. The state is not a property: it lives behind the exported `StateKey` symbol, so it never shows in `Object.keys` or a spread. |
+| `hasChanges`, `changes` | `changes` is `null` or `{ $$: state, ...fields }`: every serializable field plus the nested models and sets that changed. `@Persist` getters are included, `@Ignore` members are not. `toJSON()` gives `$$` and every field. Data with a `$$` (to the constructor or `assign`) sets the state. |
 | `revertChanges()` | Puts the original values back. Added goes back to Detached, Deleted and Modified to Unchanged. |
 | `confirmChanges(values?)` | After saving: the current values become the originals, optionally replaced by the server's. Added and Modified become Unchanged. |
 | `@Validate(...validators)`, `errors`, `hasErrors`, `hasValidChanges` | A validator returns `true` or a message. `errors` lists the messages per validated field, but only after the model changed. A Detached or Deleted model has no errors. |

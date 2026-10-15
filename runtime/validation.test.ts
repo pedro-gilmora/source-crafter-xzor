@@ -3,6 +3,7 @@ import {
   Model,
   Persist,
   State,
+  StateKey,
   Validate,
   email,
   isValidPhone,
@@ -19,7 +20,7 @@ import {
 
 // Written the way the bundle rewrites a model class (see model.test.ts); `@Validate` sits on the getter.
 
-const validNumber: Validator = (v, model) => model.state === State.Detached || v > 0 || "Field should be > 0";
+const validNumber: Validator = (v, model) => model.hasState(State.Detached) || v > 0 || "Field should be > 0";
 
 class Worker extends Model { constructor(data?: object) { super(data); this.assign(data); }
   #name = ""; get name(): string { Model.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
@@ -56,7 +57,7 @@ test("a Detached model has no errors, even with invalid values", () => {
 
 test("a model reports errors, but lists them only once it changed", () => {
   const worker = new Worker({ name: "Ada", hours: 0, tax: 2 });
-  expect(worker.state).toBe(State.Unchanged);
+  expect(worker[StateKey]).toBe(State.Unchanged);
   expect(worker.hasErrors).toBe(true);
   expect(worker.errors).toEqual({});
 
@@ -81,7 +82,7 @@ test("the errors of a model whose changes were confirmed or reverted are empty a
 });
 
 test("an Added model lists its errors, a Deleted one has none", () => {
-  const worker = new Worker({ state: State.Added, hours: 0 });
+  const worker = new Worker({ $$: State.Added, hours: 0 });
   expect(worker.hasErrors).toBe(true);
   expect(worker.errors.hours).toEqual(["Field should be > 0"]);
   worker.markDeleted();

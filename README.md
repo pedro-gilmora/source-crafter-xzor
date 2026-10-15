@@ -331,8 +331,8 @@ export class Worker extends Model {
 ```ts
 const ada = new Worker({ name: "Ada", hours: 8 });   // built from server data: Unchanged
 ada.hours = 10;
-ada.state;          // State.Modified
-ada.changes;        // { state: 16, name: "Ada", hours: 10, payment: 200 }
+ada.hasState(State.Modified);  // true
+ada.changes;        // { $$: 16, name: "Ada", hours: 10, payment: 200 }
 ada.revertChanges();  // back to 8; or ada.confirmChanges() after saving
 ```
 

@@ -8,7 +8,7 @@ import {
   type RouteTable,
   mount,
 } from "./index";
-import { EntitySet, Model, ModelChangeEvent, Persist, State } from "./model";
+import { EntitySet, Model, ModelChangeEvent, Persist, State, StateKey } from "./model";
 
 // Models are written the way the bundle rewrites them (Task 2), components the way codegen emits them.
 
@@ -382,7 +382,7 @@ class StateView extends ComponentBase {
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     this.count++;
-    b.addContent(row.state);
+    b.addContent(row[StateKey]);
   }
 }
 

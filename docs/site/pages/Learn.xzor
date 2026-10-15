@@ -107,7 +107,7 @@
         <p>Use it in a page. A component that reads a model draws again when the value changes, even if a service or a timer changed it.</p>
         <Code name="model-use" />
         <ul>
-          <li><code>state</code> tells if a model is new, changed or deleted. <code>changes</code> is what to send to the server, and <code>null</code> when nothing changed.</li>
+          <li><code>hasState(State.Modified)</code> tells if a model is new, changed or deleted. <code>changes</code> is what to send to the server, and <code>null</code> when nothing changed.</li>
           <li><code>revertChanges()</code> undoes the edits. <code>confirmChanges()</code> accepts them after you save.</li>
           <li><code>errors</code> and <code>hasErrors</code> come from the <code>@@Validate</code> checks.</li>
           <li>A model must extend <code>Model</code> directly, and the tsconfig <code>lib</code> needs <code>"ESNext.Decorators"</code>.</li>

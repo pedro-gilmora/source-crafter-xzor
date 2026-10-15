@@ -66,6 +66,9 @@ type Watch = {
 /** The "field" index a read or a change of `state` reports. */
 const stateIndex = -1;
 
+/** Key of the model's state: not an own property, so it never shows in `Object.keys` or a spread. */
+export const StateKey = Symbol("xzor.state");
+
 const meta = Symbol("xzor.model.meta");
 const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), validators: [], serialized: [] };
 
@@ -101,7 +104,7 @@ export abstract class Model extends EventTarget {
 
   constructor(data?: object) {
     super();
-    const state = (data as { state?: State } | undefined)?.state;
+    const state = (data as { $$?: State } | undefined)?.$$;
     this.#state = state ?? (data ? State.Unchanged : State.Detached);
   }
 
@@ -153,12 +156,12 @@ export abstract class Model extends EventTarget {
     return names.every((name) => Model.same(left[name], right[name]));
   }
 
-  get state(): State {
+  get [StateKey](): State {
     Model.$reader?.(this, stateIndex);
     return this.#state;
   }
 
-  set state(value: State) {
+  set [StateKey](value: State) {
     if (value === this.#state) return;
     this.#state = value;
     const subs = this.#subs;
@@ -227,7 +230,7 @@ export abstract class Model extends EventTarget {
   get changes(): Record<string, unknown> | null {
     if (!this.hasChanges) return null;
     const values = this as unknown as Record<string, unknown>;
-    const result: Record<string, unknown> = { state: this.#state };
+    const result: Record<string, unknown> = { $$: this.#state };
     for (const name of serialized(metaOf(this))) {
       const value = values[name];
       if (isSerializable(value)) result[name] = changesOf(value);
@@ -237,7 +240,7 @@ export abstract class Model extends EventTarget {
 
   toJSON(): Record<string, unknown> {
     const values = this as unknown as Record<string, unknown>;
-    const result: Record<string, unknown> = { state: this.#state };
+    const result: Record<string, unknown> = { $$: this.#state };
     for (const name of serialized(metaOf(this))) result[name] = values[name];
     return result;
   }
@@ -261,8 +264,8 @@ export abstract class Model extends EventTarget {
       }
     }
     for (const name of own.names) revertValue(values[name]);
-    if ((this.#state & State.Added) !== 0) this.state = State.Detached;
-    else if ((this.#state & (State.Deleted | State.Modified)) !== 0) this.state = State.Unchanged;
+    if ((this.#state & State.Added) !== 0) this[StateKey] = State.Detached;
+    else if ((this.#state & (State.Deleted | State.Modified)) !== 0) this[StateKey] = State.Unchanged;
     return this;
   }
 
@@ -289,27 +292,27 @@ export abstract class Model extends EventTarget {
     } finally {
       silent--;
     }
-    if ((this.#state & (State.Added | State.Modified)) !== 0) this.state = State.Unchanged;
+    if ((this.#state & (State.Added | State.Modified)) !== 0) this[StateKey] = State.Unchanged;
     return this;
   }
 
   markAdded(): this {
-    this.state = State.Added;
+    this[StateKey] = State.Added;
     return this;
   }
 
   markModified(): this {
-    if ((this.#state & State.Added) === 0) this.state = State.Modified;
+    if ((this.#state & State.Added) === 0) this[StateKey] = State.Modified;
     return this;
   }
 
   markUnchanged(): this {
-    this.state = State.Unchanged;
+    this[StateKey] = State.Unchanged;
     return this;
   }
 
   markDeleted(): this {
-    if ((this.#state & State.Detached) === 0) this.state = State.Deleted;
+    if ((this.#state & State.Detached) === 0) this[StateKey] = State.Deleted;
     return this;
   }
 
@@ -324,6 +327,7 @@ export abstract class Model extends EventTarget {
     if (data) {
       const tracked = metaOf(this).tracked;
       const source = data as Record<string, unknown>;
+      if (source.$$ !== undefined) this.#state = source.$$ as State;
       silent++;
       try {
         for (const name in source)
@@ -407,8 +411,8 @@ export abstract class Model extends EventTarget {
     const name = metaOf(this).names[index]!;
     const originals = (this.#originals ??= Object.create(null) as Record<string, unknown>);
     if (!(name in originals)) originals[name] = previous;
-    if ((this.#state & State.Detached) !== 0) this.state = State.Added;
-    else if ((this.#state & State.Unchanged) !== 0) this.state = State.Modified;
+    if ((this.#state & State.Detached) !== 0) this[StateKey] = State.Added;
+    else if ((this.#state & State.Unchanged) !== 0) this[StateKey] = State.Modified;
     // The event needs the value, but a write made during a render must not subscribe the renderer.
     const reader = Model.$reader;
     Model.$reader = undefined;
