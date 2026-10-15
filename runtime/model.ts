@@ -176,7 +176,7 @@ export abstract class Model extends EventTarget {
           const previous = values[name];
           const value = originals[name];
           values[name] = value;
-          if (this.#listens("change")) this.dispatchEvent(new ModelChangeEvent(name, value, previous));
+          this.#emit(name, value, previous);
         }
       } finally {
         silent--;
@@ -205,7 +205,7 @@ export abstract class Model extends EventTarget {
           const value = data![name];
           if (Model.same(current, value)) continue;
           target[name] = value;
-          if (this.#listens("change")) this.dispatchEvent(new ModelChangeEvent(name, value, current));
+          this.#emit(name, value, current);
         }
       }
     } finally {
@@ -310,10 +310,19 @@ export abstract class Model extends EventTarget {
     if (!(name in originals)) originals[name] = previous;
     if ((this.#state & State.Detached) !== 0) this.state = State.Added;
     else if ((this.#state & State.Unchanged) !== 0) this.state = State.Modified;
-    if (this.#listens("change"))
-      this.dispatchEvent(
-        new ModelChangeEvent(name, (this as unknown as Record<string, unknown>)[name], previous),
-      );
+    this.#emit(name, (this as unknown as Record<string, unknown>)[name], previous);
+  }
+
+  // Listeners run outside silent mode, so their own writes are tracked.
+  #emit(name: string, value: unknown, previous: unknown): void {
+    if (!this.#listens("change")) return;
+    const depth = silent;
+    silent = 0;
+    try {
+      this.dispatchEvent(new ModelChangeEvent(name, value, previous));
+    } finally {
+      silent = depth;
+    }
   }
 
   // A model nobody watches never allocates an event.

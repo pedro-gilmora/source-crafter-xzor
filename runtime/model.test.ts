@@ -237,6 +237,16 @@ test("revertChanges restores the values and the state", () => {
   expect(reverted.sort()).toEqual(["hours", "name"]);
 });
 
+test("writes made by a listener while reverting are tracked", () => {
+  const worker = new Worker({ name: "Ada", hours: 2 });
+  const other = new Worker({ name: "Log", hours: 0 });
+  worker.name = "Grace";
+  worker.addEventListener("change", () => (other.hours += 1));
+  worker.revertChanges();
+  expect(other.hours).toBe(1);
+  expect(other.state).toBe(State.Modified);
+});
+
 test("revertChanges on a new model detaches it again", () => {
   const worker = new Worker();
   worker.name = "Ada";
