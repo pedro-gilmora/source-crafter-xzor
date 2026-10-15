@@ -183,7 +183,7 @@ export class Application implements IApplication {}
 
 - `xzor dev` hot reload: saving a `.xzor` patches the changed components in the open page and keeps their state; other changes reload. A `#private` member, a new import or a changed base class reload too, and arrow-function fields keep old code until a reload.
 - To make the app installable and offline, add `manifest.webmanifest` next to `index.html` (`name`, `short_name`, `start_url: "./"`, `scope: "./"`, `display`, a 192x192 and a 512x512 icon, both files must exist) and `<link rel="manifest" href="manifest.webmanifest">` in `index.html`. No decorator or code is needed.
-- `xzor build` then writes `sw.js` beside `index.html` and registers it (never in `xzor dev`). Don't edit it: it is generated and gitignored, but it must be deployed with the app. Offline loads fall back to the cached app; a new deploy arrives on the next load. Fix any `xzor: manifest.webmanifest: ...` warning.
+- `xzor build` then writes `sw.js` beside `index.html` and registers it (never in `xzor dev`). Don't edit it: it is generated and gitignored, but it must be deployed with the app. Offline loads fall back to the cached app; a new deploy shows up on the second load (the first fetches it in the background). Fix any `xzor: manifest.webmanifest: ...` warning.
 
 ## Common mistakes
 
