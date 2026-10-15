@@ -30,12 +30,15 @@ export class ModelChangeEvent extends Event {
   readonly property: string;
   readonly value: unknown;
   readonly previous: unknown;
+  /** @internal The property's position in the class's tracked fields, when the model itself raised the event. */
+  readonly index: number | undefined;
 
-  constructor(property: string, value: unknown, previous: unknown) {
+  constructor(property: string, value: unknown, previous: unknown, index?: number) {
     super("change");
     this.property = property;
     this.value = value;
     this.previous = previous;
+    this.index = index;
   }
 }
 
@@ -91,6 +94,7 @@ export abstract class Model extends EventTarget {
   #state: State;
   #originals: Record<string, unknown> | undefined;
   #watched: Watch[] | undefined;
+  #subs: Dep[] | undefined;
 
   constructor(data?: object) {
     super();
@@ -381,32 +385,66 @@ export abstract class Model extends EventTarget {
     if (!(name in originals)) originals[name] = previous;
     if ((this.#state & State.Detached) !== 0) this.state = State.Added;
     else if ((this.#state & State.Unchanged) !== 0) this.state = State.Modified;
+    // The event needs the value, but a write made during a render must not subscribe the renderer.
+    const reader = Model.$reader;
+    Model.$reader = undefined;
     const value = (this as unknown as Record<string, unknown>)[name];
+    Model.$reader = reader;
     attach(value, this, index);
-    this.#emit(name, value, previous);
+    this.#emit(name, value, previous, index);
   }
 
   /** @internal A set on a tracked field was mutated: it keeps its own state, the model only tells its listeners. */
   $touched(index: number): void {
     const name = metaOf(this).names[index]!;
     const value = (this as unknown as Record<string, unknown>)[name];
-    this.#emit(name, value, value);
+    this.#emit(name, value, value, index);
   }
 
   // Listeners run outside silent mode, so their own writes are tracked.
-  #emit(name: string, value: unknown, previous: unknown): void {
+  #emit(name: string, value: unknown, previous: unknown, index?: number): void {
     if (!this.#listens("change")) return;
     const depth = silent;
     silent = 0;
     try {
-      this.dispatchEvent(new ModelChangeEvent(name, value, previous));
+      this.dispatchEvent(new ModelChangeEvent(name, value, previous, index));
     } finally {
       silent = depth;
     }
   }
 
+  /** @internal Subscribes a rendering component's dep to this model's changes. */
+  $watch(dep: Dep): void {
+    const subs = (this.#subs ??= []);
+    dep.slot = subs.length;
+    subs.push(dep);
+  }
+
+  /** @internal Drops a dep by swapping the last one into its slot. */
+  $unwatch(dep: Dep): void {
+    const subs = this.#subs;
+    if (subs === undefined) return;
+    const last = subs.pop()!;
+    if (last !== dep) {
+      subs[dep.slot] = last;
+      last.slot = dep.slot;
+    }
+  }
+
+  // Components are notified here, not as listeners, so a subscription costs no listener record.
+  override dispatchEvent(event: Event): boolean {
+    const subs = this.#subs;
+    if (subs !== undefined && subs.length !== 0 && event.type === "change") {
+      const e = event as ModelChangeEvent;
+      const index = e.index ?? metaOf(this).names.indexOf(e.property);
+      if (index >= 0) for (let i = 0; i < subs.length; i++) changed(subs[i]!, index);
+    }
+    return super.dispatchEvent(event);
+  }
+
   // A model nobody watches never allocates an event.
   #listens(type: string): boolean {
+    if (type === "change" && this.#subs !== undefined && this.#subs.length !== 0) return true;
     const watched = this.#watched;
     if (watched === undefined) return false;
     for (let i = 0; i < watched.length; i++) if (watched[i]!.type === type) return true;
@@ -537,26 +575,32 @@ export const maxValue = (max: number, inclusive = true): Validator => (value) =>
   (inclusive ? value <= max : value < max) ? true : `Field must be less than ${inclusive ? "or equal to" : ""} ${max}`;
 
 // Re-rendering: while a component renders, every tracked getter it reads reports itself here. The
-// component keeps one listener per model it read, with a bitmask of the properties (a field past
-// the 31st counts as "any"), rebuilt on every render; a change it covers queues one re-render.
+// component keeps one dep per model it read, with a bitmask of the properties (every field past the
+// 30th shares one bit), rebuilt on every render; a change it covers queues one re-render.
 
-/** One (component, model) pair; it is its own `change` listener, so no closure is allocated. */
+/** One (component, model) pair, held by the model in its own subscriber list. */
 type Dep = {
   model: Model;
   owner: Reads;
   mask: number;
   epoch: number;
-  handleEvent(event: Event): void;
+  /** Where the model keeps this dep, so dropping it is a swap. */
+  slot: number;
 };
 
 /** What one component read, kept on the instance under `reads`. */
 type Reads = {
   component: ComponentBase;
-  deps: Map<Model, Dep>;
+  /** Almost every component reads one model; the rest go in `more`. */
+  first: Dep | undefined;
+  more: Map<Model, Dep> | undefined;
   epoch: number;
   renders: number;
   /** `renders` when the component was queued, or -1 when it is not. */
   at: number;
+  /** Deps held, and deps touched by the render in progress: equal means nothing to sweep. */
+  size: number;
+  seen: number;
 };
 
 const reads = Symbol("xzor.model.reads");
@@ -570,30 +614,52 @@ const queued: Reads[] = [];
 let current: ComponentBase | undefined;
 let currentReads: Reads | undefined;
 
-const bitOf = (index: number): number => (index < 31 ? 1 << index : -1);
+// Fields from the 31st on share the top bit: they re-render each other's readers, nobody else's.
+const bitOf = (index: number): number => (index < 31 ? 1 << index : 1 << 31);
+
+function subscribe(own: Reads, model: Model): Dep {
+  const dep: Dep = { model, owner: own, mask: 0, epoch: own.epoch, slot: 0 };
+  model.$watch(dep);
+  own.size++;
+  own.seen++;
+  return dep;
+}
 
 function read(model: Model, index: number): void {
   let own = currentReads;
   if (own === undefined) {
-    own = currentReads = { component: current!, deps: new Map(), epoch: 1, renders: 1, at: -1 };
+    own = currentReads = {
+      component: current!,
+      first: undefined,
+      more: undefined,
+      epoch: 1,
+      renders: 1,
+      at: -1,
+      size: 0,
+      seen: 0,
+    };
     (current as unknown as Reader)[reads] = own;
   }
-  let dep = own.deps.get(model);
-  if (dep === undefined) {
-    dep = { model, owner: own, mask: 0, epoch: own.epoch, handleEvent: changed };
-    own.deps.set(model, dep);
-    model.addEventListener("change", dep);
-  } else if (dep.epoch !== own.epoch) {
+  let dep = own.first;
+  if (dep === undefined) dep = own.first = subscribe(own, model);
+  else if (dep.model !== model) {
+    dep = own.more?.get(model);
+    if (dep === undefined) {
+      dep = subscribe(own, model);
+      (own.more ??= new Map()).set(model, dep);
+    }
+  }
+  if (dep.epoch !== own.epoch) {
     dep.epoch = own.epoch;
     dep.mask = 0;
+    own.seen++;
   }
   dep.mask |= bitOf(index);
 }
 
-function changed(this: Dep, event: Event): void {
-  const index = metaOf(this.model).names.indexOf((event as ModelChangeEvent).property);
-  if (index < 0 || (this.mask & bitOf(index)) === 0) return;
-  const own = this.owner;
+function changed(dep: Dep, index: number): void {
+  if ((dep.mask & bitOf(index)) === 0) return;
+  const own = dep.owner;
   if (own.at < 0) {
     queued.push(own);
     if (queued.length === 1) queueMicrotask(flush);
@@ -611,6 +677,35 @@ function flush(): void {
   }
 }
 
+// Drops the deps the render that just ended did not read again.
+function sweep(own: Reads): void {
+  const more = own.more;
+  if (more !== undefined) {
+    for (const dep of more.values())
+      if (dep.epoch !== own.epoch) {
+        dep.model.$unwatch(dep);
+        more.delete(dep.model);
+        own.size--;
+      }
+    if (more.size === 0) own.more = undefined;
+  }
+  const first = own.first;
+  if (first !== undefined && first.epoch !== own.epoch) {
+    first.model.$unwatch(first);
+    own.first = undefined;
+    own.size--;
+    const rest = own.more;
+    if (rest !== undefined) {
+      for (const [model, dep] of rest) {
+        own.first = dep;
+        rest.delete(model);
+        break;
+      }
+      if (rest.size === 0) own.more = undefined;
+    }
+  }
+}
+
 setRenderObserver({
   begin(component: ComponentBase): void {
     stack.push(component);
@@ -619,18 +714,14 @@ setRenderObserver({
     if (own !== undefined) {
       own.epoch++;
       own.renders++;
+      own.seen = 0;
     }
     Model.$reader = read;
   },
 
   end(_component: ComponentBase): void {
     const own = currentReads;
-    if (own !== undefined)
-      for (const dep of own.deps.values())
-        if (dep.epoch !== own.epoch) {
-          dep.model.removeEventListener("change", dep);
-          own.deps.delete(dep.model);
-        }
+    if (own !== undefined && own.seen !== own.size) sweep(own);
     stack.pop();
     current = stack[stack.length - 1];
     currentReads = current === undefined ? undefined : readsOf(current);
@@ -640,9 +731,10 @@ setRenderObserver({
   dispose(component: ComponentBase): void {
     const own = readsOf(component);
     if (own === undefined) return;
-    for (const dep of own.deps.values()) dep.model.removeEventListener("change", dep);
-    own.deps.clear();
+    if (own.first !== undefined) own.first.model.$unwatch(own.first);
+    if (own.more !== undefined) for (const dep of own.more.values()) dep.model.$unwatch(dep);
+    own.first = own.more = undefined;
+    own.size = 0;
     own.renders++; // drops a queued re-render
   },
 });
-

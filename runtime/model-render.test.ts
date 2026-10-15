@@ -1,5 +1,13 @@
 import { beforeEach, expect, spyOn, test } from "bun:test";
-import { ComponentBase, type RenderTreeBuilder, mount } from "./index";
+import {
+  ComponentBase,
+  type IApplication,
+  type RenderTreeBuilder,
+  type Route,
+  type RouteSection,
+  type RouteTable,
+  mount,
+} from "./index";
 import { EntitySet, Model, ModelChangeEvent, Persist } from "./model";
 
 // Models are written the way the bundle rewrites them (Task 2), components the way codegen emits them.
@@ -145,6 +153,108 @@ class Editor extends ComponentBase {
   }
 }
 
+class Writer extends ComponentBase {
+  count = 0;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    row.hours = this.count;
+    b.addContent(row.label);
+  }
+}
+
+// 41 tracked fields, as the bundle would rewrite them, to reach past the 31st.
+const wideNames = Array.from({ length: 41 }, (_, i) => `f${i}`);
+
+class Wide extends Model {
+  slots: number[] = wideNames.map(() => 0);
+  static { Model.$define(this, wideNames); }
+}
+
+for (let i = 0; i < wideNames.length; i++)
+  Object.defineProperty(Wide.prototype, wideNames[i]!, {
+    get(this: Wide): number {
+      Model.$reader?.(this, i);
+      return this.slots[i]!;
+    },
+    set(this: Wide, v: number): void {
+      const p = this.slots[i]!;
+      if (Model.same(p, v)) return;
+      this.slots[i] = v;
+      (this as unknown as { $changed(index: number, previous: unknown): void }).$changed(i, p);
+    },
+  });
+
+type WideModel = Wide & Record<string, number>;
+let wide: WideModel;
+
+class Near extends ComponentBase {
+  count = 0;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    b.addContent(wide.f0);
+  }
+}
+
+class Far extends ComponentBase {
+  count = 0;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    b.addContent(wide.f40);
+  }
+}
+
+class Both extends ComponentBase {
+  near!: Near;
+  far!: Far;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addComponent(Near, {}, undefined, { ref: (c) => void (this.near = c) });
+    b.addComponent(Far, {}, undefined, { ref: (c) => void (this.far = c) });
+  }
+}
+
+class Boom extends ComponentBase {
+  count = 0;
+  constructor() {
+    super();
+    boom = this;
+  }
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    this.count++;
+    b.addContent(row.label);
+    throw new Error("boom");
+  }
+}
+
+class AsyncBoom extends Boom {
+  static readonly inject = ["service"];
+}
+
+let boom: Boom | undefined;
+
+const page = (component: unknown): RouteTable => [
+  { tag: undefined, pattern: "/", component, match: () => ({}) },
+];
+
+const caught: RouteSection[] = [
+  { kind: "catch", render: (_route: Route, error: unknown) => ComponentBase.fragment((b) => b.addContent(String(error))) },
+];
+
+function routed(table: RouteTable, app?: IApplication): void {
+  class Block extends ComponentBase {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addRoutes("server", table, caught);
+    }
+  }
+  host = document.createElement("main");
+  document.body.replaceChildren(host);
+  mount(Block, host, app);
+}
+
 // Queued after the flush that a change schedules.
 const tick = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 
@@ -158,6 +268,8 @@ beforeEach(() => {
   document.body.replaceChildren();
   row = new Row({ label: "a", hours: 2, tax: 3 });
   sheet = new Sheet();
+  wide = new Wide() as WideModel;
+  boom = undefined;
   views = [];
   labels = [];
   leaf = undefined;
@@ -221,7 +333,7 @@ test("a change to a property no component read renders nothing", async () => {
 });
 
 test("a component that stops showing a model stops re-rendering on its changes", async () => {
-  const forget = spyOn(row, "removeEventListener");
+  const forget = spyOn(row, "$unwatch");
   const toggle = show(Toggle);
   toggle.show = false;
   toggle.stateHasChanged();
@@ -233,7 +345,7 @@ test("a component that stops showing a model stops re-rendering on its changes",
 });
 
 test("a disposed component holds no listener", async () => {
-  const forget = spyOn(row, "removeEventListener");
+  const forget = spyOn(row, "$unwatch");
   const shell = show(Shell);
   const child = leaf!;
   expect(child.count).toBe(1);
@@ -270,4 +382,51 @@ test("a manual change event re-renders the readers of that property", async () =
   row.dispatchEvent(new ModelChangeEvent("hours", 5, 2));
   await tick();
   expect(pay.count).toBe(2);
+});
+
+test("a field past the 31st re-renders its own readers only", async () => {
+  const both = show(Both);
+  expect(both.near.count).toBe(1);
+  wide.f35 = 1;
+  await tick();
+  expect(both.near.count).toBe(1);
+  expect(both.far.count).toBe(2);
+});
+
+test("a write during a render does not subscribe the renderer to that field", async () => {
+  const writer = show(Writer);
+  expect(writer.count).toBe(1);
+  await tick();
+  await tick();
+  expect(writer.count).toBe(1);
+  expect(row.hours).toBe(1);
+});
+
+test("a page whose first render throws keeps no subscription", async () => {
+  const forget = spyOn(row, "$unwatch");
+  const dispatch = spyOn(row, "dispatchEvent");
+  routed(page(Boom));
+  await tick();
+  expect(host.textContent).toBe("Error: boom");
+  expect(boom!.count).toBe(1);
+  expect(forget).toHaveBeenCalledTimes(1);
+  row.label = "b";
+  await tick();
+  expect(boom!.count).toBe(1);
+  expect(dispatch).not.toHaveBeenCalled();
+});
+
+test("an async component whose first render throws keeps no subscription", async () => {
+  const forget = spyOn(row, "$unwatch");
+  const dispatch = spyOn(row, "dispatchEvent");
+  routed(page(AsyncBoom), { createComponent: () => Promise.resolve(new AsyncBoom()) });
+  await tick();
+  await tick();
+  expect(host.textContent).toBe("Error: boom");
+  expect(boom!.count).toBe(1);
+  expect(forget).toHaveBeenCalledTimes(1);
+  row.label = "b";
+  await tick();
+  expect(boom!.count).toBe(1);
+  expect(dispatch).not.toHaveBeenCalled();
 });

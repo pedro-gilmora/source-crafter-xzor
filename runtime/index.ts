@@ -849,6 +849,7 @@ function arrive(mounted: Mounted, instance: ComponentBase): void {
     fail(v, err);
     if (!v.instance) {
       mountedComponents.delete(instance);
+      observer?.dispose(instance);
       unsubscribeCascades(instance, v.type, mounted.scope);
       // Nodes of the failed render were never inserted; keep only the empty placeholder.
       const partial = mounted.tree;
@@ -977,6 +978,7 @@ function failedComponent(
     // Children the page had already mounted go with it, or they keep taking cascades and hooks.
     const partial = mountedComponents.get(instance);
     mountedComponents.delete(instance);
+    observer?.dispose(instance);
     unsubscribeCascades(instance, v.type, scope);
     for (const node of partial?.tree ?? []) {
       try {
