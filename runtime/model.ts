@@ -14,6 +14,7 @@
 import { setRenderObserver, type ComponentBase } from "./index";
 
 export { EntitySet } from "./entity-set";
+export { FineComponent, fine } from "./fine";
 
 export enum State {
   /** Created on the client and never sent. */
@@ -719,6 +720,9 @@ function flush(): void {
     if (own.renders === at) own.component.stateHasChanged();
   }
 }
+
+/** @internal The queue models and fine bindings share: queues `dep`'s owner when `index` is in its mask. */
+export const $notify = changed as (dep: object, index: number) => void;
 
 // Drops the deps the render that just ended did not read again.
 function sweep(own: Reads): void {

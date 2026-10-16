@@ -2,9 +2,10 @@
 // from, so it can put it back. On a tracked field it tells its model when it is mutated, without
 // touching the model's own state. `set[i] = x` and `set.length = n` are not observed; the methods
 // below are. `map`, `filter` and `slice` give plain arrays. A set assigned to two models notifies
-// only the last one. `new EntitySet(n)` (holes) is not supported: use `EntitySet.track`.
+// only the last one. `new EntitySet(n)` (holes) is not supported: use `EntitySet.track`. Its membership is
+// tracked like a field: `view` and `for...of` report a read, every mutation above notifies those readers.
 
-import { State, type Model } from "./model";
+import { $notify, Model, State } from "./model";
 
 export class EntitySet<T extends Model> extends Array<T> {
   static override get [Symbol.species](): ArrayConstructor {
@@ -22,6 +23,8 @@ export class EntitySet<T extends Model> extends Array<T> {
   #original: T[] | undefined;
   #owner: Model | undefined;
   #index = 0;
+  /** Renders and fine bindings that read the membership, as the model tracker's deps. */
+  #subs: object[] | undefined;
 
   /** @internal The model this set belongs to, and the index of the field holding it. */
   $own(owner: Model, index: number): void {
@@ -29,8 +32,33 @@ export class EntitySet<T extends Model> extends Array<T> {
     this.#index = index;
   }
 
+  /** @internal */
+  $watch(dep: object): void {
+    const subs = (this.#subs ??= []);
+    (dep as { slot: number }).slot = subs.length;
+    subs.push(dep);
+  }
+
+  /** @internal */
+  $unwatch(dep: object): void {
+    const subs = this.#subs;
+    if (subs === undefined || subs.length === 0) return;
+    const last = subs.pop() as { slot: number };
+    if (last !== dep) {
+      const slot = (dep as { slot: number }).slot;
+      subs[slot] = last;
+      last.slot = slot;
+    }
+  }
+
+  override [Symbol.iterator](): ArrayIterator<T> {
+    Model.$reader?.(this as unknown as Model, 0);
+    return super[Symbol.iterator]();
+  }
+
   /** The items to show: everything but the deleted ones. */
   get view(): T[] {
+    Model.$reader?.(this as unknown as Model, 0);
     return this.filter((item) => !item.hasState(State.Deleted));
   }
 
@@ -196,5 +224,7 @@ export class EntitySet<T extends Model> extends Array<T> {
 
   #notify(): void {
     this.#owner?.$touched(this.#index);
+    const subs = this.#subs;
+    if (subs !== undefined) for (let i = 0; i < subs.length; i++) $notify(subs[i]!, 0);
   }
 }

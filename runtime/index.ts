@@ -56,7 +56,35 @@ export type VComponent = {
   nav?: number;
 };
 
-export type VNode = VText | VElement | VRegion | VComponent;
+export type VNode = VText | VElement | VRegion | VComponent | VFine;
+
+/** A `@fine` component's DOM: built once by `fine.ts`, between two comments; patches only refresh it. */
+export type VFine = { kind: "fine"; build: (parent: Node) => void; root?: FineRoot };
+
+/** @internal What `fine.ts` keeps for one fine vnode. */
+export type FineRoot = { bindings: unknown; start: Comment; end: Comment };
+
+type FineHooks = {
+  create(build: (parent: Node) => void): FineRoot;
+  refresh(root: FineRoot): void;
+  dispose(root: FineRoot): void;
+};
+
+let fineHooks: FineHooks | undefined;
+
+/** @internal Set by `fine.ts` (the model entry), so the renderer pays nothing without it. */
+export function setFineHooks(h: FineHooks): void {
+  fineHooks = h;
+}
+
+function fineNodes(root: FineRoot): Node[] {
+  const nodes: Node[] = [];
+  for (let n: Node | null = root.start; n !== null; n = n.nextSibling) {
+    nodes.push(n);
+    if (n === root.end) break;
+  }
+  return nodes;
+}
 
 /** One entry of the generated `.xzor/routes.ts` table; `match` converts the path segments or rejects them. */
 export type RouteEntry = {
@@ -610,6 +638,11 @@ export class RenderTreeBuilder {
     this.#append({ kind: "text", text });
   }
 
+  /** `@fine`: the whole template, built once into the DOM; its bindings keep it current. */
+  addFine(build: (parent: Node) => void): void {
+    this.#append({ kind: "fine", build });
+  }
+
   addContent(value: unknown): void {
     if (isFragment(value)) {
       this.openRegion();
@@ -930,6 +963,10 @@ function create(v: VNode, owner: ComponentBase, app: IApplication | undefined, s
         return failedComponent(v, err, app, scope);
       }
     }
+    case "fine": {
+      if (!fineHooks) throw new Error("xzor: a @fine component needs @source-crafter/xzor-runtime/model");
+      return fineNodes((v.root = fineHooks.create(v.build)));
+    }
   }
 }
 
@@ -1002,6 +1039,8 @@ function nodesOf(v: VNode): Node[] {
       return [...v.children.flatMap(nodesOf), v.anchor!];
     case "component":
       return [...v.mounted!.tree.flatMap(nodesOf), v.mounted!.anchor];
+    case "fine":
+      return fineNodes(v.root!);
   }
 }
 
@@ -1033,6 +1072,9 @@ function dispose(v: VNode): void {
       mountedComponents.delete(v.instance);
       unsubscribeCascades(v.instance, v.type, v.mounted?.scope);
       disposeInstance(v.instance);
+      return;
+    case "fine":
+      fineHooks!.dispose(v.root!);
       return;
   }
 }
@@ -1124,6 +1166,11 @@ function patch(
         parametersSet(instance);
         update(instance);
       }
+      return;
+    }
+    case "fine": {
+      // Built once: a re-render (`stateHasChanged`) re-runs the bindings, for changes nothing tracks.
+      fineHooks!.refresh((n.root = (o as VFine).root!));
       return;
     }
   }
