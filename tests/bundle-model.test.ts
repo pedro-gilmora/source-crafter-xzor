@@ -2,7 +2,7 @@ import { afterAll, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { decodeMappings, trackModelFields } from "../src/bundle";
+import { decodeMappings, tracksFields, trackModelFields } from "../src/bundle";
 
 const repo = join(import.meta.dir, "..");
 // Same depth below the repo as examples/counter, so module resolution matches a real project.
@@ -37,6 +37,16 @@ test("every field of a model class becomes a private slot with a getter and a se
   const out = trackModelFields(WORKER);
   expect(out).toBe(WORKER_OUT);
   expect(out.split("\n")).toHaveLength(WORKER.split("\n").length);
+});
+
+test("project sources and generated fine components get tracked fields; other generated files do not", () => {
+  const root = join(repo, "examples", "counter");
+  const fineText = `import { FineComponent, fine } from "@source-crafter/xzor-runtime/model";`;
+  expect(tracksFields(join(root, "models", "worker.ts"), root, "")).toBe(true);
+  expect(tracksFields(join(root, ".xzor", "pages", "TeamFine.xzor.ts"), root, fineText)).toBe(true);
+  expect(tracksFields(join(root, ".xzor", "pages", "Team.xzor.ts"), root, "class Team extends ComponentBase {}")).toBe(false);
+  expect(tracksFields(join(root, ".xzor", "routes.ts"), root, fineText)).toBe(false);
+  expect(tracksFields(join(root, "node_modules", "x", "y.xzor.ts"), root, fineText)).toBe(false);
 });
 
 const FINE = `import { ComponentBase, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";

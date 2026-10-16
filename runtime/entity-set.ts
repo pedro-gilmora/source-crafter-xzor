@@ -63,12 +63,14 @@ export class EntitySet<T extends Model> extends Array<T> {
   }
 
   get hasChanges(): boolean {
+    Model.$reader?.(this as unknown as Model, 0);
     if (this.#moved()) return true;
     for (let i = 0; i < this.length; i++) if (this[i]!.hasChanges) return true;
     return false;
   }
 
   get hasErrors(): boolean {
+    Model.$reader?.(this as unknown as Model, 0);
     for (let i = 0; i < this.length; i++) if (this[i]!.hasErrors) return true;
     return false;
   }

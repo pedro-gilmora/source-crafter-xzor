@@ -1,0 +1,65 @@
+@fine
+@page "/team-fine"
+@import { EntitySet } from "@source-crafter/xzor-runtime/model"
+@import { Worker } from "../models/worker"
+
+@* The Team page with no render pass: each value below updates only when a field it reads changes. *@
+
+@code {
+  team = EntitySet.track(Worker, [
+    { name: "Ada", hours: 8, tax: 10 },
+    { name: "Linus", hours: 6, tax: 15 },
+  ]);
+  saved = "";
+
+  add() {
+    this.team.push(new Worker().markAdded());
+  }
+
+  save() {
+    this.saved = JSON.stringify(this.team.changes, null, 2);
+    this.team.confirmChanges();
+  }
+
+  // Every write is queued: the totals below re-run once, however many workers change.
+  setHours(e: Event) {
+    const hours = Number((e.target as HTMLInputElement).value);
+    for (const worker of this.team.view) worker.hours = hours;
+  }
+
+  plusOneHour() {
+    setTimeout(() => {
+      for (const worker of this.team.view) worker.hours += 1;
+    }, 500);
+  }
+}
+
+<div class="team">
+  <h2>Team (fine)</h2>
+  @for (const worker of team.view) {
+    <div class="worker">
+      <input class="name" @bind="worker.name" @bind:event="oninput" />
+      <input class="hours" type="number" @bind="worker.hours" @bind:event="oninput" />
+      <input class="tax" type="number" @bind="worker.tax" @bind:event="oninput" />
+      <span class="payment">@worker.payment.toFixed(2)</span>
+      <button class="delete" @onclick="() => team.delete(worker)">Delete</button>
+      @for (const [field, messages] of Object.entries(worker.errors)) {
+        @if (messages.length > 0) {
+          <small class="error">@field: @messages[0]</small>
+        }
+      }
+    </div>
+  }
+  <p class="totals">
+    Total hours <b class="total-hours">@team.view.reduce((sum, w) => sum + w.hours, 0)</b>,
+    payment <b class="total-payment">@team.view.reduce((sum, w) => sum + w.payment, 0).toFixed(2)</b>
+  </p>
+  <label>Everyone's hours <input class="all-hours" type="number" @onchange="setHours" /></label>
+  <button class="add" @onclick="add">Add</button>
+  <button class="revert" @onclick="() => team.revertChanges()" disabled="@(!team.hasChanges)">Revert</button>
+  <button class="save" @onclick="save" disabled="@(!team.hasChanges || team.hasErrors)">Save</button>
+  <button class="plus" @onclick="plusOneHour">+1 hour to everyone</button>
+  @if (saved) {
+    <pre class="saved">@saved</pre>
+  }
+</div>

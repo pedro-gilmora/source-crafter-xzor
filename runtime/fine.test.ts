@@ -151,6 +151,22 @@ test("a deleted item leaves the view, and its bindings stop writing", async () =
   expect(li.querySelector("span")!.textContent).toBe("20.00");
 });
 
+test("a set's hasChanges and hasErrors follow pushes", async () => {
+  const el = host();
+  const set = EntitySet.track(Worker, [{ name: "a", hours: 1, tax: 0 }]);
+  class Flags extends FineComponent {
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => fine.text(__p, () => `${set.hasChanges}/${set.hasErrors}`));
+    }
+  }
+  mount(Flags, el);
+  expect(el.textContent).toBe("false/false");
+  set.push(new Worker({ name: "b", hours: 99, tax: 0 }).markAdded());
+  await tick();
+  // This `Worker` has no validators: `hasErrors` re-ran and stays false.
+  expect(el.textContent).toBe("true/false");
+});
+
 test("a reorder moves rows without rebuilding them", async () => {
   const { c, rows } = sheet(3);
   await tick();

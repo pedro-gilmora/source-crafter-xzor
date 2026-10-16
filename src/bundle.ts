@@ -128,6 +128,13 @@ function rewritable(path: string, root: string): boolean {
   return p.endsWith(".ts") && inProject(path, root) && !p.includes("/node_modules/") && !p.includes("/.xzor/");
 }
 
+/** Files whose model and fine component fields become tracked: project sources, and generated `@fine` components. */
+export function tracksFields(path: string, root: string, text: string): boolean {
+  if (rewritable(path, root)) return true;
+  const p = path.replaceAll("\\", "/");
+  return p.includes("/.xzor/") && p.endsWith(".xzor.ts") && !p.includes("/node_modules/") && inProject(path, root) && text.includes("FineComponent");
+}
+
 function generatedPath(source: string): string {
   if (existsSync(`${source}.ts`)) return `${source}.ts`;
   const root = projectRoot(dirname(source));
@@ -1007,14 +1014,17 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
           });
           build.onLoad({ filter: /\.ts$/ }, (args) => {
             const path = args.path.replaceAll("\\", "/");
-            const text = readFileSync(args.path, "utf8");
+            let text = readFileSync(args.path, "utf8");
+            const tracked = tracksFields(args.path, root, text);
+            if (tracked) {
+              const rewritten = trackModelFields(stripMarkerDecorators(text), relative(root, args.path).replaceAll("\\", "/"), readBase, models);
+              if (rewritten !== text) originals.set(resolve(args.path), text);
+              text = rewritten;
+            }
             if (path.includes("/.xzor/") && hot && path.endsWith(".xzor.ts") && inProject(args.path, root)) {
               return { contents: hotRegistration(text, relative(root, args.path).replaceAll("\\", "/")), loader: "ts" };
             }
-            if (!rewritable(args.path, root)) return { contents: text, loader: "ts" };
-            const rewritten = trackModelFields(stripMarkerDecorators(text), relative(root, args.path).replaceAll("\\", "/"), readBase, models);
-            if (rewritten !== text) originals.set(resolve(args.path), text);
-            return { contents: rewritten, loader: "ts" };
+            return { contents: text, loader: "ts" };
           });
         },
       },
