@@ -39,6 +39,31 @@ test("every field of a model class becomes a private slot with a getter and a se
   expect(out.split("\n")).toHaveLength(WORKER.split("\n").length);
 });
 
+const FINE = `import { ComponentBase, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
+import { FineComponent, fine } from "@source-crafter/xzor-runtime/model";
+export default class Counter extends FineComponent {
+  count = 0;
+  static inject = [];
+  protected override buildRenderTree(__b: RenderTreeBuilder): void {
+    __b.addFine((__p) => fine.text(__p, () => this.count));
+  }
+}
+export class Twice extends Counter {
+  step = 2;
+}
+`;
+
+test("a fine component's fields are tracked like a model's, with no generated constructor", () => {
+  const out = trackModelFields(FINE);
+  expect(out.split("\n")).toHaveLength(FINE.split("\n").length);
+  expect(out).toContain(`export default class Counter extends FineComponent {\n  #count = 0; get count() { FineComponent.$reader?.(this, 0); return this.#count; } set count(v) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }\n`);
+  expect(out).toContain(`static { FineComponent.$define(this, ["count"]); } }`);
+  // The derived class continues after its base's fields, through the offset `$define` returns.
+  expect(out).toContain(`get step() { Counter.$reader?.(this, Twice.#at + 0); return this.#step; }`);
+  expect(out).not.toContain("constructor(");
+  expect(out).not.toContain("this.assign(");
+});
+
 const SHAPES = `${IMPORT}
 export class Odd extends Model {
   get = 1;
