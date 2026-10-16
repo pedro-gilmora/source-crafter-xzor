@@ -74,6 +74,8 @@ pub struct Document {
     pub type_params: Vec<Src>,
     /// `@inherits Base<T>`: the base class instead of `ComponentBase`.
     pub inherits: Option<Src>,
+    /// `@fine`: compiled to DOM bindings with no render pass (base `FineComponent`).
+    pub fine: bool,
     /// `@implements A, B`.
     pub implements: Vec<Src>,
     /// `@attribute dec(args)`: class decorators.

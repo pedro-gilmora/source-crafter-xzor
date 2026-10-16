@@ -91,7 +91,7 @@ struct Parser<'a> {
 /// Words that follow `@` as directives; `@cascade`, `@ClientRoutes` and `@ServerRoutes` are
 /// directives only in certain shapes, so they are matched separately.
 const DIRECTIVES: &[&str] =
-    &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject"];
+    &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject", "fine"];
 
 impl<'a> Parser<'a> {
     fn at_word(&self, w: &str) -> bool {
@@ -460,6 +460,17 @@ impl<'a> Parser<'a> {
                 let mut stmt = self.span(s, end);
                 stmt.text = stmt.text.trim_end_matches(';').trim_end().to_string();
                 self.doc.imports.push(stmt);
+                Ok(Transition::Nothing)
+            }
+            "fine" => {
+                self.doc.fine = true;
+                while matches!(self.peek(), Some(b' ' | b'\t')) {
+                    self.pos += 1;
+                }
+                if !matches!(self.peek(), None | Some(b'\n' | b'\r')) && !self.starts_with("//") && !self.starts_with("@*") {
+                    return self.err("expected end of line after @fine");
+                }
+                self.trailing_comment()?;
                 Ok(Transition::Nothing)
             }
             "typeparam" | "inherits" | "implements" | "attribute" => {
@@ -1759,6 +1770,15 @@ after"#;
         assert_eq!(&*doc.type_params[0], "T");
         assert_eq!(comments(&tokens).len(), 1);
         assert_eq!(doc.nodes.len(), 1);
+    }
+
+    #[test]
+    fn fine_directive_marks_the_document() {
+        let (doc, _) = parse("@fine // no render pass\n<p>@x</p>").unwrap();
+        assert!(doc.fine);
+        assert_eq!(doc.nodes.len(), 1);
+        assert!(!parse("<p/>").unwrap().0.fine);
+        assert!(parse("@fine x\n<p/>").is_err());
     }
 
     #[test]
