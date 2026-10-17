@@ -1,0 +1,56 @@
+@page "/orders"
+@import Toolbar from "@source-crafter/xzor-ui/Toolbar.xzor"
+@import Segmented from "@source-crafter/xzor-ui/Segmented.xzor"
+@import Table from "@source-crafter/xzor-ui/Table.xzor"
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import Menu from "@source-crafter/xzor-ui/Menu.xzor"
+@import Icon from "@source-crafter/xzor-ui/Icon.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import OrderSheet from "../components/OrderSheet.xzor"
+@import { toast } from "@source-crafter/xzor-ui"
+@import { orderColumns, orders, type Order } from "../data"
+
+@code {
+  status = "All";
+  query = "";
+  details?: OrderSheet;
+
+  get rows(): Order[] {
+    const q = this.query.trim().toLowerCase();
+    return orders.filter((o) => (this.status === "All" || o.status === this.status) && `${o.id} ${o.customer} ${o.city}`.toLowerCase().includes(q));
+  }
+
+  exportAs(kind: string) {
+    toast(`Exported ${this.rows.length} orders as ${kind}`, "success");
+  }
+}
+
+<header class="page-head">
+  <div>
+    <h1>Orders</h1>
+    <p class="xz-muted">@rows.length of @orders.length orders</p>
+  </div>
+  <Button toggles="export-menu" icon="share">Export</Button>
+  <Menu id="export-menu">
+    <button popovertarget="export-menu" popovertargetaction="hide" @onclick="() => exportAs('CSV')">CSV</button>
+    <button popovertarget="export-menu" popovertargetaction="hide" @onclick="() => exportAs('Excel')">Excel</button>
+    <hr />
+    <button popovertarget="export-menu" popovertargetaction="hide" @onclick="() => exportAs('PDF')">PDF report</button>
+  </Menu>
+</header>
+
+<Toolbar sticky="@true" depth="2">
+  <label class="search">
+    <Icon name="search" />
+    <input class="xz-input" type="search" placeholder="Search by order, customer or city" aria-label="Search orders" @bind="query" @bind:event="oninput" />
+  </label>
+  <Segmented options="@(['All', 'Paid', 'Pending', 'Refunded'])" @bind-value="status" label="Status" />
+</Toolbar>
+
+@if (rows.length === 0) {
+  <Empty title="No orders match" icon="search"><p>Try another search or status.</p></Empty>
+} else {
+  <Table items="@rows" columns="@orderColumns" depth="1" caption="Orders" onRow="(o: Order) => details?.show(o)" />
+}
+
+<OrderSheet @ref="details" />

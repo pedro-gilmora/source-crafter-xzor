@@ -1,0 +1,51 @@
+@page "/"
+@import Grid from "@source-crafter/xzor-ui/Grid.xzor"
+@import Panel from "@source-crafter/xzor-ui/Panel.xzor"
+@import Stat from "@source-crafter/xzor-ui/Stat.xzor"
+@import Segmented from "@source-crafter/xzor-ui/Segmented.xzor"
+@import Table from "@source-crafter/xzor-ui/Table.xzor"
+@import OrderSheet from "../components/OrderSheet.xzor"
+@import { href } from "../routes"
+@import { kpis, orderColumns, orders, periods, series, type Order } from "../data"
+
+@code {
+  period = "Week";
+  details?: OrderSheet;
+  recent = orders.slice(0, 6);
+  columns = orderColumns.filter((c) => ["Order", "Customer", "Status", "Total"].includes(c.label));
+}
+
+<header class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <p class="xz-muted">Sales across every store, updated a minute ago.</p>
+  </div>
+  <Segmented options="@periods" @bind-value="period" label="Period" />
+</header>
+
+<Grid min="9.5rem">
+  @for (const kpi of kpis(period)) {
+    <Panel>
+      <Stat label="@kpi.label" value="@kpi.value" unit="@kpi.unit" delta="@kpi.delta" />
+    </Panel>
+  }
+</Grid>
+
+<div class="split">
+  <Panel title="Revenue">
+    <div class="bars" role="list" aria-label="Revenue by @period.toLowerCase()">
+      @for (const bar of series(period)) {
+        <div class="col" role="listitem" title="@bar.value">
+          <div class="bar" style="--share: @bar.share"></div>
+          <span>@bar.label</span>
+        </div>
+      }
+    </div>
+  </Panel>
+  <Panel title="Recent orders">
+    @slot actions { <a href="@href.Orders()">View all</a> }
+    <Table items="@recent" columns="@columns" onRow="(o: Order) => details?.show(o)" />
+  </Panel>
+</div>
+
+<OrderSheet @ref="details" />

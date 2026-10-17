@@ -1,0 +1,48 @@
+@import Sheet from "@source-crafter/xzor-ui/Sheet.xzor"
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import Avatar from "@source-crafter/xzor-ui/Avatar.xzor"
+@import Badge from "@source-crafter/xzor-ui/Badge.xzor"
+@import { toast, type Tone } from "@source-crafter/xzor-ui"
+@import { money, when, type Order, type Status } from "../data"
+
+@code {
+  order?: Order;
+  sheet?: Sheet;
+
+  show(order: Order) {
+    this.order = order;
+    this.sheet?.show();
+  }
+
+  tone(status: Status): Tone {
+    return status === "Paid" ? "success" : status === "Pending" ? "warning" : "danger";
+  }
+
+  refund() {
+    toast(`Refund started for order ${this.order?.id}`, "success");
+    this.sheet?.close();
+  }
+}
+
+<Sheet id="order-details" title="@(order ? 'Order ' + order.id : 'Order')" side="end" @ref="sheet">
+  @if (order) {
+    @{ const o = order; }
+    <div class="customer">
+      <Avatar name="@o.customer" size="lg" />
+      <div>
+        <strong>@o.customer</strong>
+        <p class="xz-muted">@o.city</p>
+      </div>
+    </div>
+    <dl class="facts">
+      <dt>Status</dt><dd><Badge tone="@tone(o.status)">@o.status</Badge></dd>
+      <dt>Placed</dt><dd>@when(o.date)</dd>
+      <dt>Items</dt><dd>@o.items</dd>
+      <dt>Total</dt><dd><strong>@money(o.total)</strong></dd>
+    </dl>
+  }
+  @slot actions {
+    <Button variant="ghost" closes="order-details">Close</Button>
+    <Button tone="danger" variant="solid" disabled="@(order?.status !== 'Paid')" onClick="refund">Refund</Button>
+  }
+</Sheet>

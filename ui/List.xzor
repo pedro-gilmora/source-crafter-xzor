@@ -3,7 +3,8 @@
 
 @code {
   items: Iterable<T> = [];
-  depth: Depth = "1";
+  /** No surface by default, to sit inside a `Panel`; give it one when it stands alone. */
+  depth?: Depth;
 }
 
 <ul class="xz-list" data-depth="@depth">

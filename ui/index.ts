@@ -6,10 +6,12 @@ export type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
 export type Depth = "0" | "1" | "2" | "3";
 export type Size = "sm" | "md" | "lg";
 
-/** A `Table` column: `value` gives the cell text and the sort key. */
+/** A `Table` column: `value` is the sort key and, without `text`, the cell text. */
 export interface Column<T> {
   label: string;
   value(row: T): string | number;
+  /** The cell text, when it differs from the sort key (`money(o.total)` for `o.total`). */
+  text?(row: T): string;
   align?: "start" | "end";
   /** `false` turns sorting off for this column. */
   sort?: boolean;

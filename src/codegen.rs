@@ -1733,6 +1733,8 @@ impl Gen<'_> {
             };
             let value = match (kind, code) {
                 (PropKind::Callback, Some(e)) => M::lit("__b.callback(").add(self.handler(&e)).lit_then(")"),
+                // Hoisted, a string literal would widen to `string` and fail a literal-typed prop's inference.
+                (PropKind::Text, _) | (_, None) if infer && matches!(a.value, AttrValue::Static(_)) => self.value(&a.value).lit_then(" as const"),
                 (PropKind::Text, _) | (_, None) => self.value(&a.value),
                 (_, Some(e)) => self.expr(&e),
             };
@@ -3140,6 +3142,17 @@ mod tests {
         assert!(g.code.contains(&format!("__b.addComponent({}, {{ item: (x) =>", infer("__p0"))), "{}", g.code);
         assert!(g.code.contains("const __p1 = { items: this.xs };"), "{}", g.code);
         assert!(g.code.contains(&format!("__b.addComponent({});", infer("__p1"))), "{}", g.code);
+    }
+
+    /// A literal-typed text prop (`depth?: "0" | "1"`) keeps its literal type in the hoisted object, so it
+    /// does not widen to `string` and break the inference of every type parameter.
+    #[test]
+    fn hoisted_static_text_props_stay_literal() {
+        let table = "@typeparam T\n@code { items: T[] = []; depth?: \"0\" | \"1\"; caption = \"\"; }";
+        let src = "@code { xs = [1]; }\n<Table items=\"@xs\" depth=\"1\" caption=\"Rows of @xs.length\" />";
+        let g = gen_with(src, &[("Table", table)]);
+        assert!(g.code.contains("const __p0 = { items: this.xs, depth: \"1\" as const, caption: "), "{}", g.code);
+        assert!(!g.code.contains("this.xs.length as const"), "{}", g.code);
     }
 
     #[test]

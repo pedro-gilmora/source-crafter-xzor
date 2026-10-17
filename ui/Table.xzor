@@ -1,6 +1,6 @@
 @typeparam T
 @import { type EventCallback } from "@source-crafter/xzor-runtime"
-@import { type Column } from "@source-crafter/xzor-ui"
+@import { type Column, type Depth } from "@source-crafter/xzor-ui"
 @import Icon from "./Icon.xzor"
 
 @code {
@@ -9,6 +9,8 @@
   /** Makes rows clickable (and reachable with Tab and Enter). */
   onRow?: EventCallback<T>;
   caption = "";
+  /** No surface by default, to sit inside a `Panel`; give it one when it stands alone. */
+  depth?: Depth;
   sortBy = -1;
   descending = false;
 
@@ -39,7 +41,7 @@
   }
 }
 
-<div class="xz-table" data-depth="1">
+<div class="xz-table" data-depth="@depth">
   <table>
     @if (caption) {
       <caption>@caption</caption>
@@ -65,7 +67,7 @@
       @for (const row of rows) {
         <tr data-clickable="@(onRow !== undefined)" tabindex="@(onRow ? 0 : null)" @onclick="() => onRow?.(row)" @onkeydown="(e) => open(e, row)">
           @for (const column of columns) {
-            <td data-align="@column.align">@column.value(row)</td>
+            <td data-align="@column.align">@(column.text ? column.text(row) : column.value(row))</td>
           }
         </tr>
       }
