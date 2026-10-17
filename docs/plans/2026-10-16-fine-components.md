@@ -33,3 +33,19 @@ Decisions (made autonomously; the user reviews later):
 5. Parser `@fine`; codegen `fine` path emitting builder calls with source mappings. Tests in `codegen.rs`.
 6. Example `examples/counter/pages/TeamFine.xzor` (with totals), `cargo run -- build examples/counter`.
 7. Docs (design.md, README, SKILL.md), measurements, perf and memory review.
+
+## Measurements (compiled output, happy-dom, 7 processes per cell, `target/fine-bench`)
+
+| page | rows | heap over plain DOM | one change | keystroke | +1 row |
+|---|---|---|---|---|---|
+| vdom | 1000 | 7.40 MB | 6.02 ms | 5.73 ms | 4.11 ms |
+| `@fine` | 1000 | 4.98 MB | 0.018 ms | 0.049 ms | 0.44 ms |
+| vdom | 5000 | 35.88 MB | 31.5 ms | 31.2 ms | 27.8 ms |
+| `@fine` | 5000 | 23.93 MB | 0.021 ms | 0.049 ms | 2.63 ms |
+
+Per change it matches the hand-written spikes (D3/E4/E5: 0.02 ms). Two fixes got it there: a `@for` whose binding
+is a destructuring pattern (`[field, messages] of Object.entries(...)`) is a region, since its items are new on
+every run; and structure inside a region is plain control flow, not nested regions.
+
+Next, by measured gain in the spikes: exact `EntitySet` splices for lists (E4: 0.16 ms per added row at 5000,
+against 2.6 ms), delegated events and hoisted `fn(arg)` bindings (heap), no comment anchors where not needed.
