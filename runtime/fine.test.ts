@@ -440,7 +440,11 @@ test("template rows: shared reads bind each row's item, and delegated handlers g
   expect(c.team[0]!.hours).toBe(30);
   expect(rows()[0]!.querySelector("span")!.textContent).toBe("600.00");
   expect(rows()[0]!.querySelector("small")?.textContent).toBe("too many");
-  // The input bubbled to the list's `<ul>` handler too; the button's handler stops it.
+  // An event dispatched without bubbling still reaches its target's handler.
+  input.value = "31";
+  input.dispatchEvent(new Event("input"));
+  expect(c.team[0]!.hours).toBe(31);
+  // A click on the row reaches the `<ul>` handler; the button's handler stops it.
   expect(c.outer).toBe(0);
   rows()[0]!.click();
   expect(c.outer).toBe(1);

@@ -385,24 +385,31 @@ function keyOf(type: string): string {
   if (key === undefined) {
     keys.set(type, (key = "$$" + type));
     document.addEventListener(type, dispatch);
+    // The capture phase sees events that do not bubble (dispatched by code) on their way to their target.
+    document.addEventListener(type, dispatchAtTarget, true);
   }
   return key;
 }
 
+type Target = Node & Record<string, any>;
+
+// Runs `node`'s handler; whether the event stopped.
+function fire(node: Target, e: Event): boolean {
+  const handler = node[keys.get(e.type)!];
+  if (handler === undefined) return false;
+  const h = node[HOLDER] as Holder & Partial<Row>;
+  Object.defineProperty(e, "currentTarget", { configurable: true, value: node });
+  afterHandler(h.ctx, h.reads !== undefined ? handler(h.item)(e) : handler(e));
+  return e.cancelBubble;
+}
+
 /** Calls the handlers from the target up, as bubbling would; a row's handler comes from its item. */
 function dispatch(e: Event): void {
-  const key = keys.get(e.type)!;
-  let node = e.target as (Node & Record<string, any>) | null;
-  Object.defineProperty(e, "currentTarget", { configurable: true, get: () => node });
-  while (node !== null) {
-    const handler = node[key];
-    if (handler !== undefined) {
-      const h = node[HOLDER] as Holder & Partial<Row>;
-      afterHandler(h.ctx, h.reads !== undefined ? handler(h.item)(e) : handler(e));
-      if (e.cancelBubble) return;
-    }
-    node = node.parentNode as (Node & Record<string, any>) | null;
-  }
+  for (let node = e.target as Target | null; node !== null && !fire(node, e); node = node.parentNode as Target | null);
+}
+
+function dispatchAtTarget(e: Event): void {
+  if (!e.bubbles && e.target !== null) fire(e.target as Target, e);
 }
 
 function on(el: Element, event: string, handler: (e: any) => unknown, h: Holder): void {
@@ -431,18 +438,27 @@ const anchor = (parent: Node): Comment => parent.appendChild(document.createComm
  * The others append the node they bind to `parent`.
  */
 export const fine = {
-  /** Builds the nodes of `specs` once; each call returns a deep clone (a fragment unless it is one element). */
+  /**
+   * Builds the nodes of `specs` (a fragment unless they are one element). The first call builds them directly:
+   * a component used once keeps no copy. From the second on, calls clone a copy built then.
+   */
   template(specs: readonly unknown[]): () => Node {
     let node: Node | undefined;
+    let used = false;
+    const build = (): Node => {
+      const first = specs[0];
+      if (specs.length === 1 && Array.isArray(first)) return make(first as unknown as Spec);
+      const frag = document.createDocumentFragment();
+      for (const spec of specs) frag.appendChild(make(spec as Spec));
+      return frag;
+    };
     return () => {
-      if (node === undefined) {
-        const first = specs[0];
-        if (specs.length === 1 && Array.isArray(first)) node = make(first as unknown as Spec);
-        else {
-          node = document.createDocumentFragment();
-          for (const spec of specs) node.appendChild(make(spec as Spec));
-        }
+      if (node !== undefined) return node.cloneNode(true);
+      if (!used) {
+        used = true;
+        return build();
       }
+      node = build();
       return node.cloneNode(true);
     };
   },
