@@ -300,16 +300,25 @@ Validators: `required`, `email`, `phone`, `maxLength(n)`, `minLength(n)`, `requi
 - `hasChanges`, `changes` (the items that changed), `hasErrors`.
 - `revertChanges()`: restores the list and every item. `confirmChanges(serverItems?)` drops Deleted items and confirms the rest.
 
-A set held by a model field tells the model when it is mutated, so components that read the field draw again.
+A set held by a model field tells the model when it is mutated, so components that read the field draw again. A set is also tracked on its own: reading `view`, `hasChanges` or `hasErrors`, or iterating it with `for...of`, subscribes the reader to its membership, and every mutating method notifies those readers.
 
 ### Limits
 
-- Only direct subclasses of `Model` are tracked (v1).
-- `set[i] = x` and `set.length = n` are not noticed. Use the methods.
+- `set[i] = x` and `set.length = n` are not noticed. Use the methods. Reading `length`, an index, or calling `map`/`filter`/`reduce` on the set itself does not subscribe to its membership: read `view` or iterate it.
 - A set shared by two models notifies only the last one.
-- An EntitySet held directly by a component re-renders on changes made in that component's event handlers only; to see list changes from timers or services, keep the list in a model field.
 - `changes`, `same` and `isLike` don't support plain object graphs with cycles.
 - The tsconfig `lib` needs `ESNext.Decorators`.
+
+## Fine components (`@fine`)
+
+`@fine` at the top of a `.xzor` compiles the component without a render pass. Its DOM is built once. Each dynamic part is a binding that re-runs only when a tracked field it read changes. Design and measurements: `docs/plans/2026-10-16-fine-components.md`.
+
+- **Base class.** The component extends `FineComponent` (from the model entry, `runtime/fine.ts`). The bundle tracks its fields like a model's, so a handler that does `count++` updates what reads `count`. Event handlers don't re-render anything.
+- **What the codegen emits.** `buildRenderTree` holds a single `__b.addFine((__p) => { ... })`: `fine.el` and `setAttribute` for static markup, `fine.text`/`fine.attr` for `@expr` and dynamic attributes, `addEventListener` for `@onX`, and for `@bind` an attribute binding plus a listener that writes the field back.
+- **Bindings.** A binding records the fields it reads each time it runs (the compiler has no types, so there are no compile-time masks), using the model tracker's queue. Several writes in a task re-run a binding once. Derived getters and aggregates (`team.view.reduce(...)`) need nothing by hand. A binding is its own subscription for the first source it reads, so the common case allocates one object.
+- **Structure.** `@if`, `@switch`, `@while` and `for (;;)` are regions: rebuilt (nodes and inner bindings) when what they read changes. `@for (const x of items)` is a keyed list: rows are matched by identity, kept rows keep their nodes and only move, new rows are built once. A `@{ }` block becomes a region holding it and the siblings after it, so its locals stay current.
+- **In the vdom.** The template is one `fine` vnode between two comments. Patches never rebuild it: `stateHasChanged()` re-runs every binding, for changes nothing tracks. Removing the component disposes its bindings.
+- **Not yet supported** (compile errors): child components, slots, `@cascade`, routes blocks, `@attributes`, event modifiers, markup inside `@{ }`. `@inherits` must name a `FineComponent`. `@key` is accepted and ignored: rows are keyed by their item.
 
 ## Build
 

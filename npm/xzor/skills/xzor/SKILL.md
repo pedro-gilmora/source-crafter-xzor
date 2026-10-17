@@ -210,12 +210,21 @@ export class Worker extends Model {
 ```
 
 - Write plain fields. The build turns them into tracked ones, and warns on stderr when a class is not tracked: fix every warning.
-- Extend `Model` directly: a class that extends another model is not tracked (v1). Build one with `new Worker(data)` (state Unchanged) or `new Worker()` (Detached; the first edit makes it Added). If you write a constructor, call `this.assign(data)` in it.
+- Extend `Model`, or another model class (its fields continue after the base's). Build one with `new Worker(data)` (state Unchanged) or `new Worker()` (Detached; the first edit makes it Added). If you write a constructor, call `this.assign(data)` in it.
 - A component that reads a model while it renders draws again when that value changes, even if the change comes from a service or a timer. Do not call `stateHasChanged()` for models.
 - `hasState(State.Modified | ...)` (`State.Detached | Unchanged | Added | Deleted | Modified`, from `.../model`; there is no `state` property), `markAdded()`/`markModified()`/`markUnchanged()`/`markDeleted()`, `changes` (what to send to the server, `null` if nothing; the state is sent as `$$`, and `$$` in constructor data sets it), `revertChanges()`, `confirmChanges(serverValues?)`, `hasErrors`, `errors` (messages per field, filled after the first edit), `hasValidChanges`.
 - Decorators: `@Validate(...)`, `@Persist` (a getter sent with the fields), `@Ignore` (kept out of `changes`), `@Untracked` (a plain field). Validators: `required`, `email`, `phone`, `maxLength`, `minLength`, `requiredIdValue`, `nonZero`, `minValue`, `maxValue`.
-- `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed. An EntitySet held directly by a component re-renders on changes made in that component's event handlers only; to see list changes from timers or services, keep the list in a model field.
+- `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed. Read it through `view` or `for...of` (not `length`, an index or `set.map`) so the reader follows pushes and deletes.
 - Needs `"ESNext.Decorators"` in the tsconfig `lib`. Not supported: plain object graphs with cycles, one set held by two models.
+
+## Fine components (`@fine`)
+
+For large or busy pages (long lists, live data), put `@fine` on the first line. The component is compiled with no render pass: the DOM is built once and each dynamic part updates alone, in a microtask, when a field it reads changes.
+
+- Its `@code` fields are tracked like a model's: `count++` in a handler updates the page. Never call `stateHasChanged()` for that; call it only after changing something untracked (a plain array's `push`, an object's property).
+- Put list data in an `EntitySet` (or reassign a plain array) and loop with `@for (const x of list.view)`: rows are kept by identity.
+- Totals and other derived values are plain expressions (`@team.view.reduce((s, w) => s + w.hours, 0)`); no extra fields or setters.
+- Not supported yet, a compile error: child components, `@slot`, `@cascade`, routes blocks, `@attributes`, event modifiers (`@onclick:preventDefault`), markup inside `@{ }`. Use a normal component for those.
 
 ## Hot reload and PWA
 

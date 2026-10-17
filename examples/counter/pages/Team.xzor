@@ -19,7 +19,7 @@
   }
 
   // Runs outside an event handler: the page re-renders because it read these models' fields.
-  // Changes to the list itself (push, delete) would not, as `team` is held by the component.
+  // Pushes and deletes re-render it too, since it reads the list through `view`.
   plusOneHour() {
     setTimeout(() => {
       for (const worker of this.team.view) worker.hours += 1;
