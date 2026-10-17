@@ -16,7 +16,7 @@
     @slot item(order) {
       <span class="order">
         <strong>@order.id</strong>
-        <small class="xz-muted">@order.lines.reduce((n, l) => n + l.qty, 0) items · @order.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })</small>
+        <small class="xz-muted">@order.lines.reduce((n, l) => n + l.qty, 0) items, placed at @order.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })</small>
       </span>
       <Badge tone="warning">Preparing</Badge>
       <b>@price(order.total)</b>

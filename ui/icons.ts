@@ -1,9 +1,11 @@
 // Drawn for xzor-ui on a 24x24 grid, stroked at 2 with round ends: one path per icon.
 export type IconName =
+  | "apple"
   | "arrow-down"
   | "arrow-up"
   | "bell"
   | "book"
+  | "bread"
   | "calendar"
   | "cart"
   | "chart"
@@ -21,7 +23,9 @@ export type IconName =
   | "home"
   | "inbox"
   | "info"
+  | "jar"
   | "menu"
+  | "milk"
   | "minus"
   | "moon"
   | "package"
@@ -38,10 +42,12 @@ export type IconName =
   | "x";
 
 export const icons: Record<IconName, string> = {
+  apple: "M12 7.5c-1.6-1.7-4.2-2-5.8-.6C4.5 8.4 4.8 12 6.3 15c1.3 2.6 3 5 4.6 5 .6 0 .8-.4 1.1-.4s.5.4 1.1.4c1.6 0 3.3-2.4 4.6-5 1.5-3 1.8-6.6.1-8.1-1.6-1.4-4.2-1.1-5.8.6zM12 7.5c0-2 1-3.6 3-4.5",
   "arrow-down": "M12 5v14M19 12l-7 7-7-7",
   "arrow-up": "M12 19V5M5 12l7-7 7 7",
   bell: "M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a2 2 0 0 0 3.4 0",
   book: "M4 19V5a2 2 0 0 1 2-2h14v14H6a2 2 0 0 0-2 2zm0 0a2 2 0 0 0 2 2h14v-4",
+  bread: "M4 13a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5zM9 11l-1 3M13 11l-1 3M17 11l-1 3",
   calendar: "M5 5h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM4 10h16M8 3v4M16 3v4",
   cart: "M3 4h2l2.4 11.2a1 1 0 0 0 1 .8h9.2a1 1 0 0 0 1-.8L20 8H6.2M9 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   chart: "M3 3v18h18M8 17v-5M13 17V8M18 17v-9",
@@ -59,7 +65,9 @@ export const icons: Record<IconName, string> = {
   home: "M3 11l9-8 9 8M5 9.5V21h5v-6h4v6h5V9.5",
   inbox: "M3 13h5l1.5 3h5l1.5-3h5M5.5 5h13L21 13v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6l2.5-8z",
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01",
+  jar: "M8 3h8v3H8zM7 6h10a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM6 11h12M6 16h12",
   menu: "M4 6h16M4 12h16M4 18h16",
+  milk: "M8 2h8v3l2 3v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V8l2-3V2zM6 8h12M10 13h4",
   minus: "M5 12h14",
   moon: "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z",
   package: "M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8",

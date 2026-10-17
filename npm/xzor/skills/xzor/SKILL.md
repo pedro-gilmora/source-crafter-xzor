@@ -95,6 +95,7 @@ Generated `.xzor/` and `dist/` are build output: never edit them. Don't create `
 | Bind a component | `<Stepper @bind-value="n" />` (child has `value` and `valueChanged?: EventCallback<T>`) |
 | DOM/instance ref | `@ref="input"` with a field `input?: HTMLInputElement;` |
 | Spread attributes | `@attributes="attrs"` |
+| Inline SVG | `<svg viewBox="0 0 24 24"><path d="@d" /></svg>` (keep the `<svg>` and its children in one place, not split across an `@if`/`@for`) |
 
 Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A prop typed `string`, a union of string literals, an imported alias of string literals (`type Size = "s" | "m"`), or given a string default (`name: Kind = "a"`) takes text; any other type takes a TypeScript expression. Misspelled or mistyped props are build errors.
 
@@ -151,7 +152,8 @@ One `Routes.xzor` (never itself a `@page`) holds the router and the layouts:
 - `@page` works in any `.xzor` of the project (a `pages/` folder is only a convention). The component's class name is its file name.
 - A layout is an ordinary component with `@slot` where the page goes.
 - Typed links: `@import { href } from "./routes"` (relative path; the table is generated), then `<a href="@href.TodoPage({ id: 3 })">`. A page without parameters needs no argument: `href.About()`.
-- `@import { NavLink } from "@source-crafter/xzor-runtime"`, then `<NavLink href="/" match="exact">Home</NavLink>`: it adds `class="active"` on its route; `match="prefix"` is the default.
+- `@import { NavLink } from "@source-crafter/xzor-runtime"`, then `<NavLink href="/" match="exact">Home</NavLink>`: it adds `class="active"` and `aria-current="page"` on its route; `match="prefix"` is the default.
+- Animated page changes: call `viewTransitions(true)` (from `@source-crafter/xzor-runtime`) in `main.ts`; give an element the same `view-transition-name` on both pages to morph it.
 - Plain `<a href="/about">` links navigate without reloading.
 - Tag routes with `@page "/admin" as admin` and give them a layout with `@admin(page) { <AdminLayout>@page</AdminLayout> }`.
 - Served under a sub-path (GitHub Pages): add `<base href="/repo/">` to `index.html`; routes and `href` follow it.

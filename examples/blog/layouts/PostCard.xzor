@@ -6,12 +6,10 @@
   post!: Post;
 }
 
-<article class="card" data-depth="1">
-  <a href="@href.Post({ slug: post.slug })">
-    <p class="meta">@day(post.date) · @post.minutes min read</p>
-    <h2 style="view-transition-name: post-@post.slug">@post.title</h2>
-    <p>@post.summary</p>
-  </a>
+<article class="card">
+  <p class="meta"><time datetime="@post.date">@day(post.date)</time><span>@post.minutes min read</span></p>
+  <h2><a href="@href.Post({ slug: post.slug })" style="view-transition-name: post-@post.slug">@post.title</a></h2>
+  <p class="summary">@post.summary</p>
   <p class="tags">
     @for (const tag of post.tags) {
       <a href="@href.Tag({ tag })"><Badge tone="accent">#@tag</Badge></a>

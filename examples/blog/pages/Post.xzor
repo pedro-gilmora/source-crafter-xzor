@@ -21,7 +21,7 @@
 @if (post) {
   @{ const p = post; }
   <article class="article">
-    <p class="meta"><a href="@href.Home()">Field Notes</a> · @day(p.date) · @p.minutes min read</p>
+    <p class="meta"><a href="@href.Home()">Field Notes</a><time datetime="@p.date">@day(p.date)</time><span>@p.minutes min read</span></p>
     <h1 style="view-transition-name: post-@p.slug">@p.title</h1>
     <p class="lead">@p.summary</p>
     @for (const block of p.body) {

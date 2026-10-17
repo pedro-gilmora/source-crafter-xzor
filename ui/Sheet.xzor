@@ -16,9 +16,9 @@
   }
 }
 
-<dialog class="xz-sheet" id="@id" data-side="@side" data-depth="3" closedby="any" aria-label="@title" @ref="dialog">
+<dialog class="xz-sheet" id="@id" data-side="@side" data-depth="3" closedby="any" aria-labelledby="@(id + '-title')" @ref="dialog">
   <header>
-    <h2>@title</h2>
+    <h2 id="@(id + '-title')">@title</h2>
     <Button icon="x" label="Close" variant="ghost" size="sm" closes="@id" />
   </header>
   <div class="xz-sheet-body">@slot</div>

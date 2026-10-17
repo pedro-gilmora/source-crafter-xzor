@@ -1,8 +1,8 @@
 /* Bodega: a phone-first shop. Touch targets, safe areas and one-hand reach first. */
 :root {
-  --xz-hue: 285;
+  --xz-hue: 152;
   /* Toasts float above the tab bar. */
-  --xz-toast-offset: 6rem;
+  --xz-toast-offset: 9rem;
 }
 
 .screen {
@@ -19,6 +19,22 @@
 
 .hello :is(h1, p) {
   margin: 0;
+}
+
+/* Set like a shop sign: narrow, heavy, tight. */
+.hello h1 {
+  max-width: 12ch;
+  font-size: clamp(2.25rem, 1.6rem + 3vw, 3.25rem);
+  font-stretch: 75%;
+  font-weight: 680;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+}
+
+.fab-total {
+  padding-inline-start: 0.6rem;
+  border-inline-start: 1px solid oklch(100% 0 0 / 0.3);
+  font-variant-numeric: tabular-nums;
 }
 
 .hello.me {
@@ -79,10 +95,23 @@
   aspect-ratio: 4 / 3;
   margin-bottom: var(--xz-space-2);
   border-radius: var(--xz-radius);
-  background: radial-gradient(circle at 30% 25%, oklch(88% 0.1 var(--hue)), oklch(62% 0.15 var(--hue)));
-  color: oklch(100% 0 0 / 0.9);
-  font-size: 2rem;
-  font-weight: 800;
+  background:
+    radial-gradient(70% 60% at 30% 25%, oklch(92% 0.08 var(--hue) / 0.9), transparent 70%),
+    linear-gradient(160deg, oklch(80% 0.12 var(--hue)), oklch(58% 0.14 var(--hue)));
+  box-shadow: inset 0 0 0 1px oklch(0% 0 0 / 0.06);
+  color: oklch(100% 0 0 / 0.92);
+}
+
+.thumb > .xz-icon {
+  width: 2.75rem;
+  height: 2.75rem;
+  stroke-width: 1.25;
+  filter: drop-shadow(0 2px 4px oklch(0% 0 0 / 0.15));
+}
+
+.lines .thumb > .xz-icon {
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
 .buy {

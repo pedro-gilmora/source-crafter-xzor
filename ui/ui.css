@@ -2,31 +2,55 @@
    Layers, lowest first: tokens, base (element defaults), components, utilities (one-purpose classes). */
 @layer xz.tokens, xz.base, xz.components, xz.utilities;
 
+/* Instrument Sans: one variable family whose width axis does the work of a second face (condensed for display
+   and figures, normal for reading). JetBrains Mono only for code. Both SIL OFL 1.1, see fonts/. */
+@font-face {
+  font-family: "Instrument Sans";
+  src: url("./fonts/instrument-sans.woff2") format("woff2");
+  font-weight: 400 700;
+  font-stretch: 75% 100%;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./fonts/jetbrains-mono.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
 @layer xz.tokens {
   :root {
     color-scheme: light dark;
     /* The accent hue; every tinted color derives from it. */
-    --xz-hue: 262;
-    --xz-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --xz-font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    --xz-hue: 250;
+    --xz-font: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --xz-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    /* Width of display type and big figures: narrower reads as set, not typed. */
+    --xz-display-stretch: 86%;
 
-    --xz-bg: light-dark(oklch(97.5% 0.008 var(--xz-hue)), oklch(16% 0.02 var(--xz-hue)));
-    --xz-surface: light-dark(oklch(100% 0 0), oklch(21.5% 0.02 var(--xz-hue)));
-    --xz-text: light-dark(oklch(23% 0.02 var(--xz-hue)), oklch(96% 0.008 var(--xz-hue)));
-    --xz-muted: light-dark(oklch(48% 0.02 var(--xz-hue)), oklch(74% 0.02 var(--xz-hue)));
-    --xz-line: light-dark(oklch(23% 0.03 var(--xz-hue) / 0.12), oklch(96% 0.01 var(--xz-hue) / 0.13));
+    /* Porcelain by day, blue ink by night: never pure white, never #111. */
+    --xz-bg: light-dark(oklch(96.6% 0.005 var(--xz-hue)), oklch(15.8% 0.014 var(--xz-hue)));
+    --xz-surface: light-dark(oklch(99.3% 0.002 var(--xz-hue)), oklch(20.5% 0.016 var(--xz-hue)));
+    --xz-sunken: light-dark(oklch(94.2% 0.006 var(--xz-hue)), oklch(13.5% 0.012 var(--xz-hue)));
+    --xz-text: light-dark(oklch(21% 0.018 var(--xz-hue)), oklch(95% 0.006 var(--xz-hue)));
+    --xz-muted: light-dark(oklch(49% 0.016 var(--xz-hue)), oklch(71% 0.014 var(--xz-hue)));
+    --xz-line: light-dark(oklch(21% 0.03 var(--xz-hue) / 0.11), oklch(95% 0.01 var(--xz-hue) / 0.11));
+    --xz-line-strong: light-dark(oklch(21% 0.03 var(--xz-hue) / 0.2), oklch(95% 0.01 var(--xz-hue) / 0.2));
 
-    --xz-neutral: light-dark(oklch(42% 0.02 var(--xz-hue)), oklch(82% 0.02 var(--xz-hue)));
-    --xz-accent: light-dark(oklch(54% 0.21 var(--xz-hue)), oklch(74% 0.16 var(--xz-hue)));
-    --xz-success: light-dark(oklch(52% 0.14 150), oklch(78% 0.15 150));
-    --xz-warning: light-dark(oklch(60% 0.15 65), oklch(83% 0.14 80));
-    --xz-danger: light-dark(oklch(54% 0.2 25), oklch(72% 0.17 25));
+    --xz-neutral: light-dark(oklch(38% 0.016 var(--xz-hue)), oklch(84% 0.012 var(--xz-hue)));
+    --xz-accent: light-dark(oklch(51% 0.18 var(--xz-hue)), oklch(74% 0.13 var(--xz-hue)));
+    --xz-success: light-dark(oklch(50% 0.12 155), oklch(78% 0.13 155));
+    --xz-warning: light-dark(oklch(56% 0.13 70), oklch(83% 0.13 80));
+    --xz-danger: light-dark(oklch(52% 0.19 25), oklch(72% 0.16 22));
     /* Text on a solid tone. */
-    --xz-on-tone: light-dark(oklch(99% 0 0), oklch(18% 0.02 var(--xz-hue)));
+    --xz-on-tone: light-dark(oklch(99% 0.003 var(--xz-hue)), oklch(17% 0.02 var(--xz-hue)));
 
-    --xz-radius-sm: 0.5rem;
-    --xz-radius: 0.875rem;
-    --xz-radius-lg: 1.375rem;
+    /* Radii follow hierarchy: controls, surfaces, overlays. */
+    --xz-radius-sm: 6px;
+    --xz-radius: 9px;
+    --xz-radius-lg: 16px;
+    --xz-radius-xl: 24px;
     --xz-radius-pill: 999px;
 
     --xz-space-1: 0.25rem;
@@ -37,23 +61,31 @@
     --xz-space-6: 2rem;
     --xz-space-7: 3rem;
 
+    /* A major third from 15px. */
+    --xz-text-xs: 0.75rem;
     --xz-text-sm: 0.8125rem;
     --xz-text-md: 0.9375rem;
-    --xz-text-lg: 1.125rem;
-    --xz-text-xl: clamp(1.375rem, 1.15rem + 1vw, 1.75rem);
-    --xz-text-2xl: clamp(1.75rem, 1.25rem + 2.2vw, 2.75rem);
+    --xz-text-lg: 1.1875rem;
+    --xz-text-xl: clamp(1.4rem, 1.2rem + 0.9vw, 1.85rem);
+    --xz-text-2xl: clamp(1.9rem, 1.4rem + 2.2vw, 3rem);
+    --xz-text-3xl: clamp(2.6rem, 1.6rem + 4.6vw, 5.25rem);
 
-    /* Liquid glass: a translucent tint, a light rim on top, a soft shine, blur and saturation behind. */
-    --xz-glass-tint: light-dark(oklch(100% 0 0 / 0.56), oklch(27% 0.025 var(--xz-hue) / 0.5));
-    --xz-glass-edge: light-dark(oklch(100% 0 0 / 0.9), oklch(100% 0 0 / 0.16));
-    --xz-glass-rim: light-dark(oklch(23% 0.03 var(--xz-hue) / 0.1), oklch(0% 0 0 / 0.45));
-    --xz-glass-shine: linear-gradient(165deg, oklch(100% 0 0 / 0.34), oklch(100% 0 0 / 0) 45%);
-    --xz-blur-1: 10px;
-    --xz-blur-2: 18px;
-    --xz-blur-3: 30px;
-    --xz-shadow-1: 0 1px 2px oklch(0% 0 0 / 0.07), 0 4px 14px oklch(0% 0 0 / 0.06);
-    --xz-shadow-2: 0 2px 6px oklch(0% 0 0 / 0.09), 0 12px 32px oklch(0% 0 0 / 0.1);
-    --xz-shadow-3: 0 4px 12px oklch(0% 0 0 / 0.12), 0 24px 64px oklch(0% 0 0 / 0.2);
+    /* Liquid glass: a translucent tint, a rim lit from the top left, blur and saturation behind. */
+    --xz-glass-tint: light-dark(oklch(99.5% 0.003 var(--xz-hue) / 0.6), oklch(23% 0.018 var(--xz-hue) / 0.56));
+    --xz-glass-rim: linear-gradient(
+      155deg,
+      light-dark(oklch(100% 0 0 / 0.95), oklch(100% 0 0 / 0.34)),
+      light-dark(oklch(100% 0 0 / 0.3), oklch(100% 0 0 / 0.07)) 32%,
+      light-dark(oklch(21% 0.03 var(--xz-hue) / 0.1), oklch(100% 0 0 / 0.03)) 62%,
+      light-dark(oklch(100% 0 0 / 0.7), oklch(100% 0 0 / 0.16))
+    );
+    --xz-glass-sheen: radial-gradient(120% 80% at 0% 0%, light-dark(oklch(100% 0 0 / 0.5), oklch(100% 0 0 / 0.06)), transparent 55%);
+    --xz-blur-1: 12px;
+    --xz-blur-2: 20px;
+    --xz-blur-3: 32px;
+    --xz-shadow-1: 0 1px 1px oklch(18% 0.02 var(--xz-hue) / 0.05), 0 2px 8px -2px oklch(18% 0.02 var(--xz-hue) / 0.08);
+    --xz-shadow-2: 0 1px 2px oklch(18% 0.02 var(--xz-hue) / 0.06), 0 10px 28px -8px oklch(18% 0.02 var(--xz-hue) / 0.18);
+    --xz-shadow-3: 0 2px 4px oklch(12% 0.02 var(--xz-hue) / 0.08), 0 28px 70px -18px oklch(12% 0.02 var(--xz-hue) / 0.42);
 
     /* Motion: strong ease-outs for things that enter, a drawer curve for sheets. */
     --xz-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -63,11 +95,12 @@
     --xz-dur-2: 200ms;
     --xz-dur-3: 320ms;
 
-    /* What glass has to blur: soft color fields behind the page. */
+    /* What glass has to blur: one light from above, two quiet washes of color, and a fine grain. */
     --xz-backdrop:
-      radial-gradient(60vmax 45vmax at 8% -5%, oklch(72% 0.17 var(--xz-hue) / 0.28), transparent 70%),
-      radial-gradient(45vmax 40vmax at 100% 25%, oklch(78% 0.13 200 / 0.2), transparent 70%),
-      radial-gradient(55vmax 45vmax at 35% 105%, oklch(80% 0.12 330 / 0.18), transparent 70%);
+      radial-gradient(90% 55% at 50% -12%, light-dark(oklch(100% 0 0 / 0.9), oklch(34% 0.05 var(--xz-hue) / 0.55)), transparent 70%),
+      radial-gradient(45% 50% at 100% 8%, light-dark(oklch(72% 0.13 var(--xz-hue) / 0.22), oklch(60% 0.13 var(--xz-hue) / 0.22)), transparent 70%),
+      radial-gradient(50% 45% at 0% 100%, light-dark(oklch(78% 0.09 calc(var(--xz-hue) - 60) / 0.18), oklch(55% 0.08 calc(var(--xz-hue) - 60) / 0.16)), transparent 70%);
+    --xz-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
   :root[data-theme="light"] {
@@ -95,10 +128,12 @@
   body {
     margin: 0;
     min-height: 100dvh;
-    font: var(--xz-text-md) / 1.55 var(--xz-font);
+    font: 450 var(--xz-text-md) / 1.55 var(--xz-font);
+    font-kerning: normal;
     color: var(--xz-text);
     background: var(--xz-bg);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   /* Fixed, so scrolling never repaints it. */
@@ -107,7 +142,7 @@
     position: fixed;
     inset: 0;
     z-index: -1;
-    background: var(--xz-backdrop);
+    background: var(--xz-grain), var(--xz-backdrop);
     pointer-events: none;
   }
 
@@ -116,21 +151,33 @@
   h3,
   h4 {
     margin: 0 0 var(--xz-space-3);
-    line-height: 1.15;
-    letter-spacing: -0.015em;
+    font-stretch: var(--xz-display-stretch);
+    font-weight: 620;
+    line-height: 1.08;
+    letter-spacing: -0.022em;
     text-wrap: balance;
   }
 
   h1 {
     font-size: var(--xz-text-2xl);
+    font-weight: 650;
+    letter-spacing: -0.034em;
   }
 
   h2 {
     font-size: var(--xz-text-xl);
+    letter-spacing: -0.026em;
   }
 
   h3 {
     font-size: var(--xz-text-lg);
+    font-stretch: 94%;
+  }
+
+  h4 {
+    font-size: var(--xz-text-md);
+    font-stretch: 100%;
+    letter-spacing: -0.005em;
   }
 
   p {
@@ -140,14 +187,21 @@
 
   a {
     color: var(--xz-accent);
-    text-underline-offset: 0.2em;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.22em;
+  }
+
+  strong,
+  b {
+    font-weight: 620;
   }
 
   code,
   kbd,
   pre {
     font-family: var(--xz-font-mono);
-    font-size: 0.9em;
+    font-size: 0.88em;
+    font-variant-ligatures: none;
   }
 
   img,
@@ -170,7 +224,7 @@
   }
 
   ::selection {
-    background: oklch(70% 0.15 var(--xz-hue) / 0.3);
+    background: oklch(72% 0.13 var(--xz-hue) / 0.32);
   }
 }
 
@@ -218,18 +272,36 @@
   }
 
   :is([data-depth="1"], [data-depth="2"], [data-depth="3"]) {
-    background: var(--xz-glass-shine), var(--xz-glass-tint);
-    -webkit-backdrop-filter: blur(var(--xz-blur)) saturate(180%);
-    backdrop-filter: blur(var(--xz-blur)) saturate(180%);
-    border: 1px solid var(--xz-glass-rim);
+    background: var(--xz-glass-sheen), var(--xz-glass-tint);
+    -webkit-backdrop-filter: blur(var(--xz-blur)) saturate(170%);
+    backdrop-filter: blur(var(--xz-blur)) saturate(170%);
+    border: 1px solid transparent;
     box-shadow:
-      inset 0 1px 0 0 var(--xz-glass-edge),
-      inset 0 -1px 0 0 oklch(100% 0 0 / 0.05),
+      inset 0 1px 0 0 light-dark(oklch(100% 0 0 / 0.7), oklch(100% 0 0 / 0.1)),
       var(--xz-shadow);
   }
 
+  /* The rim: a gradient border lit from the top left, drawn in the border box and cut out of the middle. */
+  :is([data-depth="1"], [data-depth="2"], [data-depth="3"])::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--xz-glass-rim);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    pointer-events: none;
+  }
+
+  /* The rim needs a positioned box; dialogs, popovers and fixed bars already are. */
+  :where([data-depth="1"], [data-depth="2"], [data-depth="3"]):where(:not(dialog, [popover], .xz-navbar, .xz-toolbar[data-sticky])) {
+    position: relative;
+  }
+
   :is([data-depth="1"], [data-depth="2"], [data-depth="3"])[data-tone] {
-    background: var(--xz-glass-shine), color-mix(in oklch, var(--xz-tone) 16%, var(--xz-glass-tint));
+    background: var(--xz-glass-sheen), color-mix(in oklch, var(--xz-tone) 14%, var(--xz-glass-tint));
   }
 
   /* Without backdrop blur, or when asked for less transparency, glass becomes a solid surface. */
@@ -251,6 +323,10 @@
     :is([data-depth="1"], [data-depth="2"], [data-depth="3"]) {
       background: var(--xz-surface);
       border-color: var(--xz-text);
+    }
+
+    :is([data-depth="1"], [data-depth="2"], [data-depth="3"])::after {
+      display: none;
     }
   }
 
@@ -275,7 +351,10 @@
   .xz-panel > header h2 {
     flex: 1;
     margin: 0;
-    font-size: var(--xz-text-lg);
+    font-size: var(--xz-text-md);
+    font-stretch: 100%;
+    font-weight: 600;
+    letter-spacing: -0.008em;
   }
 
   /* ---------- layout ---------- */
@@ -342,7 +421,7 @@
   .xz-grid {
     display: grid;
     gap: var(--xz-gap, var(--xz-space-4));
-    grid-template-columns: repeat(auto-fill, minmax(min(var(--xz-min, 16rem), 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(var(--xz-min, 16rem), 100%), 1fr));
   }
 
   .xz-toolbar {
@@ -372,9 +451,15 @@
     position: sticky;
     top: 0;
     z-index: 20;
-    padding-inline: max(var(--xz-space-4), env(safe-area-inset-left));
+    padding-inline: max(var(--xz-space-4), env(safe-area-inset-left)) max(var(--xz-space-4), env(safe-area-inset-right));
     border-width: 0 0 1px;
+    border-color: var(--xz-line);
     border-radius: 0;
+  }
+
+  /* Edge to edge, a bar is lit by its hairline, not a rim. */
+  .xz-navbar[data-kind="top"]::after {
+    display: none;
   }
 
   .xz-navbar[data-kind="side"] {
@@ -390,7 +475,7 @@
 
   .xz-navbar[data-kind="tabs"] {
     position: fixed;
-    inset: auto var(--xz-space-3) calc(var(--xz-space-3) + env(safe-area-inset-bottom));
+    inset: auto max(var(--xz-space-3), env(safe-area-inset-right)) calc(var(--xz-space-3) + env(safe-area-inset-bottom)) max(var(--xz-space-3), env(safe-area-inset-left));
     z-index: 20;
     justify-content: space-around;
     max-width: 32rem;
@@ -402,17 +487,18 @@
     display: flex;
     align-items: center;
     gap: var(--xz-space-2);
-    min-height: 2.75rem;
-    padding: var(--xz-space-2) var(--xz-space-3);
+    min-height: 2.25rem;
+    padding: var(--xz-space-1) var(--xz-space-3);
     border-radius: var(--xz-radius);
     color: var(--xz-muted);
-    font-weight: 550;
+    font-weight: 520;
     text-decoration: none;
   }
 
   .xz-navbar a:is(.active, [aria-current="page"]) {
     color: var(--xz-text);
-    background: color-mix(in oklch, var(--xz-accent) 15%, transparent);
+    background: light-dark(oklch(100% 0 0 / 0.78), oklch(100% 0 0 / 0.08));
+    box-shadow: var(--xz-shadow-1), inset 0 0 0 1px var(--xz-line);
   }
 
   .xz-navbar[data-kind="tabs"] a {
@@ -420,13 +506,17 @@
     flex-direction: column;
     gap: 2px;
     max-width: 6rem;
+    min-height: 3rem;
     padding: var(--xz-space-1) var(--xz-space-2);
     border-radius: var(--xz-radius-pill);
-    font-size: 0.6875rem;
+    font-size: var(--xz-text-xs);
+    font-weight: 560;
   }
 
   .xz-navbar[data-kind="tabs"] a:is(.active, [aria-current="page"]) {
     color: var(--xz-accent);
+    background: none;
+    box-shadow: none;
   }
 
   @media (hover: hover) {
@@ -445,12 +535,12 @@
 
   .xz-tabs > button {
     position: relative;
-    min-height: 2.75rem;
+    min-height: 2.5rem;
     padding: var(--xz-space-2) var(--xz-space-3);
     border: 0;
     background: none;
     color: var(--xz-muted);
-    font-weight: 550;
+    font-weight: 540;
     white-space: nowrap;
     cursor: pointer;
   }
@@ -475,29 +565,31 @@
 
   /* ---------- actions ---------- */
   .xz-icon {
-    width: 1.2em;
-    height: 1.2em;
+    width: 1.15em;
+    height: 1.15em;
     flex: none;
     fill: none;
     stroke: currentColor;
-    stroke-width: 2;
+    stroke-width: 1.75;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 
   .xz-button {
-    --xz-mix: 13%;
+    --xz-mix: 11%;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--xz-space-2);
-    min-height: 2.5rem;
-    padding: 0 var(--xz-space-4);
+    gap: 0.4rem;
+    min-height: 2.25rem;
+    padding: 0 0.875rem;
     border: 1px solid transparent;
-    border-radius: var(--xz-radius-pill);
+    border-radius: var(--xz-radius);
     background: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) var(--xz-mix), transparent);
-    color: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 75%, var(--xz-text));
-    font-weight: 600;
+    color: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 82%, var(--xz-text));
+    font-size: var(--xz-text-md);
+    font-weight: 560;
+    letter-spacing: -0.006em;
     line-height: 1;
     white-space: nowrap;
     text-decoration: none;
@@ -506,10 +598,22 @@
     touch-action: manipulation;
   }
 
+  /* The everyday button: a raised paper key, not a tinted blob. */
+  .xz-button[data-variant="soft"]:is([data-tone="neutral"], :not([data-tone])) {
+    border-color: var(--xz-line-strong);
+    background: linear-gradient(light-dark(oklch(100% 0 0), oklch(100% 0 0 / 0.07)), light-dark(oklch(97.5% 0.004 var(--xz-hue)), oklch(100% 0 0 / 0.03)));
+    color: var(--xz-text);
+    box-shadow: var(--xz-shadow-1), inset 0 1px 0 light-dark(oklch(100% 0 0), oklch(100% 0 0 / 0.08));
+  }
+
   .xz-button[data-variant="solid"] {
-    background: var(--xz-tone, var(--xz-neutral));
+    background: linear-gradient(oklch(100% 0 0 / 0.16), oklch(100% 0 0 / 0) 55%), var(--xz-tone, var(--xz-neutral));
     color: var(--xz-on-tone);
-    box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.2), var(--xz-shadow-1);
+    box-shadow:
+      inset 0 1px 0 oklch(100% 0 0 / 0.24),
+      inset 0 0 0 1px oklch(0% 0 0 / 0.1),
+      0 1px 2px oklch(18% 0.03 var(--xz-hue) / 0.18),
+      0 4px 12px -4px color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 55%, transparent);
   }
 
   .xz-button[data-variant="ghost"] {
@@ -521,15 +625,17 @@
   }
 
   .xz-button[data-size="sm"] {
-    min-height: 2rem;
-    padding-inline: var(--xz-space-3);
+    min-height: 1.875rem;
+    padding-inline: 0.625rem;
+    border-radius: var(--xz-radius-sm);
     font-size: var(--xz-text-sm);
   }
 
   .xz-button[data-size="lg"] {
-    min-height: 3rem;
-    padding-inline: var(--xz-space-5);
-    font-size: var(--xz-text-lg);
+    min-height: 2.75rem;
+    padding-inline: 1.25rem;
+    border-radius: 11px;
+    font-size: 1rem;
   }
 
   .xz-button[data-square] {
@@ -538,28 +644,42 @@
   }
 
   .xz-button:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
+    box-shadow: none;
   }
 
   @media (hover: hover) {
     .xz-button:not(:disabled):hover {
-      --xz-mix: 22%;
+      --xz-mix: 18%;
+    }
+
+    .xz-button[data-variant="soft"]:is([data-tone="neutral"], :not([data-tone])):not(:disabled):hover {
+      border-color: color-mix(in oklch, var(--xz-text) 28%, transparent);
     }
 
     .xz-button[data-variant="solid"]:not(:disabled):hover {
-      background: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 88%, var(--xz-text));
+      background: linear-gradient(oklch(100% 0 0 / 0.22), oklch(100% 0 0 / 0.04) 60%), var(--xz-tone, var(--xz-neutral));
     }
   }
 
   /* Fingers need 44px. */
   @media (pointer: coarse) {
-    .xz-button {
+    .xz-button,
+    .xz-button[data-size="sm"],
+    .xz-navbar a,
+    .xz-popover[data-kind="menu"] > :is(button, a) {
       min-height: 2.75rem;
     }
 
-    .xz-button[data-size="sm"] {
-      min-height: 2.5rem;
+    .xz-segmented span {
+      display: grid;
+      align-items: center;
+      min-height: 2.75rem;
+    }
+
+    .xz-table th button {
+      min-height: 2.75rem;
     }
   }
 
@@ -603,7 +723,6 @@
 
   .xz-popover[data-kind="menu"] > :is(button, a):is(:hover, :focus-visible) {
     background: var(--xz-line);
-    outline: none;
   }
 
   .xz-popover[data-kind="menu"] > hr {
@@ -645,7 +764,7 @@
 
   .xz-sheet-body {
     flex: 1;
-    padding: var(--xz-space-2) var(--xz-space-5) var(--xz-space-5);
+    padding: var(--xz-space-2) var(--xz-space-5) max(var(--xz-space-5), env(safe-area-inset-bottom));
     overflow: auto;
     overscroll-behavior: contain;
   }
@@ -661,7 +780,7 @@
 
   .xz-dialog {
     width: min(30rem, calc(100vw - 2rem));
-    border-radius: var(--xz-radius-lg);
+    border-radius: var(--xz-radius-xl);
   }
 
   .xz-sheet[data-side="bottom"] {
@@ -670,7 +789,7 @@
     max-height: 88dvh;
     margin: auto auto 0;
     border-bottom: 0;
-    border-radius: var(--xz-radius-lg) var(--xz-radius-lg) 0 0;
+    border-radius: var(--xz-radius-xl) var(--xz-radius-xl) 0 0;
   }
 
   .xz-sheet[data-side="bottom"]::before {
@@ -692,25 +811,25 @@
 
   .xz-sheet[data-side="end"] {
     margin: 0 0 0 auto;
-    border-radius: var(--xz-radius-lg) 0 0 var(--xz-radius-lg);
+    border-radius: var(--xz-radius-xl) 0 0 var(--xz-radius-xl);
   }
 
   .xz-sheet[data-side="start"] {
     margin: 0 auto 0 0;
-    border-radius: 0 var(--xz-radius-lg) var(--xz-radius-lg) 0;
+    border-radius: 0 var(--xz-radius-xl) var(--xz-radius-xl) 0;
   }
 
   /* ---------- forms: native controls, styled ---------- */
   .xz-field {
     display: grid;
-    gap: var(--xz-space-1);
+    gap: 0.375rem;
     min-width: 0;
   }
 
   .xz-field-label {
-    color: var(--xz-muted);
+    color: var(--xz-text);
     font-size: var(--xz-text-sm);
-    font-weight: 600;
+    font-weight: 560;
   }
 
   :is(.xz-field-hint, .xz-field-error) {
@@ -727,17 +846,23 @@
 
   :is(.xz-field :is(input:not([type="checkbox"], [type="radio"]), select, textarea), .xz-input) {
     width: 100%;
-    min-height: 2.5rem;
-    padding: var(--xz-space-2) var(--xz-space-3);
-    border: 1px solid var(--xz-line);
+    min-height: 2.25rem;
+    padding: 0.4375rem 0.75rem;
+    border: 1px solid var(--xz-line-strong);
     border-radius: var(--xz-radius);
-    background: color-mix(in oklch, var(--xz-surface) 72%, transparent);
+    background: var(--xz-surface);
+    box-shadow: inset 0 1px 2px oklch(18% 0.02 var(--xz-hue) / 0.05);
+  }
+
+  :is(.xz-field :is(input, textarea), .xz-input)::placeholder {
+    color: color-mix(in oklch, var(--xz-muted) 75%, transparent);
   }
 
   :is(.xz-field :is(input:not([type="checkbox"], [type="radio"]), select, textarea), .xz-input):focus-visible {
     border-color: var(--xz-accent);
-    outline: none;
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--xz-accent) 25%, transparent);
+    /* Transparent, so forced-colors mode still draws it. */
+    outline: 2px solid transparent;
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--xz-accent) 22%, transparent);
   }
 
   .xz-field[data-invalid] :is(input, select, textarea) {
@@ -760,11 +885,12 @@
   input[type="checkbox"][role="switch"] {
     position: relative;
     flex: none;
-    width: 2.75rem;
-    height: 1.625rem;
+    width: 2.5rem;
+    height: 1.5rem;
     margin: 0;
     border-radius: var(--xz-radius-pill);
-    background: var(--xz-line);
+    background: var(--xz-line-strong);
+    box-shadow: inset 0 1px 2px oklch(18% 0.02 var(--xz-hue) / 0.12);
     appearance: none;
     cursor: pointer;
   }
@@ -772,11 +898,11 @@
   input[type="checkbox"][role="switch"]::before {
     content: "";
     position: absolute;
-    inset: 3px auto 3px 3px;
+    inset: 2px auto 2px 2px;
     aspect-ratio: 1;
     border-radius: 50%;
     background: oklch(100% 0 0);
-    box-shadow: var(--xz-shadow-1);
+    box-shadow: 0 1px 3px oklch(18% 0.02 var(--xz-hue) / 0.3);
   }
 
   input[type="checkbox"][role="switch"]:checked {
@@ -784,15 +910,16 @@
   }
 
   input[type="checkbox"][role="switch"]:checked::before {
-    translate: 1.125rem 0;
+    translate: 1rem 0;
   }
 
   .xz-segmented {
     display: inline-flex;
     gap: 2px;
-    padding: 3px;
-    border-radius: var(--xz-radius-pill);
-    background: var(--xz-line);
+    padding: 2px;
+    border-radius: 10px;
+    background: var(--xz-sunken);
+    box-shadow: inset 0 0 0 1px var(--xz-line), inset 0 1px 2px oklch(18% 0.02 var(--xz-hue) / 0.06);
   }
 
   .xz-segmented > label {
@@ -809,18 +936,18 @@
 
   .xz-segmented span {
     display: block;
-    padding: var(--xz-space-1) var(--xz-space-3);
-    border-radius: var(--xz-radius-pill);
+    padding: 0.3125rem 0.75rem;
+    border-radius: 8px;
     color: var(--xz-muted);
     font-size: var(--xz-text-sm);
-    font-weight: 600;
-    line-height: 1.75;
+    font-weight: 540;
+    line-height: 1.5;
   }
 
   .xz-segmented :checked + span {
-    background: var(--xz-surface);
+    background: light-dark(oklch(100% 0 0), oklch(100% 0 0 / 0.1));
     color: var(--xz-text);
-    box-shadow: var(--xz-shadow-1);
+    box-shadow: var(--xz-shadow-1), inset 0 0 0 1px var(--xz-line);
   }
 
   .xz-segmented > label:has(:focus-visible) span {
@@ -836,6 +963,15 @@
     overscroll-behavior-x: contain;
   }
 
+  /* A scroll box would carry the rim along with its rows: it keeps a plain border instead. */
+  .xz-table[data-depth]::after {
+    display: none;
+  }
+
+  .xz-table[data-depth]:not([data-depth="0"]) {
+    border-color: var(--xz-line);
+  }
+
   .xz-table table {
     width: 100%;
     border-collapse: separate;
@@ -844,13 +980,13 @@
   }
 
   .xz-table caption {
-    padding: var(--xz-space-3) var(--xz-space-4) 0;
-    font-weight: 650;
+    padding: var(--xz-space-3) var(--xz-space-4) var(--xz-space-1);
+    font-weight: 600;
     text-align: start;
   }
 
   .xz-table :is(th, td) {
-    padding: var(--xz-space-3) var(--xz-space-4);
+    padding: 0.625rem var(--xz-space-4);
     border-bottom: 1px solid var(--xz-line);
     text-align: start;
     white-space: nowrap;
@@ -860,10 +996,12 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: color-mix(in oklch, var(--xz-surface) 88%, transparent);
+    padding-block: 0.5rem;
+    background: color-mix(in oklch, var(--xz-sunken) 82%, transparent);
     color: var(--xz-muted);
-    font-size: var(--xz-text-sm);
-    font-weight: 650;
+    font-size: var(--xz-text-xs);
+    font-weight: 560;
+    letter-spacing: 0.01em;
   }
 
   .xz-table [data-align="end"] {
@@ -895,7 +1033,7 @@
   }
 
   .xz-table tbody tr:is(:hover, :focus-visible) td {
-    background: color-mix(in oklch, var(--xz-accent) 7%, transparent);
+    background: color-mix(in oklch, var(--xz-accent) 5%, transparent);
   }
 
   .xz-table tbody tr:focus-visible {
@@ -924,28 +1062,31 @@
   .xz-stat {
     display: grid;
     align-content: start;
-    gap: var(--xz-space-1);
+    gap: 0.375rem;
   }
 
   .xz-stat-label {
     color: var(--xz-muted);
     font-size: var(--xz-text-sm);
-    font-weight: 600;
+    font-weight: 500;
   }
 
+  /* Figures set narrow and tight, like a printed table, with the delta riding the baseline. */
   .xz-stat strong {
     font-size: var(--xz-text-2xl);
-    font-weight: 700;
+    font-stretch: 78%;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
+    letter-spacing: -0.035em;
+    line-height: 1;
   }
 
   .xz-stat strong small {
-    margin-inline-start: 2px;
+    margin-inline-start: 0.08em;
     color: var(--xz-muted);
-    font-size: 0.5em;
-    font-weight: 600;
+    font-size: 0.55em;
+    font-weight: 500;
+    letter-spacing: 0;
   }
 
   .xz-stat .xz-badge {
@@ -956,14 +1097,15 @@
     display: inline-flex;
     align-items: center;
     gap: var(--xz-space-1);
-    padding: 1px var(--xz-space-2);
-    border-radius: var(--xz-radius-pill);
-    background: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 16%, transparent);
-    color: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 80%, var(--xz-text));
-    font-size: var(--xz-text-sm);
+    padding: 0.0625rem 0.4375rem;
+    border-radius: var(--xz-radius-sm);
+    background: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 12%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 18%, transparent);
+    color: color-mix(in oklch, var(--xz-tone, var(--xz-neutral)) 65%, var(--xz-text));
+    font-size: var(--xz-text-xs);
     font-variant-numeric: tabular-nums;
-    font-weight: 650;
-    line-height: 1.5;
+    font-weight: 580;
+    line-height: 1.55;
     white-space: nowrap;
   }
 
@@ -976,10 +1118,12 @@
     height: var(--xz-avatar);
     border-radius: 50%;
     overflow: hidden;
-    background: color-mix(in oklch, var(--xz-accent) 20%, var(--xz-surface));
-    color: var(--xz-accent);
-    font-size: calc(var(--xz-avatar) * 0.38);
-    font-weight: 700;
+    background: color-mix(in oklch, var(--xz-accent) 16%, var(--xz-surface));
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--xz-accent) 22%, transparent);
+    color: color-mix(in oklch, var(--xz-accent) 80%, var(--xz-text));
+    font-size: calc(var(--xz-avatar) * 0.36);
+    font-weight: 600;
+    letter-spacing: 0.01em;
   }
 
   .xz-avatar[data-size="sm"] {
@@ -1041,6 +1185,8 @@
     border: 0;
     background: none;
     overflow: visible;
+    /* Status only: taps go through to what is under it. */
+    pointer-events: none;
   }
 
   .xz-toasts:popover-open {
@@ -1166,6 +1312,12 @@
       opacity: 0;
     }
 
+    /* Leaving is quicker than arriving. */
+    :is(.xz-sheet, .xz-dialog):not([open]),
+    :is(.xz-sheet, .xz-dialog):not([open])::backdrop {
+      transition-duration: var(--xz-dur-2);
+    }
+
     @starting-style {
       .xz-sheet[data-side="bottom"][open] {
         translate: 0 100%;
@@ -1191,8 +1343,8 @@
 
     .xz-toast {
       transition:
-        opacity var(--xz-dur-3) var(--xz-ease-out),
-        translate var(--xz-dur-3) var(--xz-ease-out);
+        opacity var(--xz-dur-2) var(--xz-ease-out),
+        translate var(--xz-dur-2) var(--xz-ease-out);
     }
 
     @starting-style {

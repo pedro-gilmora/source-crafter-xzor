@@ -35,7 +35,7 @@
   }
 
   open(e: KeyboardEvent, row: T) {
-    if (e.key !== "Enter") return;
+    if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     this.onRow?.(row);
   }

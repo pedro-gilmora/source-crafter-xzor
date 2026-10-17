@@ -1,20 +1,52 @@
-/* Field Notes: reading layout. The kit gives the surfaces, tokens and motion. */
+/* Field Notes: Newsreader (SIL OFL 1.1, see fonts/) sets the reading; the kit's sans keeps the chrome. */
+@font-face {
+  font-family: "Newsreader";
+  src: url("./fonts/newsreader.woff2") format("woff2");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("./fonts/newsreader-italic.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: italic;
+  font-display: swap;
+}
+
 :root {
-  --xz-hue: 32;
+  --xz-hue: 196;
+  --serif: "Newsreader", ui-serif, Georgia, serif;
+}
+
+.card h2,
+.article :is(h1, h2),
+.intro h1 {
+  font-family: var(--serif);
+  font-stretch: 100%;
+  font-weight: 480;
+  letter-spacing: -0.012em;
+}
+
+.intro h1 {
+  font-size: var(--xz-text-3xl);
+  font-weight: 420;
+  letter-spacing: -0.03em;
 }
 
 .brand {
   padding-inline: var(--xz-space-2);
   color: var(--xz-text);
-  font-size: var(--xz-text-lg);
-  font-weight: 750;
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 520;
   letter-spacing: -0.02em;
   text-decoration: none;
 }
 
 .page {
-  width: min(46rem, 100% - 2 * var(--xz-space-4));
-  margin: var(--xz-space-6) auto;
+  width: min(50rem, 100% - 2 * var(--xz-space-4));
+  margin: var(--xz-space-7) auto;
 }
 
 .intro {
@@ -23,28 +55,65 @@
 
 .posts {
   display: grid;
-  gap: var(--xz-space-4);
+  border-bottom: 1px solid var(--xz-line);
 }
 
+/* An index, not a stack of cards: dates in the margin, titles carrying the page. */
 .card {
-  padding: var(--xz-space-5);
-  border-radius: var(--xz-radius-lg);
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr);
+  column-gap: var(--xz-space-5);
+  padding: var(--xz-space-6) 0;
+  border-top: 1px solid var(--xz-line);
 }
 
-.card > a {
-  color: inherit;
-  text-decoration: none;
+.card > :not(.meta) {
+  grid-column: 2;
+}
+
+.card .meta {
+  flex-direction: column;
+  grid-row: span 3;
+  margin: 0.45rem 0 0;
 }
 
 .card h2 {
   margin-bottom: var(--xz-space-2);
+  font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
 }
 
-.card > a:hover h2 {
+.card h2 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.card h2 a:hover {
   color: var(--xz-accent);
 }
 
+.summary {
+  color: var(--xz-muted);
+}
+
+@media (max-width: 640px) {
+  .card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .card > :not(.meta) {
+    grid-column: 1;
+  }
+
+  .card .meta {
+    flex-direction: row;
+    grid-row: auto;
+  }
+}
+
 .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
   color: var(--xz-muted);
   font-size: var(--xz-text-sm);
 }
@@ -77,8 +146,14 @@
 }
 
 .article {
-  font-size: 1.0625rem;
-  line-height: 1.7;
+  font-family: var(--serif);
+  font-size: 1.1875rem;
+  font-weight: 380;
+  line-height: 1.68;
+}
+
+.article .meta {
+  font-family: var(--xz-font);
 }
 
 .article h1 {

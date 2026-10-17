@@ -1,7 +1,7 @@
 // Bundles a xzor app with Bun. `./X.xzor` imports resolve to the generated `<project>/.xzor/<rel>/X.xzor.ts`,
 // and the bundle's source map is composed with each generated file's map so it points at the `.xzor` sources.
 // Usage: bun bundle.ts <entry> <outdir> [--hot] [--watch]
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 type Segment = number[];
@@ -992,6 +992,8 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
     if (!bases.has(path)) bases.set(path, existsSync(path) ? readFileSync(path, "utf8") : undefined);
     return bases.get(path);
   };
+  // Fonts the CSS points at (`./fonts/x.woff2`), by that spec: copied under `outdir` after the build.
+  const fonts = new Map<string, string>();
   const result = await Bun.build({
     entrypoints: [entry],
     outdir,
@@ -1001,6 +1003,11 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
       {
         name: "xzor",
         setup(build) {
+          // Bun inlines assets under 128 KB as base64, which would hold the first paint behind the CSS.
+          build.onResolve({ filter: /^\.\/.*\.woff2?$/ }, (args) => {
+            fonts.set(args.path, resolve(dirname(args.importer), args.path));
+            return { path: args.path, external: true };
+          });
           // Relative only: a package specifier (`@scope/kit/X.xzor`) goes through the tsconfig `paths`.
           build.onResolve({ filter: /^\.\.?\/.*\.xzor$/ }, (args) => ({
             path: generatedPath(resolve(dirname(args.importer), args.path)),
@@ -1034,6 +1041,11 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
   });
   for (const log of result.logs) console.error(log);
   if (!result.success) process.exit(1);
+  for (const [spec, file] of fonts) {
+    const to = join(outdir, spec);
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(file, to);
+  }
   for (const output of result.outputs) {
     if (output.path.endsWith(".map")) {
       const mapDir = dirname(output.path);

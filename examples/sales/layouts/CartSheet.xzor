@@ -2,8 +2,9 @@
 @import Button from "@source-crafter/xzor-ui/Button.xzor"
 @import Field from "@source-crafter/xzor-ui/Field.xzor"
 @import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import Icon from "@source-crafter/xzor-ui/Icon.xzor"
 @import { toast } from "@source-crafter/xzor-ui"
-@import { price, type Cart } from "../store"
+@import { kinds, price, type Cart } from "../store"
 @inject Cart cart
 
 @code {
@@ -12,6 +13,7 @@
   name = "";
   phone = "";
   address = "";
+  doorstep = true;
   tried = false;
 
   get nameError() {
@@ -28,7 +30,10 @@
 
   place() {
     this.tried = true;
-    if (this.nameError || this.phoneError || this.addressError) return;
+    if (this.nameError || this.phoneError || this.addressError) {
+      queueMicrotask(() => this.checkout?.dialog?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      return;
+    }
     const order = this.cart.place(this.name.trim());
     this.tried = false;
     this.checkout?.close();
@@ -44,8 +49,8 @@
     <ul class="lines">
       @for (const line of cart.lines) {
         <li>
-          <span class="thumb" style="--hue: @line.product.hue" aria-hidden="true">@line.product.name[0]</span>
-          <span class="line-name"><strong>@line.product.name</strong><small class="xz-muted">@price(line.product.price) · @line.product.unit</small></span>
+          <span class="thumb" style="--hue: @line.product.hue" aria-hidden="true"><Icon name="@(kinds[line.product.category] ?? 'package')" /></span>
+          <span class="line-name"><strong>@line.product.name</strong><small class="xz-muted">@line.product.unit, @price(line.product.price) each</small></span>
           <span class="stepper">
             <Button size="sm" icon="minus" label="@('One less ' + line.product.name)" onClick="() => cart.change(line.product, -1)" />
             <b aria-live="polite">@line.qty</b>
@@ -58,19 +63,19 @@
   }
   @slot actions {
     <Button variant="ghost" closes="cart">Keep shopping</Button>
-    <Button tone="accent" variant="solid" opens="checkout" disabled="@(cart.count === 0)">Checkout</Button>
+    <Button tone="accent" variant="solid" opens="checkout" disabled="@(cart.count === 0)" onClick="() => basket?.close()">Checkout</Button>
   }
 </Sheet>
 
 <Sheet id="checkout" title="Delivery" @ref="checkout">
   <form id="checkout-form" class="checkout" @onsubmit="place" @onsubmit:preventDefault>
-    <Field label="Name" error="@nameError"><input autocomplete="name" @bind="name" @bind:event="oninput" /></Field>
-    <Field label="Phone" error="@phoneError"><input type="tel" autocomplete="tel" inputmode="tel" @bind="phone" @bind:event="oninput" /></Field>
-    <Field label="Address" hint="We deliver within 2 km, in under 30 minutes" error="@addressError"><textarea autocomplete="street-address" rows="2" @bind="address" @bind:event="oninput"></textarea></Field>
-    <label class="option"><input type="checkbox" role="switch" checked /> Leave at the door</label>
+    <Field label="Name" error="@nameError"><input autocomplete="name" aria-invalid="@(nameError !== '')" @bind="name" @bind:event="oninput" /></Field>
+    <Field label="Phone" error="@phoneError"><input type="tel" autocomplete="tel" inputmode="tel" aria-invalid="@(phoneError !== '')" @bind="phone" @bind:event="oninput" /></Field>
+    <Field label="Address" hint="We deliver within 2 km, in under 30 minutes" error="@addressError"><textarea autocomplete="street-address" rows="2" aria-invalid="@(addressError !== '')" @bind="address" @bind:event="oninput"></textarea></Field>
+    <label class="option"><input type="checkbox" role="switch" @bind="doorstep" /> Leave at the door</label>
   </form>
   @slot actions {
     <Button variant="ghost" closes="checkout">Back</Button>
-    <Button tone="accent" variant="solid" onClick="place">Place order · @price(cart.total)</Button>
+    <Button tone="accent" variant="solid" onClick="place">Pay @price(cart.total)</Button>
   }
 </Sheet>

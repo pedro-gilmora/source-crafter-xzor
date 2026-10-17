@@ -353,6 +353,23 @@ Components are compiled without a render pass. The DOM is built once; each `@val
 
 The component's own fields are tracked like a model's, so `count++` in a handler is enough. Write `@render` at the top of a component to get a virtual-DOM render pass instead. See [`examples/counter/pages/TeamFine.xzor`](examples/counter/pages/TeamFine.xzor).
 
+## A design kit: xzor-ui
+
+[`ui/`](ui) is a kit of ready-made components with a liquid-glass look, made of one static style sheet and small `.xzor` files. Components set a class and `data-*` attributes; the CSS (cascade layers, `light-dark()`, `backdrop-filter`, container queries, `@starting-style`) does the rest. The browser opens, closes and anchors things natively, so a sheet needs no state:
+
+```xzor
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import Sheet from "@source-crafter/xzor-ui/Sheet.xzor"
+
+<Button opens="cart" icon="cart" tone="accent" variant="solid">Basket</Button>
+<Sheet id="cart" title="Your basket">
+  ...
+  @slot actions { <Button closes="cart">Done</Button> }
+</Sheet>
+```
+
+Three apps show it at work: [`examples/dashboard`](examples/dashboard) (KPIs, a sortable table, filters, a detail sheet), [`examples/blog`](examples/blog) (page transitions and a scroll-driven reading bar) and [`examples/sales`](examples/sales) (an installable phone app with a tab bar, basket and checkout). Build them with `bun run examples`. The [documentation site](https://pedro-gilmora.github.io/source-crafter-xzor/) has the live gallery and recipes, and [`.github/agents`](.github/agents) holds design sub-agents (designer, component builder, motion, reviewer) that build with it.
+
 ---
 
 ## See it all together
@@ -388,7 +405,9 @@ cargo test                 # compiler tests
 bun test                   # runtime, build, DI and language server tests
 bun run test:grammar       # VS Code syntax highlighting tests
 ./Package.ps1 -test true   # build, test and pack everything into publish/
-bun run docs               # build the documentation site into docs/site/_site
+bun run ui                 # compile the xzor-ui kit (before building anything that uses it)
+bun run examples           # compile the kit and build the three showcase apps
+bun run docs               # build the documentation site (and the showcase apps) into docs/site/_site
 ```
 
 **Releasing:** push to `main` with a commit message that starts with `[Release]`. CI then builds the binaries for Windows, Linux and macOS, runs every test, publishes to npm with the next version (`0.1.0`, `0.1.1`, …), and attaches the `.vsix`, the binaries and the npm tarballs to a GitHub release.

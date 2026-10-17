@@ -23,7 +23,7 @@
   <Avatar name="Rosa Martín" size="lg" />
   <div>
     <h1>Rosa Martín</h1>
-    <p class="xz-muted">Member since 2024 · @price(spent) this week</p>
+    <p class="xz-muted">Member since 2024. @price(spent) spent this week.</p>
   </div>
 </header>
 <Panel title="Settings">

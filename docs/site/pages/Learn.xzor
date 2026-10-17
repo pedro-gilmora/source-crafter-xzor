@@ -117,12 +117,12 @@
 
     <nav class="pager">
       @if (step > 1) {
-        <a class="xz-button" data-variant="glass" data-depth="1" href="@href.Learn({ step: step - 1 })">← @steps[step - 2]</a>
+        <a class="xz-button" data-variant="soft" data-tone="neutral" href="@href.Learn({ step: step - 1 })">Previous: @steps[step - 2]</a>
       }
       @if (step < steps.length) {
-        <a class="xz-button primary" data-variant="solid" data-tone="accent" href="@href.Learn({ step: step + 1 })">@steps[step] →</a>
+        <a class="xz-button primary" data-variant="solid" data-tone="accent" href="@href.Learn({ step: step + 1 })">Next: @steps[step]</a>
       } else {
-        <a class="xz-button primary" data-variant="solid" data-tone="accent" href="@href.HowItWorks()">How it works →</a>
+        <a class="xz-button primary" data-variant="solid" data-tone="accent" href="@href.HowItWorks()">Next: how it works</a>
       }
     </nav>
   </article>

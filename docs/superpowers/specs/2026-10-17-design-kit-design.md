@@ -162,3 +162,23 @@ The router gains one opt-in, for example `viewTransitions: true` in the router o
 1. The website replaces the styling of `docs/site/` instead of starting a second site.
 2. The npm package for the kit is deferred; the in-repo apps use relative paths.
 3. Route view-transitions are included, as the opt-in runtime change in section 4.
+
+## 6. As built (2026-10-17)
+
+The plan is [docs/plans/2026-10-17-design-kit.md](../../plans/2026-10-17-design-kit.md). Deviations from the text above:
+
+- **Icons** are an own hand-drawn set (`ui/icons.ts`), not vendored from Lucide, so there is no third-party license and no npm package.
+- **Components:**
+  - `Input`, `Select` and `Switch` are native elements styled by the kit, so `@bind` keeps working.
+  - `IconButton` is `<Button icon label>`.
+  - `Toast` is the `toast()` function.
+  - `NavItem` was added.
+  - `Table` and `List` have no surface by default, to avoid glass on glass inside a `Panel`.
+- **The blog's reading bar** is a CSS scroll-driven animation, not a custom property written from script.
+- **Compiler and runtime changes** the kit needed:
+  - `<svg>` in the SVG namespace;
+  - components and string aliases resolved through tsconfig `paths` and re-exports;
+  - hoisted text props kept literal;
+  - kit components tracked outside the app root;
+  - `NavLink` sets `aria-current`.
+- **Lighthouse** has not been run, since it would add an npm package. The apps were checked in Chromium instead: both themes, 390px wide, keyboard and invoker flows. A Lighthouse pass is still open.

@@ -90,12 +90,17 @@ Native controls are styled when they sit in a `Field`. Write `<input type="check
 
 ## Tokens
 
-- **Color:** `--xz-bg`, `--xz-surface`, `--xz-text`, `--xz-muted`, `--xz-line`, `--xz-neutral`, `--xz-accent`, `--xz-success`, `--xz-warning`, `--xz-danger`, `--xz-on-tone`; inside a toned element, `--xz-tone`.
-- **Hue:** change the whole palette with `--xz-hue`.
+- **Type:** Instrument Sans (variable weight and width), self-hosted from `ui/fonts/` (SIL OFL), and JetBrains Mono for code only.
+  - The width axis is the second voice: headings and figures are narrower (`--xz-display-stretch`, `font-stretch: 76%` for heroes, 78% for `Stat` figures) and tighter. Body text stays at normal width, weight 450.
+  - The scale is a major third from 15px: `--xz-text-xs`, `-sm`, `-md`, `-lg`, `-xl`, `-2xl`, `-3xl` (heroes).
+  - An app may add one distinct reading face for long-form text, as the blog does with Newsreader.
+  - Never uppercase labels, never color one word of a headline, never join metadata with " · ".
+- **Color:** `--xz-bg` (porcelain by day, blue ink by night), `--xz-surface`, `--xz-sunken`, `--xz-text`, `--xz-muted`, `--xz-line`, `--xz-line-strong`, `--xz-neutral`, `--xz-accent`, `--xz-success`, `--xz-warning`, `--xz-danger`, `--xz-on-tone`; inside a toned element, `--xz-tone`.
+- **Hue:** change the accent with `--xz-hue`. Pick one per product, from its subject; avoid the default purple.
+- **Backdrop:** `--xz-backdrop` (one light from above, two quiet washes) plus `--xz-grain`.
 - **Toasts:** `--xz-toast-offset` lifts them above a bottom tab bar.
 - **Space:** `--xz-space-1` to `-7` (0.25rem to 3rem).
-- **Radius:** `--xz-radius-sm`, `--xz-radius`, `--xz-radius-lg`, `--xz-radius-pill`.
-- **Text:** `--xz-text-sm`, `-md`, `-lg`, `-xl`, `-2xl`.
+- **Radius:** set by hierarchy. `--xz-radius-sm` (6px) is for badges and small controls, `--xz-radius` (9px) for controls, `--xz-radius-lg` (16px) for surfaces, `--xz-radius-xl` (24px) for overlays, and `--xz-radius-pill` only for tab bars and switches.
 - **Glass:** `--xz-glass-tint`, `--xz-glass-edge`, `--xz-glass-rim`, `--xz-blur-1` to `-3`, `--xz-shadow-1` to `-3`.
 - **Motion:** `--xz-ease-out`, `--xz-ease-in-out`, `--xz-ease-drawer`, `--xz-dur-1` (120ms), `-2` (200ms), `-3` (320ms).
 
@@ -103,7 +108,8 @@ Utilities: `.xz-page` (centered content width), `.xz-container` (a container-que
 
 ## Rules
 
-- **Glass needs something behind it.** The body draws soft color fields (`--xz-backdrop`). Don't put glass on glass: a `depth` 1–3 element inside another one shows nothing through it. Use `depth="0"` or no surface inside a glass panel.
+- **Glass needs something behind it.** The body draws `--xz-backdrop` and a fine grain. Don't put glass on glass: a `depth` 1–3 element inside another one shows nothing through it. Use `depth="0"` or no surface inside a glass panel.
+- **Don't make everything a card.** Lists of content (posts, apps, features) read better as ruled rows or columns than as identical rounded boxes. Keep glass for things that float: bars, panels of tools, overlays.
 - **Contrast:** body text goes on `--xz-surface` or glass, never on raw `--xz-accent`. Solid buttons use `--xz-on-tone`.
 - **Motion:** use `transform`, `opacity`, `translate` and `scale` only, behind `@media (prefers-reduced-motion: no-preference)`. Entry 200–320ms with `--xz-ease-out`; exits faster.
 - **Touch:** targets of 44px or more on coarse pointers (the kit does this for its own controls). Use `env(safe-area-inset-*)` at screen edges.

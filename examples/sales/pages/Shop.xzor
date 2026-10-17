@@ -4,7 +4,7 @@
 @import Icon from "@source-crafter/xzor-ui/Icon.xzor"
 @import Empty from "@source-crafter/xzor-ui/Empty.xzor"
 @import { toast } from "@source-crafter/xzor-ui"
-@import { categories, price, products, type Cart, type Product } from "../store"
+@import { categories, kinds, price, products, type Cart, type Product } from "../store"
 @inject Cart cart
 
 @code {
@@ -39,8 +39,8 @@
 } else {
   <ul class="products">
     @for (const product of shown) {
-      <li class="product" data-depth="1">
-        <span class="thumb" style="--hue: @product.hue" aria-hidden="true">@product.name[0]</span>
+      <li class="product" data-depth="0">
+        <span class="thumb" style="--hue: @product.hue" aria-hidden="true"><Icon name="@(kinds[product.category] ?? 'package')" /></span>
         <strong>@product.name</strong>
         <small class="xz-muted">@product.unit</small>
         <span class="buy">
@@ -54,6 +54,6 @@
 
 @if (cart.count > 0) {
   <div class="cart-fab">
-    <Button opens="cart" variant="glass" size="lg" icon="cart">@cart.count · @price(cart.total)</Button>
+    <Button opens="cart" variant="solid" tone="accent" size="lg" icon="cart">View basket <span class="fab-total">@price(cart.total)</span></Button>
   </div>
 }

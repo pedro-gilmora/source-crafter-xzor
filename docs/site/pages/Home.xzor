@@ -1,74 +1,69 @@
 @page "/"
 @import Code from "../components/Code.xzor"
 @import LiveCounter from "../components/LiveCounter.xzor"
-@import Icon from "@source-crafter/xzor-ui/Icon.xzor"
 @import { href } from "../routes"
 
 <section class="hero">
-  <h1>Write components the Blazor way.<br /><span class="accent">Ship plain, typed TypeScript.</span></h1>
-  <p class="lead">
-    A <code>.xzor</code> file is HTML with <code>@@</code> expressions and a <code>@@code</code> block.
-    The compiler turns it into a TypeScript class, TypeScript 7 checks it, and Bun bundles a small single-page app.
-  </p>
-  <div class="actions">
-    <a class="xz-button" data-variant="solid" data-tone="accent" data-size="lg" href="@href.Start()">Get started</a>
-    <a class="xz-button" data-variant="glass" data-depth="1" data-size="lg" href="@href.Learn({ step: 1 })">Learn in seven steps</a>
+  <div class="hero-copy">
+    <h1>Write components the Blazor way. Ship plain, typed TypeScript.</h1>
+    <p class="lead">
+      A <code>.xzor</code> file is HTML with <code>@@</code> expressions and a <code>@@code</code> block.
+      The compiler turns it into a TypeScript class, TypeScript 7 checks it, and Bun bundles a small single-page app.
+    </p>
+    <div class="actions">
+      <a class="xz-button" data-variant="solid" data-tone="accent" data-size="lg" href="@href.Start()">Get started</a>
+      <a class="xz-button" data-variant="soft" data-tone="neutral" data-size="lg" href="@href.Learn({ step: 1 })">Learn in seven steps</a>
+    </div>
   </div>
+  <figure class="hero-demo" data-depth="2">
+    <Code name="hero" />
+    <figcaption class="live">
+      <span class="xz-muted">That component, running on this page:</span>
+      <LiveCounter />
+    </figcaption>
+  </figure>
 </section>
 
-<section class="demo">
-  <Code name="hero" />
-  <div class="live" data-depth="1">
-    <span class="label">Live: this is that component, running on this page</span>
-    <LiveCounter />
-  </div>
-</section>
-
-<section class="features">
-  <article data-depth="1">
+<section class="points" aria-label="Why xzor">
+  <div>
     <h3>Types everywhere</h3>
     <p>Props, events, slots, routes and services are checked at build time. Your editor shows the errors as you type, even inside <code>@@</code> expressions.</p>
-  </article>
-  <article data-depth="1">
+  </div>
+  <div>
     <h3>No runtime magic</h3>
     <p>Routing and dependency injection are generated as plain code. No reflection, no container, nothing to configure at startup.</p>
-  </article>
-  <article data-depth="1">
-    <h3>Small and fast</h3>
-    <p>Components build their DOM once; after that each dynamic part updates on its own when the data it reads changes. No render pass, no diff.</p>
-  </article>
-  <article data-depth="1">
+  </div>
+  <div>
+    <h3>No render pass</h3>
+    <p>Components build their DOM once; after that each dynamic part updates on its own when the data it reads changes.</p>
+  </div>
+  <div>
     <h3>Familiar</h3>
     <p>If you know Razor, you already know most of it: <code>@@if</code>, <code>@@for</code>, <code>@@bind</code>, <code>@@page</code>, <code>@@inject</code>, layouts and cascading values.</p>
-  </article>
-</section>
-
-<section class="kit-teaser">
-  <h2>A design language that reads like what it does</h2>
-  <p class="lead">
-    xzor-ui is a kit of ready-made components on one static style sheet: liquid glass, native popovers and sheets,
-    container queries and view transitions. Say <code>&lt;Button opens="cart"&gt;</code> and the sheet opens, with no state and no handler.
-  </p>
-  <div class="actions">
-    <a class="xz-button" data-variant="solid" data-tone="accent" href="@href.Kit()">See every component</a>
-    <a class="xz-button" data-variant="glass" data-depth="1" href="@href.Recipes()">Recipes</a>
   </div>
 </section>
 
-<section class="showcase">
-  <a href="examples/dashboard/" rel="external" data-depth="1">
-    <Icon name="chart" />
-    <strong>Pulse</strong>
-    <span>A sales dashboard: KPIs, a sortable table, filters and a detail sheet.</span>
-  </a>
-  <a href="examples/blog/" rel="external" data-depth="1">
-    <Icon name="book" />
-    <strong>Field Notes</strong>
-    <span>A blog with page transitions and a reading bar driven by scroll, not script.</span>
-  </a>
-  <a href="examples/sales/" rel="external" data-depth="1">
-    <Icon name="cart" />
-    <strong>Bodega</strong>
-    <span>A phone-first shop you can install: tab bar, basket sheet, checkout.</span>
-  </a>
+<section class="kit-intro">
+  <div>
+    <h2>A design kit that reads like what it does</h2>
+    <p class="lead">
+      xzor-ui gives you ready-made components on one static style sheet: glass surfaces, native popovers and sheets,
+      container queries and page transitions. <code>&lt;Button opens="cart"&gt;</code> opens the sheet with no state and no handler.
+    </p>
+    <div class="actions">
+      <a class="xz-button" data-variant="solid" data-tone="accent" href="@href.Kit()">Browse the components</a>
+      <a class="xz-button" data-variant="soft" data-tone="neutral" href="@href.Recipes()">Read the recipes</a>
+    </div>
+  </div>
+  <ul class="showcase">
+    <li>
+      <a href="examples/dashboard/" rel="external"><strong>Pulse</strong><span>A sales dashboard with KPIs, a sortable table, filters and a detail sheet.</span></a>
+    </li>
+    <li>
+      <a href="examples/blog/" rel="external"><strong>Field Notes</strong><span>A blog with page transitions and a reading bar driven by scroll, not script.</span></a>
+    </li>
+    <li>
+      <a href="examples/sales/" rel="external"><strong>Bodega</strong><span>A phone-first shop you can install, with a tab bar, a basket and checkout.</span></a>
+    </li>
+  </ul>
 </section>

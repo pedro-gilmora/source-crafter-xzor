@@ -1,12 +1,12 @@
 /* The xzor site: page layout on top of the xzor-ui kit (ui.css). Colors, radii and motion come from its tokens. */
 :root {
-  --xz-hue: 268;
+  --xz-hue: 236;
   /* Code samples keep the editor's night theme in both color schemes. */
-  --code-bg: #0f1222;
-  --code-head: #151a33;
-  --code-line: #232946;
-  --code-text: #d6deeb;
-  --code-muted: #8b93b5;
+  --code-bg: oklch(17.5% 0.022 var(--xz-hue));
+  --code-head: oklch(20.5% 0.024 var(--xz-hue));
+  --code-line: oklch(30% 0.03 var(--xz-hue));
+  --code-text: oklch(92% 0.01 var(--xz-hue));
+  --code-muted: oklch(68% 0.02 var(--xz-hue));
 }
 
 code {
@@ -26,77 +26,88 @@ code {
 
 /* Shell */
 .brand {
+  display: flex;
+  align-items: baseline;
   padding-inline: var(--xz-space-2);
   color: var(--xz-text);
-  font-size: 1.35rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-size: 1.3rem;
+  font-stretch: 80%;
+  font-weight: 680;
+  letter-spacing: -0.04em;
   text-decoration: none;
 }
 
 .brand .at {
+  margin-inline-end: 0.04em;
   color: var(--xz-accent);
+  font-weight: 560;
 }
 
 .links {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--xz-space-1);
+  gap: 2px;
 }
 
 .links a {
-  padding: var(--xz-space-2) var(--xz-space-3);
-  border-radius: var(--xz-radius-pill);
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--xz-radius);
   color: var(--xz-muted);
-  font-weight: 550;
+  font-size: var(--xz-text-md);
+  font-weight: 520;
   text-decoration: none;
+}
+
+.links a:hover {
+  color: var(--xz-text);
 }
 
 .links a:is(.active, [aria-current="page"]) {
   color: var(--xz-text);
-  background: color-mix(in oklch, var(--xz-accent) 15%, transparent);
+  background: light-dark(oklch(100% 0 0 / 0.78), oklch(100% 0 0 / 0.08));
+  box-shadow: var(--xz-shadow-1), inset 0 0 0 1px var(--xz-line);
 }
 
 main {
-  max-width: 1120px;
+  max-width: 1160px;
   margin: 0 auto;
-  padding: 0 clamp(1rem, 4vw, 3rem) 4rem;
+  padding: 0 clamp(1rem, 4vw, 3rem) 5rem;
 }
 
 body > div > footer,
 #app > footer {
-  padding: 2rem 1rem 3rem;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 2rem clamp(1rem, 4vw, 3rem) 3rem;
   border-top: 1px solid var(--xz-line);
   color: var(--xz-muted);
-  font-size: 0.85rem;
-  text-align: center;
+  font-size: var(--xz-text-sm);
 }
 
-/* Home */
+/* Home: the headline set large and narrow on the left, the thing itself (a .xzor file and its running result) on the right. */
 .hero {
-  padding: 5rem 0 3rem;
-  text-align: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 4.5rem);
+  padding: clamp(3rem, 8vw, 6.5rem) 0 clamp(3rem, 6vw, 5rem);
 }
 
 .hero h1 {
-  margin: 0 0 1.2rem;
-  font-size: clamp(2rem, 5vw, 3.4rem);
-  letter-spacing: -0.03em;
-}
-
-.hero .accent {
-  /* background-image, not the shorthand: the bundler's color fallbacks repeat the shorthand, which would reset the clip. */
-  background-image: linear-gradient(90deg, var(--xz-accent), oklch(72% 0.14 200));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  max-width: 13ch;
+  margin: 0 0 1.5rem;
+  font-size: var(--xz-text-3xl);
+  font-stretch: 76%;
+  font-weight: 640;
+  line-height: 0.96;
+  letter-spacing: -0.045em;
 }
 
 .lead {
-  max-width: 46rem;
-  margin-inline: auto;
+  max-width: 34rem;
   color: var(--xz-muted);
-  font-size: 1.15rem;
+  font-size: 1.125rem;
+  line-height: 1.55;
 }
 
 .hero .lead {
@@ -106,35 +117,39 @@ body > div > footer,
 .actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
   gap: var(--xz-space-3);
 }
 
-.demo {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  align-items: stretch;
-  gap: var(--xz-space-5);
-  margin: 2rem 0 4rem;
+.hero-demo {
+  margin: 0;
+  padding: var(--xz-space-2);
+  border-radius: var(--xz-radius-xl);
+}
+
+.hero-demo .code {
+  margin: 0;
+  border-radius: var(--xz-radius-lg);
 }
 
 .live {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--xz-space-3);
-  padding: var(--xz-space-5);
-  border-radius: var(--xz-radius-lg);
+  padding: var(--xz-space-3) var(--xz-space-3) var(--xz-space-2);
+  font-size: var(--xz-text-sm);
 }
 
 .live button {
-  padding: 0.6rem 1rem;
+  min-height: 2.25rem;
+  padding: 0 0.875rem;
   border: 0;
-  border-radius: var(--xz-radius-pill);
-  background: var(--xz-accent);
+  border-radius: var(--xz-radius);
+  background: linear-gradient(oklch(100% 0 0 / 0.16), oklch(100% 0 0 / 0) 55%), var(--xz-accent);
   color: var(--xz-on-tone);
-  font-weight: 700;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
 
@@ -145,71 +160,86 @@ body > div > footer,
 
 .label {
   color: var(--xz-muted);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--xz-text-sm);
+  font-weight: 520;
 }
 
-.features {
+/* Four points in a row, ruled, not boxed. */
+.points {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--xz-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--xz-space-6) var(--xz-space-5);
+  padding-top: var(--xz-space-6);
+  border-top: 1px solid var(--xz-line);
 }
 
-.features article {
-  padding: var(--xz-space-5);
-  border-radius: var(--xz-radius-lg);
+.points h3 {
+  margin: 0 0 var(--xz-space-2);
+  font-size: var(--xz-text-md);
+  font-stretch: 100%;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.features h3 {
-  margin: 0 0 0.4rem;
-}
-
-.features p {
+.points p {
   margin: 0;
   color: var(--xz-muted);
 }
 
-.kit-teaser {
-  margin-top: 5rem;
-  text-align: center;
+.kit-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(2rem, 5vw, 4.5rem);
+  margin-top: clamp(4rem, 9vw, 7rem);
+}
+
+.kit-intro h2 {
+  max-width: 16ch;
+  margin-top: 0;
+  font-size: var(--xz-text-2xl);
+  font-stretch: 80%;
+}
+
+.kit-intro .lead {
+  margin-bottom: 1.75rem;
 }
 
 .showcase {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--xz-space-4);
-  margin-top: var(--xz-space-6);
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--xz-line);
+  list-style: none;
+}
+
+.showcase li {
+  border-bottom: 1px solid var(--xz-line);
 }
 
 .showcase a {
   display: grid;
-  gap: var(--xz-space-2);
-  padding: var(--xz-space-5);
-  border-radius: var(--xz-radius-lg);
+  grid-template-columns: 9rem 1fr;
+  gap: var(--xz-space-4);
+  padding: var(--xz-space-5) var(--xz-space-2);
   color: var(--xz-text);
   text-decoration: none;
 }
 
-.showcase a > .xz-icon {
-  width: 1.75rem;
-  height: 1.75rem;
-  color: var(--xz-accent);
+.showcase strong {
+  font-size: var(--xz-text-xl);
+  font-stretch: 80%;
+  font-weight: 620;
+  letter-spacing: -0.03em;
+  line-height: 1;
 }
 
-.showcase a > span {
+.showcase span {
   color: var(--xz-muted);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .showcase a {
-    transition: translate var(--xz-dur-2) var(--xz-ease-out);
-  }
-
-  @media (hover: hover) {
-    .showcase a:hover {
-      translate: 0 -3px;
-    }
+@media (hover: hover) {
+  .showcase a:hover strong {
+    color: var(--xz-accent);
   }
 }
 
@@ -338,8 +368,8 @@ body > div > footer,
   margin: 0;
   padding: 1rem 1.1rem;
   overflow-x: auto;
-  font-size: 0.88rem;
-  line-height: 1.6;
+  font-size: 0.82rem;
+  line-height: 1.65;
 }
 
 /* Kit gallery and recipes */
@@ -387,7 +417,9 @@ body > div > footer,
   height: 16rem;
   border-radius: var(--xz-radius-lg);
   overflow: auto;
-  background: linear-gradient(160deg, oklch(70% 0.15 var(--xz-hue)), oklch(70% 0.13 200) 60%, oklch(75% 0.12 330));
+  background:
+    radial-gradient(60% 80% at 85% 10%, oklch(80% 0.11 200), transparent 70%),
+    linear-gradient(170deg, oklch(62% 0.15 var(--xz-hue)), oklch(42% 0.12 var(--xz-hue)));
 }
 
 .scroller .xz-toolbar {
@@ -398,7 +430,7 @@ body > div > footer,
 
 .scroller p {
   margin: var(--xz-space-3) var(--xz-space-4);
-  color: oklch(20% 0.02 var(--xz-hue));
+  color: oklch(97% 0.01 var(--xz-hue));
 }
 
 /* Recipe: a bottom sheet that rests half open and snaps fully open, by scroll snap alone. */
@@ -503,11 +535,17 @@ body > div > footer,
 }
 
 @media (max-width: 820px) {
-  .demo,
+  .hero,
+  .kit-intro,
   .two,
   .learn,
   .specimen {
     grid-template-columns: 1fr;
+  }
+
+  .showcase a {
+    grid-template-columns: 1fr;
+    gap: var(--xz-space-1);
   }
 
   .learn aside {

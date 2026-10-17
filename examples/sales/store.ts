@@ -1,4 +1,8 @@
 import { Model } from "@source-crafter/xzor-runtime/model";
+import type { IconName } from "@source-crafter/xzor-ui";
+
+/** The icon on a category's product tiles. */
+export const kinds: Record<string, IconName> = { Fruit: "apple", Bakery: "bread", Dairy: "milk", Pantry: "jar" };
 
 export interface Product {
   id: string;
