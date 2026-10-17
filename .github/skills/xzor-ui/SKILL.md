@@ -92,6 +92,7 @@ Native controls are styled when they sit in a `Field`. Write `<input type="check
 
 - **Color:** `--xz-bg`, `--xz-surface`, `--xz-text`, `--xz-muted`, `--xz-line`, `--xz-neutral`, `--xz-accent`, `--xz-success`, `--xz-warning`, `--xz-danger`, `--xz-on-tone`; inside a toned element, `--xz-tone`.
 - **Hue:** change the whole palette with `--xz-hue`.
+- **Toasts:** `--xz-toast-offset` lifts them above a bottom tab bar.
 - **Space:** `--xz-space-1` to `-7` (0.25rem to 3rem).
 - **Radius:** `--xz-radius-sm`, `--xz-radius`, `--xz-radius-lg`, `--xz-radius-pill`.
 - **Text:** `--xz-text-sm`, `-md`, `-lg`, `-xl`, `-2xl`.

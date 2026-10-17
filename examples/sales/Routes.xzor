@@ -1,0 +1,11 @@
+@import Shell from "./layouts/Shell.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+
+<Shell>
+  @ClientRoutes(route) {
+    @notFound {
+      <Empty title="Nothing here" icon="search"><p>There is no screen at @route.path.</p></Empty>
+    }
+    @default(page) { @page }
+  }
+</Shell>

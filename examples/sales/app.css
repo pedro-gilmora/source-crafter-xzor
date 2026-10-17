@@ -1,0 +1,176 @@
+/* Bodega: a phone-first shop. Touch targets, safe areas and one-hand reach first. */
+:root {
+  --xz-hue: 285;
+  /* Toasts float above the tab bar. */
+  --xz-toast-offset: 6rem;
+}
+
+.screen {
+  width: min(40rem, 100%);
+  margin-inline: auto;
+  padding: calc(var(--xz-space-4) + env(safe-area-inset-top)) max(var(--xz-space-4), env(safe-area-inset-right)) calc(9rem + env(safe-area-inset-bottom)) max(var(--xz-space-4), env(safe-area-inset-left));
+}
+
+.hello {
+  display: grid;
+  gap: var(--xz-space-3);
+  margin-bottom: var(--xz-space-5);
+}
+
+.hello :is(h1, p) {
+  margin: 0;
+}
+
+.hello.me {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search > .xz-icon {
+  position: absolute;
+  inset-inline-start: var(--xz-space-3);
+  color: var(--xz-muted);
+  pointer-events: none;
+}
+
+.search > input {
+  min-height: 2.75rem;
+  padding-inline-start: 2.5rem;
+  border-radius: var(--xz-radius-pill);
+}
+
+/* Categories scroll sideways on narrow screens instead of wrapping. */
+.chips {
+  margin-inline: calc(-1 * var(--xz-space-4));
+  padding-inline: var(--xz-space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chips .xz-segmented span {
+  padding-block: var(--xz-space-2);
+}
+
+.products {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(10rem, 45%), 1fr));
+  gap: var(--xz-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product {
+  display: grid;
+  gap: 2px;
+  padding: var(--xz-space-3);
+  border-radius: var(--xz-radius-lg);
+}
+
+.thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  margin-bottom: var(--xz-space-2);
+  border-radius: var(--xz-radius);
+  background: radial-gradient(circle at 30% 25%, oklch(88% 0.1 var(--hue)), oklch(62% 0.15 var(--hue)));
+  color: oklch(100% 0 0 / 0.9);
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.buy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--xz-space-2);
+}
+
+.cart-fab {
+  position: fixed;
+  inset: auto 0 calc(5.5rem + env(safe-area-inset-bottom));
+  z-index: 15;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.cart-fab > .xz-button {
+  pointer-events: auto;
+}
+
+.lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lines > li {
+  display: grid;
+  grid-template-columns: 3rem 1fr auto;
+  align-items: center;
+  gap: var(--xz-space-3);
+  padding-block: var(--xz-space-2);
+}
+
+.lines > li + li {
+  border-top: 1px solid var(--xz-line);
+}
+
+.lines .thumb {
+  aspect-ratio: 1;
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.line-name {
+  display: grid;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--xz-space-2);
+}
+
+.stepper b {
+  min-width: 1.5ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.total {
+  display: flex;
+  justify-content: space-between;
+  margin: var(--xz-space-4) 0 0;
+  font-size: var(--xz-text-lg);
+}
+
+.checkout {
+  display: grid;
+  gap: var(--xz-space-4);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--xz-space-3);
+  min-height: 3rem;
+}
+
+.order {
+  display: grid;
+  flex: 1;
+}
+
+.install {
+  margin-top: var(--xz-space-5);
+  text-align: center;
+}

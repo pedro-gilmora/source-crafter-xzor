@@ -1,0 +1,25 @@
+@page "/orders"
+@import List from "@source-crafter/xzor-ui/List.xzor"
+@import Badge from "@source-crafter/xzor-ui/Badge.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import { href } from "../routes"
+@import { price, type Cart } from "../store"
+@inject Cart cart
+
+<header class="hello">
+  <h1>Orders</h1>
+</header>
+@if (cart.orders.length === 0) {
+  <Empty title="No orders yet" icon="package"><p>Your orders show up here. <a href="@href.Shop()">Start shopping</a></p></Empty>
+} else {
+  <List items="@cart.orders" depth="1">
+    @slot item(order) {
+      <span class="order">
+        <strong>@order.id</strong>
+        <small class="xz-muted">@order.lines.reduce((n, l) => n + l.qty, 0) items · @order.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })</small>
+      </span>
+      <Badge tone="warning">Preparing</Badge>
+      <b>@price(order.total)</b>
+    }
+  </List>
+}

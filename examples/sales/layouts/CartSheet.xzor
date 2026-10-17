@@ -1,0 +1,76 @@
+@import Sheet from "@source-crafter/xzor-ui/Sheet.xzor"
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import Field from "@source-crafter/xzor-ui/Field.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import { toast } from "@source-crafter/xzor-ui"
+@import { price, type Cart } from "../store"
+@inject Cart cart
+
+@code {
+  basket?: Sheet;
+  checkout?: Sheet;
+  name = "";
+  phone = "";
+  address = "";
+  tried = false;
+
+  get nameError() {
+    return this.tried && !this.name.trim() ? "Tell us who the order is for" : "";
+  }
+
+  get phoneError() {
+    return this.tried && !/^\+?[\d\s()-]{7,}$/.test(this.phone) ? "A phone number the rider can call" : "";
+  }
+
+  get addressError() {
+    return this.tried && this.address.trim().length < 5 ? "Street and number, please" : "";
+  }
+
+  place() {
+    this.tried = true;
+    if (this.nameError || this.phoneError || this.addressError) return;
+    const order = this.cart.place(this.name.trim());
+    this.tried = false;
+    this.checkout?.close();
+    this.basket?.close();
+    toast(`Order ${order.id} placed: ${price(order.total)}`, "success");
+  }
+}
+
+<Sheet id="cart" title="Your basket" @ref="basket">
+  @if (cart.count === 0) {
+    <Empty title="Your basket is empty" icon="cart"><p>Add something from the shop.</p></Empty>
+  } else {
+    <ul class="lines">
+      @for (const line of cart.lines) {
+        <li>
+          <span class="thumb" style="--hue: @line.product.hue" aria-hidden="true">@line.product.name[0]</span>
+          <span class="line-name"><strong>@line.product.name</strong><small class="xz-muted">@price(line.product.price) · @line.product.unit</small></span>
+          <span class="stepper">
+            <Button size="sm" icon="minus" label="@('One less ' + line.product.name)" onClick="() => cart.change(line.product, -1)" />
+            <b aria-live="polite">@line.qty</b>
+            <Button size="sm" icon="plus" label="@('One more ' + line.product.name)" onClick="() => cart.change(line.product, 1)" />
+          </span>
+        </li>
+      }
+    </ul>
+    <p class="total"><span>Total</span><strong>@price(cart.total)</strong></p>
+  }
+  @slot actions {
+    <Button variant="ghost" closes="cart">Keep shopping</Button>
+    <Button tone="accent" variant="solid" opens="checkout" disabled="@(cart.count === 0)">Checkout</Button>
+  }
+</Sheet>
+
+<Sheet id="checkout" title="Delivery" @ref="checkout">
+  <form id="checkout-form" class="checkout" @onsubmit="place" @onsubmit:preventDefault>
+    <Field label="Name" error="@nameError"><input autocomplete="name" @bind="name" @bind:event="oninput" /></Field>
+    <Field label="Phone" error="@phoneError"><input type="tel" autocomplete="tel" inputmode="tel" @bind="phone" @bind:event="oninput" /></Field>
+    <Field label="Address" hint="We deliver within 2 km, in under 30 minutes" error="@addressError"><textarea autocomplete="street-address" rows="2" @bind="address" @bind:event="oninput"></textarea></Field>
+    <label class="option"><input type="checkbox" role="switch" checked /> Leave at the door</label>
+  </form>
+  @slot actions {
+    <Button variant="ghost" closes="checkout">Back</Button>
+    <Button tone="accent" variant="solid" onClick="place">Place order · @price(cart.total)</Button>
+  }
+</Sheet>

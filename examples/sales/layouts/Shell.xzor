@@ -1,0 +1,12 @@
+@import NavBar from "@source-crafter/xzor-ui/NavBar.xzor"
+@import NavItem from "@source-crafter/xzor-ui/NavItem.xzor"
+@import CartSheet from "./CartSheet.xzor"
+@import { href } from "../routes"
+
+<main class="screen">@slot</main>
+<NavBar kind="tabs" label="Sections">
+  <NavItem href="@href.Shop()" label="Shop" icon="home" match="exact" />
+  <NavItem href="@href.Orders()" label="Orders" icon="package" />
+  <NavItem href="@href.Profile()" label="Profile" icon="user" />
+</NavBar>
+<CartSheet />

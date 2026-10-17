@@ -1,0 +1,59 @@
+@page "/"
+@import Segmented from "@source-crafter/xzor-ui/Segmented.xzor"
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import Icon from "@source-crafter/xzor-ui/Icon.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import { toast } from "@source-crafter/xzor-ui"
+@import { categories, price, products, type Cart, type Product } from "../store"
+@inject Cart cart
+
+@code {
+  category = "All";
+  query = "";
+
+  get shown(): Product[] {
+    const q = this.query.trim().toLowerCase();
+    return products.filter((p) => (this.category === "All" || p.category === this.category) && p.name.toLowerCase().includes(q));
+  }
+
+  add(product: Product) {
+    this.cart.change(product, 1);
+    toast(`${product.name} added`, "success", 1800);
+  }
+}
+
+<header class="hello">
+  <p class="xz-muted">Good evening</p>
+  <h1>What do you need today?</h1>
+  <label class="search">
+    <Icon name="search" />
+    <input class="xz-input" type="search" placeholder="Search the shop" aria-label="Search the shop" @bind="query" @bind:event="oninput" />
+  </label>
+  <div class="chips">
+    <Segmented options="@categories" @bind-value="category" label="Category" />
+  </div>
+</header>
+
+@if (shown.length === 0) {
+  <Empty title="Nothing matches" icon="search"><p>Try another word or category.</p></Empty>
+} else {
+  <ul class="products">
+    @for (const product of shown) {
+      <li class="product" data-depth="1">
+        <span class="thumb" style="--hue: @product.hue" aria-hidden="true">@product.name[0]</span>
+        <strong>@product.name</strong>
+        <small class="xz-muted">@product.unit</small>
+        <span class="buy">
+          <b>@price(product.price)</b>
+          <Button size="sm" variant="solid" tone="accent" icon="plus" label="@('Add ' + product.name)" onClick="() => add(product)" />
+        </span>
+      </li>
+    }
+  </ul>
+}
+
+@if (cart.count > 0) {
+  <div class="cart-fab">
+    <Button opens="cart" variant="glass" size="lg" icon="cart">@cart.count · @price(cart.total)</Button>
+  </div>
+}

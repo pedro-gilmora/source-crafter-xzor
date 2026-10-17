@@ -1033,7 +1033,8 @@
   }
 
   .xz-toasts {
-    inset: auto 0 calc(var(--xz-space-5) + env(safe-area-inset-bottom));
+    /* Raise it above a bottom tab bar with --xz-toast-offset. */
+    inset: auto 0 calc(var(--xz-toast-offset, var(--xz-space-5)) + env(safe-area-inset-bottom));
     width: min(24rem, calc(100vw - 2rem));
     margin: 0 auto;
     padding: 0;

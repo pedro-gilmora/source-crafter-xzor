@@ -1,0 +1,33 @@
+@page "/profile"
+@import Avatar from "@source-crafter/xzor-ui/Avatar.xzor"
+@import Panel from "@source-crafter/xzor-ui/Panel.xzor"
+@import { currentTheme, setTheme } from "@source-crafter/xzor-ui"
+@import { price, type Cart } from "../store"
+@inject Cart cart
+
+@code {
+  dark = currentTheme() === "dark";
+  deals = true;
+
+  setDark(e: Event) {
+    this.dark = (e.target as HTMLInputElement).checked;
+    setTheme(this.dark ? "dark" : "light");
+  }
+
+  get spent(): number {
+    return this.cart.orders.reduce((sum, o) => sum + o.total, 0);
+  }
+}
+
+<header class="hello me">
+  <Avatar name="Rosa Martín" size="lg" />
+  <div>
+    <h1>Rosa Martín</h1>
+    <p class="xz-muted">Member since 2024 · @price(spent) this week</p>
+  </div>
+</header>
+<Panel title="Settings">
+  <label class="option"><span>Dark theme</span><input type="checkbox" role="switch" checked="@dark" @onchange="setDark" /></label>
+  <label class="option"><span>Deals and offers</span><input type="checkbox" role="switch" @bind="deals" /></label>
+</Panel>
+<p class="xz-muted install">Add Bodega to your home screen from the browser menu: it works offline too.</p>
