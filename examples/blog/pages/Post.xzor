@@ -1,0 +1,59 @@
+@page "/posts/:slug"
+@import Badge from "@source-crafter/xzor-ui/Badge.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import { href } from "../routes"
+@import { day, posts } from "../posts"
+
+@code {
+  slug = "";
+
+  get post() {
+    return posts.find((p) => p.slug === this.slug);
+  }
+
+  get next() {
+    const at = posts.findIndex((p) => p.slug === this.slug);
+    return posts[(at + 1) % posts.length]!;
+  }
+}
+
+<div class="progress" aria-hidden="true"></div>
+@if (post) {
+  @{ const p = post; }
+  <article class="article">
+    <p class="meta"><a href="@href.Home()">Field Notes</a> · @day(p.date) · @p.minutes min read</p>
+    <h1 style="view-transition-name: post-@p.slug">@p.title</h1>
+    <p class="lead">@p.summary</p>
+    @for (const block of p.body) {
+      @if ("h" in block) {
+        <h2>@block.h</h2>
+      } else if ("code" in block) {
+        <pre><code>@block.code</code></pre>
+      } else if ("quote" in block) {
+        <blockquote>@block.quote</blockquote>
+      } else {
+        <p>
+          @* `code` spans: every odd piece between backticks. *@
+          @for (const [i, part] of block.p.split("`").entries()) {
+            @if (i % 2 === 1) {
+              <code>@part</code>
+            } else {
+              @part
+            }
+          }
+        </p>
+      }
+    }
+    <p class="tags">
+      @for (const tag of p.tags) {
+        <a href="@href.Tag({ tag })"><Badge tone="accent">#@tag</Badge></a>
+      }
+    </p>
+  </article>
+  <a class="next" data-depth="1" href="@href.Post({ slug: next.slug })">
+    <span class="xz-muted">Read next</span>
+    <strong>@next.title</strong>
+  </a>
+} else {
+  <Empty title="Post not found" icon="book"><p><a href="@href.Home()">Back to every post</a></p></Empty>
+}

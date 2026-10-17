@@ -1,0 +1,20 @@
+@import Badge from "@source-crafter/xzor-ui/Badge.xzor"
+@import { href } from "../routes"
+@import { day, type Post } from "../posts"
+
+@code {
+  post!: Post;
+}
+
+<article class="card" data-depth="1">
+  <a href="@href.Post({ slug: post.slug })">
+    <p class="meta">@day(post.date) · @post.minutes min read</p>
+    <h2 style="view-transition-name: post-@post.slug">@post.title</h2>
+    <p>@post.summary</p>
+  </a>
+  <p class="tags">
+    @for (const tag of post.tags) {
+      <a href="@href.Tag({ tag })"><Badge tone="accent">#@tag</Badge></a>
+    }
+  </p>
+</article>

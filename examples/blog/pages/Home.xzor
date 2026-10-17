@@ -1,0 +1,13 @@
+@page "/"
+@import PostCard from "../layouts/PostCard.xzor"
+@import { posts } from "../posts"
+
+<header class="intro">
+  <h1>Field Notes</h1>
+  <p class="xz-muted">Short notes on building interfaces with modern CSS: glass, popovers, transitions and layout, with no JavaScript doing the styling.</p>
+</header>
+<div class="posts">
+  @for (const post of posts) {
+    <PostCard post="@post" />
+  }
+</div>

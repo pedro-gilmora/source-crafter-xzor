@@ -1,0 +1,23 @@
+@import NavBar from "@source-crafter/xzor-ui/NavBar.xzor"
+@import NavItem from "@source-crafter/xzor-ui/NavItem.xzor"
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import { currentTheme, toggleTheme } from "@source-crafter/xzor-ui"
+@import { href } from "../routes"
+
+@code {
+  theme = currentTheme();
+
+  flip() {
+    this.theme = toggleTheme();
+  }
+}
+
+<NavBar kind="top" label="Site">
+  <a class="brand" href="@href.Home()">Field Notes</a>
+  <span class="xz-spacer"></span>
+  <NavItem href="@href.Home()" label="Writing" match="exact" />
+  <NavItem href="@href.Tag({ tag: 'css' })" label="CSS" />
+  <Button variant="ghost" icon="@(theme === 'dark' ? 'sun' : 'moon')" label="@(theme === 'dark' ? 'Use light theme' : 'Use dark theme')" onClick="flip" />
+</NavBar>
+<main class="page">@slot</main>
+<footer class="foot">Built with xzor and the xzor-ui kit. No JavaScript styles anything here.</footer>

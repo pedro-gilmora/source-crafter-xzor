@@ -1,0 +1,161 @@
+/* Field Notes: reading layout. The kit gives the surfaces, tokens and motion. */
+:root {
+  --xz-hue: 32;
+}
+
+.brand {
+  padding-inline: var(--xz-space-2);
+  color: var(--xz-text);
+  font-size: var(--xz-text-lg);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.page {
+  width: min(46rem, 100% - 2 * var(--xz-space-4));
+  margin: var(--xz-space-6) auto;
+}
+
+.intro {
+  margin-bottom: var(--xz-space-6);
+}
+
+.posts {
+  display: grid;
+  gap: var(--xz-space-4);
+}
+
+.card {
+  padding: var(--xz-space-5);
+  border-radius: var(--xz-radius-lg);
+}
+
+.card > a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.card h2 {
+  margin-bottom: var(--xz-space-2);
+}
+
+.card > a:hover h2 {
+  color: var(--xz-accent);
+}
+
+.meta {
+  color: var(--xz-muted);
+  font-size: var(--xz-text-sm);
+}
+
+.meta a {
+  color: inherit;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--xz-space-2);
+  margin: var(--xz-space-3) 0 0;
+}
+
+.tags a,
+.tag-list a {
+  text-decoration: none;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--xz-space-3);
+}
+
+.tag-list a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.article {
+  font-size: 1.0625rem;
+  line-height: 1.7;
+}
+
+.article h1 {
+  margin-bottom: var(--xz-space-4);
+}
+
+.article h2 {
+  margin-top: var(--xz-space-6);
+}
+
+.lead {
+  color: var(--xz-muted);
+  font-size: var(--xz-text-lg);
+}
+
+.article pre {
+  padding: var(--xz-space-4);
+  border: 1px solid var(--xz-line);
+  border-radius: var(--xz-radius);
+  background: color-mix(in oklch, var(--xz-surface) 80%, transparent);
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.article blockquote {
+  margin: var(--xz-space-5) 0;
+  padding-inline-start: var(--xz-space-4);
+  border-inline-start: 3px solid var(--xz-accent);
+  font-size: var(--xz-text-lg);
+  font-style: italic;
+}
+
+.next {
+  display: grid;
+  gap: var(--xz-space-1);
+  margin-top: var(--xz-space-6);
+  padding: var(--xz-space-4) var(--xz-space-5);
+  border-radius: var(--xz-radius-lg);
+  color: var(--xz-text);
+  text-decoration: none;
+}
+
+.foot {
+  padding: var(--xz-space-6) var(--xz-space-4);
+  color: var(--xz-muted);
+  font-size: var(--xz-text-sm);
+  text-align: center;
+}
+
+/* Reading progress: driven by the page scroll, no script. */
+.progress {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 30;
+  height: 3px;
+  background: var(--xz-accent);
+  transform-origin: 0 50%;
+  scale: 0 1;
+}
+
+@supports (animation-timeline: scroll()) {
+  .progress {
+    animation: read linear both;
+    animation-timeline: scroll(root);
+  }
+}
+
+@keyframes read {
+  to {
+    scale: 1 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

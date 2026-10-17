@@ -561,11 +561,13 @@ test("popstate re-renders the routes block", () => {
 });
 
 test("viewTransitions(true) commits a navigation inside document.startViewTransition", () => {
-  const doc = document as unknown as { startViewTransition?: (cb: () => void) => void };
+  const doc = document as unknown as { startViewTransition?: (cb: () => void) => { ready: Promise<void> } };
   let called = 0;
   doc.startViewTransition = (cb) => {
     called++;
     cb();
+    // As when the browser skips the animation: the rejection must be handled.
+    return { ready: Promise.reject(new Error("skipped")) };
   };
   try {
     history.replaceState(null, "", "/users/1");

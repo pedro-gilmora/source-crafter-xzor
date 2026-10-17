@@ -1,0 +1,31 @@
+@page "/tags/:tag"
+@import PostCard from "../layouts/PostCard.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import { href } from "../routes"
+@import { posts, tags } from "../posts"
+
+@code {
+  tag = "";
+
+  get tagged() {
+    return posts.filter((p) => p.tags.includes(this.tag));
+  }
+}
+
+<header class="intro">
+  <h1>#@tag</h1>
+  <nav class="tag-list" aria-label="Tags">
+    @for (const t of tags) {
+      <a href="@href.Tag({ tag: t })" aria-current="@(t === tag ? 'page' : null)">#@t</a>
+    }
+  </nav>
+</header>
+@if (tagged.length === 0) {
+  <Empty title="No posts with this tag" icon="tag"><p><a href="@href.Home()">See every post</a></p></Empty>
+} else {
+  <div class="posts">
+    @for (const post of tagged) {
+      <PostCard post="@post" />
+    }
+  </div>
+}

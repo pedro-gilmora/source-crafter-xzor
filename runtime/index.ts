@@ -204,8 +204,9 @@ export function viewTransitions(on: boolean): void {
 }
 
 function notifyNavigated(): void {
-  const doc = document as Document & { startViewTransition?: (update: () => void) => unknown };
-  if (transitions && doc.startViewTransition) doc.startViewTransition(notifyAll);
+  const doc = document as Document & { startViewTransition?: (update: () => void) => { ready: Promise<unknown> } };
+  // `ready` rejects when the browser skips the animation (a hidden tab, a newer navigation): the update still ran.
+  if (transitions && doc.startViewTransition) doc.startViewTransition(notifyAll).ready.catch(noop);
   else notifyAll();
 }
 
