@@ -17,6 +17,8 @@ const QUEUED = 8;
 /** `model` is a map of deps: the binding read more than one source. */
 const MANY = 16;
 const DEAD = 32;
+/** In its component's `loose` list: its last run read nothing tracked. */
+const LOOSE = 64;
 
 // Same bits as the model tracker: fields from the 30th share bit 30, `state` (-1) has bit 31.
 const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
@@ -24,7 +26,7 @@ const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
 /** Where the fine component was mounted: what an island needs to mount components. */
-type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown };
+type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown; loose: Binding[] };
 /** Where bindings are chained: a fine root, a region or a list row. */
 type Holder = { bindings: unknown; ctx: Ctx };
 type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment };
@@ -111,11 +113,12 @@ class Binding {
   // Drops the sources the last run did not read again.
   #sweep(): void {
     const own = this.model;
-    if (own === undefined) return;
+    if (own === undefined) return this.#loose();
     if ((this.flags & MANY) === 0) {
       if (this.mask === 0) {
         (own as Source).$unwatch(this);
         this.model = undefined;
+        this.#loose();
       }
       return;
     }
@@ -128,7 +131,15 @@ class Binding {
     if (deps.size === 0) {
       this.model = undefined;
       this.flags &= ~MANY;
+      this.#loose();
     }
+  }
+
+  // Nothing tracked tells it about changes: its component re-runs it after each of its handlers.
+  #loose(): void {
+    if ((this.flags & (LOOSE | DEAD)) !== 0 || holder === undefined) return;
+    this.flags |= LOOSE;
+    holder.ctx.loose.push(this);
   }
 
   #run(parent?: Node): unknown {
@@ -217,6 +228,27 @@ function island(b: Binding, ctx: Ctx, build: (b: RenderTreeBuilder) => void): vo
   b.read = () => {
     state.tree = patchIsland(ctx.owner, ctx.app, ctx.scope, b.node, state.tree, build);
   };
+}
+
+/** Re-runs the component's bindings that read nothing tracked; drops the dead ones and those that now track. */
+function refreshLoose(ctx: Ctx): void {
+  const loose = ctx.loose;
+  for (let i = 0; i < loose.length; ) {
+    const b = loose[i]!;
+    if ((b.flags & DEAD) !== 0 || b.model !== undefined) {
+      b.flags &= ~LOOSE;
+      loose[i] = loose[loose.length - 1]!;
+      loose.pop();
+      continue;
+    }
+    b.stateHasChanged();
+    i++;
+  }
+}
+
+function afterHandler(ctx: Ctx, result: unknown): void {
+  refreshLoose(ctx);
+  if (result instanceof Promise) void result.then(() => refreshLoose(ctx));
 }
 
 function within(h: Holder, run: () => void): void {
@@ -325,6 +357,12 @@ export const fine = {
     return parent.appendChild(document.createElement(tag));
   },
 
+  /** A handler; afterwards the component re-runs its bindings that read nothing tracked. */
+  on(el: Element, event: string, handler: (e: any) => unknown): void {
+    const ctx = holder!.ctx;
+    el.addEventListener(event, (e) => afterHandler(ctx, handler(e)));
+  },
+
   /** Static text. */
   t(parent: Node, text: string): void {
     parent.appendChild(document.createTextNode(text));
@@ -415,11 +453,15 @@ export abstract class FineComponent extends ComponentBase {
 
 (FineComponent.prototype as unknown as Record<symbol, boolean>)[FINE] = true;
 
+const CTX = Symbol("xzor.fine.ctx");
+
 setFineHooks({
   create(build: Build, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot {
     const frag = document.createDocumentFragment();
     const start = frag.appendChild(document.createComment(""));
-    const root: FineRoot & Holder = { bindings: undefined, ctx: { owner, app, scope }, start, end: start };
+    const ctx: Ctx = { owner, app, scope, loose: [] };
+    (owner as unknown as Record<symbol, Ctx>)[CTX] = ctx;
+    const root: FineRoot & Holder = { bindings: undefined, ctx, start, end: start };
     // Reads outside a binding subscribe nothing: a fine component is never re-rendered by what it reads.
     const reader = Model.$reader;
     Model.$reader = undefined;
@@ -433,4 +475,8 @@ setFineHooks({
   },
   refresh: (root) => refreshAll(root as FineRoot & Holder),
   dispose: (root) => disposeAll(root as FineRoot & Holder),
+  handled(owner: ComponentBase, result: unknown): void {
+    const ctx = (owner as unknown as Record<symbol, Ctx | undefined>)[CTX];
+    if (ctx !== undefined) afterHandler(ctx, result);
+  },
 });

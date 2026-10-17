@@ -254,6 +254,34 @@ test("a markup value in @expr renders as markup and follows what it reads", asyn
   expect(el.querySelector("div u")!.textContent).toBe("2");
 });
 
+test("after its own handler, a fine component re-runs the bindings that read nothing tracked", async () => {
+  const work = { changes: 0 };
+  let tracked = 0;
+  class Page extends FineComponent {
+    #count = 0; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["count"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const _e0 = fine.el(__p, "button");
+        fine.on(_e0, "click", () => {
+          work.changes++;
+          this.count++;
+        });
+        fine.text(fine.el(__p, "i"), () => work.changes);
+        fine.text(fine.el(__p, "b"), () => (tracked++, this.count));
+      });
+    }
+  }
+  const el = host();
+  mount(Page, el);
+  el.querySelector("button")!.click();
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("1");
+  expect(el.querySelector("b")!.textContent).toBe("1");
+  // The tracked binding ran once for the change, not again for the handler.
+  expect(tracked).toBe(2);
+});
+
 test("a set's hasChanges and hasErrors follow pushes", async () => {
   const el = host();
   const set = EntitySet.track(Worker, [{ name: "a", hours: 1, tax: 0 }]);

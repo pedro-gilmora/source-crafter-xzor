@@ -1046,6 +1046,10 @@ impl Gen<'_> {
     fn fine_nodes(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         for (i, node) in nodes.iter().enumerate() {
             if let Node::Code(parts) = node {
+                // Markup inside `@{ }` is builder calls: the block and the siblings it scopes go to an island.
+                if parts.iter().any(|p| !matches!(p, CodePart::Ts(_))) {
+                    return self.fine_island(&nodes[i..], parent);
+                }
                 if !self.in_region {
                     return self.fine_code(parts, &nodes[i + 1..], parent);
                 }
@@ -1055,6 +1059,14 @@ impl Gen<'_> {
             }
             self.fine_node(node, parent)?;
         }
+        Ok(())
+    }
+
+    /// `nodes` as virtual-DOM builder calls, in a binding that patches them when what they read changes.
+    fn fine_island(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
+        let body = self.inline_nodes(nodes, true, &[])?;
+        let line = M::lit(&format!("fine.island({parent}, (__b) => {{ ")).add(body).lit_then(" });");
+        self.emit(line);
         Ok(())
     }
 
@@ -1127,7 +1139,10 @@ impl Gen<'_> {
                 self.emit(line);
             }
             Node::Element(el) if &*el.name.text == "text" => self.fine_nodes(&el.children, parent)?,
-            Node::Element(el) if el.is_component() => return Err(format!("@fine components cannot contain child components yet (<{}>)", el.name)),
+            Node::Element(el) if el.is_component() => self.fine_island(std::slice::from_ref(node), parent)?,
+            Node::Element(el) if el.attrs.iter().any(|a| &*a.name.text == "@attributes" || (a.name.starts_with("@on") && a.name.contains(':'))) => {
+                self.fine_island(std::slice::from_ref(node), parent)?
+            }
             Node::Element(el) => self.fine_element(el, parent)?,
             Node::Code(parts) => self.fine_code(parts, &[], parent)?,
             Node::If { branches, otherwise } => self.fine_structure(parent, |g, p| {
@@ -1203,9 +1218,8 @@ impl Gen<'_> {
                 g.line("}");
                 Ok(())
             })?,
-            Node::Slot(_) | Node::SlotFill(_) => return Err("@fine components cannot declare or fill slots yet".into()),
-            Node::Cascade { .. } => return Err("@fine components cannot provide a @cascade yet".into()),
-            Node::Routes { .. } => return Err("@fine components cannot hold a routes block yet".into()),
+            Node::Slot(_) | Node::Cascade { .. } | Node::Routes { .. } => self.fine_island(std::slice::from_ref(node), parent)?,
+            Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
         }
         Ok(())
     }
@@ -1226,13 +1240,11 @@ impl Gen<'_> {
                     let line = self.directive_expr(a)?.lit_then(&format!(" = {var};"));
                     self.emit(line);
                 }
-                _ if name.starts_with("@on") && name.contains(':') => return Err(format!("@fine components do not support event modifiers yet ({name})")),
                 _ if name.starts_with("@on") => {
                     let AttrValue::Expr(e) = &a.value else { return Err(format!("{name} requires a handler expression")) };
-                    let line = M::lit(&format!("{var}.addEventListener({}, ", js_string(&name[3..]))).add(self.handler(e)).lit_then(");");
+                    let line = M::lit(&format!("fine.on({var}, {}, ", js_string(&name[3..]))).add(self.handler(e)).lit_then(");");
                     self.emit(line);
                 }
-                "@attributes" => return Err("@fine components do not support @attributes yet".into()),
                 _ if name.starts_with('@') => return Err(format!("unknown directive attribute {name}")),
                 _ => match &a.value {
                     AttrValue::Empty => self.line(&format!("{var}.setAttribute({}, \"\");", js_string(name))),
@@ -1266,7 +1278,7 @@ impl Gen<'_> {
         };
         let prop = if is_check { "checked" } else { "value" };
         self.emit(M::lit(&format!("fine.attr({var}, \"{prop}\", () => ")).add(self.expr(target)).lit_then(");"));
-        let line = M::lit(&format!("{var}.addEventListener({}, (__e) => {{ ", js_string(&event)))
+        let line = M::lit(&format!("fine.on({var}, {}, (__e) => {{ ", js_string(&event)))
             .add(self.expr(target))
             .lit_then(" = ComponentBase.bindValue(__e, ")
             .add(self.expr(target))
@@ -2898,13 +2910,13 @@ mod tests {
         has("_e0.setAttribute(\"class\", \"team\");");
         has("fine.attr(_e0, \"title\", () => \"n \" + String(this.label));");
         has("const _e1 = fine.el(_e0, \"button\");");
-        has("_e1.addEventListener(\"click\", this.inc.bind(this));");
+        has("fine.on(_e1, \"click\", this.inc.bind(this));");
         has("this.el = _e1;");
         has("fine.text(_e1, () => this.count);");
         has("fine.attr(_e2, \"value\", () => this.label);");
-        has("_e2.addEventListener(\"input\", (__e) => { this.label = ComponentBase.bindValue(__e, this.label); });");
+        has("fine.on(_e2, \"input\", (__e) => { this.label = ComponentBase.bindValue(__e, this.label); });");
         has("fine.attr(_e3, \"checked\", () => this.ok);");
-        has("_e3.addEventListener(\"change\", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); });");
+        has("fine.on(_e3, \"change\", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); });");
         has("fine.region(_e0, (__p) => {");
         has("if (this.count > 1) {");
         has("fine.list(_e0, () => this.team, (__p, w) => {");
@@ -2924,15 +2936,16 @@ mod tests {
     }
 
     #[test]
-    fn fine_components_reject_what_they_do_not_support_yet() {
-        let err = |src: &str| {
-            let (doc, _) = crate::parser::parse(src).unwrap();
-            generate(&doc, "C", "C.xzor").unwrap_err()
-        };
-        assert!(err("@fine\n<Child />").contains("@fine"));
-        assert!(err("@fine\n<p @onclick:preventDefault />").contains("@fine"));
-        assert!(err("@fine\n<p @attributes=\"x\" />").contains("@fine"));
-        assert!(err("@fine\n@cascade:theme(1) { <p/> }").contains("@fine"));
+    fn fine_components_put_the_rest_in_islands() {
+        let card = "@code { title = \"\"; }\n<section>@title</section>";
+        let src = "@fine\n@code { n = 1; show = true; extra = {}; }\n<div>\n<Card title=\"@(n)\"><b>@n</b></Card>\n<p @onclick:preventDefault @onclick=\"() => n++\">x</p>\n<p @attributes=\"extra\" />\n@cascade:theme(n) { <i>@n</i> }\n@slot\n</div>";
+        let g = gen_with(src, &[("Card", card)]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("fine.island(_e0, (__b) => { __b.addComponent(Card, { title: this.n }, { default: () => ComponentBase.fragment((__b) => { __b.openElement(\"b\"); __b.addContent(this.n); __b.closeElement(); }) }); });");
+        has("fine.island(_e0, (__b) => { __b.openElement(\"p\"); __b.addEventModifier(\"click\", \"preventDefault\", true);");
+        has("fine.island(_e0, (__b) => { __b.openElement(\"p\"); __b.addAttributes(this.extra);");
+        has("fine.island(_e0, (__b) => { __b.openCascade(\"theme\", this.n);");
+        has("fine.island(_e0, (__b) => { __b.addContent(this.slots.default?.() ?? null); });");
     }
 
     #[test]

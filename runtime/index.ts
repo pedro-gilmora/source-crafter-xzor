@@ -68,6 +68,8 @@ type FineHooks = {
   create(build: (parent: Node) => void, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot;
   refresh(root: FineRoot): void;
   dispose(root: FineRoot): void;
+  /** A handler of a fine component ran: it re-runs the bindings that read nothing tracked. */
+  handled(owner: ComponentBase, result: unknown): void;
 };
 
 let fineHooks: FineHooks | undefined;
@@ -706,7 +708,12 @@ export class RenderTreeBuilder {
   /** Wraps a handler passed to a child as an EventCallback (re-renders this owner). */
   callback<T>(handler: (arg: T) => unknown): EventCallback<T> {
     const owner = this.owner;
-    if (isFine(owner)) return handler;
+    if (isFine(owner))
+      return (arg: T) => {
+        const result = handler(arg);
+        fineHooks!.handled(owner, result);
+        return result;
+      };
     return (arg: T) => {
       const result = handler(arg);
       update(owner);
@@ -959,7 +966,7 @@ function listen(el: Element, event: string): void {
     const handler = record.events[event];
     if (!handler) return;
     const result = handler(e);
-    if (isFine(record.owner)) return;
+    if (isFine(record.owner)) return fineHooks!.handled(record.owner, result);
     update(record.owner);
     if (result instanceof Promise) void result.then(() => update(record.owner));
   });
