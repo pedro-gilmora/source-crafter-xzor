@@ -285,7 +285,16 @@
       "beginCaptures": { "1": { "name": "keyword.control.transition.xzor" } },
       "end": "(?=[\\s\"'<>]|$)",
       "contentName": "meta.embedded.expression.typescript",
-      "patterns": [{ "include": "source.ts#expression" }]
+      "patterns": [
+        {
+          "begin": "\\G\\[",
+          "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.xzor" } },
+          "end": "\\]",
+          "endCaptures": { "0": { "name": "punctuation.section.embedded.end.xzor" } },
+          "patterns": [{ "include": "source.ts#expression" }]
+        },
+        { "include": "source.ts#expression" }
+      ]
     },
     "implicit-call": {
       "begin": "(?<![[:alnum:]])(@)(#?[_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.#?[_$[:alpha:]][_$[:alnum:]]*)*)(\\()",

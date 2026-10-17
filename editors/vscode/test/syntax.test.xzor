@@ -115,7 +115,9 @@ else {
 <!--               ^ constant.numeric.decimal.ts
   <S o="@['a', 'b'].length" />
 <!--    ^ keyword.control.transition.xzor
+<!--     ^ punctuation.section.embedded.begin.xzor
 <!--       ^ string.quoted.single.ts
+<!--              ^ punctuation.section.embedded.end.xzor
 <!--                ^^^^^^ meta.embedded.expression.typescript
 }
 @for (const item of items) {
