@@ -1,0 +1,16 @@
+@code {
+  label = "";
+  hint = "";
+  /** Shown instead of the hint, and marks the field invalid. */
+  error = "";
+}
+
+<label class="xz-field" data-invalid="@(error !== '')">
+  <span class="xz-field-label">@label</span>
+  @slot
+  @if (error) {
+    <small class="xz-field-error">@error</small>
+  } else if (hint) {
+    <small class="xz-field-hint">@hint</small>
+  }
+</label>

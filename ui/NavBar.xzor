@@ -1,0 +1,10 @@
+@import { type Depth } from "@source-crafter/xzor-ui"
+
+@code {
+  /** "top": a bar over the page; "side": a column; "tabs": a floating bottom tab bar for phones. */
+  kind: "top" | "side" | "tabs" = "top";
+  depth: Depth = "2";
+  label = "Main";
+}
+
+<nav class="xz-navbar" data-kind="@kind" data-depth="@depth" aria-label="@label">@slot</nav>

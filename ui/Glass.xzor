@@ -1,0 +1,8 @@
+@import { type Depth, type Tone } from "@source-crafter/xzor-ui"
+
+@code {
+  depth: Depth = "1";
+  tone?: Tone;
+}
+
+<div class="xz-glass" data-depth="@depth" data-tone="@tone">@slot</div>

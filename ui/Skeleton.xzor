@@ -1,0 +1,7 @@
+@code {
+  width = "100%";
+  height = "1em";
+  round = false;
+}
+
+<span class="xz-skeleton" aria-hidden="true" data-round="@round" style="--w: @width; --h: @height"></span>

@@ -1,0 +1,9 @@
+@import { type Depth } from "@source-crafter/xzor-ui"
+
+@code {
+  depth: Depth = "1";
+  /** Stays at the top of the scrolling area. */
+  sticky = false;
+}
+
+<div class="xz-toolbar" data-depth="@depth" data-sticky="@sticky">@slot</div>

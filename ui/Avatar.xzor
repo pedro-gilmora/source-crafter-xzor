@@ -1,0 +1,19 @@
+@import { type Size } from "@source-crafter/xzor-ui"
+
+@code {
+  name = "";
+  src?: string;
+  size: Size = "md";
+
+  get initials(): string {
+    return this.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
+  }
+}
+
+<span class="xz-avatar" data-size="@size" role="img" aria-label="@name">
+  @if (src) {
+    <img src="@src" alt="" />
+  } else {
+    @initials
+  }
+</span>

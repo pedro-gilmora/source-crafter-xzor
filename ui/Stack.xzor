@@ -1,0 +1,11 @@
+@import { type Size } from "@source-crafter/xzor-ui"
+
+@code {
+  direction: "column" | "row" = "column";
+  gap: Size = "md";
+  align?: "start" | "center" | "end" | "stretch";
+  justify?: "start" | "center" | "end" | "between";
+  wrap = false;
+}
+
+<div class="xz-stack" data-direction="@direction" data-gap="@gap" data-align="@align" data-justify="@justify" data-wrap="@wrap">@slot</div>

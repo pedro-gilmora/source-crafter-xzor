@@ -1,0 +1,9 @@
+@import { type Size } from "@source-crafter/xzor-ui"
+
+@code {
+  /** The narrowest a column gets before the grid drops one. */
+  min = "16rem";
+  gap: Size = "md";
+}
+
+<div class="xz-grid" data-gap="@gap" style="--xz-min: @min">@slot</div>

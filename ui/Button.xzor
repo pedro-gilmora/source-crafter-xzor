@@ -1,0 +1,31 @@
+@import { type EventCallback } from "@source-crafter/xzor-runtime"
+@import { type IconName, type Size, type Tone } from "@source-crafter/xzor-ui"
+@import Icon from "./Icon.xzor"
+
+@code {
+  tone: Tone = "neutral";
+  variant: "solid" | "soft" | "ghost" | "glass" = "soft";
+  size: Size = "md";
+  type: "button" | "submit" | "reset" = "button";
+  disabled = false;
+  icon?: IconName;
+  /** The accessible name; required when the button shows only an icon. */
+  label?: string;
+  /** Id of a `Menu` or `Popover` this button shows and hides. */
+  toggles?: string;
+  /** Id of a `Sheet` or `Dialog` this button opens. */
+  opens?: string;
+  /** Id of a `Sheet` or `Dialog` this button closes. */
+  closes?: string;
+  onClick?: EventCallback<MouseEvent>;
+}
+
+<button class="xz-button" type="@type" data-tone="@tone" data-variant="@variant" data-size="@size"
+  data-depth="@(variant === 'glass' ? '1' : null)" data-square="@(!this.slots.default)" disabled="@disabled"
+  aria-label="@label" popovertarget="@toggles" commandfor="@(opens ?? closes)"
+  command="@(opens ? 'show-modal' : closes ? 'close' : null)" @onclick="(e) => onClick?.(e)">
+  @if (icon) {
+    <Icon name="@(icon!)" />
+  }
+  @slot
+</button>

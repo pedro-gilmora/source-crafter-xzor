@@ -84,7 +84,14 @@ fn imported_components(doc: &ast::Document, path: &Path, read: &dyn Fn(&Path) ->
         if !spec.ends_with(".xzor") || !codegen::is_identifier(name) {
             continue;
         }
-        let file = dir.join(spec);
+        let file = if spec.starts_with('.') {
+            dir.join(spec)
+        } else {
+            match tsconfig_path(dir, spec, read) {
+                Some(target) => component_source(&target),
+                None => continue,
+            }
+        };
         if let Some(text) = read(&file) {
             let mut info = codegen::component_info(&text);
             resolve_string_aliases(&mut info, &text, &file, read, &mut files);
@@ -108,8 +115,8 @@ fn resolve_string_aliases(info: &mut codegen::ComponentInfo, child: &str, child_
     for (prop, names) in &named {
         let text = names.iter().all(|local| {
             let Some((original, spec)) = doc.imports.iter().find_map(|i| imported_binding(i, local)) else { return false };
-            let Some(module) = resolve_module(dir, spec, read, deps, &mut modules) else { return false };
-            alias_is_string(&module, original, 0)
+            let Some((module_dir, module)) = resolve_module(dir, spec, read, deps, &mut modules) else { return false };
+            alias_is_string(&module, &module_dir, original, 0, read, deps, &mut modules)
         });
         if text {
             info.props.insert(prop.clone(), codegen::PropKind::Text);
@@ -130,12 +137,10 @@ fn imported_binding<'a>(import: &'a str, local: &str) -> Option<(&'a str, &'a st
     })
 }
 
-/// The text of a relative module (`./sizes`, `./sizes.js`, `./sizes.ts`, `./dir` with an index).
-fn resolve_module(dir: &Path, spec: &str, read: &dyn Fn(&Path) -> Option<String>, deps: &mut Vec<PathBuf>, cache: &mut HashMap<PathBuf, Option<String>>) -> Option<String> {
-    if !spec.starts_with('.') {
-        return None;
-    }
-    let base = dir.join(spec.strip_suffix(".js").unwrap_or(spec));
+/// The text of a module and its directory: relative (`./sizes`, `./sizes.js`, `./sizes.ts`, `./dir`
+/// with an index), or a package specifier mapped by the tsconfig `paths`.
+fn resolve_module(dir: &Path, spec: &str, read: &dyn Fn(&Path) -> Option<String>, deps: &mut Vec<PathBuf>, cache: &mut HashMap<PathBuf, Option<String>>) -> Option<(PathBuf, String)> {
+    let base = if spec.starts_with('.') { dir.join(spec.strip_suffix(".js").unwrap_or(spec)) } else { tsconfig_path(dir, spec, read)? };
     let base_str = base.to_string_lossy().into_owned();
     let candidates: Vec<PathBuf> = if base_str.ends_with(".ts") {
         vec![base]
@@ -147,24 +152,101 @@ fn resolve_module(dir: &Path, spec: &str, read: &dyn Fn(&Path) -> Option<String>
             deps.push(file.clone());
         }
         let text = cache.entry(file.clone()).or_insert_with(|| read(&file)).clone();
-        if text.is_some() {
-            return text;
+        if let Some(text) = text {
+            return Some((file.parent().unwrap_or(Path::new(".")).to_path_buf(), text));
         }
     }
     None
 }
 
+/// Where a package `spec` points through the `compilerOptions.paths` of the nearest tsconfig above
+/// `dir`: the first target of the matching pattern with the longest prefix, as TypeScript picks.
+fn tsconfig_path(dir: &Path, spec: &str, read: &dyn Fn(&Path) -> Option<String>) -> Option<PathBuf> {
+    let (root, text) = dir.ancestors().find_map(|d| read(&d.join("tsconfig.json")).map(|t| (d, t)))?;
+    let config = json::Json::parse(&text).ok()?;
+    let options = config.get("compilerOptions")?;
+    let base = options.get("baseUrl").and_then(json::Json::as_str).map_or_else(|| root.to_path_buf(), |b| root.join(b));
+    let json::Json::Obj(paths) = options.get("paths")? else { return None };
+    let mut best: Option<(usize, String)> = None;
+    for (pattern, targets) in paths {
+        let Some(target) = targets.as_array().and_then(|t| t.first()).and_then(json::Json::as_str) else { continue };
+        let hit = match pattern.split_once('*') {
+            None => (pattern == spec).then(|| (usize::MAX, target.to_string())),
+            Some((pre, post)) => spec
+                .strip_prefix(pre)
+                .and_then(|rest| rest.strip_suffix(post))
+                .map(|star| (pre.len(), target.replacen('*', star, 1))),
+        };
+        if let Some(hit) = hit.filter(|h| best.as_ref().is_none_or(|b| h.0 > b.0)) {
+            best = Some(hit);
+        }
+    }
+    Some(normalize(&base.join(best?.1)))
+}
+
+/// `a/b/../c` as `a/c`, without touching the file system.
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::ParentDir if matches!(out.components().next_back(), Some(std::path::Component::Normal(_))) => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            _ => out.push(part),
+        }
+    }
+    out
+}
+
+/// The `.xzor` source behind a path: `<root>/.xzor/<rel>.xzor.ts` (the generated file) is `<root>/<rel>.xzor`.
+fn component_source(path: &Path) -> PathBuf {
+    let Some(generated) = path.to_str().and_then(|p| p.strip_suffix(".ts")) else { return path.to_path_buf() };
+    let generated = Path::new(generated);
+    let parts: Vec<_> = generated.components().collect();
+    match parts.iter().rposition(|c| c.as_os_str() == ".xzor") {
+        Some(at) => parts[..at].iter().chain(&parts[at + 1..]).collect(),
+        None => generated.to_path_buf(),
+    }
+}
+
 /// Whether `type <name> = ...` in `module` is a union of string literals, `string` and other such
-/// aliases of the same module.
-fn alias_is_string(module: &str, name: &str, depth: usize) -> bool {
-    let Some(body) = alias_body(module, name) else { return false };
-    depth < 8
-        && body.split('|').map(str::trim).filter(|t| !t.is_empty()).all(|t| {
-            t == "string"
-                || (t.len() >= 2 && (t.starts_with('"') && t.ends_with('"') || t.starts_with('\'') && t.ends_with('\'')))
-                || (t.len() >= 2 && t.starts_with('`') && t.ends_with('`') && !t.contains("${"))
-                || (codegen::is_identifier(t) && alias_is_string(module, t, depth + 1))
-        })
+/// aliases of the same module; a name the module re-exports (`export { type Name } from "./x"`) is followed.
+fn alias_is_string(
+    module: &str,
+    dir: &Path,
+    name: &str,
+    depth: usize,
+    read: &dyn Fn(&Path) -> Option<String>,
+    deps: &mut Vec<PathBuf>,
+    cache: &mut HashMap<PathBuf, Option<String>>,
+) -> bool {
+    if depth >= 8 {
+        return false;
+    }
+    let Some(body) = alias_body(module, name) else {
+        let Some((original, spec)) = module.match_indices("export").find_map(|(at, _)| imported_binding(reexport_clause(&module[at..]), name)) else {
+            return false;
+        };
+        let Some((next_dir, next)) = resolve_module(dir, spec, read, deps, cache) else { return false };
+        return alias_is_string(&next, &next_dir, original, depth + 1, read, deps, cache);
+    };
+    body.split('|').map(str::trim).filter(|t| !t.is_empty()).all(|t| {
+        t == "string"
+            || (t.len() >= 2 && (t.starts_with('"') && t.ends_with('"') || t.starts_with('\'') && t.ends_with('\'')))
+            || (t.len() >= 2 && t.starts_with('`') && t.ends_with('`') && !t.contains("${"))
+            || (codegen::is_identifier(t) && alias_is_string(module, dir, t, depth + 1, read, deps, cache))
+    })
+}
+
+/// `export { ... } from "x"` (or `export type { ... }`) at the start of `text`, up to its `;` or line end;
+/// empty when `text` starts another export.
+fn reexport_clause(text: &str) -> &str {
+    let rest = text["export".len()..].trim_start();
+    let rest = rest.strip_prefix("type").map_or(rest, str::trim_start);
+    let Some(close) = text.find('}').filter(|_| rest.starts_with('{')) else { return "" };
+    let end = text[close..].find([';', '\n']).map_or(text.len(), |n| close + n);
+    &text[..end]
 }
 
 /// The right-hand side of `[export] type <name> = ...`, up to its `;` or the next statement.
@@ -275,5 +357,28 @@ mod tests {
         }
         // An edit to the alias module refreshes the importer.
         assert!(g.deps.contains(&root.join("sizes.ts")) && g.deps.contains(&root.join("kinds.ts")), "{:?}", g.deps);
+    }
+
+    /// A kit outside the project: `@kit/Button.xzor` maps through the tsconfig `paths` to the generated
+    /// file, whose source gives the prop kinds; aliases are followed through `paths` and re-exports.
+    #[test]
+    fn components_imported_through_tsconfig_paths_take_their_prop_kinds() {
+        let root = Path::new("/p");
+        let files: HashMap<PathBuf, &str> = [
+            (root.join("app").join("tsconfig.json"), r#"{"compilerOptions":{"paths":{"@kit":["../kit/index.ts"],"@kit/*":["../kit/.xzor/*.ts"]}}}"#),
+            (root.join("kit").join("tsconfig.json"), r#"{"compilerOptions":{"paths":{"@kit":["./index.ts"]}}}"#),
+            (root.join("kit").join("Button.xzor"), "@import { type Tone } from \"@kit\"\n@code { tone?: Tone; count = 0; }\n<p/>"),
+            (root.join("kit").join("index.ts"), "export const x = 1;\nexport { icons, type Tone as Tone } from \"./tones\";\n"),
+            (root.join("kit").join("tones.ts"), "export type Tone = \"neutral\" | \"accent\";\n"),
+        ]
+        .into_iter()
+        .collect();
+        let read = |p: &Path| files.get(p).map(|t| t.to_string());
+        let main = "@import Button from \"@kit/Button.xzor\"\n<Button tone=\"accent\" count=\"n + 1\" />\n";
+        let g = compile_mapped_with(main, &root.join("app").join("Page.xzor"), &read).unwrap();
+        for m in ["tone: \"accent\"", "count: n + 1"] {
+            assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
+        }
+        assert!(g.deps.contains(&root.join("kit").join("Button.xzor")) && g.deps.contains(&root.join("kit").join("tones.ts")), "{:?}", g.deps);
     }
 }

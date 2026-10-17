@@ -1,0 +1,74 @@
+@typeparam T
+@import { type EventCallback } from "@source-crafter/xzor-runtime"
+@import { type Column } from "@source-crafter/xzor-ui"
+@import Icon from "./Icon.xzor"
+
+@code {
+  items: Iterable<T> = [];
+  columns: Column<T>[] = [];
+  /** Makes rows clickable (and reachable with Tab and Enter). */
+  onRow?: EventCallback<T>;
+  caption = "";
+  sortBy = -1;
+  descending = false;
+
+  get rows(): T[] {
+    const rows = [...this.items];
+    const column = this.columns[this.sortBy];
+    if (!column) return rows;
+    const dir = this.descending ? -1 : 1;
+    return rows.sort((a, b) => {
+      const x = column.value(a);
+      const y = column.value(b);
+      return (x < y ? -1 : x > y ? 1 : 0) * dir;
+    });
+  }
+
+  sort(index: number) {
+    if (this.sortBy === index) this.descending = !this.descending;
+    else {
+      this.sortBy = index;
+      this.descending = false;
+    }
+  }
+
+  open(e: KeyboardEvent, row: T) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    this.onRow?.(row);
+  }
+}
+
+<div class="xz-table" data-depth="1">
+  <table>
+    @if (caption) {
+      <caption>@caption</caption>
+    }
+    <thead>
+      <tr>
+        @for (let i = 0; i < columns.length; i++) {
+          @{ const column = columns[i]!; const at = i; }
+          <th scope="col" data-align="@column.align" aria-sort="@(sortBy === at ? (descending ? 'descending' : 'ascending') : null)">
+            @if (column.sort === false) {
+              @column.label
+            } else {
+              <button type="button" @onclick="() => sort(at)">
+                @column.label
+                <Icon name="@(sortBy === at && descending ? 'arrow-down' : 'arrow-up')" />
+              </button>
+            }
+          </th>
+        }
+      </tr>
+    </thead>
+    <tbody>
+      @for (const row of rows) {
+        <tr data-clickable="@(onRow !== undefined)" tabindex="@(onRow ? 0 : null)" @onclick="() => onRow?.(row)" @onkeydown="(e) => open(e, row)">
+          @for (const column of columns) {
+            <td data-align="@column.align">@column.value(row)</td>
+          }
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>

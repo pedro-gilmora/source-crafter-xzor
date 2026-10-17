@@ -1,0 +1,26 @@
+@import { type EventCallback } from "@source-crafter/xzor-runtime"
+
+@code {
+  options: string[] = [];
+  value = "";
+  valueChanged?: EventCallback<string>;
+  label = "";
+  list?: HTMLElement;
+
+  /** Arrow keys move the selection, and the focus with it, as the tabs pattern asks. */
+  key(e: KeyboardEvent, tab: string) {
+    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (step === 0) return;
+    e.preventDefault();
+    const n = this.options.length;
+    this.valueChanged?.(this.options[(this.options.indexOf(tab) + step + n) % n]!);
+    queueMicrotask(() => this.list?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+  }
+}
+
+<div class="xz-tabs" role="tablist" aria-label="@label" @ref="list">
+  @for (const tab of options) {
+    <button type="button" role="tab" aria-selected="@(tab === value ? 'true' : 'false')" tabindex="@(tab === value ? 0 : -1)"
+      @onclick="() => valueChanged?.(tab)" @onkeydown="(e) => key(e, tab)">@tab</button>
+  }
+</div>

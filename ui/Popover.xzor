@@ -1,0 +1,6 @@
+@code {
+  /** Referenced by the `toggles` of the `Button` that opens it, which it is anchored to. */
+  id = "";
+}
+
+<div class="xz-popover" id="@id" popover data-depth="2">@slot</div>

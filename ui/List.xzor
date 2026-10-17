@@ -1,0 +1,13 @@
+@typeparam T
+@import { type Depth } from "@source-crafter/xzor-ui"
+
+@code {
+  items: Iterable<T> = [];
+  depth: Depth = "1";
+}
+
+<ul class="xz-list" data-depth="@depth">
+  @for (const item of items) {
+    <li>@slot:item(item as T) { @String(item) }</li>
+  }
+</ul>

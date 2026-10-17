@@ -853,6 +853,7 @@ test("NavLink marks the active link by prefix or exact match", () => {
 
   memory.go("/");
   expect(classes()).toEqual([null, null, null, "active"]);
+  expect(Array.from(r.host.querySelectorAll("a"), (a) => a.getAttribute("aria-current"))).toEqual([null, null, null, "page"]);
 });
 
 /** Mounts `links` with no routes block anywhere in the tree. */

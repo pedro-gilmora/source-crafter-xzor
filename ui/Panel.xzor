@@ -1,0 +1,16 @@
+@import { type Depth } from "@source-crafter/xzor-ui"
+
+@code {
+  title = "";
+  depth: Depth = "1";
+}
+
+<section class="xz-panel" data-depth="@depth">
+  @if (title || this.slots.actions) {
+    <header>
+      <h2>@title</h2>
+      @slot:actions
+    </header>
+  }
+  @slot
+</section>

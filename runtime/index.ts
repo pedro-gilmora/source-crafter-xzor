@@ -1377,7 +1377,10 @@ export class NavLink extends ComponentBase {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("a");
     b.addAttribute("href", this.href);
-    if (this.#active()) b.addAttribute("class", this.activeClass);
+    if (this.#active()) {
+      b.addAttribute("class", this.activeClass);
+      b.addAttribute("aria-current", "page");
+    }
     b.addContent(this.slots.default?.() ?? null);
     b.closeElement();
   }

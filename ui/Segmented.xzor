@@ -1,0 +1,19 @@
+@import { type EventCallback } from "@source-crafter/xzor-runtime"
+
+@code {
+  static #groups = 0;
+  options: string[] = [];
+  value = "";
+  valueChanged?: EventCallback<string>;
+  label = "";
+  #group = `xz-segmented-${++Segmented.#groups}`;
+}
+
+<div class="xz-segmented" role="radiogroup" aria-label="@label">
+  @for (const option of options) {
+    <label>
+      <input type="radio" name="@#group" value="@option" checked="@(option === value)" @onchange="() => valueChanged?.(option)" />
+      <span>@option</span>
+    </label>
+  }
+</div>

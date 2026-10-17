@@ -1,0 +1,13 @@
+@import { type IconName } from "@source-crafter/xzor-ui"
+@import Icon from "./Icon.xzor"
+
+@code {
+  title = "";
+  icon: IconName = "inbox";
+}
+
+<div class="xz-empty">
+  <Icon name="@icon" />
+  <h3>@title</h3>
+  @slot
+</div>
