@@ -59,7 +59,7 @@ const theme: ThemeRegistration = {
 
 const highlighter = await createHighlighter({
   themes: [theme],
-  langs: [{ ...grammar, name: "xzor", embeddedLangs: ["typescript"] }, "typescript", "json", "jsonc", "html", "shellscript", "powershell"],
+  langs: [{ ...grammar, name: "xzor", embeddedLangs: ["typescript"] }, "typescript", "json", "jsonc", "html", "css", "shellscript", "powershell"],
 });
 
 // `--- name | file | lang` opens a snippet; everything up to the next one is its code.

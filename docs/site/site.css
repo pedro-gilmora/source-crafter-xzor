@@ -1,0 +1,534 @@
+/* The xzor site: page layout on top of the xzor-ui kit (ui.css). Colors, radii and motion come from its tokens. */
+:root {
+  --xz-hue: 268;
+  /* Code samples keep the editor's night theme in both color schemes. */
+  --code-bg: #0f1222;
+  --code-head: #151a33;
+  --code-line: #232946;
+  --code-text: #d6deeb;
+  --code-muted: #8b93b5;
+}
+
+code {
+  font-variant-ligatures: none;
+}
+
+:not(pre) > code {
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--xz-line);
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--xz-surface) 70%, transparent);
+}
+
+:not(header) > h2 {
+  margin-top: var(--xz-space-7);
+}
+
+/* Shell */
+.brand {
+  padding-inline: var(--xz-space-2);
+  color: var(--xz-text);
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.brand .at {
+  color: var(--xz-accent);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--xz-space-1);
+}
+
+.links a {
+  padding: var(--xz-space-2) var(--xz-space-3);
+  border-radius: var(--xz-radius-pill);
+  color: var(--xz-muted);
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.links a:is(.active, [aria-current="page"]) {
+  color: var(--xz-text);
+  background: color-mix(in oklch, var(--xz-accent) 15%, transparent);
+}
+
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem) 4rem;
+}
+
+body > div > footer,
+#app > footer {
+  padding: 2rem 1rem 3rem;
+  border-top: 1px solid var(--xz-line);
+  color: var(--xz-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* Home */
+.hero {
+  padding: 5rem 0 3rem;
+  text-align: center;
+}
+
+.hero h1 {
+  margin: 0 0 1.2rem;
+  font-size: clamp(2rem, 5vw, 3.4rem);
+  letter-spacing: -0.03em;
+}
+
+.hero .accent {
+  /* background-image, not the shorthand: the bundler's color fallbacks repeat the shorthand, which would reset the clip. */
+  background-image: linear-gradient(90deg, var(--xz-accent), oklch(72% 0.14 200));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lead {
+  max-width: 46rem;
+  margin-inline: auto;
+  color: var(--xz-muted);
+  font-size: 1.15rem;
+}
+
+.hero .lead {
+  margin-bottom: 2rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--xz-space-3);
+}
+
+.demo {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  align-items: stretch;
+  gap: var(--xz-space-5);
+  margin: 2rem 0 4rem;
+}
+
+.live {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: var(--xz-space-3);
+  padding: var(--xz-space-5);
+  border-radius: var(--xz-radius-lg);
+}
+
+.live button {
+  padding: 0.6rem 1rem;
+  border: 0;
+  border-radius: var(--xz-radius-pill);
+  background: var(--xz-accent);
+  color: var(--xz-on-tone);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.live p {
+  margin: 0;
+  color: var(--xz-accent);
+}
+
+.label {
+  color: var(--xz-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--xz-space-4);
+}
+
+.features article {
+  padding: var(--xz-space-5);
+  border-radius: var(--xz-radius-lg);
+}
+
+.features h3 {
+  margin: 0 0 0.4rem;
+}
+
+.features p {
+  margin: 0;
+  color: var(--xz-muted);
+}
+
+.kit-teaser {
+  margin-top: 5rem;
+  text-align: center;
+}
+
+.showcase {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--xz-space-4);
+  margin-top: var(--xz-space-6);
+}
+
+.showcase a {
+  display: grid;
+  gap: var(--xz-space-2);
+  padding: var(--xz-space-5);
+  border-radius: var(--xz-radius-lg);
+  color: var(--xz-text);
+  text-decoration: none;
+}
+
+.showcase a > .xz-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  color: var(--xz-accent);
+}
+
+.showcase a > span {
+  color: var(--xz-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .showcase a {
+    transition: translate var(--xz-dur-2) var(--xz-ease-out);
+  }
+
+  @media (hover: hover) {
+    .showcase a:hover {
+      translate: 0 -3px;
+    }
+  }
+}
+
+/* Pages */
+.page {
+  padding-top: 2.5rem;
+}
+
+.narrow {
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--xz-space-4);
+}
+
+.checklist li {
+  margin: 0.3rem 0;
+}
+
+.learn {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 2.5rem;
+}
+
+.learn aside {
+  position: sticky;
+  top: 5rem;
+  align-self: start;
+  padding-top: 2.5rem;
+}
+
+.learn aside ol {
+  padding-left: 1.2rem;
+}
+
+.learn aside li {
+  margin: 0.4rem 0;
+  color: var(--xz-muted);
+}
+
+.learn aside a {
+  color: var(--xz-muted);
+  text-decoration: none;
+}
+
+.learn aside a.active {
+  color: var(--xz-accent);
+  font-weight: 600;
+}
+
+.learn article {
+  min-width: 0;
+}
+
+.learn h1 {
+  margin-top: 0.3rem;
+}
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--xz-space-4);
+  margin-top: 3rem;
+}
+
+.pager .primary {
+  margin-left: auto;
+}
+
+.pieces {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.5rem 1.5rem;
+}
+
+.pieces dd {
+  margin: 0;
+  color: var(--xz-muted);
+}
+
+.error {
+  color: var(--xz-danger);
+}
+
+/* Code blocks */
+.code {
+  margin: 1.25rem 0;
+  border: 1px solid var(--code-line);
+  border-radius: var(--xz-radius);
+  background: var(--code-bg);
+  color: var(--code-text);
+  overflow: hidden;
+}
+
+.code figcaption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.45rem 0.9rem;
+  border-bottom: 1px solid var(--code-line);
+  background: var(--code-head);
+  color: var(--code-muted);
+  font: 0.8rem var(--xz-font-mono);
+}
+
+.code .copy {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--code-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--code-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.code .copy:hover {
+  color: var(--code-text);
+}
+
+.code pre {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+/* Kit gallery and recipes */
+.gallery {
+  display: grid;
+  gap: var(--xz-space-5);
+}
+
+.specimen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--xz-space-5);
+  align-items: start;
+}
+
+.specimen > .stage {
+  display: grid;
+  gap: var(--xz-space-4);
+  min-width: 0;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--xz-space-2);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--xz-space-2);
+}
+
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--xz-space-2);
+  margin-bottom: var(--xz-space-5);
+}
+
+/* Recipe: glass bar over scrolling content. */
+.scroller {
+  position: relative;
+  height: 16rem;
+  border-radius: var(--xz-radius-lg);
+  overflow: auto;
+  background: linear-gradient(160deg, oklch(70% 0.15 var(--xz-hue)), oklch(70% 0.13 200) 60%, oklch(75% 0.12 330));
+}
+
+.scroller .xz-toolbar {
+  position: sticky;
+  top: var(--xz-space-3);
+  margin: var(--xz-space-3);
+}
+
+.scroller p {
+  margin: var(--xz-space-3) var(--xz-space-4);
+  color: oklch(20% 0.02 var(--xz-hue));
+}
+
+/* Recipe: a bottom sheet that rests half open and snaps fully open, by scroll snap alone. */
+.snap {
+  width: 100%;
+  max-width: 40rem;
+  height: 100dvh;
+  max-height: none;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+}
+
+.snap::backdrop {
+  background: oklch(12% 0.02 var(--xz-hue) / 0.4);
+}
+
+.snap-rest {
+  height: 55dvh;
+  scroll-snap-align: start;
+}
+
+.snap-panel {
+  min-height: 100dvh;
+  padding: var(--xz-space-3) var(--xz-space-5) var(--xz-space-6);
+  border-radius: var(--xz-radius-lg) var(--xz-radius-lg) 0 0;
+  scroll-snap-align: start;
+}
+
+.snap-panel::before {
+  content: "";
+  display: block;
+  width: 2.5rem;
+  height: 5px;
+  margin: 0 auto var(--xz-space-3);
+  border-radius: 3px;
+  background: var(--xz-line);
+}
+
+/* Recipe: the KPI grid lays out by its own width. Drag the corner to resize it. */
+.resizable {
+  min-width: 14rem;
+  max-width: 100%;
+  padding: var(--xz-space-3);
+  border: 1px dashed var(--xz-line);
+  border-radius: var(--xz-radius-lg);
+  overflow: hidden;
+  resize: horizontal;
+}
+
+.kpis {
+  display: grid;
+  gap: var(--xz-space-3);
+}
+
+@container (width > 32rem) {
+  .kpis {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@container (20rem < width <= 32rem) {
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.kpis .xz-stat {
+  padding: var(--xz-space-3);
+  border-radius: var(--xz-radius);
+  background: color-mix(in oklch, var(--xz-surface) 60%, transparent);
+}
+
+/* Recipe: skeleton, then content fading in. */
+.loaded {
+  display: grid;
+  gap: var(--xz-space-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .loaded > * {
+    transition: opacity var(--xz-dur-3) var(--xz-ease-out);
+  }
+
+  @starting-style {
+    .loaded > * {
+      opacity: 0;
+    }
+  }
+}
+
+.media {
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  align-items: center;
+  gap: var(--xz-space-3);
+}
+
+@media (max-width: 820px) {
+  .demo,
+  .two,
+  .learn,
+  .specimen {
+    grid-template-columns: 1fr;
+  }
+
+  .learn aside {
+    position: static;
+    padding-top: 1rem;
+  }
+
+  /* The links move to a scrolling second row under the brand. */
+  .xz-navbar[data-kind="top"] {
+    flex-wrap: wrap;
+  }
+
+  .links {
+    flex-wrap: nowrap;
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .links a {
+    white-space: nowrap;
+  }
+}

@@ -1,0 +1,214 @@
+@page "/kit"
+@import Code from "../components/Code.xzor"
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import Glass from "@source-crafter/xzor-ui/Glass.xzor"
+@import Panel from "@source-crafter/xzor-ui/Panel.xzor"
+@import Menu from "@source-crafter/xzor-ui/Menu.xzor"
+@import Popover from "@source-crafter/xzor-ui/Popover.xzor"
+@import Sheet from "@source-crafter/xzor-ui/Sheet.xzor"
+@import Dialog from "@source-crafter/xzor-ui/Dialog.xzor"
+@import Field from "@source-crafter/xzor-ui/Field.xzor"
+@import Segmented from "@source-crafter/xzor-ui/Segmented.xzor"
+@import Tabs from "@source-crafter/xzor-ui/Tabs.xzor"
+@import Stat from "@source-crafter/xzor-ui/Stat.xzor"
+@import Badge from "@source-crafter/xzor-ui/Badge.xzor"
+@import Avatar from "@source-crafter/xzor-ui/Avatar.xzor"
+@import Table from "@source-crafter/xzor-ui/Table.xzor"
+@import List from "@source-crafter/xzor-ui/List.xzor"
+@import Skeleton from "@source-crafter/xzor-ui/Skeleton.xzor"
+@import Empty from "@source-crafter/xzor-ui/Empty.xzor"
+@import Icon from "@source-crafter/xzor-ui/Icon.xzor"
+@import Grid from "@source-crafter/xzor-ui/Grid.xzor"
+@import { icons, toast, type Column, type IconName, type Size, type Tone } from "@source-crafter/xzor-ui"
+
+@code {
+  tones = ["neutral", "accent", "success", "warning", "danger"];
+  tone = "accent";
+  variant = "solid";
+  size = "md";
+  plan = "Monthly";
+  email = "";
+  section = "Overview";
+  names = Object.keys(icons) as IconName[];
+  people = [
+    { name: "Ada Lovelace", role: "Engineer", commits: 412 },
+    { name: "Grace Hopper", role: "Admiral", commits: 380 },
+    { name: "Alan Turing", role: "Researcher", commits: 297 },
+    { name: "Radia Perlman", role: "Architect", commits: 455 },
+  ];
+  columns: Column<{ name: string; role: string; commits: number }>[] = [
+    { label: "Name", value: (p) => p.name },
+    { label: "Role", value: (p) => p.role },
+    { label: "Commits", value: (p) => p.commits, align: "end" },
+  ];
+
+  get emailError() {
+    return this.email && !this.email.includes("@") ? "That doesn't look like an email" : "";
+  }
+}
+
+<section class="page">
+  <h1>The kit</h1>
+  <p class="lead" style="margin-inline: 0">
+    Every component of xzor-ui, live. Each one renders plain HTML with a class and <code>data-*</code> attributes;
+    one static style sheet does the rest, and the browser opens, closes and positions things natively.
+  </p>
+  <nav class="toc" aria-label="Sections">
+    <a class="xz-button" data-size="sm" href="kit#buttons">Buttons</a>
+    <a class="xz-button" data-size="sm" href="kit#surfaces">Surfaces</a>
+    <a class="xz-button" data-size="sm" href="kit#overlays">Overlays</a>
+    <a class="xz-button" data-size="sm" href="kit#forms">Forms</a>
+    <a class="xz-button" data-size="sm" href="kit#navigation">Navigation</a>
+    <a class="xz-button" data-size="sm" href="kit#data">Data</a>
+    <a class="xz-button" data-size="sm" href="kit#feedback">Feedback</a>
+    <a class="xz-button" data-size="sm" href="kit#icons">Icons</a>
+  </nav>
+
+  <div class="gallery">
+    <Panel title="Buttons">
+      <div class="specimen" id="buttons">
+        <div class="stage">
+          <div class="controls">
+            <Segmented options="@tones" @bind-value="tone" label="Tone" />
+            <Segmented options="@(['solid', 'soft', 'ghost', 'glass'])" @bind-value="variant" label="Variant" />
+            <Segmented options="@(['sm', 'md', 'lg'])" @bind-value="size" label="Size" />
+          </div>
+          <div class="row">
+            <Button tone="@(tone as Tone)" variant="@(variant as 'solid')" size="@(size as Size)" icon="plus">New order</Button>
+            <Button tone="@(tone as Tone)" variant="@(variant as 'solid')" size="@(size as Size)">Save</Button>
+            <Button tone="@(tone as Tone)" variant="@(variant as 'solid')" size="@(size as Size)" icon="heart" label="Like" />
+            <Button tone="@(tone as Tone)" variant="@(variant as 'solid')" size="@(size as Size)" disabled="@true">Disabled</Button>
+          </div>
+        </div>
+        <Code name="kit-button" />
+      </div>
+    </Panel>
+
+    <Panel title="Surfaces">
+      <div class="specimen" id="surfaces">
+        <div class="stage">
+          <Grid min="7rem" gap="sm">
+            <Glass depth="0"><strong>depth 0</strong><p class="xz-muted">flat</p></Glass>
+            <Glass depth="1"><strong>depth 1</strong><p class="xz-muted">content</p></Glass>
+            <Glass depth="2"><strong>depth 2</strong><p class="xz-muted">floating bars</p></Glass>
+            <Glass depth="3"><strong>depth 3</strong><p class="xz-muted">overlays</p></Glass>
+            <Glass depth="2" tone="accent"><strong>tinted</strong><p class="xz-muted">tone="accent"</p></Glass>
+            <Glass depth="2" tone="success"><strong>tinted</strong><p class="xz-muted">tone="success"</p></Glass>
+          </Grid>
+        </div>
+        <Code name="kit-surfaces" />
+      </div>
+    </Panel>
+
+    <Panel title="Overlays">
+      <div class="specimen" id="overlays">
+        <div class="stage">
+          <div class="row">
+            <Button toggles="kit-menu" icon="dots">Menu</Button>
+            <Menu id="kit-menu">
+              <button popovertarget="kit-menu" popovertargetaction="hide">Rename</button>
+              <button popovertarget="kit-menu" popovertargetaction="hide">Duplicate</button>
+              <hr />
+              <button popovertarget="kit-menu" popovertargetaction="hide">Delete</button>
+            </Menu>
+            <Button toggles="kit-pop" icon="info">Popover</Button>
+            <Popover id="kit-pop"><p style="margin: 0">Anchored to its button with <code>position-area</code>. Click outside or press Esc.</p></Popover>
+            <Button opens="kit-sheet">Bottom sheet</Button>
+            <Button opens="kit-side">Side sheet</Button>
+            <Button opens="kit-dialog" tone="danger">Dialog</Button>
+          </div>
+          <Sheet id="kit-sheet" title="Bottom sheet">
+            <p>Slides up on phones and desktops alike. Drag handle included, focus kept inside.</p>
+            @slot actions { <Button closes="kit-sheet" variant="solid" tone="accent">Done</Button> }
+          </Sheet>
+          <Sheet id="kit-side" title="Side sheet" side="end">
+            <p>From the end edge: details, filters, settings.</p>
+          </Sheet>
+          <Dialog id="kit-dialog" title="Delete this project?">
+            <p>This removes 12 pages and their history. You can't undo it.</p>
+            @slot actions {
+              <Button closes="kit-dialog" variant="ghost">Cancel</Button>
+              <Button closes="kit-dialog" variant="solid" tone="danger" onClick="() => toast('Project deleted', 'danger')">Delete</Button>
+            }
+          </Dialog>
+        </div>
+        <Code name="kit-overlays" />
+      </div>
+    </Panel>
+
+    <Panel title="Forms">
+      <div class="specimen" id="forms">
+        <div class="stage">
+          <Field label="Email" hint="We only use it for receipts" error="@emailError"><input type="email" placeholder="you@example.com" @bind="email" @bind:event="oninput" /></Field>
+          <Field label="Country"><select><option>Spain</option><option>Portugal</option><option>Mexico</option></select></Field>
+          <Field label="Notes"><textarea placeholder="Anything we should know?"></textarea></Field>
+          <label class="row"><input type="checkbox" role="switch" checked /> Email me when it ships</label>
+          <Segmented options="@(['Monthly', 'Yearly'])" @bind-value="plan" label="Billing" />
+        </div>
+        <Code name="kit-forms" />
+      </div>
+    </Panel>
+
+    <Panel title="Navigation">
+      <div class="specimen" id="navigation">
+        <div class="stage">
+          <Tabs options="@(['Overview', 'Activity', 'Settings'])" @bind-value="section" label="Project" />
+          <p>Showing <strong>@section</strong>. Arrow keys move between tabs.</p>
+        </div>
+        <Code name="kit-nav" />
+      </div>
+    </Panel>
+
+    <Panel title="Data">
+      <div class="specimen" id="data">
+        <div class="stage">
+          <Grid min="9rem" gap="sm">
+            <Stat label="Revenue" value="$48,230" delta="4.1" />
+            <Stat label="Churn" value="2.4" unit="%" delta="-0.3" />
+          </Grid>
+          <div class="row">
+            <Badge>neutral</Badge><Badge tone="accent">accent</Badge><Badge tone="success">paid</Badge><Badge tone="warning">pending</Badge><Badge tone="danger">failed</Badge>
+            <Avatar name="Ada Lovelace" size="sm" /><Avatar name="Grace Hopper" /><Avatar name="Alan Turing" size="lg" />
+          </div>
+          <Table items="@people" columns="@columns" depth="0" caption="Top contributors" />
+          <List items="@people" depth="0">
+            @slot item(p) {
+              <Avatar name="@p.name" size="sm" />
+              <span style="flex: 1">@p.name</span>
+              <Badge tone="accent">@p.commits</Badge>
+            }
+          </List>
+        </div>
+        <Code name="kit-data" />
+      </div>
+    </Panel>
+
+    <Panel title="Feedback">
+      <div class="specimen" id="feedback">
+        <div class="stage">
+          <div class="row">
+            <Button onClick="() => toast('Saved')">Toast</Button>
+            <Button tone="success" onClick="() => toast('Payment received', 'success')">Success</Button>
+            <Button tone="danger" onClick="() => toast('Upload failed', 'danger')">Danger</Button>
+          </div>
+          <div class="media">
+            <Skeleton width="3rem" height="3rem" round="@true" />
+            <div style="display: grid; gap: 0.5rem"><Skeleton width="60%" /><Skeleton width="40%" /></div>
+          </div>
+          <Empty title="No invoices yet" icon="inbox"><p>Invoices you send show up here.</p></Empty>
+        </div>
+        <Code name="kit-feedback" />
+      </div>
+    </Panel>
+
+    <Panel title="Icons">
+      <div id="icons">
+        <Grid min="7rem" gap="sm">
+          @for (const name of names) {
+            <span class="row"><Icon name="@name" /><small class="xz-muted">@name</small></span>
+          }
+        </Grid>
+      </div>
+    </Panel>
+  </div>
+</section>

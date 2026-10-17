@@ -1,5 +1,9 @@
-import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import "@source-crafter/xzor-ui";
+import "./site.css";
+import { type IApplication, Mount, viewTransitions } from "@source-crafter/xzor-runtime";
 import Routes from "./Routes.xzor";
+
+viewTransitions(true);
 
 @Mount(Routes, "app")
 export class Application implements IApplication {}

@@ -161,3 +161,120 @@ Counter.xzor  →  xzor  →  .xzor/Counter.xzor.ts  →  tsc  →  Bun  →  di
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
   ]
 }
+--- kit-button | Toolbar.xzor | xzor
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+
+<Button tone="accent" variant="solid" icon="plus">New order</Button>
+<Button>Save</Button>
+<Button icon="heart" label="Like" />      @* icon only: label is its name *@
+<Button disabled="@saving">Disabled</Button>
+--- kit-surfaces | Dashboard.xzor | xzor
+<Glass depth="2" tone="accent">…</Glass>
+
+<Panel title="Revenue">
+  @slot actions { <a href="orders">View all</a> }
+  <Stat label="This week" value="$48,230" delta="4.1" />
+</Panel>
+--- kit-overlays | Page.xzor | xzor
+<Button toggles="more" icon="dots">Menu</Button>
+<Menu id="more">
+  <button>Rename</button>
+  <button>Delete</button>
+</Menu>
+
+<Button opens="cart">Basket</Button>
+<Sheet id="cart" title="Your basket">
+  …
+  @slot actions { <Button closes="cart">Done</Button> }
+</Sheet>
+--- kit-forms | Signup.xzor | xzor
+<Field label="Email" hint="Only for receipts" error="@emailError">
+  <input type="email" @bind="email" @bind:event="oninput" />
+</Field>
+<label><input type="checkbox" role="switch" /> Email me</label>
+<Segmented options="@(['Monthly', 'Yearly'])" @bind-value="plan" label="Billing" />
+--- kit-nav | Shell.xzor | xzor
+<NavBar kind="tabs">                      @* top, side or tabs (phones) *@
+  <NavItem href="@href.Shop()" label="Shop" icon="home" match="exact" />
+  <NavItem href="@href.Orders()" label="Orders" icon="package" />
+</NavBar>
+
+<Tabs options="@sections" @bind-value="section" label="Project" />
+--- kit-data | Team.xzor | xzor
+@code {
+  columns: Column<Person>[] = [
+    { label: "Name", value: (p) => p.name },
+    { label: "Commits", value: (p) => p.commits, align: "end" },
+  ];
+}
+
+<Table items="@people" columns="@columns" onRow="(p: Person) => open(p)" />
+<List items="@people">
+  @slot item(p) { <Avatar name="@p.name" size="sm" /> @p.name <Badge tone="accent">@p.commits</Badge> }
+</List>
+--- kit-feedback | Upload.xzor | xzor
+@import { toast } from "@source-crafter/xzor-ui"
+
+<Button onClick="() => toast('Upload failed', 'danger')">Upload</Button>
+<Skeleton width="60%" />
+<Empty title="No invoices yet" icon="inbox"><p>They show up here.</p></Empty>
+--- recipe-glass-bar | Inbox.xzor + app.css | xzor
+<div class="scroller">
+  <Toolbar depth="2">…</Toolbar>       @* glass: blur, tint and rim come from depth *@
+  …
+</div>
+
+@* app.css *@
+@* .scroller .xz-toolbar { position: sticky; top: 0.75rem; } *@
+--- recipe-snap-sheet | Directions.xzor + app.css | xzor
+<Button opens="steps">Directions</Button>
+<dialog id="steps" class="snap" closedby="any">
+  <div class="snap-rest"></div>                  @* scrolled to: half open *@
+  <div class="snap-panel" data-depth="3">…</div>  @* scrolled to: fully open *@
+</dialog>
+
+@* .snap { height: 100dvh; overflow-y: auto; scroll-snap-type: y mandatory; }
+   .snap-rest { height: 55dvh; scroll-snap-align: start; }
+   .snap-panel { min-height: 100dvh; scroll-snap-align: start; } *@
+--- recipe-command-menu | Commands.xzor | xzor
+<Button toggles="commands" icon="search">Commands</Button>
+<Menu id="commands">
+  <input class="xz-input" type="search" @bind="query" @bind:event="oninput" />
+  @for (const command of matches) {
+    <button popovertarget="commands" popovertargetaction="hide" @onclick="() => run(command)">@command</button>
+  }
+</Menu>
+--- recipe-toasts | Anywhere.ts | typescript
+import { toast } from "@source-crafter/xzor-ui";
+
+toast("Draft saved");
+toast("Payment received", "success");
+toast("Sync failed", "danger", 6000); // ms on screen
+--- recipe-container-kpis | app.css | css
+.box { container-type: inline-size; }   /* or class="xz-container" */
+
+.kpis { display: grid; gap: 0.75rem; }
+@container (20rem < width <= 32rem) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+@container (width > 32rem)          { .kpis { grid-template-columns: repeat(3, 1fr); } }
+--- recipe-sticky-table | Orders.xzor | xzor
+@* The header sticks; the custom property caps the height. *@
+<div style="--xz-table-height: 16rem">
+  <Table items="@rows" columns="@columns" />
+</div>
+--- recipe-theme | Settings.xzor | xzor
+@import { setTheme, type Theme } from "@source-crafter/xzor-ui"
+
+<Segmented options="@(['Light', 'Dark', 'Auto'])" value="@theme"
+  valueChanged="(v: string) => setTheme(v.toLowerCase() as Theme)" label="Theme" />
+--- recipe-view-transitions | main.ts + app.css | typescript
+import { viewTransitions } from "@source-crafter/xzor-runtime";
+
+viewTransitions(true);
+// app.css: the same name on both pages morphs one into the other
+// .card h2, .post h1 { view-transition-name: var(--name); }
+--- recipe-skeleton | Profile.xzor | xzor
+@if (loading) {
+  <Skeleton width="3rem" height="3rem" round="@true" />
+} else {
+  <div class="loaded">…</div>   @* @starting-style fades it in *@
+}

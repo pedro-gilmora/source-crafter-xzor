@@ -1,0 +1,174 @@
+@page "/recipes"
+@import Code from "../components/Code.xzor"
+@import Button from "@source-crafter/xzor-ui/Button.xzor"
+@import Panel from "@source-crafter/xzor-ui/Panel.xzor"
+@import Toolbar from "@source-crafter/xzor-ui/Toolbar.xzor"
+@import Menu from "@source-crafter/xzor-ui/Menu.xzor"
+@import Icon from "@source-crafter/xzor-ui/Icon.xzor"
+@import Stat from "@source-crafter/xzor-ui/Stat.xzor"
+@import Table from "@source-crafter/xzor-ui/Table.xzor"
+@import Segmented from "@source-crafter/xzor-ui/Segmented.xzor"
+@import Skeleton from "@source-crafter/xzor-ui/Skeleton.xzor"
+@import Avatar from "@source-crafter/xzor-ui/Avatar.xzor"
+@import { currentTheme, setTheme, toast, type Column, type Theme } from "@source-crafter/xzor-ui"
+
+@code {
+  query = "";
+  theme = "Auto";
+  loading = true;
+  commands = ["New page", "New component", "Open settings", "Switch theme", "Search docs", "Invite a teammate"];
+  rows = Array.from({ length: 30 }, (_, i) => ({ id: 1000 + i, city: ["Lisbon", "Osaka", "Austin", "Lyon", "Bogotá"][i % 5]!, total: ((i * 37) % 400) + 20 }));
+  columns: Column<{ id: number; city: string; total: number }>[] = [
+    { label: "Order", value: (r) => r.id },
+    { label: "City", value: (r) => r.city },
+    { label: "Total", value: (r) => r.total, text: (r) => `$${r.total}`, align: "end" },
+  ];
+
+  get matches(): string[] {
+    const q = this.query.trim().toLowerCase();
+    return this.commands.filter((c) => c.toLowerCase().includes(q));
+  }
+
+  run(command: string) {
+    toast(`Ran "${command}"`);
+    if (command === "Switch theme") setTheme(currentTheme() === "dark" ? "light" : "dark");
+  }
+
+  pickTheme(value: string) {
+    this.theme = value;
+    setTheme(value.toLowerCase() as Theme);
+  }
+
+  reload() {
+    this.loading = true;
+    setTimeout(() => (this.loading = false), 1200);
+  }
+
+  protected override onInitialized(): void {
+    this.reload();
+  }
+}
+
+<section class="page">
+  <h1>Recipes</h1>
+  <p class="lead" style="margin-inline: 0">
+    The combinations people ask for, built from the kit and a few lines of CSS. Each one is live; the code next to it is all there is.
+  </p>
+
+  <div class="gallery">
+    <Panel title="Glass bar over scrolling content">
+      <div class="specimen">
+        <div class="scroller" tabindex="0" aria-label="Scrolling demo">
+          <Toolbar depth="2"><Icon name="menu" /><strong>Inbox</strong><span class="xz-spacer"></span><Button size="sm" variant="glass" icon="search" label="Search" /></Toolbar>
+          @for (let i = 1; i <= 12; i++) {
+            <p>Message @i: scroll this box and watch the bar blur what passes under it.</p>
+          }
+        </div>
+        <Code name="recipe-glass-bar" />
+      </div>
+    </Panel>
+
+    <Panel title="Bottom sheet with snap points">
+      <div class="specimen">
+        <div class="stage">
+          <p>Opens half way. Drag or scroll it up and it snaps fully open, by CSS scroll snap alone.</p>
+          <div class="row"><Button opens="snap-sheet" variant="solid" tone="accent">Open the sheet</Button></div>
+          <dialog id="snap-sheet" class="snap" closedby="any" aria-label="Directions">
+            <div class="snap-rest"></div>
+            <div class="snap-panel" data-depth="3">
+              <div class="row"><h2 style="margin: 0; flex: 1">Directions</h2><Button icon="x" label="Close" variant="ghost" closes="snap-sheet" /></div>
+              @for (let i = 1; i <= 8; i++) {
+                <p>Step @i: continue along the avenue for @(i * 120) meters.</p>
+              }
+            </div>
+          </dialog>
+        </div>
+        <Code name="recipe-snap-sheet" />
+      </div>
+    </Panel>
+
+    <Panel title="Command menu">
+      <div class="specimen">
+        <div class="stage">
+          <div class="row"><Button toggles="commands" icon="search">Commands</Button></div>
+          <Menu id="commands">
+            <input class="xz-input" type="search" placeholder="Type a command" aria-label="Filter commands" @bind="query" @bind:event="oninput" />
+            @for (const command of matches) {
+              <button popovertarget="commands" popovertargetaction="hide" @onclick="() => run(command)">@command</button>
+            }
+          </Menu>
+        </div>
+        <Code name="recipe-command-menu" />
+      </div>
+    </Panel>
+
+    <Panel title="Toast stack">
+      <div class="specimen">
+        <div class="row">
+          <Button onClick="() => toast('Draft saved')">Saved</Button>
+          <Button tone="success" onClick="() => toast('Payment received', 'success')">Paid</Button>
+          <Button tone="warning" onClick="() => toast('Storage almost full', 'warning')">Warning</Button>
+          <Button tone="danger" onClick="() => toast('Sync failed', 'danger')">Error</Button>
+        </div>
+        <Code name="recipe-toasts" />
+      </div>
+    </Panel>
+
+    <Panel title="KPI grid with container queries">
+      <div class="specimen">
+        <div class="resizable xz-container">
+          <div class="kpis">
+            <Stat label="Visitors" value="18.2k" delta="6.1" />
+            <Stat label="Signups" value="932" delta="2.4" />
+            <Stat label="Bounce" value="38" unit="%" delta="-1.2" />
+          </div>
+        </div>
+        <Code name="recipe-container-kpis" />
+      </div>
+    </Panel>
+
+    <Panel title="Data table with a sticky header">
+      <div class="specimen">
+        <div style="--xz-table-height: 16rem"><Table items="@rows" columns="@columns" depth="0" /></div>
+        <Code name="recipe-sticky-table" />
+      </div>
+    </Panel>
+
+    <Panel title="Theme switching">
+      <div class="specimen">
+        <div class="stage">
+          <Segmented options="@(['Light', 'Dark', 'Auto'])" value="@theme" valueChanged="pickTheme" label="Theme" />
+          <p class="xz-muted">Every color is a <code>light-dark()</code> token, so one attribute on <code>&lt;html&gt;</code> switches the whole page. The choice is remembered.</p>
+        </div>
+        <Code name="recipe-theme" />
+      </div>
+    </Panel>
+
+    <Panel title="Route view transitions">
+      <div class="specimen">
+        <p class="xz-muted">This site turns them on: move between pages and the content crossfades. Give the same element the same <code>view-transition-name</code> on both pages and it morphs into place, as the post titles do in the <a href="examples/blog/" rel="external">blog example</a>.</p>
+        <Code name="recipe-view-transitions" />
+      </div>
+    </Panel>
+
+    <Panel title="Skeleton, then content">
+      <div class="specimen">
+        <div class="stage">
+          @if (loading) {
+            <div class="media" aria-busy="true">
+              <Skeleton width="3rem" height="3rem" round="@true" />
+              <div style="display: grid; gap: 0.5rem"><Skeleton width="70%" /><Skeleton width="45%" /></div>
+            </div>
+          } else {
+            <div class="media loaded">
+              <Avatar name="Katherine Johnson" size="lg" />
+              <div><strong>Katherine Johnson</strong><p class="xz-muted" style="margin: 0">Trajectories, 3 new comments</p></div>
+            </div>
+          }
+          <div class="row"><Button icon="clock" onClick="reload">Load again</Button></div>
+        </div>
+        <Code name="recipe-skeleton" />
+      </div>
+    </Panel>
+  </div>
+</section>
