@@ -118,7 +118,7 @@ else {
 <!--     ^ punctuation.section.embedded.begin.xzor
 <!--       ^ string.quoted.single.ts
 <!--              ^ punctuation.section.embedded.end.xzor
-<!--                ^^^^^^ meta.embedded.expression.typescript
+<!--                ^^^^^^ variable.other.readwrite.xzor
 }
 @for (const item of items) {
 <!-- <~--- keyword.control.xzor

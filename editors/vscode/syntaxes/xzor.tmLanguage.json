@@ -280,21 +280,19 @@
       "patterns": [{ "include": "source.ts#expression" }]
     },
     "array": {
-      "comment": "`@[...]`, an array literal and its member chain: the array rule balances the brackets, the end wins at the closing quote.",
-      "begin": "(?<![[:alnum:]])(@)(?=\\[)",
-      "beginCaptures": { "1": { "name": "keyword.control.transition.xzor" } },
-      "end": "(?=[\\s\"'<>]|$)",
+      "comment": "`@[...]`, scoped like `@( )` so the brackets color the same; a trailing member chain reads as one.",
+      "begin": "(?<![[:alnum:]])(@)(\\[)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "punctuation.section.embedded.begin.xzor" }
+      },
+      "end": "(\\])((?:\\??\\.#?[_$[:alpha:]][_$[:alnum:]]*)*)",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.embedded.end.xzor" },
+        "2": { "name": "variable.other.readwrite.xzor" }
+      },
       "contentName": "meta.embedded.expression.typescript",
-      "patterns": [
-        {
-          "begin": "\\G\\[",
-          "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.xzor" } },
-          "end": "\\]",
-          "endCaptures": { "0": { "name": "punctuation.section.embedded.end.xzor" } },
-          "patterns": [{ "include": "source.ts#expression" }]
-        },
-        { "include": "source.ts#expression" }
-      ]
+      "patterns": [{ "include": "source.ts#expression" }]
     },
     "implicit-call": {
       "begin": "(?<![[:alnum:]])(@)(#?[_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.#?[_$[:alpha:]][_$[:alnum:]]*)*)(\\()",
