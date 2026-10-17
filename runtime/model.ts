@@ -14,7 +14,7 @@
 import { setRenderObserver, type ComponentBase } from "./index";
 
 export { EntitySet } from "./entity-set";
-export { FineComponent, fine } from "./fine";
+export { FineComponent, fine, type El } from "./fine";
 
 export enum State {
   /** Created on the client and never sent. */

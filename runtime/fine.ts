@@ -19,6 +19,8 @@ const MANY = 16;
 const DEAD = 32;
 /** In its component's `loose` list: its last run read nothing tracked. */
 const LOOSE = 64;
+/** A row's binding: `read` is shared by the list's rows and takes the row's item (`data.item`). */
+const ITEM = 128;
 
 // Same bits as the model tracker: fields from the 30th share bit 30, `state` (-1) has bit 31.
 const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
@@ -29,11 +31,16 @@ type Dep = { model: Source; owner: Binding; mask: number; slot: number };
 type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown; loose: Binding[] };
 /** Where bindings are chained: a fine root, a region or a list row. */
 type Holder = { bindings: unknown; ctx: Ctx };
-type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment };
-type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node };
+type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown };
+/** A row's shared reads, from the list: `(item, x) => value`; a handler's gives the handler. */
+type Reads = readonly ((item: any, x?: any) => any)[];
+type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
-type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[] };
+type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined };
+
+/** The element type of tag `K`. */
+export type El<K extends string> = K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : HTMLElement;
 
 let collecting: Binding | undefined;
 let holder: Holder | undefined;
@@ -83,8 +90,8 @@ class Binding {
     /** TEXT: its Text; ATTR: its element; REGION, LIST and ISLAND: the comment that ends them. */
     public node: Node,
     /** TEXT and ATTR: the value; REGION: builds into its argument; LIST: the items; ISLAND: patches it. */
-    public read: (parent?: Node) => unknown,
-    /** TEXT: the mount context; ATTR: the attribute; REGION: its `Region`; LIST: its `ListState`; ISLAND: its `Island`. */
+    public read: (a?: any, b?: any) => unknown,
+    /** TEXT: its holder; ATTR: the attribute (ITEM: its row); REGION: its `Region`; LIST: its `ListState`; ISLAND: its `Island`. */
     public data: any,
   ) {}
 
@@ -149,7 +156,7 @@ class Binding {
     Model.$reader = collect as unknown as typeof Model.$reader;
     this.#reset();
     try {
-      return this.read(parent);
+      return (this.flags & ITEM) !== 0 ? this.read(this.data.item, parent) : this.read(parent);
     } finally {
       collecting = prev;
       Model.$reader = reader;
@@ -170,7 +177,7 @@ class Binding {
         return;
       }
       case ATTR:
-        return setAttr(this.node as Element, this.data, this.#run());
+        return setAttr(this.node as Element, (flags & ITEM) !== 0 ? (this.read as unknown as Named).$n : this.data, this.#run());
       case REGION: {
         const region = this.data as Region;
         disposeAll(region);
@@ -192,13 +199,15 @@ class Binding {
 
   // `@expr` gave markup: from now on it renders through the virtual DOM, whatever it gives.
   #becomeIsland(): void {
-    const value = this.read;
+    const read = this.read;
+    const h = this.data as Holder & { item?: unknown };
+    const value = (this.flags & ITEM) !== 0 ? () => read(h.item) : read;
     const text = this.node;
     const end = text.parentNode!.insertBefore(document.createComment(""), text.nextSibling);
     text.parentNode!.removeChild(text);
     this.node = end;
-    this.flags = (this.flags & ~KIND) | ISLAND;
-    island(this, this.data as Ctx, (b) => {
+    this.flags = (this.flags & ~(KIND | ITEM)) | ISLAND;
+    island(this, h.ctx, (b) => {
       const v = value();
       if ($isFragment(v)) (v as (b: RenderTreeBuilder) => void)(b);
       else b.addContent(v);
@@ -330,7 +339,7 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
     let row = state.rows.get(item);
     if (row === undefined) {
       const frag = document.createDocumentFragment();
-      const made: Row = { bindings: undefined, ctx: state.ctx, head: frag, tail: frag };
+      const made: Row = { bindings: undefined, ctx: state.ctx, head: frag, tail: frag, item, reads: state.reads };
       within(made, () => state.build(frag, item));
       // A row keeps at least one node, so it always has a place.
       if (frag.firstChild === null) frag.appendChild(document.createComment(""));
@@ -351,16 +360,110 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
   state.order = order;
 }
 
-/** What generated `@fine` code calls. `parent` is the element (or fragment) the new node is appended to. */
+type Named = { $n: string };
+
+/** A template node: text (`""` is a binding's place), `null` a comment (an anchor), or `[tag, attrs | 0, ...children]`. */
+type Spec = string | null | readonly [string, 0 | readonly string[], ...unknown[]];
+
+function make(spec: Spec): Node {
+  if (spec === null) return document.createComment("");
+  if (typeof spec === "string") return document.createTextNode(spec);
+  const el = document.createElement(spec[0]);
+  const attrs = spec[1];
+  if (attrs !== 0) for (let i = 0; i < attrs.length; i += 2) el.setAttribute(attrs[i]!, attrs[i + 1]!);
+  for (let i = 2; i < spec.length; i++) el.appendChild(make(spec[i] as Spec));
+  return el;
+}
+
+// Events that bubble go through one listener on the document: an element only holds its handler and holder.
+const DELEGATED = new Set(["beforeinput", "click", "dblclick", "contextmenu", "focusin", "focusout", "input", "keydown", "keyup", "mousedown", "mousemove", "mouseout", "mouseover", "mouseup", "pointerdown", "pointermove", "pointerout", "pointerover", "pointerup", "touchend", "touchmove", "touchstart"]);
+const keys = new Map<string, string>();
+const HOLDER = "$$h";
+
+function keyOf(type: string): string {
+  let key = keys.get(type);
+  if (key === undefined) {
+    keys.set(type, (key = "$$" + type));
+    document.addEventListener(type, dispatch);
+  }
+  return key;
+}
+
+/** Calls the handlers from the target up, as bubbling would; a row's handler comes from its item. */
+function dispatch(e: Event): void {
+  const key = keys.get(e.type)!;
+  let node = e.target as (Node & Record<string, any>) | null;
+  Object.defineProperty(e, "currentTarget", { configurable: true, get: () => node });
+  while (node !== null) {
+    const handler = node[key];
+    if (handler !== undefined) {
+      const h = node[HOLDER] as Holder & Partial<Row>;
+      afterHandler(h.ctx, h.reads !== undefined ? handler(h.item)(e) : handler(e));
+      if (e.cancelBubble) return;
+    }
+    node = node.parentNode as (Node & Record<string, any>) | null;
+  }
+}
+
+function on(el: Element, event: string, handler: (e: any) => unknown, h: Holder): void {
+  if (DELEGATED.has(event)) {
+    const target = el as unknown as Record<string, unknown>;
+    target[keyOf(event)] = handler;
+    target[HOLDER] = h;
+  } else el.addEventListener(event, (e) => afterHandler(h.ctx, handler(e)));
+}
+
+function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number): void {
+  const region: Region = { bindings: undefined, ctx: holder!.ctx, start, item };
+  track(new Binding(REGION | flags, end, build, region));
+}
+
+function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void): void {
+  const state: ListState = { build, ctx: holder!.ctx, rows: new Map(), order: [], reads };
+  track(new Binding(LIST, end, items, state));
+}
+
+const anchor = (parent: Node): Comment => parent.appendChild(document.createComment(""));
+
+/**
+ * What generated `@fine` code calls. A run of nodes is a `template` clone; the `...At` calls bind the nodes it
+ * has in place, and the `...Item` ones bind a row's nodes to a read its list shares (`reads[i]`, given the item).
+ * The others append the node they bind to `parent`.
+ */
 export const fine = {
-  el<K extends keyof HTMLElementTagNameMap>(parent: Node, tag: K): HTMLElementTagNameMap[K] {
-    return parent.appendChild(document.createElement(tag));
+  /** Builds the nodes of `specs` once; each call returns a deep clone (a fragment unless it is one element). */
+  template(specs: readonly unknown[]): () => Node {
+    let node: Node | undefined;
+    return () => {
+      if (node === undefined) {
+        const first = specs[0];
+        if (specs.length === 1 && Array.isArray(first)) node = make(first as unknown as Spec);
+        else {
+          node = document.createDocumentFragment();
+          for (const spec of specs) node.appendChild(make(spec as Spec));
+        }
+      }
+      return node.cloneNode(true);
+    };
+  },
+
+  el<K extends string>(parent: Node, tag: K): El<K> {
+    return parent.appendChild(document.createElement(tag)) as El<K>;
   },
 
   /** A handler; afterwards the component re-runs its bindings that read nothing tracked. */
   on(el: Element, event: string, handler: (e: any) => unknown): void {
-    const ctx = holder!.ctx;
-    el.addEventListener(event, (e) => afterHandler(ctx, handler(e)));
+    const h = holder!;
+    // The dispatcher asks a row with shared reads for the handler of its item.
+    on(el, event, (h as Partial<Row>).reads !== undefined && DELEGATED.has(event) ? () => handler : handler, h);
+  },
+
+  /** A row's handler: `reads[i](item)` gives it. */
+  onItem(el: Element, event: string, i: number): void {
+    const row = holder as Row;
+    const read = row.reads![i]!;
+    if (DELEGATED.has(event)) on(el, event, read, row);
+    else el.addEventListener(event, (e) => afterHandler(row.ctx, read(row.item)(e)));
   },
 
   /** Static text. */
@@ -370,7 +473,16 @@ export const fine = {
 
   /** Text that follows `read()`; markup (a `RenderFragment`) renders as markup. */
   text(parent: Node, read: () => unknown): void {
-    track(new Binding(TEXT, parent.appendChild(document.createTextNode("")), read, holder!.ctx));
+    fine.textAt(parent.appendChild(document.createTextNode("")), read);
+  },
+
+  textAt(node: Text, read: () => unknown): void {
+    track(new Binding(TEXT, node, read, holder!));
+  },
+
+  textItem(node: Text, i: number): void {
+    const row = holder as Row;
+    track(new Binding(TEXT | ITEM, node, row.reads![i]!, row));
   },
 
   /** Attribute `name` of `el` that follows `read()`; `false`/`null`/`undefined` remove it. */
@@ -378,21 +490,46 @@ export const fine = {
     track(new Binding(ATTR, el, read, name));
   },
 
+  attrItem(el: Element, name: string, i: number): void {
+    const row = holder as Row;
+    const read = row.reads![i]! as Reads[number] & Named;
+    read.$n = name;
+    track(new Binding(ATTR | ITEM, el, read, row));
+  },
+
   /** `@if`, `@switch`, a `@for` that is not a plain list, `@{ }`: rebuilt whenever what `build` read changes. */
   region(parent: Node, build: Build): void {
-    const region: Region = { bindings: undefined, ctx: holder!.ctx, start: parent.appendChild(document.createComment("")) };
-    track(new Binding(REGION, parent.appendChild(document.createComment("")), build as (p?: Node) => unknown, region));
+    region(anchor(parent), anchor(parent), build, undefined, 0);
+  },
+
+  /** A region between `end` and the comment before it. */
+  regionAt(end: Comment, build: Build): void {
+    region(end.previousSibling as Comment, end, build, undefined, 0);
+  },
+
+  /** A row's region: `reads[i](item, parent)` builds it. */
+  regionItem(end: Comment, i: number): void {
+    const row = holder as Row;
+    region(end.previousSibling as Comment, end, row.reads![i]!, row.item, ITEM);
   },
 
   /** `@for (const item of items)`: one row per item, matched by identity; a row is built once. */
   list<T>(parent: Node, items: () => Iterable<T>, build: (parent: Node, item: T) => void): void {
-    const state: ListState = { build, ctx: holder!.ctx, rows: new Map(), order: [] };
-    track(new Binding(LIST, parent.appendChild(document.createComment("")), items, state));
+    list(anchor(parent), items, undefined, build);
+  },
+
+  /** A list before `end`; its rows' bindings use `reads`, shared by the rows. */
+  listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void): void {
+    list(end, items, reads, build);
   },
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */
   island(parent: Node, build: (b: RenderTreeBuilder) => void): void {
-    const b = new Binding(ISLAND, parent.appendChild(document.createComment("")), noop, undefined);
+    fine.islandAt(anchor(parent), build);
+  },
+
+  islandAt(end: Comment, build: (b: RenderTreeBuilder) => void): void {
+    const b = new Binding(ISLAND, end, noop, undefined);
     island(b, holder!.ctx, build);
     track(b);
   },

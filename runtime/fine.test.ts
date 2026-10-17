@@ -379,3 +379,78 @@ test("a fine child removed by a vdom parent stops writing", async () => {
   await tick();
   expect(node.textContent).toBe("2");
 });
+
+// As codegen emits a list: a template per run, and rows whose bindings and handlers share the list's reads.
+const __row = fine.template([["li", ["class", "row"], ["input", 0], ["span", 0, ""], null, null, ["button", 0, "x"]]]);
+const __ul = fine.template([["ul", 0, null], ["p", 0, ""]]);
+let picked: Worker[] = [];
+class Rows extends FineComponent {
+  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { FineComponent.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (FineComponent.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+  static { FineComponent.$define(this, ["team"]); }
+  outer = 0;
+  protected override buildRenderTree(__b: RenderTreeBuilder): void {
+    __b.addFine((__p) => {
+      const _e0 = __ul() as Node;
+      const _e1 = _e0.firstChild! as HTMLElement;
+      const _e2 = _e1.firstChild! as Comment;
+      const _e3 = _e1.nextSibling!.firstChild! as Text;
+      fine.on(_e1, "click", () => this.outer++);
+      fine.listAt(_e2, () => this.team.view, [
+        (w) => w.hours,
+        (w) => (__e: Event) => { w.hours = ComponentBase.bindValue(__e, w.hours); },
+        (w) => w.payment.toFixed(2),
+        (w, __p) => {
+          if (w.hours > 24) fine.t(fine.el(__p, "small"), "too many");
+        },
+        (w) => (__e: Event) => { picked.push(w); __e.stopPropagation(); },
+      ], (__p) => {
+        const _e4 = __row() as HTMLLIElement;
+        const _e5 = _e4.firstChild! as HTMLInputElement;
+        const _e6 = _e5.nextSibling!.firstChild! as Text;
+        const _e7 = _e5.nextSibling!.nextSibling!.nextSibling! as Comment;
+        const _e8 = _e7.nextSibling! as HTMLButtonElement;
+        fine.attrItem(_e5, "value", 0);
+        fine.onItem(_e5, "input", 1);
+        fine.textItem(_e6, 2);
+        fine.regionItem(_e7, 3);
+        fine.onItem(_e8, "click", 4);
+        __p.appendChild(_e4);
+      });
+      fine.textAt(_e3, () => this.team.view.length);
+      __p.appendChild(_e0);
+    });
+  }
+}
+
+test("template rows: shared reads bind each row's item, and delegated handlers get it", async () => {
+  const el = host();
+  const c = mount(Rows, el);
+  c.team = EntitySet.track(Worker, [{ name: "a", hours: 1, tax: 0 }, { name: "b", hours: 2, tax: 0 }]);
+  await tick();
+  const rows = () => [...el.querySelectorAll("li")];
+  expect(rows().length).toBe(2);
+  expect(rows()[1]!.className).toBe("row");
+  expect(rows()[1]!.querySelector("input")!.value).toBe("2");
+  expect(rows()[1]!.querySelector("span")!.textContent).toBe("40.00");
+  expect(el.querySelector("p")!.textContent).toBe("2");
+  const input = rows()[0]!.querySelector("input")!;
+  input.value = "30";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  await tick();
+  expect(c.team[0]!.hours).toBe(30);
+  expect(rows()[0]!.querySelector("span")!.textContent).toBe("600.00");
+  expect(rows()[0]!.querySelector("small")?.textContent).toBe("too many");
+  // The input bubbled to the list's `<ul>` handler too; the button's handler stops it.
+  expect(c.outer).toBe(0);
+  rows()[0]!.click();
+  expect(c.outer).toBe(1);
+  picked = [];
+  rows()[1]!.querySelector("button")!.click();
+  expect(picked).toEqual([c.team[1]!]);
+  expect(c.outer).toBe(1);
+  c.team.push(new Worker({ name: "c", hours: 3, tax: 0 }).markAdded());
+  await tick();
+  expect(rows().length).toBe(3);
+  expect(rows()[2]!.querySelector("span")!.textContent).toBe("60.00");
+  expect(el.querySelector("p")!.textContent).toBe("3");
+});
