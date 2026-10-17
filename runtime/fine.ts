@@ -431,6 +431,6 @@ setFineHooks({
     root.end = frag.appendChild(document.createComment(""));
     return root;
   },
-  refresh: refreshAll as (root: FineRoot) => void,
-  dispose: disposeAll as (root: FineRoot) => void,
+  refresh: (root) => refreshAll(root as FineRoot & Holder),
+  dispose: (root) => disposeAll(root as FineRoot & Holder),
 });
