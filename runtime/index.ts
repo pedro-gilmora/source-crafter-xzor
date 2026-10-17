@@ -65,17 +65,49 @@ export type VFine = { kind: "fine"; build: (parent: Node) => void; root?: FineRo
 export type FineRoot = { bindings: unknown; start: Comment; end: Comment };
 
 type FineHooks = {
-  create(build: (parent: Node) => void): FineRoot;
+  create(build: (parent: Node) => void, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot;
   refresh(root: FineRoot): void;
   dispose(root: FineRoot): void;
 };
 
 let fineHooks: FineHooks | undefined;
 
+/** @internal On `FineComponent.prototype`: its handlers and callbacks write tracked fields, so nothing re-renders it. */
+export const FINE: unique symbol = Symbol("xzor.fine");
+
+const isFine = (c: ComponentBase): boolean => (c as unknown as Record<symbol, unknown>)[FINE] === true;
+
 /** @internal Set by `fine.ts` (the model entry), so the renderer pays nothing without it. */
 export function setFineHooks(h: FineHooks): void {
   fineHooks = h;
 }
+
+/**
+ * @internal A virtual-DOM island inside a fine template: renders `build` before `end`, patching `old`.
+ * `scope` is the cascade scope the fine component was mounted in.
+ */
+export function patchIsland(
+  owner: ComponentBase,
+  app: IApplication | undefined,
+  scope: unknown,
+  end: Node,
+  old: VNode[],
+  build: (b: RenderTreeBuilder) => void,
+): VNode[] {
+  const builder = new RenderTreeBuilder(owner);
+  build(builder);
+  const next = builder.nodes;
+  batch(() => patchList(end.parentNode!, old, next, end, owner, app, scope as CascadeRecord | undefined));
+  return next;
+}
+
+/** @internal Disposes an island's tree; its DOM goes with the region that holds it. */
+export function disposeIsland(tree: VNode[]): void {
+  for (const v of tree) dispose(v);
+}
+
+/** @internal Whether a value is markup (`RenderFragment`). */
+export const $isFragment = (value: unknown): boolean => isFragment(value);
 
 function fineNodes(root: FineRoot): Node[] {
   const nodes: Node[] = [];
@@ -674,6 +706,7 @@ export class RenderTreeBuilder {
   /** Wraps a handler passed to a child as an EventCallback (re-renders this owner). */
   callback<T>(handler: (arg: T) => unknown): EventCallback<T> {
     const owner = this.owner;
+    if (isFine(owner)) return handler;
     return (arg: T) => {
       const result = handler(arg);
       update(owner);
@@ -926,6 +959,7 @@ function listen(el: Element, event: string): void {
     const handler = record.events[event];
     if (!handler) return;
     const result = handler(e);
+    if (isFine(record.owner)) return;
     update(record.owner);
     if (result instanceof Promise) void result.then(() => update(record.owner));
   });
@@ -965,7 +999,7 @@ function create(v: VNode, owner: ComponentBase, app: IApplication | undefined, s
     }
     case "fine": {
       if (!fineHooks) throw new Error("xzor: a @fine component needs @source-crafter/xzor-runtime/model");
-      return fineNodes((v.root = fineHooks.create(v.build)));
+      return fineNodes((v.root = fineHooks.create(v.build, owner, app, scope)));
     }
   }
 }

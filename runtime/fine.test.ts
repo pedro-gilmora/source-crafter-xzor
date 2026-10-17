@@ -151,6 +151,109 @@ test("a deleted item leaves the view, and its bindings stop writing", async () =
   expect(li.querySelector("span")!.textContent).toBe("20.00");
 });
 
+test("islands: child components get their parameters, and re-render only when what they read changes", async () => {
+  let childRenders = 0;
+  class Child extends ComponentBase {
+    label = "";
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      childRenders++;
+      b.openElement("em");
+      b.addContent(this.label);
+      b.closeElement();
+    }
+  }
+  class Parent extends FineComponent {
+    #name = "a"; get name(): string { FineComponent.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (FineComponent.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+    #other = 0; get other(): number { FineComponent.$reader?.(this, 1); return this.#other; } set other(v: number) { const p = this.#other; if (FineComponent.same(p, v)) return; this.#other = v; this.$changed(1, p); }
+    static { FineComponent.$define(this, ["name", "other"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.text(fine.el(__p, "b"), () => this.other);
+        fine.island(__p, (__b) => __b.addComponent(Child, { label: this.name }));
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Parent, el);
+  expect(el.querySelector("em")!.textContent).toBe("a");
+  p.other = 1;
+  await tick();
+  expect(childRenders).toBe(1);
+  p.name = "b";
+  await tick();
+  expect(el.querySelector("em")!.textContent).toBe("b");
+  expect(childRenders).toBe(2);
+});
+
+test("islands: slot content reading the fine parent re-renders the child that shows it", async () => {
+  class Card extends ComponentBase {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("section");
+      b.addContent((this.slots as { default?: () => unknown }).default?.() ?? null);
+      b.closeElement();
+    }
+  }
+  class Page extends FineComponent {
+    #name = "a"; get name(): string { FineComponent.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (FineComponent.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["name"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => fine.island(__p, (__b) => __b.addComponent(Card, {}, { default: () => ComponentBase.fragment((__b) => { __b.openElement("i"); __b.addContent(this.name); __b.closeElement(); }) } as never)));
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  expect(el.querySelector("section i")!.textContent).toBe("a");
+  p.name = "b";
+  await tick();
+  expect(el.querySelector("section i")!.textContent).toBe("b");
+});
+
+test("islands: a callback from a child updates the fine parent through its tracked field", async () => {
+  class Btn extends ComponentBase {
+    onPick?: (n: number) => unknown;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("button");
+      b.addEventHandler("click", () => this.onPick?.(7));
+      b.closeElement();
+    }
+  }
+  let renders = 0;
+  class Page extends FineComponent {
+    #picked = 0; get picked(): number { FineComponent.$reader?.(this, 0); return this.#picked; } set picked(v: number) { const p = this.#picked; if (FineComponent.same(p, v)) return; this.#picked = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["picked"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      renders++;
+      __b.addFine((__p) => {
+        fine.island(__p, (__b) => __b.addComponent(Btn, { onPick: __b.callback((n: number) => (this.picked = n)) }));
+        fine.text(fine.el(__p, "b"), () => this.picked);
+      });
+    }
+  }
+  const el = host();
+  mount(Page, el);
+  el.querySelector("button")!.click();
+  await tick();
+  expect(el.querySelector("b")!.textContent).toBe("7");
+  expect(renders).toBe(1);
+});
+
+test("a markup value in @expr renders as markup and follows what it reads", async () => {
+  class Page extends FineComponent {
+    #n = 1; get n(): number { FineComponent.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["n"]); }
+    summary = ComponentBase.fragment((__b) => { __b.openElement("u"); __b.addContent(this.n); __b.closeElement(); });
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => fine.text(fine.el(__p, "div"), () => this.summary));
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  expect(el.querySelector("div u")!.textContent).toBe("1");
+  p.n = 2;
+  await tick();
+  expect(el.querySelector("div u")!.textContent).toBe("2");
+});
+
 test("a set's hasChanges and hasErrors follow pushes", async () => {
   const el = host();
   const set = EntitySet.track(Worker, [{ name: "a", hours: 1, tax: 0 }]);
