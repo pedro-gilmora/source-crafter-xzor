@@ -2622,6 +2622,14 @@ pub fn class_name(stem: &str) -> String {
 mod tests {
     use super::*;
 
+    /// These tests cover the virtual-DOM backend (`@render`) unless the source asks for `@fine`.
+    fn parse(src: &str) -> Result<(Document, Vec<crate::parser::Token>), crate::parser::ParseError> {
+        crate::parser::parse(src).map(|(mut doc, tokens)| {
+            doc.fine = src.contains("@fine");
+            (doc, tokens)
+        })
+    }
+
     fn rw(src: &str, members: &[&str]) -> String {
         rewrite(src, &|w| members.contains(&w))
     }
@@ -2659,7 +2667,7 @@ mod tests {
     #[test]
     fn own_statics_go_through_the_class() {
         let src = "@code { static s = 2; n = 1; static go() {} }\n<p title=\"@s\">@s @n @(`${s}`)</p>\n<button @onclick=\"go\" @onfocus=\"() => s++\">x</button>";
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
         for m in ["addContent(C.s)", "addContent(this.n)", "${C.s}", "C.go.bind(C)", "() => C.s++", "addAttribute(\"title\", C.s)"] {
             assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
@@ -2752,7 +2760,7 @@ mod tests {
 
     #[test]
     fn switch_emits_scoped_cases_with_break() {
-        let (doc, _) = crate::parser::parse(
+        let (doc, _) = parse(
             "@code { mode = 1; }\n@switch (mode) { case 1: case 2: <b>low</b> default: @mode }",
         )
         .unwrap();
@@ -2778,7 +2786,7 @@ mod tests {
 
     #[test]
     fn if_and_for_are_wrapped_in_regions() {
-        let (doc, _) = crate::parser::parse("@if (a) {<b/>}\n@for (const x of xs) {@x}").unwrap();
+        let (doc, _) = parse("@if (a) {<b/>}\n@for (const x of xs) {@x}").unwrap();
         let ts = generate(&doc, "R", "R.xzor").unwrap().code;
         let expected = "    __b.openRegion();
     if (a) {
@@ -2805,14 +2813,14 @@ mod tests {
             .collect();
         sources.push(extra.into());
         for src in &sources {
-            let (doc, _) = crate::parser::parse(src).unwrap();
+            let (doc, _) = parse(src).unwrap();
             let g = generate(&doc, "C", "C.xzor").unwrap();
             assert!(g.mappings.len() > 3);
             for m in &g.mappings {
                 assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}\n{}", g.code);
             }
         }
-        let (doc, _) = crate::parser::parse("@code { count = 1; }\n<b>@count</b>").unwrap();
+        let (doc, _) = parse("@code { count = 1; }\n<b>@count</b>").unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
         let at = "@code { count = 1; }\n<b>@".len();
         let m = g.mappings.iter().find(|m| m.src == at).expect("maps @count");
@@ -2822,7 +2830,7 @@ mod tests {
     #[test]
     fn markup_in_code_becomes_fragments() {
         let src = "@code {\n  state = 1;\n  cached = <B />;\n  pick(t: number) {\n    return t ? <A state=\"@this.state\" n=\"@t\" /> : this.cached;\n  }\n}\n<p>@pick(1)</p>";
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
         assert!(g.code.contains("  cached = ComponentBase.fragment((__b) => { __b.addComponent(B, {}); });"), "{}", g.code);
         assert!(
@@ -2896,7 +2904,7 @@ mod tests {
     }
 
     fn gen_with(src: &str, components: &[(&str, &str)]) -> Generated {
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let infos = components.iter().map(|(n, s)| (n.to_string(), component_info(s))).collect();
         let g = generate_with(&doc, "C", "C.xzor", &infos, &HashSet::new(), "./routes").unwrap();
         for m in &g.mappings {
@@ -2909,7 +2917,7 @@ mod tests {
     fn routes_are_recorded_with_param_kinds() {
         use crate::routes::ParamKind;
         let src = "@page \"/p/:id/:on/:tab/:slug/*\" as p\n@page \"/u/:id\"\n@code {\n  id = 0;\n  on: boolean = false;\n  tab: \"a\" | \"b\" = \"a\";\n  slug = \"\";\n}\n<p/>";
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let g = generate_with(&doc, "UserProfile", "UserProfile.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap();
         assert!(g.code.contains("static readonly route = \"/p/:id/:on/:tab/:slug/*\";"), "{}", g.code);
         let tags: Vec<Option<&str>> = g.routes.iter().map(|r| r.tag.as_deref()).collect();
@@ -2932,10 +2940,10 @@ mod tests {
     #[test]
     fn rest_is_recorded_only_when_the_page_declares_it() {
         let declared = "@page \"/a/*\"\n@code { rest = \"\"; }\n<p/>";
-        let (doc, _) = crate::parser::parse(declared).unwrap();
+        let (doc, _) = parse(declared).unwrap();
         let g = generate_with(&doc, "A", "A.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap();
         assert!(g.routes[0].rest);
-        let (doc, _) = crate::parser::parse("@page \"/a/*\"\n<p/>").unwrap();
+        let (doc, _) = parse("@page \"/a/*\"\n<p/>").unwrap();
         let g = generate_with(&doc, "A", "A.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap();
         assert!(!g.routes[0].rest);
         let inherited = HashSet::from(["rest".to_string()]);
@@ -2947,7 +2955,7 @@ mod tests {
     fn route_param_kinds_ignore_comments_statics_and_span_lines() {
         use crate::routes::ParamKind::*;
         let src = "@page \"/:a/:b/:c/:d/:e/:f\"\n@code {\n  a = 0 // c\n  b: number /* c */ = 0\n  c: boolean // c\n  d: number | undefined\n  e:\n    | \"x\"\n    | \"y\"\n  static f = 1;\n}\n<p/>";
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let g = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap();
         let kinds: Vec<_> = g.routes[0].params.iter().map(|p| p.1.clone()).collect();
         assert_eq!(kinds, [Number, Number, Boolean, Number, Union(vec!["x".into(), "y".into()]), String]);
@@ -3086,7 +3094,7 @@ mod tests {
     #[test]
     fn inject_with_user_constructor_fails() {
         let src = "@inject A a\n@code { constructor() { super(); } }";
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let err = generate(&doc, "C", "C.xzor").unwrap_err();
         assert_eq!(err, ZDI08);
         assert_eq!(inject_constructor(&doc), src.find("constructor"));
@@ -3094,7 +3102,7 @@ mod tests {
 
     #[test]
     fn slot_errors() {
-        let err = |src: &str| generate(&crate::parser::parse(src).unwrap().0, "C", "C.xzor").unwrap_err();
+        let err = |src: &str| generate(&parse(src).unwrap().0, "C", "C.xzor").unwrap_err();
         assert!(err("@slot:a\n@slot:a").contains("slot `a` is defined twice"));
         assert!(err("@slot\n@slot").contains("slot `default` is defined twice"));
         assert!(err("@slot:a(foo())").contains("write `(foo()) as Type`"));
@@ -3104,7 +3112,7 @@ mod tests {
     }
 
     fn gen_err(src: &str, components: &[(&str, &str)]) -> String {
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let infos = components.iter().map(|(n, s)| (n.to_string(), component_info(s))).collect();
         generate_with(&doc, "C", "C.xzor", &infos, &HashSet::new(), "./routes").unwrap_err()
     }
@@ -3183,7 +3191,7 @@ mod tests {
 
     #[test]
     fn typeparam_makes_a_generic_class() {
-        let (doc, _) = crate::parser::parse("@typeparam T extends object\n@typeparam U\n<p/>").unwrap();
+        let (doc, _) = parse("@typeparam T extends object\n@typeparam U\n<p/>").unwrap();
         let g = generate(&doc, "Grid", "Grid.xzor").unwrap();
         assert!(g.code.contains("export default class Grid<T extends object, U> extends ComponentBase {"), "{}", g.code);
     }
@@ -3263,7 +3271,7 @@ mod tests {
     #[test]
     fn source_map_points_back_to_the_xzor() {
         let src = "@code {\n  n = 1;\n}\n<p>@n</p>";
-        let (doc, _) = crate::parser::parse(src).unwrap();
+        let (doc, _) = parse(src).unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
         let map = crate::json::Json::parse(&g.source_map(src, "C.xzor")).unwrap();
         assert_eq!(map["version"].as_usize(), Some(3));
@@ -3327,7 +3335,7 @@ mod tests {
     fn cascade_decorator_errors_point_at_the_decorator() {
         let err = |member: &str| {
             let src = format!("@code {{\n  {member}\n}}\n<p/>");
-            let (doc, _) = crate::parser::parse(&src).unwrap();
+            let (doc, _) = parse(&src).unwrap();
             let (message, offset) = cascade_error(&doc).unwrap_or_else(|| panic!("no error for {member}"));
             assert_eq!(offset, src.find("@Cascade").unwrap(), "{member}");
             assert_eq!(gen_err(&src, &[]), message, "{member}");
@@ -3343,7 +3351,7 @@ mod tests {
         assert_eq!(err("@Cascade(\"a\" + \"b\") r?: unknown;"), one_name);
         assert_eq!(err("@Cascade(name) r?: unknown;"), one_name);
         assert_eq!(err("@Cascade() r?: unknown;"), one_name);
-        let (doc, _) = crate::parser::parse("@code { @Cascade('route') r?: unknown; }\n<p/>").unwrap();
+        let (doc, _) = parse("@code { @Cascade('route') r?: unknown; }\n<p/>").unwrap();
         assert_eq!(cascade_error(&doc), None);
         assert!(generate(&doc, "C", "C.xzor").unwrap().code.contains("[[\"r\", \"route\"]]"));
     }

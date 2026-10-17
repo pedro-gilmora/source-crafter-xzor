@@ -9,7 +9,8 @@
     "skipLibCheck": true,
     "rootDirs": [".", ".xzor"],
     "paths": {
-      "@source-crafter/xzor-runtime": ["../../../runtime/index.ts"]
+      "@source-crafter/xzor-runtime": ["../../../runtime/index.ts"],
+      "@source-crafter/xzor-runtime/model": ["../../../runtime/model.ts"]
     }
   },
   "include": ["**/*.ts", ".xzor/**/*.ts"]

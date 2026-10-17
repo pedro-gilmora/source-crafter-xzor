@@ -130,8 +130,8 @@
       "patterns": [{ "include": "#directive-comment" }, { "include": "source.ts#expression" }]
     },
     "fine": {
-      "comment": "@fine: the component is compiled to DOM bindings, with no render pass.",
-      "begin": "(?<![[:alnum:]])(@)(fine)(?![[:alnum:]_$])",
+      "comment": "@fine (the default: DOM bindings, no render pass) or @render (a virtual-DOM render pass instead).",
+      "begin": "(?<![[:alnum:]])(@)(fine|render)(?![[:alnum:]_$])",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "keyword.control.directive.xzor" }

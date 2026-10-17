@@ -46,7 +46,7 @@ pub fn parse(src: &str) -> PResult<(Document, Vec<Token>)> {
         b: src.as_bytes(),
         pos: 0,
         tokens: Vec::new(),
-        doc: Document::default(),
+        doc: Document { fine: true, ..Document::default() },
         case_break: false,
         in_component: false,
         bound: Vec::new(),
@@ -91,7 +91,7 @@ struct Parser<'a> {
 /// Words that follow `@` as directives; `@cascade`, `@ClientRoutes` and `@ServerRoutes` are
 /// directives only in certain shapes, so they are matched separately.
 const DIRECTIVES: &[&str] =
-    &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject", "fine"];
+    &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject", "fine", "render"];
 
 impl<'a> Parser<'a> {
     fn at_word(&self, w: &str) -> bool {
@@ -462,13 +462,13 @@ impl<'a> Parser<'a> {
                 self.doc.imports.push(stmt);
                 Ok(Transition::Nothing)
             }
-            "fine" => {
-                self.doc.fine = true;
+            word @ ("fine" | "render") => {
+                self.doc.fine = word == "fine";
                 while matches!(self.peek(), Some(b' ' | b'\t')) {
                     self.pos += 1;
                 }
                 if !matches!(self.peek(), None | Some(b'\n' | b'\r')) && !self.starts_with("//") && !self.starts_with("@*") {
-                    return self.err("expected end of line after @fine");
+                    return self.err(&format!("expected end of line after @{word}"));
                 }
                 self.trailing_comment()?;
                 Ok(Transition::Nothing)
@@ -1777,7 +1777,10 @@ after"#;
         let (doc, _) = parse("@fine // no render pass\n<p>@x</p>").unwrap();
         assert!(doc.fine);
         assert_eq!(doc.nodes.len(), 1);
-        assert!(!parse("<p/>").unwrap().0.fine);
+        // Fine is the default; `@render` opts out.
+        assert!(parse("<p/>").unwrap().0.fine);
+        assert!(!parse("@render\n<p/>").unwrap().0.fine);
+        assert!(parse("@render x\n<p/>").is_err());
         assert!(parse("@fine x\n<p/>").is_err());
     }
 

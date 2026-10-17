@@ -217,14 +217,14 @@ export class Worker extends Model {
 - `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed. Read it through `view` or `for...of` (not `length`, an index or `set.map`) so the reader follows pushes and deletes.
 - Needs `"ESNext.Decorators"` in the tsconfig `lib`. Not supported: plain object graphs with cycles, one set held by two models.
 
-## Fine components (`@fine`)
+## Fine components (the default)
 
-For large or busy pages (long lists, live data), put `@fine` on the first line. The component is compiled with no render pass: the DOM is built once and each dynamic part updates alone, in a microtask, when a field it reads changes.
+Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. Write `@render` on the first line only to get the virtual-DOM render pass instead.
 
 - Its `@code` fields are tracked like a model's: `count++` in a handler updates the page. Never call `stateHasChanged()` for that; call it only after changing something untracked (a plain array's `push`, an object's property).
 - Put list data in an `EntitySet` (or reassign a plain array) and loop with `@for (const x of list.view)`: rows are kept by identity.
 - Totals and other derived values are plain expressions (`@team.view.reduce((s, w) => s + w.hours, 0)`); no extra fields or setters.
-- Not supported yet, a compile error: child components, `@slot`, `@cascade`, routes blocks, `@attributes`, event modifiers (`@onclick:preventDefault`), markup inside `@{ }`. Use a normal component for those.
+- The tsconfig `paths` (when used) must map `@source-crafter/xzor-runtime/model` as well as `@source-crafter/xzor-runtime`.
 
 ## Hot reload and PWA
 

@@ -36,7 +36,7 @@ function build(name: string, body: string) {
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
   // The example's relative `paths` entry does not reach the runtime from here.
-  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")], "@source-crafter/xzor-runtime/model": [join(root, "runtime", "model.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "List.xzor"), list);
   writeFileSync(join(dir, "Host.xzor"), host(body));

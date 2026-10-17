@@ -20,7 +20,7 @@ test("components use inherited members as bare names and pass the type check", (
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")], "@source-crafter/xzor-runtime/model": [join(root, "runtime", "model.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "base.ts"), base);
   writeFileSync(

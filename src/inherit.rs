@@ -621,7 +621,7 @@ mod tests {
             *reads.borrow_mut().entry(p.to_path_buf()).or_insert(0) += 1;
             map.get(p).cloned()
         };
-        let code = crate::compile_mapped_with(main, &root.join("C.xzor"), &read).unwrap().code;
+        let code = crate::compile_mapped_with(&format!("@render\n{main}"), &root.join("C.xzor"), &read).unwrap().code;
         (code, reads.into_inner())
     }
 
@@ -633,7 +633,7 @@ mod tests {
     fn compile_at(files: &[(&str, &str)], main: &str, at: &str) -> String {
         let root = Path::new("/p");
         let map: HashMap<PathBuf, String> = files.iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
-        crate::compile_mapped_with(main, &root.join(at), &|p| map.get(p).cloned()).unwrap().code
+        crate::compile_mapped_with(&format!("@render\n{main}"), &root.join(at), &|p| map.get(p).cloned()).unwrap().code
     }
 
     fn unresolved_in(files: &[(&str, &str)], main: &str) -> Option<String> {

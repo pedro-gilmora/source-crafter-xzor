@@ -47,7 +47,7 @@ beforeAll(async () => {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")], "@source-crafter/xzor-runtime/model": [join(root, "runtime", "model.ts").replaceAll("\\", "/")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
   writeFileSync(join(dir, "A.xzor"), "<p>a</p>\n");
   writeFileSync(join(dir, "B.xzor"), "<p>b</p>\n");
@@ -164,7 +164,7 @@ describe("build --watch --hot", () => {
     rmSync(hotDir, { recursive: true, force: true });
     mkdirSync(hotDir, { recursive: true });
     const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-    tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+    tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")], "@source-crafter/xzor-runtime/model": [join(root, "runtime", "model.ts").replaceAll("\\", "/")] };
     writeFileSync(join(hotDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
     writeFileSync(join(hotDir, "App.xzor"), "<p>app</p>\n");
     writeFileSync(join(hotDir, "main.ts"), `import App from "./App.xzor";\nexport { App };\n`);

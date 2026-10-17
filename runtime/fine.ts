@@ -3,7 +3,7 @@
 // per microtask) when one of them changes. A binding is its own dep for the first source it reads.
 
 import { $isFragment, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
-import { $notify, Model } from "./model";
+import { $flush, $notify, Model } from "./model";
 
 const TEXT = 0;
 const ATTR = 1;
@@ -255,7 +255,9 @@ function refreshLoose(ctx: Ctx): void {
   }
 }
 
+// Like a render after a vdom handler, what the handler changed shows before it returns.
 function afterHandler(ctx: Ctx, result: unknown): void {
+  $flush();
   refreshLoose(ctx);
   if (result instanceof Promise) void result.then(() => refreshLoose(ctx));
 }
@@ -377,13 +379,14 @@ function make(spec: Spec): Node {
 
 // Events that bubble go through one listener on the document: an element only holds its handler and holder.
 const DELEGATED = new Set(["beforeinput", "click", "dblclick", "contextmenu", "focusin", "focusout", "input", "keydown", "keyup", "mousedown", "mousemove", "mouseout", "mouseover", "mouseup", "pointerdown", "pointermove", "pointerout", "pointerover", "pointerup", "touchend", "touchmove", "touchstart"]);
-const keys = new Map<string, string>();
-const HOLDER = "$$h";
+// Symbols, so another copy of the runtime on the page (another bundle) never runs this one's handlers.
+const keys = new Map<string, symbol>();
+const HOLDER = Symbol("xzor.fine.holder");
 
-function keyOf(type: string): string {
+function keyOf(type: string): symbol {
   let key = keys.get(type);
   if (key === undefined) {
-    keys.set(type, (key = "$$" + type));
+    keys.set(type, (key = Symbol(type)));
     document.addEventListener(type, dispatch);
     // The capture phase sees events that do not bubble (dispatched by code) on their way to their target.
     document.addEventListener(type, dispatchAtTarget, true);
@@ -391,7 +394,7 @@ function keyOf(type: string): string {
   return key;
 }
 
-type Target = Node & Record<string, any>;
+type Target = Node & Record<symbol, any>;
 
 // Runs `node`'s handler; whether the event stopped.
 function fire(node: Target, e: Event): boolean {
@@ -414,7 +417,7 @@ function dispatchAtTarget(e: Event): void {
 
 function on(el: Element, event: string, handler: (e: any) => unknown, h: Holder): void {
   if (DELEGATED.has(event)) {
-    const target = el as unknown as Record<string, unknown>;
+    const target = el as unknown as Record<symbol, unknown>;
     target[keyOf(event)] = handler;
     target[HOLDER] = h;
   } else el.addEventListener(event, (e) => afterHandler(h.ctx, handler(e)));

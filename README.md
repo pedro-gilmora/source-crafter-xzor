@@ -343,17 +343,15 @@ ada.revertChanges();  // back to 8; or ada.confirmChanges() after saving
 
 See [`examples/counter/pages/Team.xzor`](examples/counter/pages/Team.xzor).
 
-### Fine components: no render pass
+### No render pass
 
-Write `@fine` at the top of a component and it is compiled without a render pass. The DOM is built once; each `@value`, attribute and `@bind` updates on its own when a field it reads changes, and `@for` keeps its rows. Totals are plain expressions:
+Components are compiled without a render pass. The DOM is built once; each `@value`, attribute and `@bind` updates on its own when a field it reads changes, and `@for` keeps its rows. Totals are plain expressions:
 
 ```xzor
-@fine
-...
 <b>@team.view.reduce((sum, w) => sum + w.hours, 0)</b>
 ```
 
-The component's own fields are tracked like a model's, so `count++` in a handler is enough. Child components, slots and `@cascade` are not supported in fine components yet. See [`examples/counter/pages/TeamFine.xzor`](examples/counter/pages/TeamFine.xzor).
+The component's own fields are tracked like a model's, so `count++` in a handler is enough. Write `@render` at the top of a component to get a virtual-DOM render pass instead. See [`examples/counter/pages/TeamFine.xzor`](examples/counter/pages/TeamFine.xzor).
 
 ---
 

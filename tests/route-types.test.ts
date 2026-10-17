@@ -27,7 +27,7 @@ function build(name: string, body: string, imports = "", files: Record<string, s
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")] };
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")], "@source-crafter/xzor-runtime/model": [join(root, "runtime", "model.ts").replaceAll("\\", "/")] };
   tsconfig.compilerOptions.strict = true;
   tsconfig.compilerOptions.noUncheckedIndexedAccess = true;
   tsconfig.compilerOptions.noPropertyAccessFromIndexSignature = true;

@@ -198,7 +198,7 @@ export abstract class Model extends EventTarget {
     const own = metaOf(this);
     const values = this as unknown as Record<string, unknown>;
     for (let i = 0; i < own.validators.length; i++) {
-      const [name, list] = own.validators[i];
+      const [name, list] = own.validators[i]!;
       for (const validate of list) if (typeof validate(values[name], this) === "string") return true;
     }
     for (const name of own.names) if (valueHasErrors(values[name])) return true;
@@ -214,7 +214,7 @@ export abstract class Model extends EventTarget {
     const values = this as unknown as Record<string, unknown>;
     const validators = metaOf(this).validators;
     for (let i = 0; i < validators.length; i++) {
-      const [name, list] = validators[i];
+      const [name, list] = validators[i]!;
       const messages = (result[name] = [] as string[]);
       for (const validate of list) {
         const message = validate(values[name], this);
@@ -329,7 +329,7 @@ export abstract class Model extends EventTarget {
     if (data) {
       const tracked = metaOf(this).tracked;
       const source = data as Record<string, unknown>;
-      if (source.$$ != null) this.#state = source.$$ as State;
+      if (source["$$"] != null) this.#state = source["$$"] as State;
       silent++;
       try {
         for (const name in source)
@@ -723,6 +723,8 @@ function flush(): void {
 
 /** @internal The queue models and fine bindings share: queues `dep`'s owner when `index` is in its mask. */
 export const $notify = changed as (dep: object, index: number) => void;
+/** @internal Runs what is queued now instead of in a microtask. */
+export const $flush = flush;
 
 // Drops the deps the render that just ended did not read again.
 function sweep(own: Reads): void {
