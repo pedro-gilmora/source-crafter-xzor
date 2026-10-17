@@ -4,6 +4,7 @@ const spec: [string, A[]][] = [
   ['@page "/"', [["@", "keyword.control.transition.xzor"], ["page", "keyword.control.directive.xzor"], ['"/"', "string.quoted.double.xzor"]]],
   ['@import Counter from "./Counter.xzor"', [["@", "keyword.control.transition.xzor"], ["import", "keyword.control.import.ts"], ['"./Counter.xzor"', "string.quoted.double.ts"]]],
   ["@typeparam T extends object", [["typeparam", "keyword.control.directive.xzor"], ["T", "entity.name.type.parameter.xzor"]]],
+  ["@fine // no render pass", [["@", "keyword.control.transition.xzor"], ["fine", "keyword.control.directive.xzor"], ["// no render pass", "comment.line.double-slash.xzor"]]],
   ['<input @bind="name" @bind:event="oninput" />', [["@bind", "entity.other.attribute-name.html"], ["name", "meta.embedded.expression.typescript"]]],
   ["@code {", [["@", "keyword.control.transition.xzor"], ["code", "keyword.control.directive.xzor"], ["{", "meta.embedded.block.typescript punctuation.definition.block.ts"]]],
   ["  count: number = 0;", [["count", "meta.embedded.block.typescript variable.object.property.ts"], ["number", "support.type.primitive.ts"]]],

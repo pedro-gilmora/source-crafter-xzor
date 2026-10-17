@@ -78,6 +78,7 @@
         { "include": "#code-block" },
         { "include": "#statements" },
         { "include": "#class-directives" },
+        { "include": "#fine" },
         { "include": "#line-text" },
         { "include": "#routes-block" },
         { "include": "#page" },
@@ -127,6 +128,16 @@
       "end": "$",
       "contentName": "meta.embedded.line.typescript",
       "patterns": [{ "include": "#directive-comment" }, { "include": "source.ts#expression" }]
+    },
+    "fine": {
+      "comment": "@fine: the component is compiled to DOM bindings, with no render pass.",
+      "begin": "(?<![[:alnum:]])(@)(fine)(?![[:alnum:]_$])",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" }
+      },
+      "end": "$",
+      "patterns": [{ "include": "#directive-comment" }]
     },
     "line-text": {
       "match": "(@:)",
