@@ -33,7 +33,7 @@ A new skill, `xzor-ui`, holds the kit rules:
 - "reactive styling goes through custom properties and `data-*`" (2.4);
 - what to avoid: inline colors, nesting glass inside glass, and animating layout properties.
 
-It is also shipped in `npm/xzor/skills/` next to the existing `xzor` skill.
+It ships on npm with the kit package (deferred, see 2.3).
 
 ### 1.3 Done when
 
