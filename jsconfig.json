@@ -1,0 +1,18 @@
+{
+  // Editor project for the repo's own TypeScript (compiler helpers, runtime, tests, npm launcher), run by Bun.
+  // A jsconfig, not a tsconfig: xzor treats a tsconfig.json as the root of an app project.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "ESNext.Disposable", "ESNext.Decorators", "DOM"],
+    "types": ["bun"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "checkJs": false
+  },
+  "include": ["src/**/*.ts", "runtime/**/*.ts", "tests/**/*.ts", "npm/**/*.ts", "docs/site/publish.ts", "docs/site/highlight.ts"],
+  "exclude": ["node_modules", "target", "**/.xzor", "**/dist", "tests/fixtures"]
+}

@@ -473,7 +473,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       } else {
         const owner = r.owner!.value;
         const member = r.memberSym?.value?.valueDeclaration?.resolve();
-        if (r.member?.startsWith("#") || (member && member.modifierFlags & (ModifierFlags.Private | ModifierFlags.Protected))) {
+        if (r.member?.startsWith("#") || (member && (member as unknown as { modifierFlags: number }).modifierFlags & (ModifierFlags.Private | ModifierFlags.Protected))) {
           error(r.loc, `${owner?.name ?? r.owner!.node.getText(r.loc.sf)}.${r.member} must be public`);
           continue;
         }
@@ -486,8 +486,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         }
         const ownerRef = fn ? functionRef(owner!, r.loc) : classRef(owner!, { sf: r.loc.sf, node: r.owner!.node });
         if (!ownerRef) continue;
-        const awaited = unwrapPromise(ret);
-        type = awaited ?? ret;
+        const awaited = unwrapPromise(ret!);
+        type = awaited ?? ret!;
         const d = disposal(type);
         reg = {
           lifetime,
@@ -699,7 +699,7 @@ async function serve(rootArg: string | undefined) {
         missing.clear();
         for (const f of [...files, ...components]) if (!tracked.has(key(f))) missing.set(key(f), mtime(f));
       }
-      const project = snapshot.getProject(config);
+      const project = snapshot!.getProject(config);
       if (!project) throw new Error(`no TypeScript project for ${config}`);
       // `rebuilt` is a debug signal; the Rust side ignores it.
       process.stdout.write(JSON.stringify({ ...analyze(root, project.program, project.checker, files, components), rebuilt }) + "\n");

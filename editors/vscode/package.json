@@ -8,7 +8,6 @@
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Programming Languages"],
   "main": "./out/extension.js",
-  "activationEvents": ["onLanguage:xzor"],
   "contributes": {
     "commands": [{ "command": "xzor.restartServer", "title": "Restart Server", "category": "XZor" }],
     "configuration": {

@@ -568,8 +568,8 @@ export abstract class FineComponent extends ComponentBase {
   #subs: object[] | undefined;
 
   /** @internal What tracked getters report to; the bundle emits `FineComponent.$reader?.(this, i)`. */
-  static get $reader(): typeof Model.$reader {
-    return Model.$reader;
+  static get $reader(): ((source: object, index: number) => void) | undefined {
+    return Model.$reader as ((source: object, index: number) => void) | undefined;
   }
 
   static same(a: unknown, b: unknown): boolean {

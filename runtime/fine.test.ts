@@ -465,7 +465,7 @@ test("templates create <svg> and its children in the SVG namespace", () => {
   const frag = icon() as DocumentFragment;
   const svg = frag.firstChild as Element;
   expect(svg.namespaceURI).toBe(SVG);
-  expect(svg.firstChild!.namespaceURI).toBe(SVG);
+  expect((svg.firstChild as Element).namespaceURI).toBe(SVG);
   expect(svg.getAttribute("viewBox")).toBe("0 0 24 24");
   expect((frag.lastChild as Element).namespaceURI).toBe("http://www.w3.org/1999/xhtml");
   const parent = document.createElementNS(SVG, "svg");

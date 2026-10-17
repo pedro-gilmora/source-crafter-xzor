@@ -54,7 +54,7 @@ type Meta = {
 };
 
 /** `true` when the value is valid, otherwise the message. */
-export type Validator = (value: any, model: any) => true | string;
+export type Validator = (value: any, model?: any) => true | string;
 
 /** One registration, kept only for `change` and `state` so a model knows whether it is watched. */
 type Watch = {
