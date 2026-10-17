@@ -111,6 +111,11 @@ export function disposeIsland(tree: VNode[]): void {
 /** @internal Whether a value is markup (`RenderFragment`). */
 export const $isFragment = (value: unknown): boolean => isFragment(value);
 
+export const SVG = "http://www.w3.org/2000/svg";
+/** Whether children of `parent` belong to the SVG namespace (`<foreignObject>` holds HTML). */
+export const $inSvg = (parent: Node): boolean => (parent as Element).namespaceURI === SVG && parent.nodeName !== "foreignObject";
+const inSvg = $inSvg;
+
 function fineNodes(root: FineRoot): Node[] {
   const nodes: Node[] = [];
   for (let n: Node | null = root.start; n !== null; n = n.nextSibling) {
@@ -191,8 +196,20 @@ const navigated = new Set<() => void>();
 // NavLinks: notified like routes blocks, but they never intercept clicks.
 const observers = new Set<() => void>();
 const EXTERNAL = /(^|\s)external(\s|$)/;
+let transitions = false;
+
+/** Commits each navigation inside `document.startViewTransition` where the browser has it. */
+export function viewTransitions(on: boolean): void {
+  transitions = on;
+}
 
 function notifyNavigated(): void {
+  const doc = document as Document & { startViewTransition?: (update: () => void) => unknown };
+  if (transitions && doc.startViewTransition) doc.startViewTransition(notifyAll);
+  else notifyAll();
+}
+
+function notifyAll(): void {
   for (const fn of [...navigated]) fn();
   for (const fn of [...observers]) fn();
 }
@@ -972,17 +989,24 @@ function listen(el: Element, event: string): void {
   });
 }
 
-function create(v: VNode, owner: ComponentBase, app: IApplication | undefined, scope: CascadeRecord | undefined): Node[] {
+function create(
+  v: VNode,
+  owner: ComponentBase,
+  app: IApplication | undefined,
+  scope: CascadeRecord | undefined,
+  svg = false,
+): Node[] {
   switch (v.kind) {
     case "text":
       v.dom = document.createTextNode(v.text);
       return [v.dom];
     case "element": {
-      const el = document.createElement(v.tag);
+      const el = svg || v.tag === "svg" ? document.createElementNS(SVG, v.tag) : document.createElement(v.tag);
       for (const [name, value] of Object.entries(v.attrs)) setAttr(el, name, value);
       elementHandlers.set(el, { owner, events: v.events, modifiers: v.modifiers, listening: new Set() });
       for (const event of eventNames(v)) listen(el, event);
-      for (const child of v.children) el.append(...create(child, owner, app, scope));
+      const inner = inSvg(el);
+      for (const child of v.children) el.append(...create(child, owner, app, scope, inner));
       v.dom = el;
       v.ref?.(el);
       return [el];
@@ -994,7 +1018,7 @@ function create(v: VNode, owner: ComponentBase, app: IApplication | undefined, s
         v.name === undefined
           ? scope
           : (v.cascade = { name: v.name, value: v.value, fixed: v.fixed === true, consumers: undefined, parent: scope });
-      return [...v.children.flatMap((c) => create(c, owner, app, inner)), v.anchor];
+      return [...v.children.flatMap((c) => create(c, owner, app, inner, svg)), v.anchor];
     }
     case "component": {
       if (!v.onError) return createComponent(v, app, scope);
@@ -1241,7 +1265,7 @@ function patchList(
       continue;
     }
     const ref = o ? nodesOf(o)[0]! : end;
-    for (const node of create(n, owner, app, scope)) parent.insertBefore(node, ref);
+    for (const node of create(n, owner, app, scope, inSvg(parent))) parent.insertBefore(node, ref);
     if (o) remove(parent, o);
   }
   for (const o of old.slice(next.length)) remove(parent, o);
@@ -1279,7 +1303,7 @@ function patchKeyed(
       patch(o, n, owner, app, scope);
       nodes = nodesOf(n);
     } else {
-      nodes = create(n, owner, app, scope);
+      nodes = create(n, owner, app, scope, inSvg(parent));
     }
     for (let j = nodes.length - 1; j >= 0; j--) {
       const node = nodes[j]!;

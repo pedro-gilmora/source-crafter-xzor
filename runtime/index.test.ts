@@ -177,3 +177,28 @@ test("async handlers re-render again when they settle", async () => {
   expect(button.textContent).toBe("done");
   expect(host.querySelector("button")).toBe(button);
 });
+
+test("render-tree <svg> elements and their children are created in the SVG namespace", () => {
+  class Icon extends ComponentBase {
+    d = "M0 0";
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("svg");
+      b.addAttribute("viewBox", "0 0 24 24");
+      b.openRegion();
+      b.openElement("path");
+      b.addAttribute("d", this.d);
+      b.closeElement();
+      b.closeRegion();
+      b.closeElement();
+    }
+  }
+  const host = document.createElement("div");
+  const c = mount(Icon, host);
+  const SVG = "http://www.w3.org/2000/svg";
+  expect(host.querySelector("svg")!.namespaceURI).toBe(SVG);
+  expect(host.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 24 24");
+  expect(host.querySelector("path")!.namespaceURI).toBe(SVG);
+  c.d = "M1 1";
+  c.stateHasChanged();
+  expect(host.querySelector("path")!.getAttribute("d")).toBe("M1 1");
+});

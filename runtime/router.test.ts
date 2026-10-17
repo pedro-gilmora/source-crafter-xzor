@@ -10,6 +10,7 @@ import {
   type RouteTable,
   mount,
   setNavigationForTests,
+  viewTransitions,
 } from "./index";
 
 // happy-dom starts on about:blank, where relative URLs and pushState are not allowed.
@@ -557,6 +558,36 @@ test("popstate re-renders the routes block", () => {
   history.replaceState(null, "", "/users/2");
   window.dispatchEvent(new PopStateEvent("popstate"));
   expect(r.html()).toBe("<aside><u>2</u></aside>");
+});
+
+test("viewTransitions(true) commits a navigation inside document.startViewTransition", () => {
+  const doc = document as unknown as { startViewTransition?: (cb: () => void) => void };
+  let called = 0;
+  doc.startViewTransition = (cb) => {
+    called++;
+    cb();
+  };
+  try {
+    history.replaceState(null, "", "/users/1");
+    const r = routed([{ kind: "default", render: wrap("aside") }]);
+    history.replaceState(null, "", "/users/2");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(called).toBe(0);
+
+    viewTransitions(true);
+    history.replaceState(null, "", "/users/3");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(called).toBe(1);
+    expect(r.html()).toBe("<aside><u>3</u></aside>");
+
+    delete doc.startViewTransition;
+    history.replaceState(null, "", "/users/4");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(r.html()).toBe("<aside><u>4</u></aside>");
+  } finally {
+    viewTransitions(false);
+    delete doc.startViewTransition;
+  }
 });
 
 class ThrowingCtor extends ComponentBase {

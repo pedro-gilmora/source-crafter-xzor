@@ -2,7 +2,7 @@
 // is a binding: it collects the tracked fields it reads while it runs, and re-runs through the model queue (once
 // per microtask) when one of them changes. A binding is its own dep for the first source it reads.
 
-import { $isFragment, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { $inSvg as inSvg, $isFragment, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
 import { $flush, $notify, Model } from "./model";
 
 const TEXT = 0;
@@ -367,13 +367,15 @@ type Named = { $n: string };
 /** A template node: text (`""` is a binding's place), `null` a comment (an anchor), or `[tag, attrs | 0, ...children]`. */
 type Spec = string | null | readonly [string, 0 | readonly string[], ...unknown[]];
 
-function make(spec: Spec): Node {
+function make(spec: Spec, svg = false): Node {
   if (spec === null) return document.createComment("");
   if (typeof spec === "string") return document.createTextNode(spec);
-  const el = document.createElement(spec[0]);
+  const tag = spec[0];
+  const el = svg || tag === "svg" ? document.createElementNS(SVG, tag) : document.createElement(tag);
   const attrs = spec[1];
   if (attrs !== 0) for (let i = 0; i < attrs.length; i += 2) el.setAttribute(attrs[i]!, attrs[i + 1]!);
-  for (let i = 2; i < spec.length; i++) el.appendChild(make(spec[i] as Spec));
+  const inner = inSvg(el);
+  for (let i = 2; i < spec.length; i++) el.appendChild(make(spec[i] as Spec, inner));
   return el;
 }
 
@@ -467,7 +469,7 @@ export const fine = {
   },
 
   el<K extends string>(parent: Node, tag: K): El<K> {
-    return parent.appendChild(document.createElement(tag)) as El<K>;
+    return parent.appendChild(inSvg(parent) ? document.createElementNS(SVG, tag) : document.createElement(tag)) as El<K>;
   },
 
   /** A handler; afterwards the component re-runs its bindings that read nothing tracked. */

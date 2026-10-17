@@ -458,3 +458,16 @@ test("template rows: shared reads bind each row's item, and delegated handlers g
   expect(rows()[2]!.querySelector("span")!.textContent).toBe("60.00");
   expect(el.querySelector("p")!.textContent).toBe("3");
 });
+
+test("templates create <svg> and its children in the SVG namespace", () => {
+  const SVG = "http://www.w3.org/2000/svg";
+  const icon = fine.template([["svg", ["viewBox", "0 0 24 24"], ["path", ["d", "M0 0"]]], ["p", 0, "x"]]);
+  const frag = icon() as DocumentFragment;
+  const svg = frag.firstChild as Element;
+  expect(svg.namespaceURI).toBe(SVG);
+  expect(svg.firstChild!.namespaceURI).toBe(SVG);
+  expect(svg.getAttribute("viewBox")).toBe("0 0 24 24");
+  expect((frag.lastChild as Element).namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+  const parent = document.createElementNS(SVG, "svg");
+  expect(fine.el(parent, "path").namespaceURI).toBe(SVG);
+});
