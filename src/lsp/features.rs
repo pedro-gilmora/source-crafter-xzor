@@ -15,6 +15,9 @@ pub struct Component {
     pub slots: Vec<(String, usize)>,
     /// Route tags of its `@page ... as tag` lines.
     pub tags: Vec<String>,
+    /// The specifier to import it by, for a component of a package (`@kit/Button.xzor`); `None`
+    /// imports it by relative path.
+    pub import: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +27,12 @@ pub struct Prop {
     pub decl: String,
     /// Byte offset of the name in the component's source.
     pub offset: usize,
+    /// Its `/** ... */` comment, without the markers.
+    pub doc: String,
+    /// The declared type, e.g. `Tone` in `tone?: Tone = "neutral"`.
+    pub ty: Option<String>,
+    /// The string values the type admits (filled in by the caller, which can read imported modules).
+    pub values: Vec<String>,
 }
 
 pub fn component_from_source(path: &Path, text: &str) -> Component {
@@ -40,12 +49,56 @@ pub fn component_from_source(path: &Path, text: &str) -> Component {
                 let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
                 let line_end = text[offset..].find('\n').map_or(text.len(), |i| offset + i);
                 let decl = text[line_start..line_end].trim().trim_end_matches(';').to_string();
-                props.push(Prop { name: m.name, decl, offset });
+                let ty = decl_type(&decl, &m.name);
+                let values = ty.as_deref().map(literals).unwrap_or_default();
+                props.push(Prop { doc: doc_comment(&text[..line_start]), ty, values, name: m.name, decl, offset });
             }
         }
         collect_slot_names(&doc.nodes, &mut slots);
     }
-    Component { name, path: path.to_path_buf(), props, slots, tags }
+    Component { name, path: path.to_path_buf(), props, slots, tags, import: None }
+}
+
+/// The type of `name` in a field declaration: `tone?: Tone = "x"` gives `Tone`.
+fn decl_type(decl: &str, name: &str) -> Option<String> {
+    let rest = decl.split_once(name)?.1.trim_start().trim_start_matches(['?', '!']).trim_start();
+    let rest = rest.strip_prefix(':')?;
+    let mut depth = 0i32;
+    let mut end = rest.len();
+    for (i, c) in rest.char_indices() {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' | ')' | ']' | '}' => depth -= 1,
+            '=' if depth == 0 && !rest[i..].starts_with("=>") => {
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    Some(rest[..end].trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// The string literals of an inline union (`"a" | "b"`); empty for anything else.
+fn literals(ty: &str) -> Vec<String> {
+    let parts: Vec<&str> = ty.split('|').map(str::trim).filter(|t| !t.is_empty()).collect();
+    let quoted = |t: &str| t.len() >= 2 && (t.starts_with('"') && t.ends_with('"') || t.starts_with('\'') && t.ends_with('\''));
+    if parts.iter().all(|t| quoted(t)) { parts.iter().map(|t| t[1..t.len() - 1].to_string()).collect() } else { Vec::new() }
+}
+
+/// The `/** ... */` comment that ends right before `before` (the text up to a declaration line).
+fn doc_comment(before: &str) -> String {
+    let trimmed = before.trim_end();
+    if !trimmed.ends_with("*/") {
+        return String::new();
+    }
+    let Some(open) = trimmed.rfind("/**") else { return String::new() };
+    trimmed[open + 3..trimmed.len() - 2]
+        .lines()
+        .map(|l| l.trim().trim_start_matches('*').trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
@@ -137,6 +190,8 @@ pub enum Context {
     SlotName { component: String, prefix: String, start: usize },
     /// After `@` directly inside a routes block: a section keyword or route tag.
     Route { prefix: String, start: usize },
+    /// Inside the quotes of attribute `attr` on `tag`, before any `@`: a static value.
+    AttrValue { tag: String, attr: String, prefix: String, start: usize },
     Other,
 }
 
@@ -174,6 +229,9 @@ fn open_tag(text: &str, offset: usize) -> Option<(String, usize)> {
 }
 
 pub fn context(text: &str, offset: usize) -> Context {
+    if let Some(ctx) = attr_value(text, offset) {
+        return ctx;
+    }
     let start = word_start(text, offset);
     let prefix = text[start..offset].to_string();
     let prev = text[..start].bytes().last();
@@ -201,6 +259,67 @@ pub fn context(text: &str, offset: usize) -> Context {
         return Context::Directive { prefix, start };
     }
     Context::Other
+}
+
+/// Inside a quoted attribute value of an open tag; the prefix is the current word for `class`, the
+/// whole value otherwise. `None` once the value holds an `@` expression (TypeScript completes those).
+fn attr_value(text: &str, offset: usize) -> Option<Context> {
+    let before = &text[..offset];
+    let lt = before.rfind('<')?;
+    if before[lt..].contains('>') || before[lt..].bytes().filter(|&c| c == b'"').count() % 2 == 0 {
+        return None;
+    }
+    let tag: String = before[lt + 1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    let quote = before.rfind('"')?;
+    let value = &before[quote + 1..];
+    let name_end = before[..quote].trim_end().strip_suffix('=')?.trim_end();
+    let attr: String = name_end.chars().rev().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | ':' | '@')).collect::<Vec<_>>().into_iter().rev().collect();
+    if tag.is_empty() || attr.is_empty() || attr.starts_with('@') || value.contains('@') {
+        return None;
+    }
+    let word = if attr == "class" { value.rfind(char::is_whitespace).map_or(0, |i| i + 1) } else { 0 };
+    Some(Context::AttrValue { tag, attr, prefix: value[word..].to_string(), start: quote + 1 + word })
+}
+
+/// Values of native attributes the kit leans on (invokers, dialogs).
+const NATIVE_VALUES: &[(&str, &[&str])] = &[
+    ("command", &["show-modal", "close", "request-close", "toggle-popover", "show-popover", "hide-popover"]),
+    ("popovertargetaction", &["toggle", "show", "hide"]),
+    ("closedby", &["any", "closerequest", "none"]),
+    ("popover", &["auto", "manual", "hint"]),
+    ("role", &["switch", "status", "tablist", "tab", "radiogroup", "dialog", "img", "list", "listitem"]),
+];
+
+/// Attributes and props whose value is the `id` of another element on the page.
+fn takes_id(attr: &str, doc: &str) -> bool {
+    matches!(attr, "commandfor" | "popovertarget" | "for" | "aria-controls" | "aria-labelledby" | "aria-describedby") || doc.starts_with("Id of")
+}
+
+/// The `id="..."` values written in `text`.
+fn ids(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = text
+        .match_indices(" id=\"")
+        .filter_map(|(at, m)| {
+            let rest = &text[at + m.len()..];
+            let id = &rest[..rest.find('"')?];
+            (!id.is_empty() && !id.contains('@')).then(|| id.to_string())
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Class names a style sheet declares: `.name` not preceded by a word character (skips `x.woff2`, `0.5`).
+pub fn css_classes(css: &str) -> Vec<String> {
+    let b = css.as_bytes();
+    css.match_indices('.')
+        .filter(|(at, _)| *at == 0 || !(b[at - 1].is_ascii_alphanumeric() || matches!(b[at - 1], b'-' | b'_' | b'/')))
+        .filter_map(|(at, _)| {
+            let name: String = css[at + 1..].chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).collect();
+            name.starts_with(|c: char| c.is_ascii_alphabetic()).then_some(name)
+        })
+        .collect()
 }
 
 /// Whether `before` ends directly inside the braces of an open `@ClientRoutes(..) {`/`@ServerRoutes(..) {` block.
@@ -264,6 +383,7 @@ pub struct Completion {
 }
 
 const KIND_PROPERTY: u32 = 10;
+const KIND_VALUE: u32 = 12;
 const KIND_CLASS: u32 = 7;
 const KIND_KEYWORD: u32 = 14;
 const KIND_EVENT: u32 = 23;
@@ -351,7 +471,34 @@ pub fn relative_import(from_dir: &Path, to: &Path) -> String {
 }
 
 pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Component]) -> Vec<Completion> {
+    completions_with(text, offset, doc_path, components, &[])
+}
+
+fn value_item(label: &str, detail: String) -> Completion {
+    Completion { label: label.to_string(), kind: KIND_VALUE, detail, insert: label.to_string(), snippet: false, extra_edit: None }
+}
+
+/// [`completions`], with the CSS class names of the project and its packages for `class="..."`.
+pub fn completions_with(text: &str, offset: usize, doc_path: &Path, components: &[Component], classes: &[String]) -> Vec<Completion> {
     match context(text, offset) {
+        Context::AttrValue { tag, attr, prefix, .. } => {
+            let component = components.iter().find(|c| c.name == tag);
+            let prop = component.and_then(|c| c.props.iter().find(|p| p.name == attr));
+            let mut values: Vec<(String, String)> = match prop {
+                Some(p) if takes_id(&p.name, &p.doc) => ids(text).into_iter().map(|id| (id, "id on this page".to_string())).collect(),
+                Some(p) => p.values.iter().map(|v| (v.clone(), format!("{tag}.{}: {}", p.name, p.ty.as_deref().unwrap_or("string")))).collect(),
+                None if component.is_some() => Vec::new(),
+                None if attr == "class" => classes.iter().map(|c| (c.clone(), "CSS class".to_string())).collect(),
+                None if takes_id(&attr, "") => ids(text).into_iter().map(|id| (id, "id on this page".to_string())).collect(),
+                None => NATIVE_VALUES
+                    .iter()
+                    .filter(|(a, _)| *a == attr)
+                    .flat_map(|(_, vs)| vs.iter().map(|v| (v.to_string(), format!("{attr} value"))))
+                    .collect(),
+            };
+            values.retain(|(v, _)| matches_prefix(v, &prefix));
+            values.into_iter().map(|(v, d)| value_item(&v, d)).collect()
+        }
         Context::SlotName { component, prefix, .. } => components
             .iter()
             .filter(|c| c.name == component)
@@ -376,11 +523,15 @@ pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Com
                 });
                 let is_self = doc_path.file_name() == c.path.file_name() && doc_path.parent() == c.path.parent();
                 let dir = doc_path.parent().unwrap_or(Path::new("."));
-                let import = format!("@import {} from \"{}\"\n", c.name, relative_import(dir, &c.path));
+                let from = c.import.clone().unwrap_or_else(|| relative_import(dir, &c.path));
+                let import = format!("@import {} from \"{from}\"\n", c.name);
                 Completion {
                     label: c.name.clone(),
                     kind: KIND_CLASS,
-                    detail: format!("component {}", c.path.file_name().unwrap_or_default().to_string_lossy()),
+                    detail: match &c.import {
+                        Some(spec) => format!("component from {spec}"),
+                        None => format!("component {}", c.path.file_name().unwrap_or_default().to_string_lossy()),
+                    },
                     insert: c.name.clone(),
                     snippet: false,
                     extra_edit: (!imported && !is_self).then(|| (import_insert_offset(text), import)),
@@ -407,7 +558,7 @@ pub fn completions(text: &str, offset: usize, doc_path: &Path, components: &[Com
                     .map(|p| Completion {
                         label: p.name.clone(),
                         kind: KIND_PROPERTY,
-                        detail: p.decl.clone(),
+                        detail: if p.doc.is_empty() { p.decl.clone() } else { format!("{} // {}", p.decl, p.doc) },
                         insert: format!("{}=\"$1\"", p.name),
                         snippet: true,
                         extra_edit: None,
@@ -518,11 +669,45 @@ mod tests {
         let t = "<button @onc";
         assert_eq!(context(t, t.len()), Context::Attr { tag: "button".into(), prefix: "@onc".into(), start: t.len() - 4 });
         let t = "<p title=\"a b";
-        assert_eq!(context(t, t.len()), Context::Other);
+        assert_eq!(context(t, t.len()), Context::AttrValue { tag: "p".into(), attr: "title".into(), prefix: "a b".into(), start: 10 });
+        let t = "<p class=\"xz-a xz-b";
+        assert_eq!(context(t, t.len()), Context::AttrValue { tag: "p".into(), attr: "class".into(), prefix: "xz-b".into(), start: t.len() - 4 });
+        let t = "<p title=\"@x";
+        assert!(!matches!(context(t, t.len()), Context::AttrValue { .. }));
         let t = "<p>x</p>\n@sw";
         assert_eq!(context(t, t.len()), Context::Directive { prefix: "sw".into(), start: t.len() - 2 });
         let t = "mail a@b";
         assert_eq!(context(t, t.len()), Context::Other);
+    }
+
+    #[test]
+    fn attribute_value_completion() {
+        let src = "@code {\n  /** Visual weight. */\n  tone?: \"neutral\" | \"accent\" = \"neutral\";\n  /** Id of the dialog to open. */\n  opens = \"\";\n}\n<i/>";
+        let button = component_from_source(Path::new("/kit/Button.xzor"), src);
+        assert_eq!(button.props[0].doc, "Visual weight.");
+        assert_eq!(button.props[0].ty.as_deref(), Some("\"neutral\" | \"accent\""));
+        assert_eq!(button.props[0].values, ["neutral", "accent"]);
+        assert_eq!(button.props[1].ty, None);
+
+        let labels = |doc: &str, classes: &[String]| -> Vec<String> {
+            completions_with(doc, doc.len(), Path::new("/app/A.xzor"), std::slice::from_ref(&button), classes).into_iter().map(|c| c.label).collect()
+        };
+        assert_eq!(labels("<Button tone=\"a", &[]), ["accent"]);
+        assert_eq!(labels("<dialog id=\"edit\"></dialog><dialog id=\"new\"/><Button opens=\"", &[]), ["edit", "new"]);
+        assert_eq!(labels("<dialog id=\"edit\"/><button commandfor=\"e", &[]), ["edit"]);
+        assert_eq!(labels("<button command=\"show", &[]), ["show-modal", "show-popover"]);
+        assert_eq!(labels("<div class=\"xz-card xz-s", &css_classes(".xz-stack{} .xz-card > .xz-sheet{} url(a.woff2) 0.5rem")), ["xz-stack", "xz-sheet"]);
+        assert!(labels("<Button tone=\"@x", &[]).is_empty());
+
+        let doc = "<Button to";
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), std::slice::from_ref(&button));
+        assert_eq!(items[0].detail, "tone?: \"neutral\" | \"accent\" = \"neutral\" // Visual weight.");
+
+        let mut kit = button.clone();
+        kit.import = Some("@kit/Button.xzor".into());
+        let doc = "<Bu";
+        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[kit]);
+        assert_eq!(items[0].extra_edit, Some((0, "@import Button from \"@kit/Button.xzor\"\n".into())));
     }
 
     #[test]

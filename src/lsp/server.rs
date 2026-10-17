@@ -1057,17 +1057,46 @@ impl Server {
         self.notify("textDocument/publishDiagnostics", Json::obj([("uri", uri.into()), ("diagnostics", Json::Arr(all))]))
     }
 
-    /// Components defined in the project that contains `doc_path`.
+    /// Components defined in the project that contains `doc_path`, then those of the packages its
+    /// tsconfig `paths` reach (imported by specifier). Props typed with string literals get their values.
     fn components(&self, doc_path: &Path) -> Vec<features::Component> {
         let root = project_root(doc_path);
-        find_sources(&root)
-            .unwrap_or_default()
+        let read = |p: &Path| self.text_of(p);
+        let local: Vec<(Option<String>, PathBuf)> = find_sources(&root).unwrap_or_default().into_iter().map(|p| (None, p)).collect();
+        let (packages, _) = crate::tsconfig_packages(&root, &read);
+        let packages = packages.into_iter().filter(|(_, p)| !local.iter().any(|(_, l)| same_path(l, p))).map(|(s, p)| (Some(s), p));
+        local
+            .clone()
             .into_iter()
-            .filter_map(|p| {
+            .chain(packages)
+            .filter_map(|(import, p)| {
                 let text = self.text_of(&p)?;
-                Some(features::component_from_source(&p, &text))
+                let mut c = features::component_from_source(&p, &text);
+                c.import = import;
+                for prop in &mut c.props {
+                    if let (true, Some(ty)) = (prop.values.is_empty(), &prop.ty) {
+                        prop.values = crate::string_values(ty, &text, &p, &read);
+                    }
+                }
+                Some(c)
             })
             .collect()
+    }
+
+    /// Class names declared in the project's top-level style sheets and those of its packages.
+    fn classes(&self, doc_path: &Path) -> Vec<String> {
+        let root = project_root(doc_path);
+        let (_, mut sheets) = crate::tsconfig_packages(&root, &|p: &Path| self.text_of(p));
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            sheets.extend(entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "css")));
+        }
+        let mut out = Vec::new();
+        for css in sheets.iter().filter_map(|p| std::fs::read_to_string(p).ok()) {
+            out.extend(features::css_classes(&css));
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 
     fn text_of(&self, path: &Path) -> Option<String> {
@@ -1107,7 +1136,7 @@ impl Server {
         let ctx = features::context(&doc.text, off);
         let mapped = doc.compiled.as_ref().and_then(|c| c.to_gen(&doc.text, off));
         match (&ctx, mapped) {
-            (Context::Tag { .. } | Context::Attr { .. } | Context::SlotName { .. } | Context::Route { .. }, _) | (_, None) => {
+            (Context::Tag { .. } | Context::Attr { .. } | Context::AttrValue { .. } | Context::SlotName { .. } | Context::Route { .. }, _) | (_, None) => {
                 let items = self.local_completions(&uri, off);
                 self.respond(id, Json::obj([("isIncomplete", false.into()), ("items", Json::Arr(items))]))
             }
@@ -1123,13 +1152,19 @@ impl Server {
         let start = match features::context(&doc.text, off) {
             Context::Tag { start, .. }
             | Context::Attr { start, .. }
+            | Context::AttrValue { start, .. }
             | Context::Directive { start, .. }
             | Context::SlotName { start, .. }
             | Context::Route { start, .. } => start,
             Context::Other => off,
         };
         let comps = self.components(&doc.path);
-        features::completions(&doc.text, off, &doc.path, &comps)
+        let classes = if matches!(features::context(&doc.text, off), Context::AttrValue { ref attr, .. } if attr == "class") {
+            self.classes(&doc.path)
+        } else {
+            Vec::new()
+        };
+        features::completions_with(&doc.text, off, &doc.path, &comps, &classes)
             .into_iter()
             .map(|c| {
                 let mut item = Json::obj([
@@ -1160,12 +1195,18 @@ impl Server {
                 Symbol::Component(name) => comps
                     .iter()
                     .find(|c| &c.name == name)
-                    .map(|c| format!("```ts\n(component) {name}\n```\n{}", c.path.display())),
+                    .map(|c| match &c.import {
+                        Some(spec) => format!("```ts\n(component) {name}\n```\nfrom `{spec}`"),
+                        None => format!("```ts\n(component) {name}\n```\n{}", c.path.display()),
+                    }),
                 Symbol::Prop { component, name } => comps
                     .iter()
                     .find(|c| &c.name == component)
                     .and_then(|c| c.props.iter().find(|p| &p.name == name))
-                    .map(|p| format!("```ts\n(prop) {component}.{}\n```", p.decl)),
+                    .map(|p| {
+                        let doc = if p.doc.is_empty() { String::new() } else { format!("\n{}", p.doc) };
+                        format!("```ts\n(prop) {component}.{}\n```{doc}", p.decl)
+                    }),
                 Symbol::Slot { component, name } => comps
                     .iter()
                     .find(|c| &c.name == component && c.slots.iter().any(|(n, _)| n == name))

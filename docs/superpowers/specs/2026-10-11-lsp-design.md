@@ -23,8 +23,8 @@ Give `.tszor` authors IntelliSense, go-to-definition and diagnostics in any LSP 
 
 | Request | Inside a TS region (code block, `@expr`, `@( )`, conditions, handlers, attribute expressions) | Elsewhere (markup) |
 |---|---|---|
-| completion | Forwarded to tsgo, with edit ranges mapped back. After `@ident`, zor keywords are added. | `<` gives components (imported, plus project `.tszor` files, with an auto `@import`). Inside a component tag, its props. `@on` gives DOM event names. `@` gives the zor keywords. |
-| hover | Forwarded | Component tag shows the component and its source path. Prop shows its declaration line. |
+| completion | Forwarded to tsgo, with edit ranges mapped back. After `@ident`, zor keywords are added. | `<` gives components (imported, plus project `.tszor` files and the `.xzor` components of packages the tsconfig `paths` map to a `.xzor/*.ts` folder, with an auto `@import` by specifier). Inside a component tag, its props with their `/** */` comment. `@on` gives DOM event names. `@` gives the zor keywords. Inside a static attribute value: the string literals of the prop type (inline unions, or aliases imported through `paths` and re-exports); page `id`s for `commandfor`, `popovertarget`, `for`, `aria-*` ids and props documented `Id of ...`; class names from the project's and packages' top-level `.css` for `class`; known values of `command`, `popover`, `closedby`, `role`. |
+| hover | Forwarded | Component tag shows the component and its source path (or package specifier). Prop shows its declaration line and doc comment. |
 | definition | Forwarded; locations in `.zor` files are mapped back to their `.tszor` | Component tag jumps to its `.tszor` file. Prop jumps to its member in `@code`. |
 | diagnostics | tsgo diagnostics on the generated file, mapped back. Unmappable ones attach to the nearest preceding mapped position. | zor parse errors |
 

@@ -534,3 +534,24 @@ test("a route pattern duplicated by another open document is reported on the pat
   notify("textDocument/didClose", { textDocument: { uri: uriOf(aPath) } });
   rmSync(dir, { recursive: true, force: true });
 }, 90000);
+
+test("kit components, prop values, ids and classes complete through tsconfig paths", async () => {
+  const path = join(repo, "examples", "dashboard", "pages", "LspProbe.xzor");
+  const uri = uriOf(path);
+  const text = `<Butt\n<Button tone="\n<Button opens="\n<div class="xz-gl\n<dialog id="edit"></dialog>\n`;
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text } });
+  const labels = async (needle: string) => {
+    const r = await request("textDocument/completion", { textDocument: { uri }, position: pos(text, needle, needle.length) });
+    return r.items as any[];
+  };
+
+  const tag = (await labels("<Butt")).find((i) => i.label === "Button");
+  expect(tag.additionalTextEdits[0].newText).toBe('@import Button from "@source-crafter/xzor-ui/Button.xzor"\n');
+  expect((await labels('<Button tone="')).map((i) => i.label)).toEqual(expect.arrayContaining(["neutral", "accent", "danger"]));
+  expect((await labels('<Button opens="')).map((i) => i.label)).toEqual(["edit"]);
+  expect((await labels('<div class="xz-gl')).map((i) => i.label)).toContain("xz-glass");
+
+  const hover = await request("textDocument/hover", { textDocument: { uri }, position: pos(text, 'opens="', 1) });
+  expect(hover.contents.value).toContain("Id of a `Sheet` or `Dialog` this button opens.");
+  notify("textDocument/didClose", { textDocument: { uri } });
+}, 30000);
