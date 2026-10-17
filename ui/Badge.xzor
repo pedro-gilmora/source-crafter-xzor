@@ -1,0 +1,7 @@
+@import { type Tone } from "@source-crafter/xzor-ui"
+
+@code {
+  tone: Tone = "neutral";
+}
+
+<span class="xz-badge" data-tone="@tone">@slot</span>

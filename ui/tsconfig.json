@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "ESNext.Disposable", "ESNext.Decorators", "DOM"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "rootDirs": [".", ".xzor"],
+    "paths": {
+      "@source-crafter/xzor-runtime": ["../runtime/index.ts"],
+      "@source-crafter/xzor-runtime/model": ["../runtime/model.ts"],
+      "@source-crafter/xzor-ui": ["./index.ts"],
+      "@source-crafter/xzor-ui/*": ["./.xzor/*.ts"]
+    }
+  },
+  "include": ["**/*.ts", ".xzor/**/*.ts"],
+  "exclude": ["dist"]
+}

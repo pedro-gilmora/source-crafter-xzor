@@ -128,11 +128,11 @@ function rewritable(path: string, root: string): boolean {
   return p.endsWith(".ts") && inProject(path, root) && !p.includes("/node_modules/") && !p.includes("/.xzor/");
 }
 
-/** Files whose model and fine component fields become tracked: project sources, and generated `@fine` components. */
+/** Files whose model and fine component fields become tracked: project sources, and generated fine components (the app's or a kit's). */
 export function tracksFields(path: string, root: string, text: string): boolean {
   if (rewritable(path, root)) return true;
   const p = path.replaceAll("\\", "/");
-  return p.includes("/.xzor/") && p.endsWith(".xzor.ts") && !p.includes("/node_modules/") && inProject(path, root) && text.includes("FineComponent");
+  return p.includes("/.xzor/") && p.endsWith(".xzor.ts") && !p.includes("/node_modules/") && text.includes("FineComponent");
 }
 
 function generatedPath(source: string): string {
@@ -1001,15 +1001,17 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
       {
         name: "xzor",
         setup(build) {
-          build.onResolve({ filter: /\.xzor$/ }, (args) => ({
+          // Relative only: a package specifier (`@scope/kit/X.xzor`) goes through the tsconfig `paths`.
+          build.onResolve({ filter: /^\.\.?\/.*\.xzor$/ }, (args) => ({
             path: generatedPath(resolve(dirname(args.importer), args.path)),
           }));
-          // Like the type check's rootDirs: a relative import missing beside its importer comes from the other root.
+          // Like the type check's rootDirs: a relative import missing beside its importer comes from the
+          // other root of the importer's own project (the app's, or a kit's outside it).
           build.onResolve({ filter: /^\.\.?\// }, (args) => {
             const dir = dirname(args.importer);
-            if (!inProject(args.importer, root) || args.importer.replaceAll("\\", "/").includes("/node_modules/")) return undefined;
+            if (args.importer.replaceAll("\\", "/").includes("/node_modules/")) return undefined;
             if (tryResolve(args.path, dir)) return undefined;
-            const path = tryResolve(args.path, mirroredDir(dir, root));
+            const path = tryResolve(args.path, mirroredDir(dir, inProject(args.importer, root) ? root : projectRoot(dir)));
             return path ? { path } : undefined;
           });
           build.onLoad({ filter: /\.ts$/ }, (args) => {

@@ -1,0 +1,17 @@
+@import Badge from "./Badge.xzor"
+
+@code {
+  label = "";
+  value: string | number = "";
+  unit = "";
+  delta?: number;
+}
+
+<div class="xz-stat">
+  <span class="xz-stat-label">@label</span>
+  <strong>@value<small>@unit</small></strong>
+  @if (delta !== undefined) {
+    @{ const d = delta; }
+    <Badge tone="@(d >= 0 ? 'success' : 'danger')">@(d >= 0 ? "+" : "")@d%</Badge>
+  }
+</div>

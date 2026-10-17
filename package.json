@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "example": "cargo run -q -- build examples/counter",
+    "ui": "cargo run -q -- compile ui",
     "docs": "bun docs/site/publish.ts",
     "test:grammar": "bun editors/vscode/test/run.ts",
     "build:vscode": "bun build editors/vscode/src/extension.ts --outdir editors/vscode/out --target node --format cjs --external vscode"

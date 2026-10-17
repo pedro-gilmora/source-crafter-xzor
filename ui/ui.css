@@ -1,0 +1,8 @@
+/* xzor-ui: one static style sheet. Components only set classes and data-* attributes. */
+@layer xz.tokens, xz.base, xz.components, xz.utilities;
+
+@layer xz.tokens {
+  :root {
+    color-scheme: light dark;
+  }
+}
