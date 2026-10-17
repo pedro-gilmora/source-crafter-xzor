@@ -325,6 +325,77 @@ body > div > footer,
   color: var(--xz-muted);
 }
 
+/* A rail down the left; each phase hangs a dot in its tone on it. */
+.roadmap {
+  margin: 2rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.roadmap > li {
+  position: relative;
+  padding: 0 0 2.25rem 2rem;
+  border-left: 1px solid var(--xz-line-strong);
+}
+
+.roadmap > li:last-child {
+  border-left-color: transparent;
+}
+
+.roadmap > li::before {
+  content: "";
+  position: absolute;
+  top: 0.3rem;
+  left: -0.4rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--xz-bg);
+  box-shadow: inset 0 0 0 2px var(--xz-muted);
+}
+
+.roadmap > li[data-tone="success"]::before {
+  background: var(--xz-success);
+  box-shadow: none;
+}
+
+.roadmap > li[data-tone="accent"]::before {
+  box-shadow: inset 0 0 0 2px var(--xz-accent), 0 0 0 4px color-mix(in oklab, var(--xz-accent) 22%, transparent);
+}
+
+.roadmap h2 {
+  margin: 0 0 0.9rem;
+  font-size: inherit;
+  line-height: 1;
+}
+
+.roadmap dl {
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  gap: 0.6rem 1.5rem;
+  margin: 0;
+}
+
+.roadmap dt {
+  font-weight: 600;
+}
+
+.roadmap dd {
+  margin: 0;
+  color: var(--xz-muted);
+}
+
+@media (max-width: 640px) {
+  .roadmap dl {
+    grid-template-columns: 1fr;
+    gap: 0.15rem;
+  }
+
+  .roadmap dd + dt {
+    margin-top: 0.6rem;
+  }
+}
+
 .error {
   color: var(--xz-danger);
 }

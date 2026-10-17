@@ -1,0 +1,63 @@
+@page "/roadmap"
+@import Badge from "@source-crafter/xzor-ui/Badge.xzor"
+@import { type Tone } from "@source-crafter/xzor-ui"
+
+@code {
+  readonly phases: { name: string; tone: Tone; items: [string, string][] }[] = [
+    {
+      name: "Shipped",
+      tone: "success",
+      items: [
+        ["Compiler", "Razor-style .xzor to typed TypeScript classes, with source maps and a tsc check on every build."],
+        ["Fine components", "The default: the DOM is built once and bindings update only what changed."],
+        ["Routing", "@page routes, a typed href table, client and server routes blocks."],
+        ["Dependency injection", "Services wired at build time from TypeScript types; no container at runtime."],
+        ["Cascading values and inherited members", "@cascade blocks and @inherits base classes, checked by TypeScript."],
+        ["Models and validation", "Trackable models with field state for forms."],
+        ["Builds", "Parallel compile, event-driven --watch with hot reload, PWA output."],
+        ["Editor", "VS Code extension: completion, hover, definition, rename, references, live errors."],
+        ["xzor-ui", "Liquid glass kit: buttons, sheets, dialogs, menus, tables, stats, forms, icons."],
+      ],
+    },
+    {
+      name: "Now",
+      tone: "accent",
+      items: [
+        ["Kit IntelliSense", "Prop values, page ids and kit classes complete inside attribute values."],
+        ["xzor-ui on npm", "Publish the kit as @source-crafter/xzor-ui, with the same import paths apps use today."],
+      ],
+    },
+    {
+      name: "Next",
+      tone: "warning",
+      items: [
+        ["Scoped styles", "A <style> block per component, scoped at build time."],
+        ["HTML completion", "Element and attribute names in markup, next to the component ones."],
+        ["Visual Studio", "The same language server behind a Visual Studio extension."],
+      ],
+    },
+    {
+      name: "Later",
+      tone: "neutral",
+      items: [["Native target", "The same components rendered natively instead of in the DOM."]],
+    },
+  ];
+}
+
+<section class="page narrow">
+  <h1>Roadmap</h1>
+  <p class="lead">What xzor does today, what is being built, and what comes after. Plans change; the order is the intent.</p>
+  <ol class="roadmap">
+    @for (const phase of phases) {
+      <li data-tone="@phase.tone">
+        <h2><Badge tone="@phase.tone">@phase.name</Badge></h2>
+        <dl>
+          @for (const [title, text] of phase.items) {
+            <dt>@title</dt>
+            <dd>@text</dd>
+          }
+        </dl>
+      </li>
+    }
+  </ol>
+</section>

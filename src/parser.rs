@@ -395,6 +395,11 @@ impl<'a> Parser<'a> {
                 self.mark(TokenKind::Transition, at, at + 1);
                 return self.implicit_expression(word_start);
             }
+            Some(b'[') => {
+                // `@[...]`: an array literal is already one balanced expression, like `@(...)`.
+                self.mark(TokenKind::Transition, at, at + 1);
+                return self.implicit_expression(self.pos);
+            }
             Some(c) if is_ident_start(c) => {}
             _ => return Ok(Transition::Text("@")),
         }
@@ -1541,6 +1546,21 @@ mod tests {
                 Node::Text("a@b.com @ ".into()),
                 Node::Expr("1 + (2)".into())
             ]
+        );
+    }
+
+    #[test]
+    fn array_literal_is_an_expression() {
+        assert_eq!(
+            nodes("<S o=\"@['a', 'b]']\" n=\"@[1].length\" />"),
+            vec![el(
+                "S",
+                vec![
+                    Attr { name: "o".into(), value: AttrValue::Expr("['a', 'b]']".into()) },
+                    Attr { name: "n".into(), value: AttrValue::Expr("[1].length".into()) },
+                ],
+                vec![]
+            )]
         );
     }
 

@@ -357,6 +357,26 @@
     letter-spacing: -0.008em;
   }
 
+  /* Surfaces never widen their track: prose wraps, one-line labels end in an ellipsis. */
+  :is(.xz-glass, .xz-stat, .xz-list > li) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  :is(.xz-glass, .xz-stat, .xz-list > li) > :is(strong, b, small, span, .xz-muted),
+  .xz-panel > header h2 {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+
+  :is(.xz-glass, .xz-stat) > p.xz-muted {
+    display: block;
+  }
+
   /* ---------- layout ---------- */
   [data-gap="sm"] {
     --xz-gap: var(--xz-space-2);

@@ -14,6 +14,9 @@
 <!-- <- keyword.control.transition.xzor
 <!-- <~---- keyword.control.directive.xzor
 <!--  ^^^^^^^^^^^^^^^^^ comment.line.double-slash.xzor
+@render
+<!-- <- keyword.control.transition.xzor
+<!-- <~------ keyword.control.directive.xzor
 <input @bind="name" @bind:event="oninput" />
 <!--   ^^^^^ entity.other.attribute-name.html
 <!--          ^^^^ meta.embedded.expression.typescript
@@ -110,6 +113,10 @@ else {
 <!--       ^^^^ entity.other.attribute-name.html
 <!--             ^ keyword.control.transition.xzor
 <!--               ^ constant.numeric.decimal.ts
+  <S o="@['a', 'b'].length" />
+<!--    ^ keyword.control.transition.xzor
+<!--       ^ string.quoted.single.ts
+<!--                ^^^^^^ meta.embedded.expression.typescript
 }
 @for (const item of items) {
 <!-- <~--- keyword.control.xzor

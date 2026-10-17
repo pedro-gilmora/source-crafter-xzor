@@ -56,6 +56,7 @@ const spec: [string, A[]][] = [
   ['<button disabled="@(n < 1)" @onclick="() => n > 0 && go()">x</button>', [["<", "keyword.operator.relational.ts", 1], [">", "keyword.operator.relational.ts", 1]]],
   ["else {", [["else", "keyword.control.xzor"]]],
   ['  <Counter step="@(2)" />', [["Counter", "support.class.component.xzor"], ["step", "entity.other.attribute-name.html"], ["@", "keyword.control.transition.xzor"], ["2", "constant.numeric.decimal.ts"]]],
+  ["  <S o=\"@['a', 'b'].length\" />", [["@", "keyword.control.transition.xzor"], ["a", "string.quoted.single.ts"], ["length", "meta.embedded.expression.typescript"]]],
   ["}", []],
   ["@for (const item of items) {", [["for", "keyword.control.xzor"], ["const", "storage.type.ts"]]],
   ["  <li>@item</li>", [["@", "keyword.control.transition.xzor"], ["item", "variable.other.readwrite.xzor"]]],

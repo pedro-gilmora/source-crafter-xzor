@@ -542,12 +542,14 @@ pub fn completions_with(text: &str, offset: usize, doc_path: &Path, components: 
             if let Some(c) = components.iter().find(|c| c.name == tag) {
                 let directives = COMPONENT_DIRECTIVES
                     .iter()
+                    .map(|(label, detail)| (label.to_string(), detail.to_string()))
+                    .chain(c.props.iter().filter(|p| p.ty.as_deref().is_some_and(|t| t.starts_with("EventCallback"))).map(|p| (format!("@{}", p.name.to_ascii_lowercase()), p.decl.clone())))
                     .filter(|(label, _)| prefix.starts_with('@') && matches_prefix(label, &prefix))
                     .map(|(label, detail)| Completion {
-                        label: label.to_string(),
-                        kind: KIND_KEYWORD,
-                        detail: detail.to_string(),
                         insert: format!("{label}=\"$1\""),
+                        label,
+                        kind: KIND_KEYWORD,
+                        detail,
                         snippet: true,
                         extra_edit: None,
                     });
@@ -658,6 +660,8 @@ mod tests {
         assert_eq!(labels("<li @k", &[]), ["@key"]);
         assert_eq!(labels("<input @r", &[]), ["@ref"]);
         assert_eq!(labels("<Counter @", &[counter()]), ["@key", "@ref"]);
+        let button = component_from_source(Path::new("/app/Button.xzor"), "@code { onClick?: EventCallback<MouseEvent>; }\n<b/>");
+        assert_eq!(labels("<Button @on", &[button]), ["@onclick"]);
     }
 
     #[test]

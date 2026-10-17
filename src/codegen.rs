@@ -1720,11 +1720,26 @@ impl Gen<'_> {
                 );
                 continue;
             }
-            if a.name.starts_with('@') {
+            // `@onclick` on a component sets its `onClick` EventCallback, like on an element.
+            let event_prop = match a.name.strip_prefix('@').filter(|n| n.starts_with("on") && !n.contains(':')) {
+                Some(event) => Some(
+                    info.props
+                        .iter()
+                        .find(|(p, k)| **k == PropKind::Callback && p.eq_ignore_ascii_case(event))
+                        .map(|(p, _)| p.as_str())
+                        .ok_or_else(|| format!("<{}> has no EventCallback prop for {}", el.name, a.name))?,
+                ),
+                None => None,
+            };
+            if a.name.starts_with('@') && event_prop.is_none() {
                 return Err(format!("<{}>: directive attribute {} is not supported on components", el.name, a.name));
             }
-            let key = if is_identifier(&a.name) { M::src(&a.name, a.name.at) } else { M::lit(&js_string(&a.name)) };
-            let kind = info.props.get(&*a.name.text).copied().unwrap_or(PropKind::Text);
+            let key = match event_prop {
+                Some(p) => M::lit(p),
+                None if is_identifier(&a.name) => M::src(&a.name, a.name.at),
+                None => M::lit(&js_string(&a.name)),
+            };
+            let kind = info.props.get(event_prop.unwrap_or(&a.name)).copied().unwrap_or(PropKind::Text);
             let code = match &a.value {
                 AttrValue::Static(s) if s.trim().is_empty() => None,
                 AttrValue::Static(s) if s.at != Src::UNMAPPED => Some(s.clone()),
@@ -3200,6 +3215,17 @@ mod tests {
         assert!(g.code.contains("__b.addComponent(Counter, { onChange: __b.callback(this.save.bind(this)), onReset: __b.callback(() => this.n = 0), value: this.n, valueChanged: __b.callback((__v) => { this.n = __v; }) });"), "{}", g.code);
         assert!(g.code.contains("__b.addAttribute(\"value\", this.name);\n    __b.addEventHandler(\"change\", (__e) => { this.name = ComponentBase.bindValue(__e, this.name); });"), "{}", g.code);
         assert!(g.code.contains("__b.addAttribute(\"checked\", this.ok);\n    __b.addEventHandler(\"input\", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); return this.save(); });"), "{}", g.code);
+    }
+
+    #[test]
+    fn dom_event_syntax_on_a_component_sets_its_callback() {
+        let counter = "@code { onChange?: EventCallback<number>; label = \"\"; }";
+        let g = gen_with("@code { save() {} }\n<Counter @onchange=\"save\" />", &[("Counter", counter)]);
+        assert!(g.code.contains("__b.addComponent(Counter, { onChange: __b.callback(this.save.bind(this)) });"), "{}", g.code);
+        let doc = parse("<Counter @onlabel=\"x\" />").unwrap().0;
+        let infos = HashMap::from([("Counter".to_string(), component_info(counter))]);
+        let err = generate_with(&doc, "C", "C.xzor", &infos, &HashSet::new(), "./routes").unwrap_err();
+        assert!(err.contains("has no EventCallback prop for @onlabel"), "{err}");
     }
 
     #[test]

@@ -64,6 +64,7 @@
             { "include": "#switch" },
             { "include": "#control" },
             { "include": "#explicit" },
+            { "include": "#array" },
             { "include": "#implicit-call" },
             { "include": "#implicit" },
             { "include": "#entity" }
@@ -93,6 +94,7 @@
         { "include": "#switch" },
         { "include": "#control" },
         { "include": "#explicit" },
+        { "include": "#array" },
         { "include": "#implicit-call" },
         { "include": "#implicit" },
         { "include": "#end-tag" },
@@ -274,6 +276,14 @@
       },
       "end": "\\)",
       "endCaptures": { "0": { "name": "punctuation.section.embedded.end.xzor" } },
+      "contentName": "meta.embedded.expression.typescript",
+      "patterns": [{ "include": "source.ts#expression" }]
+    },
+    "array": {
+      "comment": "`@[...]`, an array literal and its member chain: the array rule balances the brackets, the end wins at the closing quote.",
+      "begin": "(?<![[:alnum:]])(@)(?=\\[)",
+      "beginCaptures": { "1": { "name": "keyword.control.transition.xzor" } },
+      "end": "(?=[\\s\"'<>]|$)",
       "contentName": "meta.embedded.expression.typescript",
       "patterns": [{ "include": "source.ts#expression" }]
     },
@@ -468,6 +478,7 @@
         { "include": "#quoted-attribute" },
         { "match": "(?<=\\s)@[\\w-]+(?::[\\w-]+)?(?=[\\s/>])", "name": "entity.other.attribute-name.html" },
         { "include": "#explicit" },
+        { "include": "#array" },
         { "include": "#implicit-call" },
         { "include": "#implicit" },
         { "match": "[^\\s=/>\"']+", "name": "entity.other.attribute-name.html" },
@@ -499,6 +510,7 @@
       "patterns": [
         { "include": "#escape" },
         { "include": "#explicit" },
+        { "include": "#array" },
         { "include": "#implicit-call" },
         { "include": "#implicit" },
         { "include": "#entity" }

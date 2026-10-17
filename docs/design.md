@@ -19,6 +19,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@code { ... }` | Class members |
 | `@name`, `@a.b(c)[0]?.d` | Implicit expression; stops at text such as `:` or `.` followed by a non-identifier |
 | `@( expr )` | Explicit expression |
+| `@[a, b]`, `@[a, b].length` | An array literal is already balanced, so it needs no parentheses |
 | `@if (c) { } else if (c) { } else { }` | Control flow |
 | `@for (const x of xs) { }` | Loop (any JS `for` head) |
 | `@while (cond) { }` | `while` loop, in its own region |
@@ -36,7 +37,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `<Child prop="x" n="5" />` | Component (capitalized tag); props are type-checked as `Partial<Child>`. As in Blazor, a prop declared with a non-string type (`n: number`, `on: () => void`, or inferred from a non-string initializer) takes its value as a TypeScript expression. String props take text: `string`, string literals, a string default (`name: SnippetName = "hero"`), or an alias of string literals imported from a relative module (`size?: Size` with `export type Size = "s" \| "m"`). |
 | `@typeparam T extends X` | Generic component class `C<T extends X>`. Callers can pass the argument as an attribute (`<List T="string" …>` compiles to `List<string>`) or leave it out: `T` is then inferred from the props. Without `T=`, callback props must annotate their own parameters, a type parameter that cannot be inferred becomes `unknown` (not its default), and a prop mismatch is reported at the tag. |
 | `@inject IDatabase db // why` | Directive lines (`@inject`, `@inherits`, `@implements`, `@typeparam`, `@attribute`, `@import`, `@page`) accept a trailing `// …` or `@* … *@` comment. |
-| `onChange?: EventCallback<T>` | A prop the parent sets with `onChange="handler"`. Calling it re-renders the parent. |
+| `onChange?: EventCallback<T>` | A prop the parent sets with `onChange="handler"`, or `@onchange="handler"` (matched case-insensitively). Calling it re-renders the parent. |
 | `@bind="x"`, `@bind:event="oninput"`, `@bind:after="save"` | Two-way binding on inputs. Checkboxes and radios bind `checked`, and numbers stay numbers. |
 | `@bind-value="x"` | Two-way binding on a component: passes `value` and a `valueChanged` callback. |
 | `@key="expr"` | On an element or component in a list: the diff matches it by key, moving DOM nodes and component state when items reorder. |
