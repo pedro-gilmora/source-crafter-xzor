@@ -1,6 +1,6 @@
 {
   "name": "xzor-language",
-  "displayName": "XZor Language Support",
+  "displayName": "XZor by SourceCrafter",
   "description": "Language support for .xzor components (xzor: Blazor-style components for TypeScript)",
   "version": "0.4.1",
   "publisher": "SourceCrafter",
