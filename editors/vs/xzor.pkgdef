@@ -1,0 +1,3 @@
+; TextMate grammars for .xzor and .css.xzor, shared with the VS Code extension.
+[$RootKey$\TextMate\Repositories]
+"xzor"="$PackageFolder$\Grammars"

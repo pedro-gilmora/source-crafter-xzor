@@ -119,6 +119,24 @@ jobs:
         path: target/release/${{ matrix.exe }}
         if-no-files-found: error
 
+    # Visual Studio 2022/2026 extension: needs Visual Studio's MSBuild, so it is built here with the Windows binary inside.
+    - name: Build the Visual Studio extension
+      if: matrix.target == 'win32-x64'
+      shell: pwsh
+      run: |
+        $latest = npm view @source-crafter/xzor version 2>$null
+        $version = if ($latest) { $p = $latest.Split('.'); "$($p[0]).$($p[1]).$([int]$p[2] + 1)" } else { "0.1.0" }
+        New-Item -ItemType Directory -Force vs-extension | Out-Null
+        ./editors/vs/build.ps1 -version $version -server target/release/xzor.exe -out "vs-extension/xzor-vs-$version.vsix"
+
+    - name: Upload the Visual Studio extension
+      if: matrix.target == 'win32-x64'
+      uses: actions/upload-artifact@v7
+      with:
+        name: vs-extension
+        path: vs-extension/*.vsix
+        if-no-files-found: error
+
   try-deliver:
     name: 'xzor Build, Test & Deploy'
     runs-on: 'ubuntu-latest'
@@ -473,6 +491,7 @@ jobs:
         | File | Use |
         |---|---|
         | ``xzor-$($env:VERSION).vsix`` | VS Code extension: ``code --install-extension xzor-$($env:VERSION).vsix`` |
+        | ``xzor-vs-$($env:VERSION).vsix`` | Visual Studio 2022/2026 extension: open it to install |
         | ``xzor-<platform>[.exe]`` | The compiler binary for win32-x64, linux-x64 or darwin-arm64 |
         | ``source-crafter-xzor-*.tgz`` | The npm packages, for ``bun add ./<file>.tgz`` |
         "@
