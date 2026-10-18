@@ -26,7 +26,7 @@
   <ItemGroup Condition="'$(VsInstallRoot)' == ''">
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
-    <PackageReference Include="Microsoft.VisualStudio.LanguageServer.Client" Version="17.14.52" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VisualStudio.LanguageServer.Client" Version="17.14.60" ExcludeAssets="runtime" />
   </ItemGroup>
   <ItemGroup Condition="'$(VsInstallRoot)' != ''">
     <Reference Include="System.ComponentModel.Composition" />

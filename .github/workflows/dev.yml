@@ -122,6 +122,8 @@ jobs:
     # Visual Studio 2022/2026 extension: needs Visual Studio's MSBuild, so it is built here with the Windows binary inside.
     - name: Build the Visual Studio extension
       if: matrix.target == 'win32-x64'
+      # The release goes out without it rather than not at all.
+      continue-on-error: true
       shell: pwsh
       run: |
         $latest = npm view @source-crafter/xzor version 2>$null
@@ -131,6 +133,7 @@ jobs:
 
     - name: Upload the Visual Studio extension
       if: matrix.target == 'win32-x64'
+      continue-on-error: true
       uses: actions/upload-artifact@v7
       with:
         name: vs-extension
