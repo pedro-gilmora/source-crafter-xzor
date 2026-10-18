@@ -396,6 +396,7 @@ const DOM_EVENTS: &[&str] = &[
 
 const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("code", "code {\n\t$0\n}", "Component members"),
+    ("module", "module {\n\t$0\n}", "Module code outside the class: constants, types, helpers, exports"),
     ("if", "if ($1) {\n\t$0\n}", "Conditional markup"),
     ("for", "for (const $1 of $2) {\n\t$0\n}", "Repeated markup"),
     ("switch", "switch ($1) {\n\tcase $2:\n\t\t$0\n}", "Switch on a value"),

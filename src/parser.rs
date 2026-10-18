@@ -410,11 +410,13 @@ impl<'a> Parser<'a> {
         let cascade = word == "cascade" && self.peek() == Some(b':') && matches!(self.peek_at(1), Some(c) if is_ident_start(c));
         // Likewise `@ClientRoutes`/`@ServerRoutes` only open a routes block when `(` follows on the same line.
         let routes = matches!(word, "ClientRoutes" | "ServerRoutes") && self.next_non_blank() == Some(b'(');
+        // `@module` opens the module block only when `{` follows; otherwise it is a member reference.
+        let module = word == "module" && self.next_non_blank() == Some(b'{');
         self.mark(TokenKind::Transition, at, at + 1);
         if self.bound.iter().any(|b| b == word) {
             return self.implicit_expression(word_start);
         }
-        let is_keyword = cascade || routes || DIRECTIVES.contains(&word);
+        let is_keyword = cascade || routes || module || DIRECTIVES.contains(&word);
         if is_keyword {
             self.mark(TokenKind::Keyword, word_start, self.pos);
         }
@@ -428,6 +430,15 @@ impl<'a> Parser<'a> {
                 let parts = self.code_block(false)?;
                 self.doc.code.push(Src::new(&self.src[open + 1..self.pos - 1], open + 1));
                 self.doc.code_parts.push(parts);
+                Ok(Transition::Nothing)
+            }
+            "module" if module => {
+                if self.doc.module.is_some() {
+                    return Err(ParseError { message: "a component has only one @module block".into(), offset: at });
+                }
+                self.skip_ws();
+                let parts = self.code_block(false)?;
+                self.doc.module = Some(parts);
                 Ok(Transition::Nothing)
             }
             "page" => {
@@ -1572,6 +1583,16 @@ mod tests {
         assert_eq!(doc.imports, vec!["A from \"./A.xzor\""]);
         assert_eq!(doc.code, vec!["\n  n = \"}\";\n"]);
         assert!(doc.nodes.is_empty());
+    }
+
+    #[test]
+    fn module_block() {
+        let doc = parse("@module {\n  export const n = 1;\n  const f = <b>x</b>;\n}\n<p>@module</p>").unwrap().0;
+        let parts = doc.module.expect("module block");
+        assert!(matches!(&parts[0], CodePart::Ts(t) if t.contains("export const n = 1;")));
+        assert!(parts.iter().any(|p| matches!(p, CodePart::Markup(el) if &*el.name == "b")));
+        assert!(matches!(&doc.nodes[0], Node::Element(p) if p.children == vec![Node::Expr("module".into())]));
+        assert!(parse("@module { }\n@module { }").unwrap_err().message.contains("one @module"));
     }
 
     #[test]

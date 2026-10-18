@@ -300,6 +300,11 @@ pub fn generate_with(
         }
         g.line("");
     }
+    if let Some(parts) = &doc.module {
+        let block = g.code_block(parts, &[])?;
+        g.emit_block(block);
+        g.line("");
+    }
     let generics = if doc.type_params.is_empty() {
         M::default()
     } else {
@@ -3215,6 +3220,17 @@ mod tests {
         assert!(g.code.contains("__b.addComponent(Counter, { onChange: __b.callback(this.save.bind(this)), onReset: __b.callback(() => this.n = 0), value: this.n, valueChanged: __b.callback((__v) => { this.n = __v; }) });"), "{}", g.code);
         assert!(g.code.contains("__b.addAttribute(\"value\", this.name);\n    __b.addEventHandler(\"change\", (__e) => { this.name = ComponentBase.bindValue(__e, this.name); });"), "{}", g.code);
         assert!(g.code.contains("__b.addAttribute(\"checked\", this.ok);\n    __b.addEventHandler(\"input\", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); return this.save(); });"), "{}", g.code);
+    }
+
+    #[test]
+    fn module_code_sits_before_the_class_without_this() {
+        let src = "@module {\n  export const sizes = [\"s\", \"m\"];\n  const tag = (t: string) => <b>@t @sizes</b>;\n}\n@code { n = 0; }\n<p>@sizes.length @n @tag(\"x\")</p>";
+        let g = gen_with(src, &[]);
+        let module = g.code.find("export const sizes").expect(&g.code);
+        assert!(module < g.code.find("export default class").unwrap(), "{}", g.code);
+        assert!(g.code.contains("const tag = (t: string) => ComponentBase.fragment((__b) => {"), "{}", g.code);
+        assert!(!g.code.contains("this.sizes") && !g.code.contains("this.tag"), "{}", g.code);
+        assert!(g.code.contains("this.n"), "{}", g.code);
     }
 
     #[test]

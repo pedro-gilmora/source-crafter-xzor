@@ -17,6 +17,11 @@
 @render
 <!-- <- keyword.control.transition.xzor
 <!-- <~------ keyword.control.directive.xzor
+@module { export const n = 1; }
+<!-- <- keyword.control.transition.xzor
+<!-- <~------ keyword.control.directive.xzor
+<!--      ^^^^^^ meta.embedded.block.typescript keyword.control.export.ts
+<!--             ^^^^^ storage.type.ts
 <input @bind="name" @bind:event="oninput" />
 <!--   ^^^^^ entity.other.attribute-name.html
 <!--          ^^^^ meta.embedded.expression.typescript

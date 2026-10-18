@@ -80,6 +80,22 @@ fn build_prints_timings() {
 const APP_MAIN: &str = "import App from \"./App.xzor\";\nconsole.log(App);\n";
 
 #[test]
+fn module_exports_are_imported_by_other_components_and_type_checked() {
+    if !has_bun() {
+        return;
+    }
+    let button = "@module {\n  export type Kind = \"a\" | \"b\";\n  export const kinds: Kind[] = [\"a\", \"b\"];\n  export const badge = (t: string) => <b>@t</b>;\n}\n@code { kind: Kind = \"a\"; }\n<button>@kind @kinds.length</button>\n";
+    let app = "@import Button, { kinds, badge, type Kind } from \"./Button.xzor\"\n@code { k: Kind = kinds[1]!; }\n<Button kind=\"@k\" />\n@badge(\"new\")\n";
+    let root = project("module-exports", &[("Button.xzor", button), ("App.xzor", app), ("main.ts", APP_MAIN)]);
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).arg("--no-bundle").output().unwrap();
+    assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    fs::write(root.join("App.xzor"), app.replace("kinds[1]!", "\"c\"")).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).arg("--no-bundle").output().unwrap();
+    assert!(!out.status.success(), "a wrong literal for an exported type must fail the check");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn check_runs_while_bundling() {
     if !has_bun() {
         return;

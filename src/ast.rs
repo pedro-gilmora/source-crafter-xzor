@@ -88,6 +88,8 @@ pub struct Document {
     pub code: Vec<Src>,
     /// The same blocks split into TypeScript and markup used as values (`RenderFragment`s).
     pub code_parts: Vec<Vec<CodePart>>,
+    /// `@module { ... }`: module-level code (TypeScript and markup values) outside the class.
+    pub module: Option<Vec<CodePart>>,
     pub nodes: Vec<Node>,
 }
 

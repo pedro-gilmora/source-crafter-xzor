@@ -6,6 +6,7 @@ const spec: [string, A[]][] = [
   ["@typeparam T extends object", [["typeparam", "keyword.control.directive.xzor"], ["T", "entity.name.type.parameter.xzor"]]],
   ["@fine // no render pass", [["@", "keyword.control.transition.xzor"], ["fine", "keyword.control.directive.xzor"], ["// no render pass", "comment.line.double-slash.xzor"]]],
   ["@render", [["@", "keyword.control.transition.xzor"], ["render", "keyword.control.directive.xzor"]]],
+  ["@module { export const n = 1; }", [["@", "keyword.control.transition.xzor"], ["module", "keyword.control.directive.xzor"], ["export", "meta.embedded.block.typescript keyword.control.export.ts"], ["const", "storage.type.ts"]]],
   ['<input @bind="name" @bind:event="oninput" />', [["@bind", "entity.other.attribute-name.html"], ["name", "meta.embedded.expression.typescript"]]],
   ["@code {", [["@", "keyword.control.transition.xzor"], ["code", "keyword.control.directive.xzor"], ["{", "meta.embedded.block.typescript punctuation.definition.block.ts"]]],
   ["  count: number = 0;", [["count", "meta.embedded.block.typescript variable.object.property.ts"], ["number", "support.type.primitive.ts"]]],

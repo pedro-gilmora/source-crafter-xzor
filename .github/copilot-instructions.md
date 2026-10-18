@@ -4,7 +4,7 @@ A Blazor/Razor-style component compiler written in Rust that targets TypeScript.
 
 ## Workflow (Superpowers skills in `.github/skills/`)
 
-Before any task, check whether a skill applies and follow it:
+Before any task, check whether a skill applies and follow it. Use superpowers, ponytail, and a performance and memory sub-agent (`.github/agents/perf.agent.md`) to address every phase: design, plan, implementation and review each get a perf pass with measured numbers, and its regressions are fixed before moving on. Skills by task:
 
 - New feature or behavior change: `brainstorming`, then `writing-plans` (plans go in `docs/plans/`), then `executing-plans` or `subagent-driven-development`.
 - All code: `test-driven-development` (write a failing test first, then make it pass).

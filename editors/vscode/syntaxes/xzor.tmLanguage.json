@@ -77,6 +77,7 @@
         { "include": "#razor-comment" },
         { "include": "#comment" },
         { "include": "#code-block" },
+        { "include": "#module-block" },
         { "include": "#statements" },
         { "include": "#class-directives" },
         { "include": "#fine" },
@@ -168,6 +169,16 @@
       "end": "(?<=\\})",
       "contentName": "meta.embedded.block.typescript",
       "patterns": [{ "include": "source.ts#class-or-interface-body" }]
+    },
+    "module-block": {
+      "begin": "(?<![[:alnum:]])(@)(module)\\s*(?=\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.transition.xzor" },
+        "2": { "name": "keyword.control.directive.xzor" }
+      },
+      "end": "(?<=\\})",
+      "contentName": "meta.embedded.block.typescript",
+      "patterns": [{ "include": "source.ts" }]
     },
     "page": {
       "match": "(?<![[:alnum:]])(@)(page)\\s+(\"[^\"]*\")(?:[ \\t]+(as)[ \\t]+([_$[:alpha:]][_$[:alnum:]]*))?[ \\t]*(//.*$)?",
