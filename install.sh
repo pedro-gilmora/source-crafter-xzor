@@ -22,8 +22,8 @@ bun x xzor init
 if command -v code > /dev/null; then
   step "Installing the VS Code extension"
   tmp=$(mktemp -d)
-  if ! { command -v gh > /dev/null && gh release download -R "$repo" -p '*.vsix' -D "$tmp" 2> /dev/null; }; then
-    url=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" 2> /dev/null | grep -o 'https://[^"]*\.vsix' | head -n 1 || true)
+  if ! { command -v gh > /dev/null && gh release download -R "$repo" -p 'xzor-[0-9]*.vsix' -D "$tmp" 2> /dev/null; }; then
+    url=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" 2> /dev/null | grep -o 'https://[^"]*/xzor-[0-9][^"/]*\.vsix' | head -n 1 || true)
     if [ -n "$url" ]; then curl -fsSL -o "$tmp/xzor.vsix" "$url"; fi
   fi
   vsix=$(ls "$tmp"/*.vsix 2> /dev/null | head -n 1 || true)
@@ -38,8 +38,8 @@ if command -v code > /dev/null; then
       profiles=$(bun -e 'const s = await Bun.file(process.argv[1]).json(); for (const p of s.userDataProfiles ?? []) if (!String(p.location).startsWith("builtin/")) console.log(p.name)' "$storage" 2> /dev/null || true)
     fi
     export NODE_NO_WARNINGS=1
-    # Earlier ids of this extension (xzor.xzor, PedroGilMora.xzor); two copies would both start a language server.
-    for old in xzor.xzor PedroGilMora.xzor; do
+    # Earlier ids of this extension; two copies would both start a language server.
+    for old in xzor.xzor PedroGilMora.xzor SourceCrafter.xzor; do
       code --uninstall-extension "$old" > /dev/null 2>&1 || true
       while IFS= read -r name; do
         [ -n "$name" ] && { code --profile "$name" --uninstall-extension "$old" > /dev/null 2>&1 || true; }

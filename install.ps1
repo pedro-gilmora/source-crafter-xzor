@@ -26,10 +26,10 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
     $tmp = Join-Path ([IO.Path]::GetTempPath()) "xzor-vsix-$PID"
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     try {
-        if (Get-Command gh -ErrorAction SilentlyContinue) { gh release download -R $repo -p "*.vsix" -D $tmp 2>$null }
+        if (Get-Command gh -ErrorAction SilentlyContinue) { gh release download -R $repo -p "xzor-[0-9]*.vsix" -D $tmp 2>$null }
         if (-not (Get-ChildItem $tmp -Filter *.vsix)) {
             try {
-                $asset = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest").assets | Where-Object name -like "*.vsix" | Select-Object -First 1
+                $asset = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest").assets | Where-Object name -like "xzor-[0-9]*.vsix" | Select-Object -First 1
                 if ($asset) { Invoke-WebRequest $asset.browser_download_url -OutFile (Join-Path $tmp $asset.name) -UseBasicParsing }
             } catch {}
         }
@@ -59,8 +59,8 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
                 $profiles = @((Get-Content $storage -Raw | ConvertFrom-Json).userDataProfiles | Where-Object { $_.location -notlike 'builtin/*' } | ForEach-Object name)
             }
             $env:NODE_NO_WARNINGS = "1"
-            # Earlier ids of this extension (xzor.xzor, PedroGilMora.xzor); two copies would both start a language server.
-            foreach ($old in 'xzor.xzor', 'PedroGilMora.xzor') { foreach ($name in @($null) + $profiles) { code @codeArgs $(if ($name) { '--profile', $name }) --uninstall-extension $old 2>$null | Out-Null } }
+            # Earlier ids of this extension; two copies would both start a language server.
+            foreach ($old in 'xzor.xzor', 'PedroGilMora.xzor', 'SourceCrafter.xzor') { foreach ($name in @($null) + $profiles) { code @codeArgs $(if ($name) { '--profile', $name }) --uninstall-extension $old 2>$null | Out-Null } }
             code @codeArgs --install-extension $vsix.FullName --force
             foreach ($name in $profiles) { code @codeArgs --profile $name --install-extension $vsix.FullName --force }
             Write-Host "Installed $($vsix.Name) in the default profile$(if ($profiles) { ' and ' + ($profiles -join ', ') }). Reload VS Code (Developer: Reload Window) to use it."
