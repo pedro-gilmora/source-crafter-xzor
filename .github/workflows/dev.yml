@@ -181,6 +181,9 @@ jobs:
         curl -fsSL -o "$RUNNER_TEMP/TypeScript.tmLanguage.json" \
           https://raw.githubusercontent.com/microsoft/vscode/7baac39ec3ca969dab74ac12c097f6a486e46593/extensions/typescript-basics/syntaxes/TypeScript.tmLanguage.json
         echo "TS_GRAMMAR=$RUNNER_TEMP/TypeScript.tmLanguage.json" >> $GITHUB_ENV
+        curl -fsSL -o "$RUNNER_TEMP/css.tmLanguage.json" \
+          https://raw.githubusercontent.com/microsoft/vscode/7baac39ec3ca969dab74ac12c097f6a486e46593/extensions/css/syntaxes/css.tmLanguage.json
+        echo "CSS_GRAMMAR=$RUNNER_TEMP/css.tmLanguage.json" >> $GITHUB_ENV
 
         # Los artefactos no conservan el bit de ejecucion, y npm instala los
         # ficheros con el modo que traiga el tarball.
