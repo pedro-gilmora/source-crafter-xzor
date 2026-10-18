@@ -147,6 +147,8 @@ jobs:
     if: needs.resolve.outputs.proceed == 'true'
     # A full run takes a few minutes; a hung test must not hold the runner for hours.
     timeout-minutes: 30
+    outputs:
+      version: ${{ steps.event.outputs.version }}
 
     steps:
     - name: Get source code
@@ -171,6 +173,7 @@ jobs:
         path: binaries
 
     - name: Save GitHub Event Payload
+      id: event
       env:
         GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         PR_NUMBER: ${{ needs.resolve.outputs.number }}
@@ -198,6 +201,7 @@ jobs:
           version=0.1.0
         fi
         echo "VERSION=${version}" >> $GITHUB_ENV
+        echo "version=${version}" >> $GITHUB_OUTPUT
 
         # El evento de PR no trae head_commit ni commits: ese par solo viaja en el
         # evento push. Se reconstruyen desde la API para que el resto del script siga
@@ -306,6 +310,9 @@ jobs:
         if [ -f "publish/xzor-${{ env.VERSION }}.vsix" ]; then
           jq -nc --arg v "${{ env.VERSION }}" '{package: ("xzor-" + $v + ".vsix"), version: $v, registry: "vsix"}' >> packages.jsonl
         fi
+        if [ -f "publish/xzor-vs-${{ env.VERSION }}.vsix" ]; then
+          jq -nc --arg v "${{ env.VERSION }}" '{package: ("xzor-vs-" + $v + ".vsix"), version: $v, registry: "vs-vsix"}' >> packages.jsonl
+        fi
         ls -la publish
 
     - name: Build the docs site
@@ -321,15 +328,43 @@ jobs:
       with:
         path: docs/site/_site
 
-    - name: Notify Telegram & GitHub Release
+    # The notify job reports this delivery together with the Visual Studio Marketplace publish.
+    - name: Keep the delivery state
       if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: delivery
+        path: |
+          github_event.json
+          packages.jsonl
+          errors.log
+          publish/
+        if-no-files-found: ignore
+
+  notify:
+    name: 'Notify Telegram & GitHub Release'
+    needs: [ resolve, try-deliver, vs-publish ]
+    if: always() && needs.resolve.outputs.proceed == 'true'
+    runs-on: 'ubuntu-latest'
+    steps:
+    - name: Get the delivery state
+      uses: actions/download-artifact@v8
+      continue-on-error: true
+      with:
+        pattern: '*delivery'
+        merge-multiple: true
+
+    - name: Notify Telegram & GitHub Release
       shell: pwsh
       env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           # RELEASE_TOKEN no lee Actions; el token del workflow si (permissions: actions: read).
           RUN_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ needs.resolve.outputs.head_ref }}
           BASE_REF: ${{ needs.resolve.outputs.base_ref }}
+          VERSION: ${{ needs.try-deliver.outputs.version }}
+          RESULT: ${{ needs.try-deliver.result }}
       run:  |
         # Load the event payload as JSON
         $githubEvent = @{}
@@ -338,13 +373,13 @@ jobs:
         }
 
         # Paquetes publicados, uno por linea y registro.
-        $packages = @( if (Test-Path "packages.jsonl") { Get-Content packages.jsonl | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } } ) | Sort-Object { $_.package.Length }
+        $packages = @( Get-ChildItem *.jsonl -ErrorAction SilentlyContinue | Get-Content | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } ) | Sort-Object { $_.package.Length }
 
         function packageUrl ($p) {
           switch ($p.registry) {
             'npm'         { "https://www.npmjs.com/package/$($p.package)/v/$($p.version)" }
-            'vsix'        { "https://github.com/${{ github.repository }}/releases/download/v$($p.version)/$($p.package)" }
-            'marketplace' { "https://marketplace.visualstudio.com/items?itemName=$($p.package)" }
+            { $_ -in 'vsix', 'vs-vsix' } { "https://github.com/${{ github.repository }}/releases/download/v$($p.version)/$($p.package)" }
+            { $_ -in 'marketplace', 'vsmarketplace' } { "https://marketplace.visualstudio.com/items?itemName=$($p.package)" }
             'openvsx'     { "https://open-vsx.org/extension/$($p.package.Replace('.', '/'))/$($p.version)" }
           }
         }
@@ -353,7 +388,9 @@ jobs:
           switch ($p.registry) {
             'npm'         { "https://img.shields.io/npm/v/$($p.package).svg?label=$([uri]::EscapeDataString($p.package))&style=plastic" }
             'vsix'        { "https://img.shields.io/badge/VS%20Code%20extension-$($p.version)-007ACC.svg?style=plastic" }
+            'vs-vsix'     { "https://img.shields.io/badge/Visual%20Studio%20extension-$($p.version)-5C2D91.svg?style=plastic" }
             'marketplace' { "https://img.shields.io/visual-studio-marketplace/v/$($p.package).svg?label=VS%20Code&style=plastic" }
+            'vsmarketplace' { "https://img.shields.io/visual-studio-marketplace/v/$($p.package).svg?label=Visual%20Studio&style=plastic" }
             'openvsx'     { "https://img.shields.io/open-vsx/v/$($p.package.Replace('.', '/')).svg?label=Open%20VSX&style=plastic" }
           }
         }
@@ -377,9 +414,9 @@ jobs:
 
         # Load errors from errors logs file
         $errors = ""
-        if (Test-Path "./errors.log") {
+        if (Test-Path "./*errors.log") {
           echo "Found errors log file"
-          $errors = $( Get-Content -Path "./errors.log" )
+          $errors = $( Get-Content -Path "./*errors.log" )
         }
 
         echo "These are the errors: [$errors]"
@@ -419,11 +456,11 @@ jobs:
         # reciente al mas antiguo.
         $commits = @( $githubEvent.commits | Where-Object { $_.id -ne $githubEvent.head_commit.id } )
         [array]::Reverse($commits)
-        $failed = '${{ job.status }}' -eq 'failure'
+        $failed = $env:RESULT -eq 'failure'
 
         $status, $icon, $message = if ($failed -or $errors) {
           'failed', '💥', $errors
-        } elseif ('${{ job.status }}' -eq 'success') {
+        } elseif ($env:RESULT -eq 'success') {
           'successfully completed', '✅', $headCommit
         } else {
           'cancelled', '⛔', 'User aborted the action'
@@ -474,7 +511,7 @@ jobs:
         "@
 
         # A store that rejects a package (Marketplace, Open VSX, npm) doesn't hold back the release: its error goes in the notes.
-        if( $isRelease -and '${{ job.status }}' -eq 'success' )
+        if( $isRelease -and $env:RESULT -eq 'success' )
         {
           $releaseNotes = if($commits.Count -gt 0) {
         @"
@@ -498,7 +535,7 @@ jobs:
         | File | Use |
         |---|---|
         | ``xzor-$($env:VERSION).vsix`` | VS Code extension: ``code --install-extension xzor-$($env:VERSION).vsix`` |
-        | ``xzor-vs-$($env:VERSION).vsix`` | Visual Studio 2022/2026 extension (also on the Visual Studio Marketplace): open it to install |
+        | ``xzor-vs-$($env:VERSION).vsix`` | Visual Studio 2022/2026 extension: open it to install, or get XZor from the Visual Studio Marketplace |
         | ``xzor-<platform>[.exe]`` | The compiler binary for win32-x64, linux-x64 or darwin-arm64 |
         | ``source-crafter-xzor-*.tgz`` | The npm packages, for ``bun add ./<file>.tgz`` |
         "@
@@ -521,7 +558,7 @@ jobs:
           # la rama por defecto del repositorio.
           # La extension, los binarios y los paquetes se adjuntan para instalarlos sin registro.
           $assets = @( Get-ChildItem publish/* -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName } )
-          gh release create v${{ env.VERSION }} --target ${{ needs.resolve.outputs.head_sha }} -t "$(subject $githubEvent.head_commit.message)" -n "$releaseNotes$downloads" @assets
+          gh release create v$($env:VERSION) --target ${{ needs.resolve.outputs.head_sha }} -t "$(subject $githubEvent.head_commit.message)" -n "$releaseNotes$downloads" @assets
         }
 
         Write-Host $message
@@ -563,7 +600,7 @@ jobs:
   vs-publish:
     name: 'Visual Studio extension publish'
     needs: [ resolve, try-deliver ]
-    if: needs.resolve.outputs.release == 'true'
+    if: needs.resolve.outputs.release == 'true' && needs.try-deliver.result == 'success'
     runs-on: 'windows-latest'
     steps:
     - name: Get source code
@@ -581,7 +618,25 @@ jobs:
       shell: pwsh
       env:
         VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        VERSION: ${{ needs.try-deliver.outputs.version }}
       run: |
         if (-not $env:VSCE_PAT) { Write-Host "VSCE_PAT is not set: the Visual Studio Marketplace is skipped"; exit 0 }
         $vsix = Get-ChildItem vs-extension/*.vsix | Select-Object -First 1
-        ./editors/vs/publish.ps1 -vsix $vsix.FullName -token $env:VSCE_PAT
+        # Like the other stores, a rejection goes in the notes instead of failing the job.
+        $output = ./editors/vs/publish.ps1 -vsix $vsix.FullName -token $env:VSCE_PAT 2>&1 | Out-String
+        Write-Host $output
+        if ($LASTEXITCODE -eq 0) {
+          @{ package = 'SourceCrafter.xzor-visualstudio'; version = $env:VERSION; registry = 'vsmarketplace' } | ConvertTo-Json -Compress | Set-Content vs.jsonl
+        } else {
+          "Visual Studio Marketplace errors for SourceCrafter.xzor-visualstudio:`n$output`n" | Set-Content vs-errors.log
+        }
+
+    - name: Keep the publish state
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: vs-delivery
+        path: |
+          vs.jsonl
+          vs-errors.log
+        if-no-files-found: ignore
