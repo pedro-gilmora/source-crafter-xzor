@@ -140,10 +140,10 @@ try {
 
 # Visual Studio 2022/2026: CI builds it on Windows (binaries/vs-extension); locally Visual Studio's MSBuild builds it, with the host binary inside.
 $prebuilt = if ($binaries) { Get-ChildItem (Join-Path $binaries "vs-extension") -Filter *.vsix -ErrorAction SilentlyContinue | Select-Object -First 1 } else { $null }
-$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+$vswhere = if ($IsWindows) { Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe" } else { $null }
 if ($prebuilt) {
     Copy-Item -Force $prebuilt.FullName (Join-Path $publish "xzor-vs-$version.vsix")
-} elseif ($IsWindows -and (Test-Path $vswhere)) {
+} elseif ($vswhere -and (Test-Path $vswhere)) {
     $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
     & (Join-Path $root "editors/vs/build.ps1") -version $version -server (Join-Path $root "target/release/xzor.exe") -msbuild $msbuild -out (Join-Path $publish "xzor-vs-$version.vsix")
     if ($LASTEXITCODE -ne 0) { throw "PACKER: the Visual Studio extension failed with exit code $LASTEXITCODE" }
