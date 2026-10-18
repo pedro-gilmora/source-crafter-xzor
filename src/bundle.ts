@@ -2,7 +2,7 @@
 // and the bundle's source map is composed with each generated file's map so it points at the `.xzor` sources.
 // Usage: bun bundle.ts <entry> <outdir> [--hot] [--watch]
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 type Segment = number[];
 type SourceMap = { version: number; sources: string[]; sourcesContent?: (string | null)[]; names: string[]; mappings: string };
@@ -1029,6 +1029,10 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
               const rewritten = trackModelFields(stripMarkerDecorators(text), relative(root, args.path).replaceAll("\\", "/"), readBase, models);
               if (rewritten !== text) originals.set(resolve(args.path), text);
               text = rewritten;
+            }
+            // A component's lowered `<style>` sits beside its module; appended, so no line moves under the source map.
+            if (path.includes("/.xzor/") && path.endsWith(".xzor.ts") && existsSync(`${args.path.slice(0, -3)}.css`)) {
+              text += `\nimport "./${basename(args.path).slice(0, -3)}.css";\n`;
             }
             if (path.includes("/.xzor/") && hot && path.endsWith(".xzor.ts") && inProject(args.path, root)) {
               return { contents: hotRegistration(text, relative(root, args.path).replaceAll("\\", "/")), loader: "ts" };

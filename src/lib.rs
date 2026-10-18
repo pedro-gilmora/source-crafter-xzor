@@ -10,6 +10,7 @@ pub mod json;
 pub mod lsp;
 pub mod parser;
 pub mod routes;
+pub mod style;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -42,12 +43,17 @@ pub fn compile_mapped(source: &str, path: &Path) -> Result<codegen::Generated, D
 
 /// Like [`compile_mapped`], reading `@inherits` base sources through `read`.
 pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Option<String>) -> Result<codegen::Generated, Diagnostic> {
-    let (doc, _) = parser::parse(source).map_err(|e| {
+    let (mut doc, _) = parser::parse(source).map_err(|e| {
         let (line, column) = line_col(source, e.offset);
         Diagnostic { message: e.message, line, column, offset: e.offset }
     })?;
     let file_name = path.file_name().map_or_else(|| "component.xzor".into(), |n| n.to_string_lossy());
     let stem = file_name.strip_suffix(".xzor").unwrap_or(&file_name);
+    let css = component_style(&mut doc, path, stem, read).map_err(|(message, offset)| {
+        let offset = if offset == ast::Src::UNMAPPED { 0 } else { offset };
+        let (line, column) = line_col(source, offset);
+        Diagnostic { message, line, column, offset }
+    })?;
     let (components, imported) = imported_components(&doc, path, read);
     if let Some(offset) = codegen::inject_constructor(&doc) {
         let (line, column) = line_col(source, offset);
@@ -64,12 +70,40 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
             .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
     generated.deps = base.deps;
     generated.deps.extend(imported);
+    generated.css = css;
+    generated.deps.push(path.with_file_name(format!("{stem}.css.xzor")));
     if let (Some(name), Some(inherits)) = (base.unresolved, &doc.inherits) {
         let (line, column) = line_col(source, inherits.at);
         let message = format!("could not read base class '{name}'; use this.<member> for its members");
         generated.warnings.push(Diagnostic { message, line, column, offset: inherits.at });
     }
     Ok(generated)
+}
+
+/// Lowers the component's `<style>` or its sibling `X.css.xzor` (never both) and puts the scope id and
+/// the dynamic attributes on its roots. `@global` on the sibling's first line skips the scope.
+fn component_style(doc: &mut ast::Document, path: &Path, stem: &str, read: &dyn Fn(&Path) -> Option<String>) -> Result<Option<String>, (String, usize)> {
+    let sibling = path.with_file_name(format!("{stem}.css.xzor"));
+    let block = match (doc.style.take(), read(&sibling)) {
+        (Some(s), Some(_)) => return Err((format!("{stem}.xzor has a <style> block and {stem}.css.xzor: keep one"), s.at)),
+        (Some(s), None) => s,
+        (None, Some(text)) => {
+            let trimmed = text.trim_start();
+            let global = trimmed.starts_with("@global") && !trimmed[7..].starts_with(|c: char| c.is_ascii_alphanumeric());
+            let body = if global { trimmed[7..].to_string() } else { text };
+            ast::StyleBlock { body: ast::Src::new(body, ast::Src::UNMAPPED), global, at: ast::Src::UNMAPPED }
+        }
+        (None, None) => return Ok(None),
+    };
+    let root = build::project_root(path);
+    let key = path.strip_prefix(&root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    let id = style::style_id(&key);
+    let lowered = style::lower(&block.body, block.body.at, &id, block.global).map_err(|(m, at)| match block.at {
+        ast::Src::UNMAPPED => (format!("{stem}.css.xzor: {m}"), at),
+        _ => (m, at),
+    })?;
+    style::inject(doc, &id, &lowered.attrs);
+    Ok(Some(lowered.css))
 }
 
 /// Type parameters and prop kinds of each `.xzor` component imported by `doc`, read through `read`,
@@ -403,6 +437,49 @@ mod tests {
     fn no_warning_without_a_readable_chain() {
         assert!(warnings("<p/>\n").is_empty());
         assert!(warnings("@import { ComponentBase } from \"@source-crafter/xzor-runtime\"\n@inherits ComponentBase\n<p/>\n").is_empty());
+    }
+
+    fn styled(src: &str, sibling: Option<&str>) -> Result<codegen::Generated, Diagnostic> {
+        let root = Path::new("/p");
+        let child = "@code { n = 0; }\n<section>@slot</section>\n";
+        let read = |p: &Path| match p.file_name()?.to_str()? {
+            "Box.xzor" => Some(child.to_string()),
+            "C.css.xzor" => sibling.map(str::to_string),
+            _ => None,
+        };
+        let g = compile_mapped_with(src, &root.join("C.xzor"), &read)?;
+        for m in &g.mappings {
+            assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}\n{}", g.code);
+        }
+        Ok(g)
+    }
+
+    #[test]
+    fn a_style_block_scopes_the_roots_and_binds_one_property_per_dynamic_declaration() {
+        let id = style::style_id("C.xzor");
+        let src = "@import Box from \"./Box.xzor\"\n@code { w = 1; on = false; }\n<div class=\"a\">x</div>\n<Box><p>fill</p></Box>\n<style>\n.a { width: @w%; }\n@if (on) { .a { color: red } }\n</style>\n";
+        let g = styled(src, None).unwrap();
+        assert!(!g.code.contains(".css"), "the bundler imports the sheet, so the type check never sees it\n{}", g.code);
+        let css = g.css.as_deref().unwrap();
+        assert!(css.contains(&format!("@scope ([data-xz=\"{id}\"])")) && css.contains(&format!("width: var(--{id}-0)")), "{css}");
+        assert!(g.code.contains(&format!("\"data-xz\", \"{id}\"]")), "{}", g.code);
+        assert!(g.code.contains(&format!("\"--{id}-0\", () => String(this.w) + \"%\"")), "{}", g.code);
+        assert!(g.code.contains(&format!("\"data-{id}-0\", () => this.on")), "{}", g.code);
+        // The content passed to `Box` renders in its DOM: it carries the scope and the bindings too.
+        assert!(g.code.contains(&format!("__b.addAttribute(\"data-xz\", \"{id}\")")), "{}", g.code);
+        assert!(!g.code.contains("<style"), "{}", g.code);
+        let render = styled(&format!("@render\n{src}"), None).unwrap();
+        assert!(render.code.contains(&format!("__b.addAttribute(\"--{id}-0\", String(this.w) + \"%\");")), "{}", render.code);
+    }
+
+    #[test]
+    fn a_sibling_css_xzor_styles_the_component_and_excludes_a_style_block() {
+        let g = styled("@code { w = 1; }\n<div>x</div>\n", Some("@global\n.a { width: @w; }")).unwrap();
+        let css = g.css.unwrap();
+        assert!(!css.contains("@scope") && css.contains(".a { width: var(--"), "{css}");
+        let err = styled("<div/>\n<style>.a{}</style>\n", Some(".b{}")).unwrap_err();
+        assert!(err.message.contains("keep one"), "{}", err.message);
+        assert!(styled("<div/>\n", None).unwrap().css.is_none());
     }
 
     /// The editor's text of an imported component decides its prop kinds, and a change to it refreshes the importer.

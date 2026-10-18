@@ -28,6 +28,8 @@ pub struct Generated {
     pub deps: Vec<std::path::PathBuf>,
     /// Problems that don't stop the build.
     pub warnings: Vec<crate::Diagnostic>,
+    /// The lowered `<style>` (or `X.css.xzor`), written beside the code as `X.xzor.css` and imported by it.
+    pub css: Option<String>,
 }
 
 impl Generated {
@@ -181,7 +183,7 @@ impl M {
     }
 
     fn src(text: &str, at: usize) -> M {
-        let maps = if text.is_empty() { Vec::new() } else { vec![Mapping { src: at, out: 0, len: text.len() }] };
+        let maps = if text.is_empty() || at == Src::UNMAPPED { Vec::new() } else { vec![Mapping { src: at, out: 0, len: text.len() }] };
         M { text: text.into(), maps }
     }
 
@@ -433,7 +435,7 @@ pub fn generate_with(
     let injects = doc.injects.clone();
     let routes = page_routes(doc, &decls, inherited);
     let routes_block = block.and_then(block_info);
-    Ok(Generated { code: g.out, mappings: g.mappings, injects, routes, routes_block, deps: Vec::new(), warnings: Vec::new() })
+    Ok(Generated { code: g.out, mappings: g.mappings, injects, routes, routes_block, deps: Vec::new(), warnings: Vec::new(), css: None })
 }
 
 /// The document's routes block, wherever in the markup it sits (there is at most one per project).
@@ -906,7 +908,7 @@ impl Gen<'_> {
         let mut maps = Vec::new();
         let (mut start, mut added) = (0, 0);
         for (end, len) in inserts.iter().copied().chain([(e.len(), 0)]) {
-            if end > start {
+            if end > start && e.at != Src::UNMAPPED {
                 maps.push(Mapping { src: e.at + start, out: start + added, len: end - start });
             }
             start = end;
@@ -2869,7 +2871,7 @@ mod tests {
     #[test]
     fn html_entities_in_text_and_attributes_are_decoded() {
         let child = "@code {\n  label: string = \"\";\n  n = 0;\n}\n<p/>";
-        let src = "@code { n = 1; }\n<p title=\"a &amp; b\" class=\"x &lt;@n&gt;\">&lt;b&gt; caf&eacute; &#233;&#xE9; &copy; &nbsp; &unknown; &amp;amp; 5 &amp 6</p>\n<style>a &gt; b</style>\n<Child label=\"Tom &amp; Jerry\" n=\"n\" />";
+        let src = "@code { n = 1; }\n<p title=\"a &amp; b\" class=\"x &lt;@n&gt;\">&lt;b&gt; caf&eacute; &#233;&#xE9; &copy; &nbsp; &unknown; &amp;amp; 5 &amp 6</p>\n<div><style>a &gt; b</style></div>\n<Child label=\"Tom &amp; Jerry\" n=\"n\" />";
         let g = gen_with(src, &[("Child", child)]);
         for m in [
             "__b.addAttribute(\"title\", \"a & b\");",

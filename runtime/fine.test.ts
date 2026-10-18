@@ -61,6 +61,35 @@ test("a tracked component field updates its bindings without a re-render", async
   expect(button.getAttribute("title")).toBe("x2");
 });
 
+class Bar extends FineComponent {
+  #count = 0; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+  static { FineComponent.$define(this, ["count"]); }
+
+  protected override buildRenderTree(__b: RenderTreeBuilder): void {
+    __b.addFine((__p) => {
+      const _div0 = fine.el(__p, "div");
+      fine.attr(_div0, "--w", () => this.count * 10 + "%");
+      fine.attr(_div0, "--on", () => this.count > 1 || null);
+    });
+  }
+}
+
+test("a -- attribute binding writes a custom property, and null removes it", async () => {
+  const el = host();
+  const c = mount(Bar, el);
+  const div = el.querySelector("div")!;
+  expect(div.style.getPropertyValue("--w")).toBe("0%");
+  expect(div.style.getPropertyValue("--on")).toBe("");
+  expect(div.hasAttribute("--w")).toBe(false);
+  c.count = 2;
+  await tick();
+  expect(div.style.getPropertyValue("--w")).toBe("20%");
+  expect(div.style.getPropertyValue("--on")).toBe("true");
+  c.count = 0;
+  await tick();
+  expect(div.style.getPropertyValue("--on")).toBe("");
+});
+
 test("stateHasChanged refreshes what nothing tracks", async () => {
   const el = host();
   const c = mount(Counter, el);

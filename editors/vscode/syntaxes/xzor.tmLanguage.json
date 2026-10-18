@@ -4,6 +4,10 @@
   "name": "XZor",
   "patterns": [{ "include": "#markup" }],
   "injections": {
+    "L:meta.embedded.block.css - comment - string": {
+      "comment": "@expr, @(expr), @if/else and @@ anywhere inside a <style>, nested CSS rules included.",
+      "patterns": [{ "include": "#css-expr" }]
+    },
     "L:meta.embedded.block.typescript - comment - string": {
       "comment": "Markup used as a value inside @code and @{ }, where TypeScript would read a cast.",
       "patterns": [{ "include": "#code-markup-value" }]
@@ -99,6 +103,7 @@
         { "include": "#implicit-call" },
         { "include": "#implicit" },
         { "include": "#end-tag" },
+        { "include": "#style-block" },
         { "include": "#start-tag" },
         { "include": "#entity" }
       ]
@@ -477,6 +482,53 @@
         "3": { "name": "entity.name.tag.html" },
         "4": { "name": "punctuation.definition.tag.end.html" }
       }
+    },
+    "style-block": {
+      "comment": "A component's <style>: CSS, plus @expr values and @if blocks.",
+      "begin": "(<)(style)\\b([^>]*)(>)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.html" },
+        "3": { "name": "entity.other.attribute-name.html" },
+        "4": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "end": "(</)(style)\\s*(>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.html" },
+        "2": { "name": "entity.name.tag.html" },
+        "3": { "name": "punctuation.definition.tag.end.html" }
+      },
+      "contentName": "meta.embedded.block.css",
+      "patterns": [{ "include": "#css-body" }]
+    },
+    "css-body": {
+      "patterns": [{ "include": "#css-expr" }, { "include": "source.css" }]
+    },
+    "css-expr": {
+      "patterns": [
+        { "include": "#escape" },
+        {
+          "begin": "(?<![[:alnum:]])(@)(if)\\s*(?=\\()|(?<=\\})\\s*(else)\\s+(if)\\s*(?=\\()",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "keyword.control.xzor" },
+            "3": { "name": "keyword.control.xzor" },
+            "4": { "name": "keyword.control.xzor" }
+          },
+          "end": "(?<=\\))",
+          "patterns": [{ "include": "#condition" }]
+        },
+        { "match": "(?<=\\})\\s*(else)\\b", "captures": { "1": { "name": "keyword.control.xzor" } } },
+        { "include": "#explicit" },
+        {
+          "comment": "@name in a value; CSS at-rules keep their own colors.",
+          "match": "(?<![[:alnum:]])(@)(?!(?:media|supports|container|layer|scope|keyframes|-webkit-keyframes|font-face|import|namespace|page|property|counter-style|font-feature-values|starting-style|view-transition|position-try|charset|global|if)\\b)([_$[:alpha:]][_$[:alnum:]]*(?:\\??\\.[_$[:alpha:]][_$[:alnum:]]*)*)",
+          "captures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "variable.other.readwrite.xzor" }
+          }
+        }
+      ]
     },
     "start-tag": {
       "name": "meta.tag.xzor",

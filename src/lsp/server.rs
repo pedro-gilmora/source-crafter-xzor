@@ -634,6 +634,15 @@ impl Server {
     /// Recompiles a document, syncs the generated code to TypeScript and requests diagnostics.
     fn refresh(&mut self, uri: &str) -> io::Result<()> {
         let Some(doc) = self.docs.get(uri) else { return Ok(()) };
+        // A sibling `X.css.xzor` is not a component: its open `X.xzor` recompiles with the unsaved sheet.
+        if let Some(stem) = doc.path.to_string_lossy().strip_suffix(".css.xzor") {
+            let component = PathBuf::from(format!("{stem}.xzor"));
+            let open = self.docs.iter().find(|(_, d)| same_path(&d.path, &component)).map(|(u, _)| u.clone());
+            return match open {
+                Some(u) => self.refresh(&u),
+                None => Ok(()),
+            };
+        }
         // `@inherits` bases and imported components open in the editor are read from their unsaved text.
         let read = |p: &Path| match self.docs.values().find(|d| same_path(&d.path, p)) {
             Some(d) => Some(d.text.clone()),

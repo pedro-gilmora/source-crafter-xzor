@@ -100,6 +100,30 @@ test("an event re-renders only the owning component and patches nodes in place",
   expect(b.querySelector("span")!.firstChild).toBe(bSpanText);
 });
 
+class Styled extends ComponentBase {
+  width = 10;
+
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("div");
+    b.addAttribute("--w", this.width === 0 ? null : this.width + "px");
+    b.addEventHandler("click", () => (this.width = this.width ? 0 : 5));
+    b.closeElement();
+  }
+}
+
+test("a -- attribute writes a custom property in the render pass, and null removes it", () => {
+  const host = document.createElement("main");
+  document.body.replaceChildren(host);
+  mount(Styled, host);
+  const div = host.querySelector("div")!;
+  expect(div.style.getPropertyValue("--w")).toBe("10px");
+  expect(div.hasAttribute("--w")).toBe(false);
+  click(div);
+  expect(div.style.getPropertyValue("--w")).toBe("");
+  click(div);
+  expect(div.style.getPropertyValue("--w")).toBe("5px");
+});
+
 test("conditional blocks insert and remove without recreating siblings", () => {
   const { a, buttons } = setup();
   const i = a.querySelector("i")!;

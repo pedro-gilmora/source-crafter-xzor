@@ -125,6 +125,11 @@ const spec: [string, A[]][] = [
   ["@ServerRoutes(route)", [["ServerRoutes", "keyword.control.directive.xzor"]]],
   ["{", [["{", "punctuation.section.block.begin.xzor"]]],
   ["}", []],
+  ["<style global>", [["style", "entity.name.tag.html"], ["global", "entity.other.attribute-name.html"]]],
+  [".bar { width: @pct%; color: @(on ? 'red' : 'blue'); }", [["@", "keyword.control.transition.xzor"], ["pct", "variable.other.readwrite.xzor"], ["on ?", "meta.embedded.expression.typescript"], ["width", "support.type.property-name.css"]]],
+  ["@if (big) { .t { color: red } } else if (x) { .u { margin: 0 } } else { .v { gap: 0 } }", [["if", "keyword.control.xzor"], ["big", "meta.embedded.expression.typescript"], ["else", "keyword.control.xzor"], ["x", "meta.embedded.expression.typescript"]]],
+  ["@media (width > 1px) { .a { margin: @@x } }", [["media", "keyword.control.at-rule.media.css"], ["@@", "constant.character.escape.xzor"]]],
+  ["</style>", [["style", "entity.name.tag.html"]]],
 ];
 
 const out = ['<!-- SYNTAX TEST "source.xzor" "xzor grammar"'];

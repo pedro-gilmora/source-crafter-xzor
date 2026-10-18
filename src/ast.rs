@@ -90,7 +90,18 @@ pub struct Document {
     pub code_parts: Vec<Vec<CodePart>>,
     /// `@module { ... }`: module-level code (TypeScript and markup values) outside the class.
     pub module: Option<Vec<CodePart>>,
+    /// The component's top-level `<style>` (or its sibling `X.css.xzor`): raw CSS, lowered by `style::lower`.
+    pub style: Option<StyleBlock>,
     pub nodes: Vec<Node>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StyleBlock {
+    pub body: Src,
+    /// `<style global>` / `@global`: no `@scope` wrapper.
+    pub global: bool,
+    /// Offset of the `<style` tag.
+    pub at: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]

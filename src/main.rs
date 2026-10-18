@@ -282,6 +282,10 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                     known.insert(src.clone(), build::inject_signature(&unit.generated.injects));
                     match units.iter_mut().find(|u| u.source == unit.source) {
                         Some(slot) => {
+                            // A style change swaps the page's style sheet: reload instead of patching.
+                            if slot.generated.css != unit.generated.css {
+                                hot = None;
+                            }
                             if slot.generated.code != unit.generated.code {
                                 if let Some(ids) = hot.as_mut() {
                                     ids.insert(hot_id(&unit.source, &unit.out));

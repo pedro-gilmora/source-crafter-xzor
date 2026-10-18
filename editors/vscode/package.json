@@ -26,15 +26,27 @@
         "aliases": ["XZor", "xzor"],
         "extensions": [".xzor"],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "xzor-css",
+        "aliases": ["XZor style sheet"],
+        "extensions": [".css.xzor"]
       }
     ],
     "grammars": [
+      {
+        "language": "xzor-css",
+        "scopeName": "source.xzor-css",
+        "path": "./syntaxes/xzor-css.tmLanguage.json",
+        "embeddedLanguages": { "meta.embedded.expression.typescript": "typescript" }
+      },
       {
         "language": "xzor",
         "scopeName": "source.xzor",
         "path": "./syntaxes/xzor.tmLanguage.json",
         "embeddedLanguages": {
           "meta.embedded.block.typescript": "typescript",
+          "meta.embedded.block.css": "css",
           "meta.embedded.expression.typescript": "typescript",
           "meta.embedded.line.typescript": "typescript"
         },

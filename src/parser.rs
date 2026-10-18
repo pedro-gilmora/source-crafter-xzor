@@ -338,6 +338,10 @@ impl<'a> Parser<'a> {
                         }),
                     };
                 }
+                b'<' if matches!(until, Until::Eof) && self.at_style_tag() => {
+                    flush_text(&mut nodes, &mut text);
+                    self.style_block()?;
+                }
                 b'<' if matches!(self.peek_at(1), Some(c) if c.is_ascii_alphabetic()) => {
                     flush_text(&mut nodes, &mut text);
                     let el = self.element()?;
@@ -1261,6 +1265,34 @@ impl<'a> Parser<'a> {
         &src[start..self.pos]
     }
 
+    fn at_style_tag(&self) -> bool {
+        self.b.get(self.pos + 1..self.pos + 6).is_some_and(|n| n.eq_ignore_ascii_case(b"style")) && matches!(self.peek_at(6), Some(b'>' | b' ' | b'\t' | b'\r' | b'\n'))
+    }
+
+    /// A top-level `<style>` (optionally `<style global>`): raw CSS, kept out of the markup.
+    fn style_block(&mut self) -> PResult<()> {
+        let start = self.pos;
+        if self.doc.style.is_some() {
+            return self.err("a component has only one <style> block");
+        }
+        let Some(close) = self.src[start..].find('>') else { return self.err("unclosed tag <style>") };
+        let attrs = &self.src[start + 6..start + close];
+        let global = attrs.split_whitespace().any(|a| a == "global");
+        if let Some(other) = attrs.split_whitespace().find(|a| *a != "global") {
+            return self.err(format!("unknown <style> attribute {other} (only `global` is supported)"));
+        }
+        self.mark(TokenKind::TagDelim, start, start + 1);
+        self.mark(TokenKind::TagName, start + 1, start + 6);
+        let body_start = start + close + 1;
+        let lower = self.src[body_start..].to_ascii_lowercase();
+        let Some(end) = lower.find("</style>") else { return self.err("missing closing tag </style>") };
+        self.doc.style = Some(StyleBlock { body: Src::new(&self.src[body_start..body_start + end], body_start), global, at: start });
+        self.mark(TokenKind::TagDelim, body_start + end, body_start + end + 2);
+        self.mark(TokenKind::TagName, body_start + end + 2, body_start + end + 7);
+        self.pos = body_start + end + "</style>".len();
+        Ok(())
+    }
+
     fn element(&mut self) -> PResult<Element> {
         let start = self.pos;
         self.pos += 1;
@@ -1583,6 +1615,19 @@ mod tests {
         assert_eq!(doc.imports, vec!["A from \"./A.xzor\""]);
         assert_eq!(doc.code, vec!["\n  n = \"}\";\n"]);
         assert!(doc.nodes.is_empty());
+    }
+
+    #[test]
+    fn top_level_style_is_raw_css() {
+        let src = "<p>x</p>\n<style global>\n  .a { width: @w%; }\n</style>\n<div><style>.in{}</style></div>";
+        let doc = parse(src).unwrap().0;
+        let style = doc.style.expect("style");
+        assert!(style.global);
+        assert_eq!(style.body, "\n  .a { width: @w%; }\n");
+        assert_eq!(&src[style.body.at..style.body.at + 5], "\n  .a");
+        assert_eq!(doc.nodes.iter().filter(|n| matches!(n, Node::Element(_))).count(), 2, "the nested <style> stays markup");
+        assert!(parse("<style></style><style></style>").unwrap_err().message.contains("only one <style>"));
+        assert!(parse("<style scoped></style>").unwrap_err().message.contains("only `global`"));
     }
 
     #[test]

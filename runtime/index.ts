@@ -741,14 +741,16 @@ export class RenderTreeBuilder {
   }
 }
 
-// Inputs keep live state in properties, so bound attributes are mirrored onto them.
+// Inputs keep live state in properties, so bound attributes are mirrored onto them. `--name` is a custom property.
 function setAttr(el: Element, name: string, value: string): void {
+  if (name.charCodeAt(0) === 45 && name.charCodeAt(1) === 45) return (el as HTMLElement).style.setProperty(name, value);
   el.setAttribute(name, value);
   if (name === "value" && "value" in el) (el as HTMLInputElement).value = value;
   if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = true;
 }
 
 function removeAttr(el: Element, name: string): void {
+  if (name.charCodeAt(0) === 45 && name.charCodeAt(1) === 45) return void (el as HTMLElement).style.removeProperty(name);
   el.removeAttribute(name);
   if (name === "value" && "value" in el) (el as HTMLInputElement).value = "";
   if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = false;

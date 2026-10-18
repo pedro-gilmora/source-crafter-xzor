@@ -296,6 +296,15 @@ const textOf = (value: unknown): string => (value === null || value === undefine
 
 /** `null`, `undefined` and `false` remove it, `true` sets it empty; `value` and `checked` follow onto the property. */
 function setAttr(el: Element, name: string, value: unknown): void {
+  // `--name`: a custom property from a component's `<style>`; reading first skips a costly same-value write.
+  if (name.charCodeAt(0) === 45 && name.charCodeAt(1) === 45) {
+    const style = (el as HTMLElement).style;
+    const text = value === null || value === undefined || value === false ? "" : String(value);
+    if (style.getPropertyValue(name) === text) return;
+    if (text === "") style.removeProperty(name);
+    else style.setProperty(name, text);
+    return;
+  }
   if (value === null || value === undefined || value === false) {
     if (el.hasAttribute(name)) el.removeAttribute(name);
     if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = false;

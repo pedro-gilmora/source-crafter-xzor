@@ -18,7 +18,7 @@ pub fn find_sources(root: &Path) -> io::Result<Vec<PathBuf>> {
         out.push(root.to_path_buf());
         return Ok(out);
     }
-    walk(root, &|n| n.ends_with(".xzor"), &mut out)?;
+    walk(root, &|n| n.ends_with(".xzor") && !n.ends_with(".css.xzor"), &mut out)?;
     out.sort();
     Ok(out)
 }
@@ -141,8 +141,18 @@ pub fn compile_one(src: &Path) -> Result<Compiled, String> {
     let out = output_path(src);
     let name = src.file_name().unwrap_or_default().to_string_lossy();
     let map = generated.source_map(&text, &relative_from(out.parent().unwrap_or(Path::new(".")), src, &name));
-    write_if_changed(&out, &generated.code)?;
+    let code_changed = write_if_changed(&out, &generated.code)?;
     write_if_changed(&map_path(&out), &map)?;
+    match &generated.css {
+        Some(css) => {
+            write_if_changed(&css_path(&out), css)?;
+        }
+        // A styled component's code carries its scope id, so unchanged code had no sheet before either.
+        None if code_changed => {
+            let _ = fs::remove_file(css_path(&out));
+        }
+        None => {}
+    }
     Ok(Compiled { source: src.to_path_buf(), out, text, generated })
 }
 
@@ -203,10 +213,16 @@ fn map_path(out: &Path) -> PathBuf {
     p.into()
 }
 
-/// Deletes the generated `.xzor/*.xzor.ts` and `.map` of a removed `.xzor`.
+/// `X.xzor.css` beside the generated `X.xzor.ts`.
+fn css_path(out: &Path) -> PathBuf {
+    out.with_extension("css")
+}
+
+/// Deletes the generated `.xzor/*.xzor.ts`, `.map` and `.css` of a removed `.xzor`.
 pub fn remove_outputs(src: &Path) {
     let out = output_path(src);
     let _ = fs::remove_file(map_path(&out));
+    let _ = fs::remove_file(css_path(&out));
     let _ = fs::remove_file(out);
 }
 
@@ -297,6 +313,15 @@ pub fn watch_plan(paths: &[String], known_injects: &HashMap<PathBuf, Vec<String>
     plan.rebuild = removed_dir;
     for path in files {
         let name = path.to_string_lossy();
+        // A component's sibling style sheet: recompile the component.
+        if let Some(stem) = name.strip_suffix(".css.xzor") {
+            let component = PathBuf::from(format!("{stem}.xzor"));
+            if component.is_file() && !plan.recompile.contains(&component) {
+                plan.recompile.push(component);
+            }
+            plan.rebuild = true;
+            continue;
+        }
         if !name.ends_with(".xzor") {
             plan.rebuild = true;
             // Providers import other `.ts` files, so any of them may change the generated providers.
@@ -638,7 +663,7 @@ pub fn provider_files(root: &Path) -> Vec<PathBuf> {
 pub fn project_sources(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if root.is_dir() {
-        let _ = walk(root, &|n| is_source(n) && !n.ends_with(".d.ts"), &mut files);
+        let _ = walk(root, &|n| is_source(n) && !n.ends_with(".d.ts") && !n.ends_with(".css.xzor"), &mut files);
     }
     files
 }

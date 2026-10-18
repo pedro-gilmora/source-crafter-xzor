@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "source.xzor-css",
+  "name": "XZor style sheet",
+  "injections": {
+    "L:source.xzor-css - comment - string": { "patterns": [{ "include": "source.xzor#css-expr" }] }
+  },
+  "patterns": [
+    {
+      "match": "\\A\\s*(@)(global)\\b",
+      "captures": { "1": { "name": "keyword.control.transition.xzor" }, "2": { "name": "keyword.control.directive.xzor" } }
+    },
+    { "include": "source.xzor#css-body" }
+  ]
+}

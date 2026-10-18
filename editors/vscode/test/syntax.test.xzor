@@ -304,3 +304,21 @@ else {
 {
 <!-- <- punctuation.section.block.begin.xzor
 }
+<style global>
+<!-- <~----- entity.name.tag.html
+<!--   ^^^^^^ entity.other.attribute-name.html
+.bar { width: @pct%; color: @(on ? 'red' : 'blue'); }
+<!--          ^ keyword.control.transition.xzor
+<!--           ^^^ variable.other.readwrite.xzor
+<!--                          ^^^^ meta.embedded.expression.typescript
+<!--   ^^^^^ support.type.property-name.css
+@if (big) { .t { color: red } } else if (x) { .u { margin: 0 } } else { .v { gap: 0 } }
+<!-- <~-- keyword.control.xzor
+<!-- ^^^ meta.embedded.expression.typescript
+<!--                            ^^^^ keyword.control.xzor
+<!--                                     ^ meta.embedded.expression.typescript
+@media (width > 1px) { .a { margin: @@x } }
+<!-- <~----- keyword.control.at-rule.media.css
+<!--                                ^^ constant.character.escape.xzor
+</style>
+<!-- <~~----- entity.name.tag.html

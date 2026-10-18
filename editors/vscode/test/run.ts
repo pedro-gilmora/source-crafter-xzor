@@ -10,8 +10,9 @@ const tsGrammar =
 if (!tsGrammar) throw new Error("TypeScript grammar not found; set TS_GRAMMAR");
 
 const root = join(import.meta.dir, "..");
+const cssGrammar = tsGrammar.replace(/typescript-basics[\\/]syntaxes[\\/]TypeScript\.tmLanguage\.json$/, "css/syntaxes/css.tmLanguage.json");
 const proc = Bun.spawnSync(
-  ["bun", "x", "vscode-tmgrammar-test", "-g", join(root, "syntaxes/xzor.tmLanguage.json"), "-g", tsGrammar, join(root, "test/*.test.xzor")],
+  ["bun", "x", "vscode-tmgrammar-test", "-g", join(root, "syntaxes/xzor.tmLanguage.json"), "-g", tsGrammar, "-g", cssGrammar, join(root, "test/*.test.xzor")],
   { stdout: "inherit", stderr: "inherit" },
 );
 process.exit(proc.exitCode ?? 1);

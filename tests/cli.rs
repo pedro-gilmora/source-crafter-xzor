@@ -80,6 +80,31 @@ fn build_prints_timings() {
 const APP_MAIN: &str = "import App from \"./App.xzor\";\nconsole.log(App);\n";
 
 #[test]
+fn component_styles_are_bundled_once_per_module_and_type_checked() {
+    if !has_bun() {
+        return;
+    }
+    let app = "@import Card from \"./Card.xzor\"\n<Card /><Card />\n<style>\n.app { color: red }\n</style>\n";
+    let card = "@code { w = 50; }\n<div class=\"card\">x</div>\n";
+    let sheet = ".card { width: @w%; }\n";
+    let root = project("styles", &[("App.xzor", app), ("Card.xzor", card), ("Card.css.xzor", sheet), ("main.ts", APP_MAIN)]);
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).output().unwrap();
+    assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(root.join(".xzor/Card.xzor.css").is_file() && !root.join(".xzor/Card.css.xzor.ts").exists());
+    let css = fs::read_to_string(root.join("dist/main.css")).unwrap();
+    assert_eq!(css.matches(".card {").count(), 1, "{css}");
+    assert!(css.contains("@scope") && css.contains(".app"), "{css}");
+    // A wrong expression in the sheet is a type error.
+    fs::write(root.join("Card.css.xzor"), ".card { width: @nope%; }\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).arg("--no-bundle").output().unwrap();
+    assert!(!out.status.success());
+    fs::remove_file(root.join("Card.css.xzor")).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_xzor")).arg("build").arg(&root).arg("--no-bundle").output().unwrap();
+    assert!(out.status.success() && !root.join(".xzor/Card.xzor.css").exists());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn module_exports_are_imported_by_other_components_and_type_checked() {
     if !has_bun() {
         return;

@@ -618,7 +618,10 @@ mod tests {
         let map: HashMap<PathBuf, String> = files.iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
         let reads = RefCell::new(HashMap::new());
         let read = |p: &Path| {
-            *reads.borrow_mut().entry(p.to_path_buf()).or_insert(0) += 1;
+            // The sibling style-sheet probe is not a base-class read.
+            if !p.to_string_lossy().ends_with(".css.xzor") {
+                *reads.borrow_mut().entry(p.to_path_buf()).or_insert(0) += 1;
+            }
             map.get(p).cloned()
         };
         let code = crate::compile_mapped_with(&format!("@render\n{main}"), &root.join("C.xzor"), &read).unwrap().code;
@@ -916,7 +919,7 @@ export class After { late = 1; }
         let root = Path::new("/p");
         let main = "@import { Pkg } from \"ui/forms\"\n@inherits Pkg\n<p/>\n";
         let g = crate::compile_mapped_with(main, &root.join("src/C.xzor"), &|_| None).unwrap();
-        assert!(g.deps.iter().all(|d| d.file_name().is_some_and(|n| n == "package.json")), "{:?}", g.deps);
+        assert!(g.deps.iter().all(|d| d.file_name().is_some_and(|n| n == "package.json" || n == "C.css.xzor")), "{:?}", g.deps);
     }
 
     #[test]
