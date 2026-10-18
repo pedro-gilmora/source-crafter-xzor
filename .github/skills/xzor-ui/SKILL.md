@@ -88,7 +88,7 @@ Native controls are styled when they sit in a `Field`. Write `<input type="check
 - A variant is a prop the component turns into `data-*` (`tone="@(ok ? 'success' : 'danger')"`).
 - A continuous value is a custom property: `<div class="bar" style="--progress: @(read * 100)%">`, and the CSS reads `var(--progress)`. That is one attribute write per change, with no style recalculation outside it.
 - Never toggle classes or `hidden` to show a popover or sheet: use the invokers above.
-- A component's `<style>` block is not scoped. Put page CSS in the app's own `.css`, after `ui.css`, and in the `xz.utilities` layer or unlayered.
+- A component's `<style>` (or its `X.css.xzor`) is scoped to it. Use it for page and app components; put shared rules in the app's own `.css`, after `ui.css`, in the `xz.utilities` layer or unlayered. Kit components keep their rules in `ui.css`.
 
 ## Tokens
 

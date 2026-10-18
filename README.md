@@ -61,7 +61,7 @@ bun x xzor init    # sets up package.json, tsconfig.json and .gitignore
 }
 ```
 
-The extension is the `xzor-<version>.vsix` on the [releases page](../../releases): `code --install-extension xzor-<version>.vsix`.
+The extension is the `xzor-<version>.vsix` on the [releases page](../../releases): `code --install-extension xzor-<version>.vsix`. For Visual Studio 2022 or 2026, open `xzor-vs-<version>.vsix` from the same page.
 </details>
 
 ---
@@ -276,6 +276,37 @@ export class Application implements IApplication {}
 ```
 
 xzor reads your types and generates the plain `new Database(new ConsoleLogger())` code. A missing service, an ambiguous one or a dependency cycle is a build error with a clear message. Async factories, keyed services (`@Singleton("key", factory)`) and disposal (`Symbol.dispose`) work too.
+
+---
+
+## Styles and module code
+
+**`ProgressBar.xzor`**: a `<style>` applies to this component only, and `@` values in it follow the component's fields.
+
+```xzor
+@module {
+  export type Tone = "ok" | "warn";        // module code: importable from "./ProgressBar.xzor"
+  export const clamp = (n: number) => Math.min(100, Math.max(0, n));
+}
+
+@code {
+  value = 0;
+  tone: Tone = "ok";
+}
+
+<div class="track"><div class="fill"></div></div>
+
+<style>
+  .track { height: 6px; background: #eee; }
+  .fill { width: @clamp(value)%; height: 100%; }
+  @if (tone === "warn") { .fill { background: orange; } } else { .fill { background: green; } }
+</style>
+```
+
+- The rules are scoped with the browser's `@scope`: they reach this component's markup and the content it passes to children, not the children's insides. `<style global>` opts out.
+- Each declaration with `@` becomes one CSS custom property, so a change rewrites one property, not the style sheet. `@if` toggles rules with one attribute.
+- Prefer the CSS in its own file? Put it in `ProgressBar.css.xzor` next to the component (one or the other, not both).
+- `@module { }` is module-level code: constants, types, helpers and markup values that other files can import (`@import ProgressBar, { clamp } from "./ProgressBar.xzor"`).
 
 ---
 

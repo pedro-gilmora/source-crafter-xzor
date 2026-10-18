@@ -17,6 +17,8 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@page "/route"`, `@page "/users/:id" as admin` | Route of this component (see [Routing](#routing)) |
 | `@import A from "./A.xzor"` | Verbatim ES import |
 | `@code { ... }` | Class members |
+| `@module { ... }` | Module-level code outside the class, exportable (see [Module code](#module-code-module)) |
+| `<style>...</style>`, `X.css.xzor` | The component's own CSS, scoped and reactive (see [Component styles](#component-styles)) |
 | `@name`, `@a.b(c)[0]?.d` | Implicit expression; stops at text such as `:` or `.` followed by a non-identifier |
 | `@( expr )` | Explicit expression |
 | `@[a, b]`, `@[a, b].length` | An array literal is already balanced, so it needs no parentheses |
@@ -354,13 +356,27 @@ Full design: [the design kit spec](superpowers/specs/2026-10-17-design-kit-desig
 - DI diagnostics appear where the problem is defined or referenced: registration decorators and constructor and factory parameters in `.ts` files, and `@inject` lines in `.xzor` files.
 - They update live. Ranges shift as you type. 300 ms after the last change, the analysis reruns with the unsaved text of open documents. Nothing is written to disk until you save.
 - The language server opens `.ts` files only for these diagnostics. Every other `.ts` feature stays with VS Code's TypeScript.
+- Visual Studio 2022 and 2026 (`editors/vs`, a VSSDK extension): an `ILanguageClient` starts the same `xzor lsp` the first time a `.xzor` opens, found like the VS Code client (`XZOR_SERVER_PATH`, the newest `target/{release,debug}/xzor.exe` of the solution folder, the npm platform package, then the copy shipped in the `.vsix`), and a `.pkgdef` registers the shared TextMate grammars. The out-of-process VisualStudio.Extensibility model can't ship grammars yet, hence the classic model.
+
+## Module code (`@module`)
+
+`@module { ... }` (one per file) holds TypeScript that sits at the top level of the generated module, after the imports and before the class: constants, types, helper functions, and anything `export`ed. Other files import those names from the `.xzor` (`@import Button, { type Kind, kinds } from "./Button.xzor"`). The template and `@code` use them as written: they are not members, so no `this.` is added. Markup used as a value works as in `@code` (`export const badge = (t: string) => <b>@t</b>;`), but the block runs once per module, so it can't read the component's members; pass them as parameters. Component styles do not reach markup made in `@module`.
+
+## Component styles
+
+A component's top-level `<style>` (one per file), or a sibling `X.css.xzor` (never both), is CSS that applies to that component only.
+
+- **Scope.** The rules are wrapped in `@scope ([data-xz="<id>"]) to (:scope [data-xz] > *)`, and each selector `S` becomes `:where(:scope, :scope *):is(S)` (same specificity; it also matches the component's top elements). Every top element of the template gets the static `data-xz="<id>"`, `<id>` being a hash of the project-relative path. The rules reach the component's own markup and the top elements of its child components, not their insides. A child with no styles of its own is styled like plain markup. Content passed to a child (default content and `@slot` fills) carries the parent's id, so the parent's rules reach it inside the child.
+- **Global.** `<style global>`, or `@global` on the first line of `X.css.xzor`, skips the wrapper.
+- **Reactive values.** A declaration whose value holds `@name` or `@(expr)` reads `var(--<id>-<n>)`, and the top elements get the attribute `--<id>-<n>` with the value's text (`width: @progress%` gives `String(this.progress) + "%"`). Attributes starting with `--` are custom properties in both renderers, so one change writes one property on the elements that show it; fine components compare before writing. Expressions are type-checked like attribute values. `@` in a selector or an at-rule prelude is an error; CSS at-rules (`@media`, `@container`, `@keyframes`, ...) are left alone, and `@@` is a literal `@`.
+- **Conditional rules.** `@if (c) { rules } else if (d) { rules } else { rules }` gives each condition a boolean attribute `data-<id>-<n>` on the top elements, and nests the rules under a guard on the scope root (`:scope[data-<id>-0]`, `:scope:not([data-<id>-0])[data-<id>-1]`, ...). Inside a rule, `@if` guards that rule's elements by the root's state. Values from `@Cascade` fields work like any member.
+- **Output.** The lowered sheet is written as `.xzor/<rel>.xzor.css`. The bundler appends `import "./X.xzor.css"` to the generated module it loads, so Bun emits one copy per module in `dist/main.css` and the type check never sees CSS. A style change reloads the page in `xzor dev` instead of patching.
+- **Costs.** A component with R top elements and V dynamic declarations gets R x V bindings; a static style adds one attribute to the template and nothing per instance.
 
 ## Roadmap
 
 The documentation site's Roadmap page is the public view; this is the short list.
 
 1. Publish xzor-ui to npm as `@source-crafter/xzor-ui`, keeping the import paths apps use today.
-2. Scoped styles: a `<style>` block per component, scoped at build time.
-3. HTML element and attribute completion in markup.
-4. The same language server behind a Visual Studio extension.
-5. Later: a native rendering target for the same components.
+2. HTML element and attribute completion in markup.
+3. Later: a native rendering target for the same components.

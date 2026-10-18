@@ -15,15 +15,17 @@
         ["Cascading values and inherited members", "@cascade blocks and @inherits base classes, checked by TypeScript."],
         ["Models and validation", "Trackable models with field state for forms."],
         ["Builds", "Parallel compile, event-driven --watch with hot reload, PWA output."],
-        ["Editor", "VS Code extension: completion, hover, definition, rename, references, live errors."],
+        ["Editor", "VS Code and Visual Studio 2022/2026: completion, hover, definition, rename, references, live errors."],
         ["xzor-ui", "Liquid glass kit: buttons, sheets, dialogs, menus, tables, stats, forms, icons."],
+        ["Kit IntelliSense", "Prop values, page ids and kit classes complete inside attribute values."],
+        ["Scoped styles", "A <style> block or X.css.xzor per component, scoped with @scope, with reactive @expr values and @if blocks."],
+        ["@module", "Module-level code beside the component: constants, types, helpers and markup values to export."],
       ],
     },
     {
       name: "Now",
       tone: "accent",
       items: [
-        ["Kit IntelliSense", "Prop values, page ids and kit classes complete inside attribute values."],
         ["xzor-ui on npm", "Publish the kit as @source-crafter/xzor-ui, with the same import paths apps use today."],
       ],
     },
@@ -31,9 +33,7 @@
       name: "Next",
       tone: "warning",
       items: [
-        ["Scoped styles", "A <style> block per component, scoped at build time."],
         ["HTML completion", "Element and attribute names in markup, next to the component ones."],
-        ["Visual Studio", "The same language server behind a Visual Studio extension."],
       ],
     },
     {

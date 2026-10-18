@@ -101,6 +101,25 @@ Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A callba
 
 An event re-renders **only the component that owns the handler**, and that render reads everything again (its fields, props and injected services). If shared state changes in *another* component's handler, call `this.stateHasChanged()` on the components that show it, or pass the value down as a prop.
 
+## Styles and module code
+
+```xzor
+@module {
+  export type Kind = "a" | "b";            // module scope: exportable, no `this`
+  export const label = (k: Kind) => k.toUpperCase();
+}
+@code { kind: Kind = "a"; pct = 40; }
+<div class="bar">@label(kind)</div>
+<style>
+  .bar { width: @pct%; }
+  @if (kind === "b") { .bar { color: red; } }
+</style>
+```
+
+- One top-level `<style>` per component, or a sibling `X.css.xzor` (not both). Rules are scoped to the component's markup and the content it passes to children; `<style global>` (or `@global` first in `X.css.xzor`) opts out.
+- `@name` / `@(expr)` only in property values (one CSS custom property each); `@if (...) { rules } else { rules }` toggles rules; `@@` is a literal `@`; `@media`, `@keyframes`, ... stay CSS.
+- `@module { }` (one per file) is module-level TypeScript: constants, types, helpers, markup values; other files import its exports from the `.xzor`. It can't read component members.
+
 ## Lifecycle
 
 `protected override onInitialized()` / `onInitializedAsync()` once; `onParametersSet()` / `onParametersSetAsync()` on mount and when props change; then render; then `onAfterRender(first: boolean)`. `shouldRender()` can skip a render, `dispose()` runs on removal. A resolved `...Async` promise re-renders.
