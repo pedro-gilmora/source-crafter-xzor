@@ -473,7 +473,8 @@ jobs:
         $telegramPackages
         "@
 
-        if( $isRelease -and '${{ job.status }}' -eq 'success' -and -not $errors )
+        # A store that rejects a package (Marketplace, Open VSX, npm) doesn't hold back the release: its error goes in the notes.
+        if( $isRelease -and '${{ job.status }}' -eq 'success' )
         {
           $releaseNotes = if($commits.Count -gt 0) {
         @"
@@ -501,6 +502,17 @@ jobs:
         | ``xzor-<platform>[.exe]`` | The compiler binary for win32-x64, linux-x64 or darwin-arm64 |
         | ``source-crafter-xzor-*.tgz`` | The npm packages, for ``bun add ./<file>.tgz`` |
         "@
+          if ($errors) {
+            $downloads += @"
+
+        ---
+        ### Not published
+
+        ``````
+        $(($errors -join "`n").Trim())
+        ``````
+        "@
+          }
 
           # El cuerpo va entre comillas: sin ellas PowerShell parte el argumento por cada
           # espacio y salto de linea, y gh recibe la tabla despedazada.
