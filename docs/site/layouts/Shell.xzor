@@ -19,6 +19,7 @@
     <NavLink href="@href.Start()">Get started</NavLink>
     <NavLink href="@href.Learn({ step: 1 })">Learn</NavLink>
     <NavLink href="@href.Kit()">Kit</NavLink>
+    <NavLink href="@href.Showcase()">Examples</NavLink>
     <NavLink href="@href.Recipes()">Recipes</NavLink>
     <NavLink href="@href.HowItWorks()">How it works</NavLink>
     <NavLink href="@href.Roadmap()">Roadmap</NavLink>

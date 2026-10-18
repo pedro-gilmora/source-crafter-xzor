@@ -325,6 +325,40 @@ body > div > footer,
   color: var(--xz-muted);
 }
 
+/* Ruled rows, not cards: the apps are the thing to look at. */
+.examples {
+  margin: 2rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.examples > li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--xz-space-4);
+  align-items: center;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--xz-line);
+}
+
+.examples h2 {
+  margin: 0 0 0.35rem;
+}
+
+.examples p {
+  margin: 0.25rem 0 0;
+}
+
+.examples .actions {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .examples > li {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* A rail down the left; each phase hangs a dot in its tone on it. */
 .roadmap {
   margin: 2rem 0 0;

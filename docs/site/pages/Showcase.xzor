@@ -1,0 +1,57 @@
+@page "/showcase"
+
+@code {
+  readonly source = "https://github.com/pedro-gilmora/source-crafter-xzor/tree/main/examples/";
+  readonly apps = [
+    {
+      name: "Pulse",
+      folder: "dashboard",
+      live: true,
+      text: "A sales dashboard: KPIs, a sortable table, filters and an order sheet opened from a row.",
+      shows: "Table, Stat, Sheet, Segmented and a side NavBar.",
+    },
+    {
+      name: "Field Notes",
+      folder: "blog",
+      live: true,
+      text: "A blog with a reading face, page transitions and a reading bar driven by scroll.",
+      shows: "Routes with parameters and typed links, view transitions, scroll-driven CSS.",
+    },
+    {
+      name: "Bodega",
+      folder: "sales",
+      live: true,
+      text: "A phone-first shop you can install, with a tab bar, a basket and checkout.",
+      shows: "A PWA (manifest and service worker), a tabs NavBar, Sheet, a model and a basket service injected at build time.",
+    },
+    {
+      name: "Counter",
+      folder: "counter",
+      live: false,
+      text: "Every language feature in one small app, unstyled: the reference to read rather than to look at.",
+      shows: "Slots, cascading values, generic components, an admin area, typed links, injected services and models. Run it with bun run example.",
+    },
+  ];
+}
+
+<section class="page narrow">
+  <h1>Examples</h1>
+  <p class="lead">Full apps built with xzor and the kit. Open them, then read the source next to it.</p>
+  <ul class="examples">
+    @for (const app of apps) {
+      <li>
+        <div>
+          <h2>@app.name</h2>
+          <p>@app.text</p>
+          <p class="xz-muted">@app.shows</p>
+        </div>
+        <div class="actions">
+          @if (app.live) {
+            <a class="xz-button" data-variant="solid" data-tone="accent" href="@('examples/' + app.folder + '/')" rel="external">Open the app</a>
+          }
+          <a class="xz-button" data-variant="soft" data-tone="neutral" href="@(source + app.folder)" rel="external">Source</a>
+        </div>
+      </li>
+    }
+  </ul>
+</section>
