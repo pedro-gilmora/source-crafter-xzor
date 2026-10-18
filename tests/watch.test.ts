@@ -147,7 +147,9 @@ test("renaming a member of an inherited .ts base recompiles the inheriting compo
   const seen = await waitFor("watching");
   expect(seen).toContain("compiled 1 component(s)");
   expect(seen).toMatch(/D\.xzor\(\d+,\d+\)/);
-  expect(readFileSync(join(dir, ".xzor", "D.xzor.ts"), "utf8")).toContain("addContent(title)");
+  const code = readFileSync(join(dir, ".xzor", "D.xzor.ts"), "utf8");
+  expect(code).not.toContain("this.title");
+  expect(code).toContain("=> title)");
   await quiet();
 }, 30_000);
 
