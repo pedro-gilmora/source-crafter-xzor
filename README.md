@@ -106,7 +106,7 @@ export class Application implements IApplication {}
 
 That's a working app. A few things to notice:
 
-- `@count` prints a value. Use `@(a + b)` for anything longer than a name or a member chain.
+- `@count` prints a value. Use `@(a + b)` for anything longer than a name or a member chain; an array literal is already balanced, so `@['a', 'b']` needs no parentheses.
 - You write `count`, not `this.count`: names that refer to `@code` members get `this.` added for you.
 - `@onclick` gets a typed DOM event and re-renders the component when the handler is done.
 - `@if`, `@for`, `@while` and `@switch` are ordinary TypeScript control flow wrapped around markup.
@@ -142,6 +142,7 @@ A field in `@code` is a **prop**: the parent sets it as an attribute.
 ```
 
 - A capitalized tag is a component. A misspelled prop or a wrong type is a build error.
+- A callback prop such as `onChange?: EventCallback<number>` is set with `onChange="save"`, or like a DOM event with `@onchange="save"`.
 - In lists, add `@key="item.id"`: rows keep their DOM and state when they reorder.
 - Lifecycle methods follow Blazor's order: `onInitialized(Async)`, then `onParametersSet(Async)`, then the render, then `onAfterRender(first)`. `dispose()` runs when the component leaves the page.
 
@@ -239,7 +240,7 @@ export class Application implements IApplication {}
 ```
 
 - `href.UserPage(...)` is generated from your `@page`s, so a link to a route that doesn't exist won't compile.
-- `NavLink` adds the `active` class while you're on its page.
+- `NavLink` adds the `active` class and `aria-current="page"` while you're on its page.
 - Give some routes a tag (`@page "/admin" as admin`) and wrap them all in another layout with `@admin(page) { <AdminLayout>@page</AdminLayout> }`.
 
 ### 6. Services: dependency injection at compile time
@@ -368,7 +369,9 @@ The component's own fields are tracked like a model's, so `count++` in a handler
 </Sheet>
 ```
 
-Three apps show it at work: [`examples/dashboard`](examples/dashboard) (KPIs, a sortable table, filters, a detail sheet), [`examples/blog`](examples/blog) (page transitions and a scroll-driven reading bar) and [`examples/sales`](examples/sales) (an installable phone app with a tab bar, basket and checkout). Build them with `bun run examples`. The [documentation site](https://pedro-gilmora.github.io/source-crafter-xzor/) has the live gallery and recipes, and [`.github/agents`](.github/agents) holds design sub-agents (designer, component builder, motion, reviewer) that build with it.
+Three apps show it at work: [`examples/dashboard`](examples/dashboard) (KPIs, a sortable table, filters, a detail sheet), [`examples/blog`](examples/blog) (page transitions and a scroll-driven reading bar) and [`examples/sales`](examples/sales) (an installable phone app with a tab bar, basket and checkout). Build them with `bun run examples`. The [documentation site](https://pedro-gilmora.github.io/source-crafter-xzor/) has the live gallery, recipes and the roadmap, and [`.github/agents`](.github/agents) holds design sub-agents (designer, component builder, motion, reviewer) that build with it.
+
+The editor knows the kit through the tsconfig `paths`: it completes its components (adding the `@import`), prop values such as `tone` or `icon`, the page's ids for `opens` and `commandfor`, and its CSS classes, and shows each prop's doc comment on hover.
 
 ---
 
@@ -402,7 +405,7 @@ The rules the project follows:
 
 ```sh
 cargo test                 # compiler tests
-bun test                   # runtime, build, DI and language server tests
+bun test ./runtime ./tests # runtime, build, DI and language server tests (a bare `bun test` also scans target/)
 bun run test:grammar       # VS Code syntax highlighting tests
 ./Package.ps1 -test true   # build, test and pack everything into publish/
 bun run ui                 # compile the xzor-ui kit (before building anything that uses it)

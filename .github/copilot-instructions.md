@@ -14,9 +14,9 @@ Before any task, check whether a skill applies and follow it:
 ## Commands
 
 - `cargo test`: unit tests (in the modules) and `tests/` integration tests.
-- `bun test`: runtime tests (`runtime/*.test.ts`, using happy-dom) and the LSP end-to-end test (`tests/lsp.test.ts`, which builds and drives `xzor lsp`).
+- `bun test ./runtime ./tests`: runtime tests (`runtime/*.test.ts`, using happy-dom) and the LSP end-to-end test (`tests/lsp.test.ts`, which runs `cargo build` and drives `target/debug/xzor lsp`, so don't set `CARGO_TARGET_DIR` for it). A bare `bun test` also scans scratch clones in `target/`.
 - `bun run test:grammar`: VS Code TextMate grammar tests (`editors/vscode/test`). Edit `test/gen.ts`, not the generated `syntax.test.xzor`.
-- `bun run build:vscode`, then `vsce package --no-dependencies` in `editors/vscode`: builds the extension (the client starts `xzor lsp`).
+- `bun run build:vscode`, then `bun x @vscode/vsce package --no-dependencies --skip-license --allow-missing-repository -o ../../target/xzor-local.vsix` in `editors/vscode` and `code --install-extension target/xzor-local.vsix --force`: builds and installs the extension. The client runs the newest of `target/{release,debug}/xzor`, so after `cargo build` a restart of the extension host is enough. Keep only one xzor extension installed (an old `xzor.xzor` id shadows the grammar).
 - `cargo run -- build examples/counter`: full pipeline (compile, run `bun x tsc` type check, Bun bundle).
 - `cargo run -- highlight examples/counter/Counter.xzor`: prints the template with colors.
 - `bun run ui` (`xzor compile ui`): compiles the xzor-ui kit in `ui/`; run it before building anything that imports the kit. `bun run examples` builds `examples/{dashboard,blog,sales}` on it. Kit rules: `.github/skills/xzor-ui/SKILL.md`; design sub-agents: `.github/agents/`.
@@ -29,7 +29,9 @@ Before any task, check whether a skill applies and follow it:
 - Pipeline: `parser.rs` (AST with `Src` spans, plus token spans) → `codegen.rs` (TypeScript class with `buildRenderTree`, plus source `Mapping`s) → `build.rs` (writes `<project>/.xzor/*.xzor.ts`, writes the route table `.xzor/routes.ts` from the `@page`s (`src/routes.rs`), runs DI analysis (`src/di.ts` → `src/di/` → `.xzor/<entry>` and `.xzor/**/*.provider.ts`), runs the tsc check, then `src/bundle.ts` via Bun).
 - DI analysis goes through a persistent `di.ts --serve` process per root (`src/analyzer.rs`). `--watch` is event-driven (`src/watch.ts`, `build::watch_plan`). Both helper scripts are written to `<root>/node_modules/.cache/xzor/`.
 - Generic component uses without `T=` hoist props into `const __pN` and infer `T` with a conditional type (zero runtime cost).
-- `xzor lsp` (`src/lsp/`): component features live in `features.rs`, and TypeScript regions are proxied to TypeScript 7's `tsc --lsp --stdio` through the mappings. Feature providers are registered dynamically for `xzor` only; `.ts` documents get live DI diagnostics and nothing else. JSON is hand-written in `json.rs`.
+- `xzor lsp` (`src/lsp/`): component features live in `features.rs`, and TypeScript regions are proxied to TypeScript 7's `tsc --lsp --stdio` through the mappings. Feature providers are registered dynamically for `xzor` only; `.ts` documents get live DI diagnostics and nothing else. JSON is hand-written in `json.rs`. Package components come from the tsconfig `paths` (`tsconfig_packages` in `lib.rs`), and attribute values complete from string-literal prop types (`string_values`), page ids and CSS classes.
+- Package `.xzor` imports (`@source-crafter/xzor-ui/Button.xzor`) resolve through tsconfig `paths` to their source in the compiler too. `src/bundle.ts` is embedded in the binary: rebuild after editing it.
+- The repo's own TypeScript (`src`, `runtime`, `tests`, ...) is typed by the root `jsconfig.json`: any `tsconfig.json` would be taken for an app root.
 - Project tsconfigs need `"rootDirs": [".", ".xzor"]` and `".xzor/**/*.ts"` in `include`; DI projects also need `"ESNext.Disposable"` in `lib`.
 - A `.xzor` must not import from `./main`: `rootDirs` resolves it to the generated `.xzor/main.ts`.
 - The runtime is `runtime/index.ts`. Keep the generated code and the `RenderTreeBuilder` API in sync.

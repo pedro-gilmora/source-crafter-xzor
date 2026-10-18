@@ -29,6 +29,8 @@ Prefer a kit component to hand-written markup, and a prop to a class. Never writ
    @import Button from "@source-crafter/xzor-ui/Button.xzor"
    ```
 
+The editor reads the same `paths`: typing `<But` offers `Button` and adds its `@import`, and inside quotes it completes prop values (`tone`, `variant`, `icon`, ...), the page's `id`s for `opens`, `closes`, `toggles` and `commandfor`, and the kit's `xz-` classes. Hover shows each prop's doc comment.
+
 ## Shared props
 
 | Prop | Values | Meaning |
@@ -49,7 +51,7 @@ Prefer a kit component to hand-written markup, and a prop to a class. Never writ
 | `NavBar` | `kind="top"\|"side"\|"tabs"` (tabs is a floating bottom bar for phones), `label` | `NavItem`s |
 | `NavItem` | `href`, `label`, `icon?`, `match="prefix"\|"exact"` | none (marks itself active, with `aria-current`) |
 | `Tabs` | `options: string[]`, `@bind-value`, `label` | none: show the panel with `@if` |
-| `Button` | `tone`, `variant="soft"\|"solid"\|"ghost"\|"glass"`, `size`, `type`, `disabled`, `icon?`, `label?`, `toggles?`, `opens?`, `closes?`, `onClick?` | text |
+| `Button` | `tone`, `variant="soft"\|"solid"\|"ghost"\|"glass"`, `size`, `type`, `disabled`, `icon?`, `label?`, `toggles?`, `opens?`, `closes?`, `onClick?` (or `@onclick`) | text |
 | `Menu`, `Popover` | `id` | buttons or links / anything |
 | `Sheet` | `id`, `title`, `side="bottom"\|"end"\|"start"`; methods `show()`, `close()` | default slot, `@slot actions { }` |
 | `Dialog` | `id`, `title`; methods `show()`, `close()` | default slot, `@slot actions { }` |
@@ -110,6 +112,7 @@ Utilities: `.xz-page` (centered content width), `.xz-container` (a container-que
 
 - **Glass needs something behind it.** The body draws `--xz-backdrop` and a fine grain. Don't put glass on glass: a `depth` 1–3 element inside another one shows nothing through it. Use `depth="0"` or no surface inside a glass panel.
 - **Don't make everything a card.** Lists of content (posts, apps, features) read better as ruled rows or columns than as identical rounded boxes. Keep glass for things that float: bars, panels of tools, overlays.
+- **Surfaces don't grow with their text.** Inside `Glass`, `Stat` and `List` rows, one-line labels (`strong`, `b`, `small`, `span`, `.xz-muted`) end in an ellipsis, and so do `Panel` titles; paragraphs wrap. Put text that must be read in full in a `<p>`.
 - **Contrast:** body text goes on `--xz-surface` or glass, never on raw `--xz-accent`. Solid buttons use `--xz-on-tone`.
 - **Motion:** use `transform`, `opacity`, `translate` and `scale` only, behind `@media (prefers-reduced-motion: no-preference)`. Entry 200–320ms with `--xz-ease-out`; exits faster.
 - **Touch:** targets of 44px or more on coarse pointers (the kit does this for its own controls). Use `env(safe-area-inset-*)` at screen edges.

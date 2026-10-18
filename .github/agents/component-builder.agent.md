@@ -12,6 +12,7 @@ Load these skills first: `xzor`, `xzor-ui`, `test-driven-development`, and `emil
 
 - **Markup:** semantic HTML, with the native element first (`<button>`, `<dialog>`, `<input>`, `popover`). Use ARIA only where no element exists. The root carries `class="xz-<name>"`.
 - **Props:** fields with defaults. Variants use the shared vocabulary (`tone: Tone`, `depth: Depth`, `size: Size` from `@source-crafter/xzor-ui`), rendered as `data-tone`, `data-depth` and `data-size`. Other variants are `data-<prop>`, and continuous values are custom properties in `style`.
+- **Editor-friendly props:** type a fixed set of values as a string-literal union or an imported alias, so the editor completes them. Give non-obvious props a one-line `/** */` comment (shown on hover); start it with "Id of" when the prop takes another element's `id`, so the page's ids complete. Callbacks are `onX?: EventCallback<T>`, which callers can also set with `@onx`.
 - **No JavaScript** for looks or for open/closed state. Methods exist only for what the platform can't do declaratively (`show()`/`close()` on a ref).
 - **CSS:**
   - it goes in `ui/ui.css`, in `@layer xz.components`, and uses tokens only;
@@ -29,5 +30,5 @@ Load these skills first: `xzor`, `xzor-ui`, `test-driven-development`, and `emil
 2. Run `bun test ./tests/ui.test.ts` and watch it fail.
 3. Write the `.xzor` and the CSS.
 4. Run `xzor compile ui`, `bun x tsc --noEmit -p ui` and the test until they pass.
-5. Add the component to the site gallery (`docs/site/pages/Gallery.xzor`) and to the table in `.github/skills/xzor-ui/SKILL.md`.
+5. Add the component to the site gallery (`docs/site/pages/Kit.xzor`) and to the table in `.github/skills/xzor-ui/SKILL.md`.
 6. Ask `reviewer` to check it.

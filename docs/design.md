@@ -333,6 +333,8 @@ Full design: [the design kit spec](superpowers/specs/2026-10-17-design-kit-desig
 - **Tracking.** Generated fine components are field-tracked wherever they live (outside `node_modules`), so a kit component's props update like the app's own.
 - **Hoisted props stay literal.** A generic component used without type arguments gets its props hoisted to infer `T`; static text props are emitted `as const`, so `depth="1"` keeps the type `"1"` and doesn't make inference fail.
 - **CSS.** `import "@source-crafter/xzor-ui"` pulls in `ui.css`, which Bun bundles into `dist/main.css`; link that in `index.html`. The kit's rules: [`.github/skills/xzor-ui/SKILL.md`](../.github/skills/xzor-ui/SKILL.md).
+- **Fonts.** `url(./fonts/*.woff2)` in a style sheet is kept external and the files are copied to `dist/fonts/` (Bun would inline small assets as base64).
+- **Editor.** The language server lists the kit's components from the same `paths` (patterns that map to a `.xzor/*.ts` folder) and its classes from the `.css` beside the package entry.
 
 ## Build
 
@@ -347,13 +349,18 @@ Full design: [the design kit spec](superpowers/specs/2026-10-17-design-kit-desig
 
 ## Editor
 
+- Completion in markup: `<` offers the project's components and those reachable through tsconfig `paths`, adding the `@import`. Inside a component tag it offers its props (with their `/** */` comment), `@key`, `@ref` and `@on<event>` for its `EventCallback` props. Inside a static attribute value it offers the string literals of the prop's type (inline unions and imported aliases), the page's `id`s for `commandfor`, `popovertarget`, `for`, `aria-*` ids and props documented "Id of ...", class names from the project's and packages' top-level `.css`, and the values of `command`, `popover`, `popovertargetaction`, `closedby` and `role`.
+- Hover on a prop shows its declaration and doc comment; hover on a package component shows its import specifier.
 - DI diagnostics appear where the problem is defined or referenced: registration decorators and constructor and factory parameters in `.ts` files, and `@inject` lines in `.xzor` files.
 - They update live. Ranges shift as you type. 300 ms after the last change, the analysis reruns with the unsaved text of open documents. Nothing is written to disk until you save.
 - The language server opens `.ts` files only for these diagnostics. Every other `.ts` feature stays with VS Code's TypeScript.
 
 ## Roadmap
 
-1. Rename and find references, through the same mappings.
-2. Keep TypeScript features working while the template has syntax errors.
-3. Color markup inside `@code` as markup.
-4. PWA support: `@Pwa({...})` next to `@Mount` generates the manifest, a service worker and its registration, on top of content-hashed assets ([plan](plans/backlog-pwa.md)).
+The documentation site's Roadmap page is the public view; this is the short list.
+
+1. Publish xzor-ui to npm as `@source-crafter/xzor-ui`, keeping the import paths apps use today.
+2. Scoped styles: a `<style>` block per component, scoped at build time.
+3. HTML element and attribute completion in markup.
+4. The same language server behind a Visual Studio extension.
+5. Later: a native rendering target for the same components.

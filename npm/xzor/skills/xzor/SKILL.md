@@ -81,7 +81,7 @@ Generated `.xzor/` and `dist/` are build output: never edit them. Don't create `
 
 | Need | Write |
 |---|---|
-| Print a value | `@name`, `@user.name`, `@items[0]`, `@(a + b)` for anything else |
+| Print a value | `@name`, `@user.name`, `@items[0]`, `@(a + b)` for anything else; an array literal needs no parentheses: `@['a', 'b']` |
 | Literal `@` | `@@` (emails like `a@b.com` are fine as is) |
 | Condition | `@if (x) { ... } else if (y) { ... } else { ... }` |
 | Loop | `@for (const item of items) { <li @key="item.id">@item.name</li> }` (any JS `for` head; there is no `@foreach`) |
@@ -97,7 +97,7 @@ Generated `.xzor/` and `dist/` are build output: never edit them. Don't create `
 | Spread attributes | `@attributes="attrs"` |
 | Inline SVG | `<svg viewBox="0 0 24 24"><path d="@d" /></svg>` (keep the `<svg>` and its children in one place, not split across an `@if`/`@for`) |
 
-Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A prop typed `string`, a union of string literals, an imported alias of string literals (`type Size = "s" | "m"`), or given a string default (`name: Kind = "a"`) takes text; any other type takes a TypeScript expression. Misspelled or mistyped props are build errors.
+Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A callback prop (`onSave?: EventCallback<T>`) can also be set like a DOM event: `@onsave="save"`. A prop typed `string`, a union of string literals, an imported alias of string literals (`type Size = "s" | "m"`), or given a string default (`name: Kind = "a"`) takes text; any other type takes a TypeScript expression. Misspelled or mistyped props are build errors.
 
 An event re-renders **only the component that owns the handler**, and that render reads everything again (its fields, props and injected services). If shared state changes in *another* component's handler, call `this.stateHasChanged()` on the components that show it, or pass the value down as a prop.
 
