@@ -498,7 +498,7 @@ jobs:
         | File | Use |
         |---|---|
         | ``xzor-$($env:VERSION).vsix`` | VS Code extension: ``code --install-extension xzor-$($env:VERSION).vsix`` |
-        | ``xzor-vs-$($env:VERSION).vsix`` | Visual Studio 2022/2026 extension: open it to install |
+        | ``xzor-vs-$($env:VERSION).vsix`` | Visual Studio 2022/2026 extension (also on the Visual Studio Marketplace): open it to install |
         | ``xzor-<platform>[.exe]`` | The compiler binary for win32-x64, linux-x64 or darwin-arm64 |
         | ``source-crafter-xzor-*.tgz`` | The npm packages, for ``bun add ./<file>.tgz`` |
         "@
@@ -558,3 +558,30 @@ jobs:
     steps:
     - id: deployment
       uses: actions/deploy-pages@v5
+
+  # The Visual Studio Marketplace takes the .vsix the Windows runner built, once the release succeeded.
+  vs-publish:
+    name: 'Visual Studio extension publish'
+    needs: [ resolve, try-deliver ]
+    if: needs.resolve.outputs.release == 'true'
+    runs-on: 'windows-latest'
+    steps:
+    - name: Get source code
+      uses: actions/checkout@v7
+      with:
+        ref: ${{ needs.resolve.outputs.head_sha }}
+
+    - name: Get the Visual Studio extension
+      uses: actions/download-artifact@v8
+      with:
+        name: vs-extension
+        path: vs-extension
+
+    - name: Publish to the Visual Studio Marketplace
+      shell: pwsh
+      env:
+        VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      run: |
+        if (-not $env:VSCE_PAT) { Write-Host "VSCE_PAT is not set: the Visual Studio Marketplace is skipped"; exit 0 }
+        $vsix = Get-ChildItem vs-extension/*.vsix | Select-Object -First 1
+        ./editors/vs/publish.ps1 -vsix $vsix.FullName -token $env:VSCE_PAT

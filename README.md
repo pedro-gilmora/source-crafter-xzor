@@ -61,7 +61,7 @@ bun x xzor init    # sets up package.json, tsconfig.json and .gitignore
 }
 ```
 
-The extension is the `xzor-<version>.vsix` on the [releases page](../../releases): `code --install-extension xzor-<version>.vsix`. For Visual Studio 2022 or 2026, open `xzor-vs-<version>.vsix` from the same page.
+The extension is the `xzor-<version>.vsix` on the [releases page](../../releases): `code --install-extension xzor-<version>.vsix`. For Visual Studio 2022 or 2026, install **XZor** from the Visual Studio Marketplace (Extensions > Manage Extensions), or open `xzor-vs-<version>.vsix` from the same page.
 </details>
 
 ---
