@@ -708,18 +708,48 @@ test("a cached getter runs once per change for all its readers, and is never sta
   const el = host();
   const p = mount(Page, el);
   expect(el.textContent).toBe("101110/1");
-  expect(runs).toBe(1);
+  // Its first reader ran it uncached; the second made the cache.
+  expect(runs).toBe(2);
   p.a = 2;
   await tick();
   expect(el.textContent).toBe("202120/1");
-  expect(runs).toBe(2);
+  expect(runs).toBe(3);
   // Read outside a binding, between changes: still cached.
   expect(p.total).toBe(20);
-  expect(runs).toBe(2);
+  expect(runs).toBe(3);
   // What nothing tracks is never cached.
   outside.n = 5;
   p.stateHasChanged();
   expect(el.querySelector("u")!.textContent).toBe("20/5");
+});
+
+test("a getter with one reader, or read outside bindings, gets no cache", async () => {
+  let runs = 0;
+  class Page extends FineComponent {
+    #a = 1; get a(): number { FineComponent.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (FineComponent.same(p, v)) return; this.#a = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["a"]); }
+    get total(): number {
+      runs++;
+      return this.a * 10;
+    }
+    static { fine.memo(this, ["total"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.text(fine.el(__p, "b"), () => this.total);
+      });
+    }
+  }
+  const memos = (o: object) => Object.getOwnPropertySymbols(o).filter((s) => s.description === "xzor.fine.memos").length;
+  const loose = new Page();
+  expect(loose.total).toBe(10);
+  expect(memos(loose)).toBe(0);
+  const el = host();
+  const p = mount(Page, el);
+  p.a = 2;
+  await tick();
+  expect(el.textContent).toBe("20");
+  expect(runs).toBe(3);
+  expect(memos(p)).toBe(0);
 });
 
 test("@await: pending, then the value; a newer promise wins; what then reads re-renders it without a new request", async () => {

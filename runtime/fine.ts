@@ -51,7 +51,7 @@ type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
 type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
-/** A component's cached getters, created on first read. */
+/** A component's cached getters by `fine.memo` index, created when a second binding reads them. */
 const MEMOS = Symbol("xzor.fine.memos");
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.fine.empty");
@@ -777,23 +777,31 @@ export const fine = {
    */
   memo(cls: Function, names: readonly string[]): void {
     const proto = cls.prototype as object;
-    for (const name of names) {
+    names.forEach((name, i) => {
       const desc = Object.getOwnPropertyDescriptor(proto, name);
       const get = desc?.get;
-      if (get === undefined) continue;
-      const key = Symbol(name);
+      if (get === undefined) return;
+      const reader = Symbol(name);
       Object.defineProperty(proto, name, {
         ...desc,
         get(this: Record<symbol, unknown>) {
-          let b = this[key] as Binding | undefined;
-          if (b === undefined) {
-            b = this[key] = new Binding(MEMO | QUEUED, null as unknown as Node, () => get.call(this), undefined);
-            ((this[MEMOS] ??= []) as Binding[]).push(b);
+          const memo = (this[MEMOS] as (Binding | undefined)[] | undefined)?.[i];
+          if (memo !== undefined) return memo.$memo();
+          // A cache pays off from a second reader: outside bindings, or for its one reader, it runs as written.
+          const by = collecting;
+          if (by === undefined) return get.call(this);
+          const first = this[reader] as Binding | undefined;
+          if (first === undefined || first === by || (first.flags & DEAD) !== 0) {
+            this[reader] = by;
+            return get.call(this);
           }
+          this[reader] = undefined;
+          const b = new Binding(MEMO | QUEUED, null as unknown as Node, () => get.call(this), undefined);
+          ((this[MEMOS] ??= []) as (Binding | undefined)[])[i] = b;
           return b.$memo();
         },
       });
-    }
+    });
   },
 
   /**
@@ -948,13 +956,13 @@ setFineHooks({
   },
   refresh(root) {
     // A whole-component pass recomputes the cached getters too: what changed may be untracked.
-    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS];
-    if (memos !== undefined) for (const m of memos) m.flags &= ~FRESH;
+    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, (Binding | undefined)[] | undefined>)[MEMOS];
+    if (memos !== undefined) for (const m of memos) if (m !== undefined) m.flags &= ~FRESH;
     refreshAll(root as FineRoot & Holder);
   },
   dispose(root) {
-    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS];
-    if (memos !== undefined) for (const m of memos) m.dispose();
+    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, (Binding | undefined)[] | undefined>)[MEMOS];
+    if (memos !== undefined) for (const m of memos) m?.dispose();
     disposeAll(root as FineRoot & Holder);
   },
   handled(owner: ComponentBase, result: unknown): void {
