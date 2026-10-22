@@ -28,6 +28,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@for (…) { } else { }`, `@while (…) { } @else { }` | The `else` renders when no pass ran |
 | `@for (const [k, v] of es) @key(k) { }` | What matches a pass to its kept DOM in a fine component (see [Fine components](#fine-components-the-default)) |
 | `@attr:class="x @y"`, `@attr:hidden` | Inside a branch: an attribute of the enclosing element while that branch shows. `class` adds to the element's classes; other names replace and are restored when the branch goes. Go-to-definition jumps to the owning element. |
+| `@once(expr)`, `@once { … }` | Read once, with nothing bound or tracked, not even by an enclosing region; control flow inside the block is plain JS and attributes are set once. Child components inside stay live. A region or row that rebuilds builds it again, once. In `@render` components it renders as usual. |
 | `@async`, `@cached` | Directive lines. `@async`: importers load the component on first use (a chunk of its own with `--minify`); its class is a type-only import there. `@cached`: leaving the tree keeps the instance and its DOM, matched by type and `@key` when it comes back (never evicted). |
 | `@* comment *@` | A comment, removed at compile time |
 | `@{ const x = f(); <p>@x</p> @: text @x }` | Statements inside `buildRenderTree`. Variables declared there are usable later in the same scope. Markup at statement start and `@:` lines render in place, and markup used as a value becomes a `RenderFragment`. |

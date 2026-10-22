@@ -94,6 +94,7 @@
         { "include": "#import" },
         { "include": "#escape" },
         { "include": "#parent-attribute" },
+        { "include": "#once" },
         { "include": "#cascade" },
         { "include": "#slot-definition-args" },
         { "include": "#slot-fill-params" },
@@ -416,6 +417,30 @@
             "2": { "name": "keyword.control.xzor" },
             "3": { "name": "punctuation.separator.attr.xzor" },
             "4": { "name": "entity.other.attribute-name.html" }
+          }
+        }
+      ]
+    },
+    "once": {
+      "comment": "@once(expr) or @once { }: built once, nothing bound.",
+      "patterns": [
+        {
+          "begin": "(?<![[:alnum:]])(@)(once)(\\()",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "keyword.control.xzor" },
+            "3": { "name": "punctuation.section.parens.begin.xzor" }
+          },
+          "end": "\\)",
+          "endCaptures": { "0": { "name": "punctuation.section.parens.end.xzor" } },
+          "contentName": "meta.embedded.expression.typescript",
+          "patterns": [{ "include": "source.ts#expression" }]
+        },
+        {
+          "match": "(?<![[:alnum:]])(@)(once)(?=\\s*\\{)",
+          "captures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "keyword.control.xzor" }
           }
         }
       ]

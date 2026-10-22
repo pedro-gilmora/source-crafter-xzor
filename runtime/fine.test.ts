@@ -644,6 +644,45 @@ test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRen
   expect(el.querySelector("i")!.textContent).toBe("2");
 });
 
+test("@once: read once, untracked, even inside a region", async () => {
+  class Page extends FineComponent {
+    #n = 1; get n(): number { FineComponent.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    #show = true; get show(): boolean { FineComponent.$reader?.(this, 1); return this.#show; } set show(v: boolean) { const p = this.#show; if (FineComponent.same(p, v)) return; this.#show = v; this.$changed(1, p); }
+    static { FineComponent.$define(this, ["n", "show"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const t = __p.appendChild(document.createTextNode(""));
+        fine.textOnce(t, () => this.n);
+        fine.region(__p, (__p) => {
+          if (this.show) {
+            fine.onceAt(__p.appendChild(document.createComment("")), (__p) => {
+              const b = __p.appendChild(document.createElement("b"));
+              fine.set(b, "title", this.n);
+              fine.setText(b.appendChild(document.createTextNode("")), this.n);
+            });
+          }
+        });
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const b = el.querySelector("b")!;
+  expect(el.textContent).toBe("11");
+  expect(b.getAttribute("title")).toBe("1");
+  p.n = 2;
+  await tick();
+  // Nothing re-ran: not the value, not the region around the block.
+  expect(el.textContent).toBe("11");
+  expect(el.querySelector("b")).toBe(b);
+  p.show = false;
+  await tick();
+  p.show = true;
+  await tick();
+  // A rebuilt region builds its block again, once.
+  expect(el.querySelector("b")!.textContent).toBe("2");
+});
+
 test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });

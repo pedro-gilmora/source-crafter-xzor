@@ -418,9 +418,19 @@ impl<'a> Parser<'a> {
         let module = word == "module" && self.next_non_blank() == Some(b'{');
         // `@attr:name=value` sets an attribute of the enclosing element; bare `@attr` is a member reference.
         let parent_attr = word == "attr" && self.peek() == Some(b':') && matches!(self.peek_at(1), Some(c) if is_ident_start(c));
+        // `@once(expr)` or `@once { }`; bare `@once` is a member reference.
+        let once = word == "once" && (self.peek() == Some(b'(') || self.next_non_blank() == Some(b'{'));
         self.mark(TokenKind::Transition, at, at + 1);
         if self.bound.iter().any(|b| b == word) {
             return self.implicit_expression(word_start);
+        }
+        if once {
+            self.mark(TokenKind::Keyword, word_start, self.pos);
+            if self.peek() == Some(b'(') {
+                let expr = self.condition()?;
+                return Ok(Transition::Node(Node::Once(vec![Node::Expr(expr)])));
+            }
+            return Ok(Transition::Node(Node::Once(self.block()?)));
         }
         if parent_attr {
             self.mark(TokenKind::Keyword, word_start, self.pos);
@@ -1721,6 +1731,16 @@ mod tests {
         assert!(doc.lazy && doc.cached);
         let doc = parse("<p/>").unwrap().0;
         assert!(!doc.lazy && !doc.cached);
+    }
+
+    #[test]
+    fn once_takes_an_expression_or_a_block() {
+        let n = nodes("<p>@once(a.b) @once { <i>@c</i> } @once</p>");
+        let Node::Element(p) = &n[0] else { panic!("{n:?}") };
+        assert_eq!(p.children[0], Node::Once(vec![Node::Expr("a.b".into())]));
+        assert!(matches!(&p.children[2], Node::Once(body) if matches!(&body[0], Node::Element(i) if &*i.name == "i")), "{p:?}");
+        // Bare, it is a member reference.
+        assert_eq!(p.children[4], Node::Expr("once".into()));
     }
 
     #[test]

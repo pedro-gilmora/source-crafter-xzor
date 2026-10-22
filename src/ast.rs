@@ -165,6 +165,8 @@ pub enum Node {
     SlotFill(SlotFill),
     /// `@attr:name="value"`: an attribute of the enclosing element while this node renders.
     ParentAttr(Attr),
+    /// `@once(expr)` (one `Expr`) or `@once { }`: built once, with nothing bound.
+    Once(Vec<Node>),
 }
 
 /// One section of a routes block and the markup it renders.

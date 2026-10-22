@@ -295,6 +295,7 @@ pub fn generate_with(
         owner: None,
         list_keys,
         pass_locals: None,
+        once: false,
         templates: Vec::new(),
         reads: None,
         uses_el: false,
@@ -478,6 +479,7 @@ fn find_routes(nodes: &[Node]) -> Option<&Node> {
         }
         Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => find_routes(body).or_else(|| otherwise.as_deref().and_then(find_routes)),
         Node::Cascade { body, .. } => find_routes(body),
+        Node::Once(body) => find_routes(body),
         Node::Switch { cases, .. } => cases.iter().find_map(|c| find_routes(&c.body)),
         Node::SlotFill(fill) => find_routes(&fill.body),
         Node::Slot(slot) => slot.fallback.as_deref().and_then(find_routes),
@@ -651,6 +653,8 @@ struct Gen<'p> {
     list_keys: HashMap<String, String>,
     /// Emitting a keyed pass's row: its loop variables, which keep the row only while they are the same.
     pass_locals: Option<Vec<String>>,
+    /// Emitting an `@once` block: values are set, not bound.
+    once: bool,
     /// The specs of the `@fine` templates, emitted after the class as `__t<N>`.
     templates: Vec<String>,
     /// The row being emitted, whose bindings go through its list's shared reads.
@@ -683,6 +687,10 @@ enum FinePart<'n> {
     ParentAttr(&'n Attr),
     /// An `@if`/`@switch` of a keyed pass's row that reads only the pass's values, appended to its element.
     Flow(&'n Node),
+    /// `@once(expr)`: its text hole, set once.
+    OnceText(&'n Src),
+    /// `@once { }`: built once before its anchor.
+    Once(&'n [Node]),
 }
 
 struct Reads {
@@ -839,6 +847,7 @@ impl Gen<'_> {
             owner: None,
             list_keys: HashMap::new(),
             pass_locals: None,
+            once: false,
             templates: Vec::new(),
             reads: None,
             uses_el: false,
@@ -1109,6 +1118,8 @@ impl Gen<'_> {
                 let line = M::lit(&format!("__b.addParentAttribute({}, ", js_string(&a.name))).add(self.value(&a.value)).lit_then(");");
                 self.emit(line);
             }
+            // A render pass has no "once": it renders as usual.
+            Node::Once(body) => self.nodes(body)?,
             Node::Cascade { name, value, fixed, body } => {
                 let quoted = js_string(name);
                 // The mapping stays on the name only while the literal is a straight copy of it.
@@ -1494,6 +1505,16 @@ impl Gen<'_> {
                 }
                 Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
                 Node::ParentAttr(a) => parts.push((path.to_vec(), FinePart::ParentAttr(a))),
+                Node::Once(body) => match body.as_slice() {
+                    [Node::Expr(e)] => {
+                        parts.push((at(kids), FinePart::OnceText(e)));
+                        kids.push(Tpl::Hole);
+                    }
+                    _ => {
+                        parts.push((at(kids), FinePart::Once(body)));
+                        kids.push(Tpl::Anchor);
+                    }
+                },
             }
         }
         Ok(())
@@ -1569,6 +1590,21 @@ impl Gen<'_> {
             }
             FinePart::List(node) => self.fine_list(node, var)?,
             FinePart::Flow(node) => self.fine_flow(node, var)?,
+            FinePart::OnceText(e) => {
+                let read = self.expr(e);
+                self.emit(M::lit(&format!("fine.textOnce({var}, () => ")).add(read).lit_then(");"));
+            }
+            FinePart::Once(body) => {
+                self.line(&format!("fine.onceAt({var}, (__p) => {{"));
+                // Plain control flow, and values set rather than bound.
+                let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, true), std::mem::replace(&mut self.once, true));
+                let pass = self.pass_locals.take();
+                let r = self.fine_block(body, "__p");
+                self.pass_locals = pass;
+                (self.in_region, self.in_loop, self.once) = flags;
+                r?;
+                self.line("});");
+            }
             FinePart::ParentAttr(a) => {
                 let read = self.value(&a.value);
                 self.emit(M::lit(&format!("fine.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
@@ -1598,7 +1634,10 @@ impl Gen<'_> {
 
     /// A text (`call` "text") or attribute ("attr", `args` naming it too) binding to `read`.
     fn fine_bound(&mut self, call: &str, args: &str, read: M) {
-        if self.row_level() {
+        if self.once {
+            let call = if call == "text" { "setText" } else { "set" };
+            self.emit(M::lit(&format!("fine.{call}({args}, ")).add(read).lit_then(");"));
+        } else if self.row_level() {
             let i = self.push_read("", read);
             self.line(&format!("fine.{call}Item({args}, {i});"));
         } else {
@@ -2480,6 +2519,7 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
             }
             Node::SlotFill(fill) => collect_slots(&fill.body, members, loops, out)?,
             Node::Cascade { body, .. } => collect_slots(body, members, loops, out)?,
+            Node::Once(body) => collect_slots(body, members, loops, out)?,
             Node::Routes { sections, .. } => {
                 for section in sections {
                     collect_slots(&section.body, members, loops, out)?;
@@ -3698,6 +3738,26 @@ mod tests {
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
         has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
         has("static readonly cached = true;");
+    }
+
+    #[test]
+    fn once_builds_without_bindings() {
+        let src = "@fine\n@code { n = 0; xs: string[] = []; show = true; }\n<p>at @once(n) now @n</p>\n@if (show) {\n@once {\n<b title=\"@n\">@n</b>\n@for (const x of xs) {<i>@x</i>}\n}\n}";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // A value read once into its hole; the other `@n` stays bound.
+        has("fine.textOnce(_e2, () => this.n);");
+        has("fine.textAt(_e3, () => this.n);");
+        // A block built once: plain control flow, values set, no binding inside.
+        has("fine.onceAt(");
+        has("fine.set(_e");
+        has("fine.setText(_e");
+        has("for (const x of this.xs) {");
+        let block = &g.code[g.code.find("fine.onceAt(").unwrap()..];
+        assert!(!block[..block.find("});\n").unwrap()].contains("fine.textAt"), "{}", g.code);
+        // A render pass has no \"once\": the block renders as usual.
+        let g = gen_with("@render\n@code { n = 0; }\n<p>@once(n)</p>", &[]);
+        assert!(g.code.contains("__b.addContent(this.n);"), "{}", g.code);
     }
 
     #[test]

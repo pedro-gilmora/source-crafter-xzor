@@ -277,6 +277,20 @@ function afterHandler(ctx: Ctx, result: unknown): void {
   if (result instanceof Promise) void result.then(() => refreshLoose(ctx));
 }
 
+// Runs `run` with no binding collecting, so what it reads subscribes nothing (`@once`).
+function untracked<T>(run: () => T): T {
+  const prev = collecting;
+  const reader = Model.$reader;
+  collecting = undefined;
+  Model.$reader = undefined;
+  try {
+    return run();
+  } finally {
+    collecting = prev;
+    Model.$reader = reader;
+  }
+}
+
 function within(h: Holder, run: () => void): void {
   const prev = holder;
   holder = h;
@@ -686,6 +700,28 @@ export const fine = {
   /** A region between `end` and the comment before it. */
   regionAt(end: Comment, build: Build): void {
     region(end.previousSibling as Comment, end, build, undefined, 0);
+  },
+
+  /** `@once(expr)`: `read()` once, untracked, into `node`. */
+  textOnce(node: Text, read: () => unknown): void {
+    node.data = textOf(untracked(read));
+  },
+
+  /** `@once { }`: `build` once, untracked, before `end`; its values are set, not bound. */
+  onceAt(end: Comment, build: Build): void {
+    const frag = document.createDocumentFragment();
+    untracked(() => build(frag));
+    end.parentNode!.insertBefore(frag, end);
+  },
+
+  /** An attribute set once, inside `@once`. */
+  set(el: Element, name: string, value: unknown): void {
+    setAttr(el, name, value);
+  },
+
+  /** Text set once, inside `@once`. */
+  setText(node: Text, value: unknown): void {
+    node.data = textOf(value);
   },
 
   /** A comment appended to `parent`: where a lone list, keyed loop or island goes. */

@@ -65,6 +65,7 @@ const spec: [string, A[]][] = [
   ["  <li>@item</li>", [["@", "keyword.control.transition.xzor"], ["item", "variable.other.readwrite.xzor"]]],
   ["}", []],
   ["@while (more()) { <b/> } @else { <i/> }", [["while", "keyword.control.xzor"], ["@", "keyword.control.transition.xzor", 1], ["else", "keyword.control.xzor"], ["i", "entity.name.tag.html"]]],
+  ["<p>@once(a.b) @once { <i/> }</p>", [["once", "keyword.control.xzor"], ["a", "meta.embedded.expression.typescript variable.other.object.ts"], ["once", "keyword.control.xzor", 1]]],
   ["@for (const [k, v] of es) @key(k) { <b/> }", [["for", "keyword.control.xzor"], ["key", "keyword.control.xzor"], ["k", "meta.embedded.expression.typescript variable.other.readwrite.ts", 2]]],
   ['  @attr:class="error @kind" @attr:hidden', [["@", "keyword.control.transition.xzor"], ["attr", "keyword.control.xzor"], ["class", "entity.other.attribute-name.html"], ["error", "string.quoted.html"], ["kind", "variable.other.readwrite.xzor"], ["hidden", "entity.other.attribute-name.html"]]],
   ["<p>@#secret @this.#secret</p>", [["@", "keyword.control.transition.xzor"], ["#secret", "variable.other.readwrite.xzor"], ["this.#secret", "variable.other.readwrite.xzor"]]],

@@ -26,6 +26,7 @@ const page = (member: string) => `@import { Product } from "./product"
 <ul class="lines">@for (const l of lines.filter((x) => x.qty > 0)) {<li>@l.sku</li>}</ul>
 <ol class="team">@for (const [k, v] of Object.entries(team)) @key(k) {<li>@k=@v @if (v > 1) {<b>!</b>}</li>} else {<p>none</p>}</ol>
 <div class="products">@for (const p of products) {<i>@p.name</i>}</div>
+<u class="once">@once(lines.length) @once { <s>@(lines[0]!.sku)</s> }</u>
 `;
 
 const main = `import { mount } from "@source-crafter/xzor-runtime";
@@ -63,10 +64,14 @@ test("loops keep their rows by @key, a field's @Key and a model's @Key", async (
   const page = (globalThis as { page?: any }).page;
   const q = (s: string) => [...document.querySelectorAll(s)];
   expect(q(".lines li").map((li) => li.textContent)).toEqual(["a", "b"]);
+  const once = document.querySelector(".once")!;
+  expect(once.textContent).toBe("2 a");
   const [, b] = q(".lines li");
   page.lines = [{ sku: "b", qty: 2 }, { sku: "c", qty: 3 }];
   await tick();
   expect(q(".lines li").map((li) => li.textContent)).toEqual(["b", "c"]);
+  // `@once` read `lines` once: it stays as it was.
+  expect(once.textContent).toBe("2 a");
 
   const [x, y] = q(".team li");
   expect(y!.querySelector("b")).not.toBeNull();
