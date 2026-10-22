@@ -380,6 +380,61 @@ test("bindings inside a region that drops them stop writing", async () => {
   expect(node.textContent).toBe("1");
 });
 
+test("nested regions and lists in a region change alone: the outer block keeps its nodes", async () => {
+  const __t0 = fine.template([null, null]);
+  const __t1 = fine.template([["dialog", 0, ["input", 0], null, null, ["ul", 0, null]]]);
+  const __t2 = fine.template([["p", 0, "long"]]);
+  const __t3 = fine.template([["li", 0, ""]]);
+  let outer = 0;
+  class Page extends FineComponent {
+    #open = true; get open(): boolean { FineComponent.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (FineComponent.same(p, v)) return; this.#open = v; this.$changed(0, p); }
+    #items = ["a", "b"]; get items(): string[] { FineComponent.$reader?.(this, 1); return this.#items; } set items(v: string[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(1, p); }
+    #text = ""; get text(): string { FineComponent.$reader?.(this, 2); return this.#text; } set text(v: string) { const p = this.#text; if (FineComponent.same(p, v)) return; this.#text = v; this.$changed(2, p); }
+    static { FineComponent.$define(this, ["open", "items", "text"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const _e0 = __t0();
+        fine.regionAt(_e0.firstChild!.nextSibling! as Comment, (__p) => {
+          outer++;
+          if (this.open) {
+            const _e2 = __t1() as HTMLDialogElement;
+            const _e3 = _e2.firstChild! as HTMLInputElement;
+            const _e4 = _e3.nextSibling!.nextSibling! as Comment;
+            const _e5 = _e4.nextSibling! as HTMLUListElement;
+            fine.attr(_e3, "value", () => this.text);
+            fine.regionAt(_e4, (__p) => {
+              if (this.text.length > 2) __p.appendChild(__t2());
+            });
+            fine.listAt(_e5.firstChild! as Comment, () => this.items, [(it: string) => it], (__p) => {
+              const _e8 = __t3() as HTMLLIElement;
+              fine.textItem(_e8.firstChild! as Text, 0);
+              __p.appendChild(_e8);
+            });
+            __p.appendChild(_e2);
+          }
+        });
+        __p.appendChild(_e0);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const dialog = el.querySelector("dialog")!;
+  const input = el.querySelector("input")!;
+  p.text = "long";
+  await tick();
+  expect(el.querySelector("p")?.textContent).toBe("long");
+  p.items = ["a"];
+  await tick();
+  expect(el.querySelectorAll("li").length).toBe(1);
+  expect(el.querySelector("dialog")).toBe(dialog);
+  expect(el.querySelector("input")).toBe(input);
+  expect(outer).toBe(1);
+  p.open = false;
+  await tick();
+  expect(el.querySelector("dialog")).toBeNull();
+});
+
 test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });

@@ -282,6 +282,7 @@ pub fn generate_with(
         route_types: std::cell::Cell::new(0),
         fine_ids: 0,
         in_region: false,
+        in_loop: false,
         templates: Vec::new(),
         reads: None,
         uses_el: false,
@@ -610,8 +611,10 @@ struct Gen<'p> {
     route_types: std::cell::Cell<u8>,
     /// Next `_e<N>` node variable of a `@fine` template.
     fine_ids: usize,
-    /// Emitting inside a `fine.region`: structure is plain control flow there.
+    /// Emitting inside a `fine.region`: its bindings close over their values instead of sharing a row's reads.
     in_region: bool,
+    /// Emitting a plain loop's body in a region: nested structure stays inline, the region rebuilds it whole.
+    in_loop: bool,
     /// The specs of the `@fine` templates, emitted after the class as `__t<N>`.
     templates: Vec<String>,
     /// The row being emitted, whose bindings go through its list's shared reads.
@@ -675,7 +678,11 @@ fn is_island(el: &Element) -> bool {
     el.is_component() || el.attrs.iter().any(|a| &*a.name.text == "@attributes" || (a.name.starts_with("@on") && a.name.contains(':')))
 }
 
-/// Control flow inside a region: structure, a plain `@{ }`, or an element holding one.
+fn is_plain_code_node(node: &Node) -> bool {
+    matches!(node, Node::Code(parts) if is_plain_code(parts))
+}
+
+/// Control flow inside a plain loop: structure, a plain `@{ }`, or an element holding one.
 fn is_flow(node: &Node) -> bool {
     match node {
         Node::Code(parts) => is_plain_code(parts),
@@ -756,6 +763,7 @@ impl Gen<'_> {
             route_types: std::cell::Cell::new(self.route_types.get()),
             fine_ids: 0,
             in_region: false,
+            in_loop: false,
             templates: Vec::new(),
             reads: None,
             uses_el: false,
@@ -1135,12 +1143,35 @@ impl Gen<'_> {
     /// Outside regions, `nodes` is one template clone: elements and static text are in the template, and each
     /// dynamic part binds the node it has in place (a text hole for `@expr`, comments for the rest).
     /// `@if`/`@while`/`@switch`/`for(;;)` are regions, `@for...of` a keyed list, and a `@{ }` block a region
-    /// holding it and the siblings after it, so its locals stay current. Inside a region all of that is plain
-    /// control flow (the region re-runs it whole) and the runs between are templates.
+    /// holding it and the siblings after it, so its locals stay current. Inside a region the same holds, so
+    /// nested structure tracks its own reads, except that a plain `@{ }` runs inline in the region. In a plain
+    /// loop's body (a region per pass would cost more than the rebuild) structure is plain control flow.
     fn fine_nodes(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         if !self.in_region {
             return self.fine_run(nodes, parent);
         }
+        if self.in_loop {
+            return self.fine_inline(nodes, parent);
+        }
+        let mut i = 0;
+        while i < nodes.len() {
+            if let Node::Code(parts) = &nodes[i]
+                && is_plain_code(parts)
+            {
+                let block = self.fine_code_block(parts)?;
+                self.emit_block(block);
+                i += 1;
+                continue;
+            }
+            let end = nodes[i..].iter().position(is_plain_code_node).map_or(nodes.len(), |n| i + n);
+            self.fine_run(&nodes[i..end], parent)?;
+            i = end;
+        }
+        Ok(())
+    }
+
+    /// `nodes` in a plain loop's body: structure as plain control flow, the runs between as templates.
+    fn fine_inline(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         let mut i = 0;
         while i < nodes.len() {
             let node = &nodes[i];
@@ -1150,7 +1181,7 @@ impl Gen<'_> {
                     self.emit_block(block);
                 }
                 Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => self.fine_flow(node, parent)?,
-                Node::Element(el) if is_flow(node) && &*el.name.text == "text" => self.fine_nodes(&el.children, parent)?,
+                Node::Element(el) if is_flow(node) && &*el.name.text == "text" => self.fine_inline(&el.children, parent)?,
                 Node::Element(el) if is_flow(node) => self.fine_element(el, parent)?,
                 _ => {
                     // Markup inside `@{ }` is an island holding the rest, so the run takes it all.
@@ -1166,6 +1197,17 @@ impl Gen<'_> {
             i += 1;
         }
         Ok(())
+    }
+
+    /// An element whose children hold control flow, in a plain loop: created on its own.
+    fn fine_element(&mut self, el: &Element, parent: &str) -> Result<(), String> {
+        let var = self.fine_var();
+        self.line(&format!("const {var} = fine.el({parent}, {});", js_string(&el.name)));
+        self.fine_attrs(el, &var, true)?;
+        let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
+        let r = self.fine_inline(&el.children, &var);
+        self.raw_text = raw;
+        r
     }
 
     /// `nodes` as one template clone appended to `parent`, with the bindings of its dynamic parts.
@@ -1397,7 +1439,10 @@ impl Gen<'_> {
         let items = self.expr(&items);
         let name = binding.split(':').next().unwrap_or_default().trim().to_string();
         let outer = self.reads.replace(Reads { param: binding.text.clone(), name, list: Vec::new() });
+        // Rows share the list's reads even when the list sits in a region.
+        let in_region = std::mem::replace(&mut self.in_region, false);
         let row = self.capture(|g| g.fine_block(body, "__p"));
+        self.in_region = in_region;
         let reads = std::mem::replace(&mut self.reads, outer).expect("set above");
         self.locals.truncate(scope);
         let row = row?;
@@ -1477,7 +1522,9 @@ impl Gen<'_> {
                 self.locals.extend(loop_locals(head));
                 let line = M::lit("for (").add(self.expr(head)).lit_then(") {");
                 self.emit(line);
+                let in_loop = std::mem::replace(&mut self.in_loop, true);
                 let r = self.fine_block(body, p);
+                self.in_loop = in_loop;
                 self.locals.truncate(scope);
                 r?;
                 self.line("}");
@@ -1485,7 +1532,10 @@ impl Gen<'_> {
             Node::While { cond, body } => {
                 let line = M::lit("while (").add(self.expr(cond)).lit_then(") {");
                 self.emit(line);
-                self.fine_block(body, p)?;
+                let in_loop = std::mem::replace(&mut self.in_loop, true);
+                let r = self.fine_block(body, p);
+                self.in_loop = in_loop;
+                r?;
                 self.line("}");
             }
             Node::Switch { subject, cases } => {
@@ -1513,17 +1563,6 @@ impl Gen<'_> {
             _ => unreachable!("only structure is control flow"),
         }
         Ok(())
-    }
-
-    /// An element whose children hold control flow, inside a region: created on its own.
-    fn fine_element(&mut self, el: &Element, parent: &str) -> Result<(), String> {
-        let var = self.fine_var();
-        self.line(&format!("const {var} = fine.el({parent}, {});", js_string(&el.name)));
-        self.fine_attrs(el, &var, true)?;
-        let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
-        let r = self.fine_nodes(&el.children, &var);
-        self.raw_text = raw;
-        r
     }
 
     /// The attributes of `el` (in `var`) that need code: bindings, handlers, `@ref`; the static ones with `all`.
@@ -3283,13 +3322,25 @@ mod tests {
         // Destructured items (entries, tuples) are new on every run: a keyed list would rebuild every row.
         has("for (const [k, v] of Object.entries(this.team)) {");
         assert!(!g.code.contains("[k, v]) =>"), "{}", g.code);
-        // Inside a region, nested structure is plain control flow: the region re-runs it whole.
+        // Inside a plain loop the loop's region rebuilds whole: nested structure stays inline, not a region per pass.
         has("for (const [k, v] of Object.entries(this.team)) {\n          if (v) {\n            const _e18 = __t5() as El<\"u\">;");
         // A `@{ }` block and the siblings after it are one region: its locals stay in scope and current.
         has("fine.regionAt(_e9, (__p) => {\n        const total = this.count * 2;");
         has("fine.textAt(_e21, () => total);");
         has("__p.appendChild(_e0);");
         assert!(!g.code.contains("__b.openElement"), "{}", g.code);
+    }
+
+    #[test]
+    fn fine_nested_flow_in_a_region_gets_its_own_regions_and_lists() {
+        let src = "@fine\n@code { open = false; items = [\"a\"]; text = \"\"; }\n@if (open) {\n<dialog>\n<input @bind=\"text\" />\n@if (text.length > 2) {\n<p>long</p>\n}\n<ul>\n@for (const it of items) {\n<li>@it</li>\n}\n</ul>\n</dialog>\n}";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // The outer region only reads `open`: the nested `@if` and `@for` bind on their own.
+        has("fine.regionAt(_e1, (__p) => {\n        if (this.open) {\n          const _e2 = __t1() as El<\"dialog\">;");
+        has("fine.regionAt(_e4, (__p) => {\n            if (this.text.length > 2) {");
+        has("fine.listAt(_e6, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
+        assert!(!g.code.contains("for (const it of"), "{}", g.code);
     }
 
     #[test]
