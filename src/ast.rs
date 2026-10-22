@@ -76,6 +76,10 @@ pub struct Document {
     pub inherits: Option<Src>,
     /// Compiled to DOM bindings with no render pass (base `FineComponent`): the default; `@render` opts out.
     pub fine: bool,
+    /// `@async`: importers load the component on first use (a chunk of its own in a split bundle).
+    pub lazy: bool,
+    /// `@cached`: leaving the tree keeps the instance and its DOM for when it comes back.
+    pub cached: bool,
     /// `@implements A, B`.
     pub implements: Vec<Src>,
     /// `@attribute dec(args)`: class decorators.

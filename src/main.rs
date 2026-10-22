@@ -19,6 +19,8 @@ USAGE:
       --hot                  With --watch, print `xzor: hot <id>` for each component a .xzor-only change can patch in place
                              (a bare `xzor: hot` when such a change altered no generated code)
       --timings              Print how long each stage took
+      --minify               Minify, and split the bundle: each @page (and each @async component) is a chunk
+                             of its own under dist/chunks, loaded on first use
   xzor highlight <FILE>       Print a .xzor file with syntax colors
   xzor lsp                    Run the language server on stdio
 ";
@@ -46,7 +48,7 @@ fn run(args: &[String]) -> Result<(), String> {
             for p in paths {
                 let path = PathBuf::from(p);
                 let units = build::compile_all(&path)?;
-                build::write_routes(&units, &mut HashSet::new())?;
+                build::write_routes(&units, &mut HashSet::new(), false)?;
                 for unit in &units {
                     build::print_warnings(unit);
                     println!("{}", unit.out.display());
@@ -68,7 +70,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut dir = PathBuf::from(".");
             let mut entry = "main.ts".to_string();
             let mut checker = None;
-            let (mut check, mut bundle, mut watch, mut timings, mut hot) = (true, true, false, false, false);
+            let (mut check, mut bundle, mut watch, mut timings, mut hot, mut minify) = (true, true, false, false, false, false);
             let mut it = rest.iter();
             while let Some(arg) = it.next() {
                 match arg.as_str() {
@@ -79,6 +81,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     "--watch" => watch = true,
                     "--hot" => hot = true,
                     "--timings" => timings = true,
+                    "--minify" => minify = true,
                     a if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
                     a => dir = PathBuf::from(a),
                 }
@@ -86,7 +89,7 @@ fn run(args: &[String]) -> Result<(), String> {
             if hot && !watch {
                 return Err("--hot needs --watch".to_string());
             }
-            let opts = Options { dir, entry, checker, check, bundle, timings, hot, watch };
+            let opts = Options { dir, entry, checker, check, bundle, timings, hot, watch, minify };
             if watch {
                 return watch_loop(&opts);
             }
@@ -95,7 +98,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let units = build::compile_all(&opts.dir)?;
             t.compile = start.elapsed();
             let start = Instant::now();
-            build::write_routes(&units, &mut HashSet::new())?;
+            build::write_routes(&units, &mut HashSet::new(), opts.minify)?;
             t.routes = start.elapsed();
             units.iter().for_each(build::print_warnings);
             println!("xzor: compiled {} component(s)", units.len());
@@ -131,6 +134,7 @@ struct Options {
     timings: bool,
     hot: bool,
     watch: bool,
+    minify: bool,
 }
 
 struct Timings {
@@ -177,7 +181,7 @@ fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, hot: 
     };
     let timed_bundle = || {
         let start = Instant::now();
-        (build::bundle(&o.dir, &entry, o.hot, o.watch), start.elapsed())
+        (build::bundle(&o.dir, &entry, o.hot, o.watch, o.minify), start.elapsed())
     };
     let (checked, bundled) = match (o.check, o.bundle) {
         (true, true) => {
@@ -352,7 +356,7 @@ fn rebuild(
     // A failed run stays due, so the next change retries it.
     if *routes_due {
         let start = Instant::now();
-        if build::write_routes(units, routes_written)? {
+        if build::write_routes(units, routes_written, o.minify)? {
             *hot = None;
         }
         t.routes = start.elapsed();

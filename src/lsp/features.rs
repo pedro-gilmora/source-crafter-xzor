@@ -438,6 +438,8 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("inherits", "inherits $1", "Base class instead of ComponentBase"),
     ("fine", "fine", "No render pass (the default): the DOM is built once and bindings keep it current"),
     ("render", "render", "Render pass instead of fine bindings: the markup re-runs on each change and is diffed"),
+    ("async", "async", "Load this component on first use: a chunk of its own in a --minify build"),
+    ("cached", "cached", "Keep the instance and its DOM when it leaves the tree, for when it comes back"),
     ("implements", "implements $1", "Interfaces this component implements"),
     ("inject", "inject $1 $2", "Inject a service from the application"),
     ("attribute", "attribute $1", "Decorator on the component class"),

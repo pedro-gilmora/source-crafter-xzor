@@ -5,6 +5,8 @@ const spec: [string, A[]][] = [
   ['@import Counter from "./Counter.xzor"', [["@", "keyword.control.transition.xzor"], ["import", "keyword.control.import.ts"], ['"./Counter.xzor"', "string.quoted.double.ts"]]],
   ["@typeparam T extends object", [["typeparam", "keyword.control.directive.xzor"], ["T", "entity.name.type.parameter.xzor"]]],
   ["@fine // no render pass", [["@", "keyword.control.transition.xzor"], ["fine", "keyword.control.directive.xzor"], ["// no render pass", "comment.line.double-slash.xzor"]]],
+  ["@async", [["async", "keyword.control.directive.xzor"]]],
+  ["@cached", [["cached", "keyword.control.directive.xzor"]]],
   ["@render", [["@", "keyword.control.transition.xzor"], ["render", "keyword.control.directive.xzor"]]],
   ["@module { export const n = 1; }", [["@", "keyword.control.transition.xzor"], ["module", "keyword.control.directive.xzor"], ["export", "meta.embedded.block.typescript keyword.control.export.ts"], ["const", "storage.type.ts"]]],
   ['<input @bind="name" @bind:event="oninput" />', [["@bind", "entity.other.attribute-name.html"], ["name", "meta.embedded.expression.typescript"]]],

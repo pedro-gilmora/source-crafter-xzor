@@ -140,8 +140,8 @@
       "patterns": [{ "include": "#directive-comment" }, { "include": "source.ts#expression" }]
     },
     "fine": {
-      "comment": "@fine (the default: DOM bindings, no render pass) or @render (a virtual-DOM render pass instead).",
-      "begin": "(?<![[:alnum:]])(@)(fine|render)(?![[:alnum:]_$])",
+      "comment": "@fine (the default: DOM bindings, no render pass), @render (a virtual-DOM render pass instead), @async (loaded on first use), @cached (kept when it leaves the tree).",
+      "begin": "(?<![[:alnum:]])(@)(fine|render|async|cached)(?![[:alnum:]_$])",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "keyword.control.directive.xzor" }

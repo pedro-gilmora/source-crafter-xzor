@@ -109,7 +109,9 @@ That's a working app. A few things to notice:
 - `@count` prints a value. Use `@(a + b)` for anything longer than a name or a member chain; an array literal is already balanced, so `@['a', 'b']` needs no parentheses.
 - You write `count`, not `this.count`: names that refer to `@code` members get `this.` added for you.
 - `@onclick` gets a typed DOM event and re-renders the component when the handler is done.
-- `@if`, `@for`, `@while` and `@switch` are ordinary TypeScript control flow wrapped around markup.
+- `@if`, `@for`, `@while` and `@switch` are ordinary TypeScript control flow wrapped around markup. `@for` and `@while` take an `else { }` (or `@else { }`) that renders when no pass ran.
+- `@attr:name="value"` inside a branch sets an attribute of the enclosing element while that branch shows (`class` adds to the element's classes): `<span>@if (stock > 0) { @stock } else { @attr:class="error-text" Sold out }</span>`.
+- `@async` at the top of a component loads it on first use; `@cached` keeps its instance and DOM when it leaves the tree, for when it comes back. `xzor build --minify` minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`.
 
 ### 2. Components that talk to each other
 

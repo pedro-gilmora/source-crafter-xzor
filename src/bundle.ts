@@ -978,7 +978,7 @@ function writeServiceWorker(root: string, outputs: string[], entryOutput: string
   writeFileSync(worker, serviceWorker(precacheVersion(root, files, known), files));
 }
 
-async function main(entry: string, outdir: string, hot = false, watch = false): Promise<void> {
+async function main(entry: string, outdir: string, hot = false, watch = false, minify = false): Promise<void> {
   const root = projectRoot(dirname(resolve(entry)));
   // Stripped sources by absolute path; the source map shows the originals.
   const originals = new Map<string, string>();
@@ -994,11 +994,15 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
   };
   // Fonts the CSS points at (`./fonts/x.woff2`), by that spec: copied under `outdir` after the build.
   const fonts = new Map<string, string>();
+  // Chunk names carry a hash: the last build's would pile up.
+  rmSync(join(outdir, "chunks"), { recursive: true, force: true });
   const result = await Bun.build({
     entrypoints: [entry],
     outdir,
     target: "browser",
     sourcemap: "linked",
+    // Lazy pages and `@async` components become chunks; the entry keeps the name index.html loads.
+    ...(minify && { minify: true, splitting: true, naming: { entry: "[dir]/[name].[ext]", chunk: "chunks/[name]-[hash].[ext]", asset: "[name]-[hash].[ext]" } }),
     plugins: [
       {
         name: "xzor",
@@ -1045,12 +1049,18 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
   });
   for (const log of result.logs) console.error(log);
   if (!result.success) process.exit(1);
+  // Bun also writes each chunk's CSS into the entry's, and nothing loads the chunk copy.
+  const outputs = result.outputs.filter((o) => {
+    const dup = minify && o.path.endsWith(".css") && /[\\/]chunks[\\/]/.test(o.path);
+    if (dup) rmSync(o.path, { force: true });
+    return !dup;
+  });
   for (const [spec, file] of fonts) {
     const to = join(outdir, spec);
     mkdirSync(dirname(to), { recursive: true });
     copyFileSync(file, to);
   }
-  for (const output of result.outputs) {
+  for (const output of outputs) {
     if (output.path.endsWith(".map")) {
       const mapDir = dirname(output.path);
       const outer: SourceMap = JSON.parse(readFileSync(output.path, "utf8"));
@@ -1069,14 +1079,14 @@ async function main(entry: string, outdir: string, hot = false, watch = false): 
     console.log(`  ${output.path}`);
   }
   if (!watch) {
-    const paths = result.outputs.map((o) => o.path);
-    writeServiceWorker(root, paths, result.outputs.find((o) => o.kind === "entry-point")?.path);
+    const paths = outputs.map((o) => o.path);
+    writeServiceWorker(root, paths, outputs.find((o) => o.kind === "entry-point")?.path);
   }
 }
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const [entry, outdir] = args.filter((a) => !a.startsWith("--"));
-  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir> [--hot] [--watch]");
-  await main(entry, outdir, args.includes("--hot"), args.includes("--watch"));
+  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir> [--hot] [--watch] [--minify]");
+  await main(entry, outdir, args.includes("--hot"), args.includes("--watch"), args.includes("--minify"));
 }

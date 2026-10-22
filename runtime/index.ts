@@ -840,8 +840,9 @@ function findCascade(scope: CascadeRecord | undefined, name: string): CascadeRec
 }
 
 /** Gives each `@Cascade` member the nearest provider's value and subscribes to later changes. */
-function resolveCascades(instance: ComponentBase, type: Ctor<ComponentBase>, scope: CascadeRecord | undefined): void {
-  const list = cascadesOf(type);
+function resolveCascades(instance: ComponentBase, scope: CascadeRecord | undefined): void {
+  // The instance's class, not the vnode's type: a lazy component's type is its loader.
+  const list = cascadesOf(instance.constructor);
   if (!list) return;
   for (const [prop, name] of list) {
     const record = findCascade(scope, name);
@@ -852,8 +853,8 @@ function resolveCascades(instance: ComponentBase, type: Ctor<ComponentBase>, sco
   }
 }
 
-function unsubscribeCascades(instance: ComponentBase, type: Ctor<ComponentBase>, scope: CascadeRecord | undefined): void {
-  const list = cascadesOf(type);
+function unsubscribeCascades(instance: ComponentBase, scope: CascadeRecord | undefined): void {
+  const list = cascadesOf(instance.constructor);
   if (!list) return;
   for (const [, name] of list) findCascade(scope, name)?.consumers?.delete(instance);
 }
@@ -924,7 +925,28 @@ function mountComponent(
   return { nodes, mounted };
 }
 
+const LAZY = Symbol("xzor.lazy");
+type Lazy = { [LAZY]: () => Promise<Ctor<ComponentBase>>; loaded: Ctor<ComponentBase> | undefined };
+
+/**
+ * A component loaded on first use (a chunk of its own in a split bundle). It stands for the class in the
+ * tree: an anchor holds its place until the module arrives, and later uses construct it at once.
+ */
+export function lazy<C>(load: () => Promise<{ default: C }>): C {
+  let pending: Promise<Ctor<ComponentBase>> | undefined;
+  const stub: Lazy = {
+    [LAZY]: () => (pending ??= load().then((m) => (stub.loaded = m.default as Ctor<ComponentBase>))),
+    loaded: undefined,
+  };
+  return stub as unknown as C;
+}
+
 function construct(type: Ctor<ComponentBase>, app: IApplication | undefined): ComponentBase | Promise<ComponentBase> {
+  const load = (type as Partial<Lazy>)[LAZY];
+  if (load !== undefined) {
+    const loaded = (type as unknown as Lazy).loaded;
+    return loaded !== undefined ? construct(loaded, app) : load().then((c) => construct(c, app));
+  }
   const inject = (type as { inject?: readonly string[] }).inject;
   if (!inject?.length) return new type();
   const made = app?.createComponent?.(type);
@@ -945,7 +967,7 @@ function arrive(mounted: Mounted, instance: ComponentBase): void {
   try {
     batch(() => {
       applyProps(instance, v);
-      resolveCascades(instance, v.type, mounted.scope);
+      resolveCascades(instance, mounted.scope);
       v.ref?.(instance);
       for (const node of mountComponent(instance, mounted.app, mounted.scope, mounted, v).nodes)
         parent.insertBefore(node, mounted.anchor);
@@ -956,7 +978,7 @@ function arrive(mounted: Mounted, instance: ComponentBase): void {
     if (!v.instance) {
       mountedComponents.delete(instance);
       observer?.dispose(instance);
-      unsubscribeCascades(instance, v.type, mounted.scope);
+      unsubscribeCascades(instance, mounted.scope);
       // Nodes of the failed render were never inserted; keep only the empty placeholder.
       const partial = mounted.tree;
       mounted.tree = [];
@@ -1051,7 +1073,45 @@ function create(
   }
 }
 
+// `@cached` components that left the tree, by type and key; their nodes stay built, detached.
+// ponytail: never evicted; one entry per type and key, so a page with keyed routes keeps one per family.
+const kept = new WeakMap<Function, Map<unknown, VComponent>>();
+let keptCount = 0;
+
+function keep(v: VComponent): void {
+  let byKey = kept.get(v.type);
+  if (byKey === undefined) kept.set(v.type, (byKey = new Map()));
+  if (!byKey.has(v.key)) keptCount++;
+  byKey.set(v.key, v);
+}
+
+/** The nodes of a kept instance of `v`'s type and key, patched to `v`'s props; `undefined` if none is kept. */
+function revive(v: VComponent, app: IApplication | undefined, scope: CascadeRecord | undefined): Node[] | undefined {
+  if (keptCount === 0) return undefined;
+  const byKey = kept.get(v.type);
+  const old = byKey?.get(v.key);
+  if (old === undefined) return undefined;
+  byKey!.delete(v.key);
+  keptCount--;
+  const instance = (v.instance = old.instance!);
+  const mounted = (v.mounted = old.mounted!);
+  mounted.app = app;
+  mounted.scope = scope;
+  applyProps(instance, v);
+  resolveCascades(instance, scope);
+  v.ref?.(instance);
+  // Re-rendered in a fragment: `update` patches before the anchor, which needs a parent.
+  const frag = document.createDocumentFragment();
+  for (const node of nodesOf(old)) frag.appendChild(node);
+  mounted.pass = pass;
+  parametersSet(instance);
+  update(instance);
+  return [...frag.childNodes];
+}
+
 function createComponent(v: VComponent, app: IApplication | undefined, scope: CascadeRecord | undefined): Node[] {
+  const revived = revive(v, app, scope);
+  if (revived !== undefined) return revived;
   const made = construct(v.type, app);
   if (made instanceof Promise) {
     const mounted: Mounted = (v.mounted = {
@@ -1076,7 +1136,7 @@ function createComponent(v: VComponent, app: IApplication | undefined, scope: Ca
   }
   v.instance = made;
   applyProps(made, v);
-  resolveCascades(made, v.type, scope);
+  resolveCascades(made, scope);
   v.ref?.(made);
   const { nodes, mounted } = mountComponent(made, app, scope, undefined, v);
   v.mounted = mounted;
@@ -1097,7 +1157,7 @@ function failedComponent(
     const partial = mountedComponents.get(instance);
     mountedComponents.delete(instance);
     observer?.dispose(instance);
-    unsubscribeCascades(instance, v.type, scope);
+    unsubscribeCascades(instance, scope);
     for (const node of partial?.tree ?? []) {
       try {
         dispose(node);
@@ -1149,9 +1209,10 @@ function dispose(v: VNode): void {
         if (v.mounted) v.mounted.latest = undefined;
         return;
       }
+      unsubscribeCascades(v.instance, v.mounted?.scope);
+      if ((v.instance.constructor as { cached?: boolean }).cached === true) return keep(v);
       v.mounted?.tree.forEach(dispose);
       mountedComponents.delete(v.instance);
-      unsubscribeCascades(v.instance, v.type, v.mounted?.scope);
       disposeInstance(v.instance);
       return;
     case "fine":

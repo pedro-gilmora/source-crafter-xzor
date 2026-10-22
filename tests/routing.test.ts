@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
@@ -97,4 +97,51 @@ test("pages, links and layouts route a bundled app in the browser", async () => 
   click(".missing-link");
   expect(text("main.main")).toBeUndefined();
   expect(text(".missing")).toBe("no route for /nope");
+}, 120_000);
+
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5));
+};
+
+test("--minify ships each page in its own chunk, loaded on its first visit", async () => {
+  const min = `${dir}-min`;
+  rmSync(min, { recursive: true, force: true });
+  mkdirSync(min, { recursive: true });
+  const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
+  tsconfig.compilerOptions.paths = { "@source-crafter/xzor-runtime": [join(root, "runtime", "index.ts").replaceAll("\\", "/")], "@source-crafter/xzor-runtime/model": [join(root, "runtime", "model.ts").replaceAll("\\", "/")] };
+  writeFileSync(join(min, "tsconfig.json"), JSON.stringify(tsconfig));
+  writeFileSync(join(min, "Home.xzor"), home);
+  writeFileSync(join(min, "UserPage.xzor"), `@import Chart from "./Chart.xzor"\n${userPage}<Chart label="@String(id * 2)" />\n`);
+  writeFileSync(join(min, "Chart.xzor"), `@async\n@code { label = ""; }\n<em class="chart">@label</em>\n`);
+  writeFileSync(join(min, "AdminHome.xzor"), adminHome);
+  writeFileSync(join(min, "App.xzor"), app);
+  writeFileSync(join(min, "main.ts"), main);
+  try {
+    const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", min, "--minify"], { cwd: root });
+    const out = run.stdout.toString() + run.stderr.toString();
+    expect(run.exitCode, out).toBe(0);
+    const chunks = readdirSync(join(min, "dist", "chunks"));
+    for (const page of ["Home", "UserPage", "AdminHome", "Chart"]) expect(chunks.some((c) => c.startsWith(`${page}.xzor-`) && c.endsWith(".js")), chunks.join()).toBe(true);
+    // The entry keeps its name for index.html, minified, and holds no page.
+    const entry = readFileSync(join(min, "dist", "main.js"), "utf8");
+    expect(entry).not.toContain("user-link\n");
+    expect(entry).not.toMatch(/\n {2}/);
+    expect(entry).not.toContain("admin-home");
+
+    // A fresh document: the previous test's app still intercepts link clicks on this one.
+    const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+    await GlobalRegistrator.unregister();
+    GlobalRegistrator.register();
+    happyDOM().setURL("http://localhost/users/5");
+    document.body.innerHTML = `<div id="app"></div>`;
+    await import(join(min, "dist", "main.js"));
+    await settle();
+    expect(text("section.admin .user")).toBe("5");
+    expect(text("section.admin .chart")).toBe("10");
+    click(".admin-link");
+    await settle();
+    expect(text("section.admin .admin-home")).toContain("admin");
+  } finally {
+    rmSync(min, { recursive: true, force: true });
+  }
 }, 120_000);

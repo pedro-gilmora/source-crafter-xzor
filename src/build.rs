@@ -159,8 +159,8 @@ pub fn compile_one(src: &Path) -> Result<Compiled, String> {
 /// Writes `<project root>/.xzor/routes.ts` per project among `units` (deleting it when the project
 /// has no pages). `written` holds the roots with a table, so one that loses all its units is cleaned.
 /// Route errors of every project fail like compile errors, as `<path>:<line>:<col>: <message>`.
-/// Returns whether any table was written or deleted.
-pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Result<bool, String> {
+/// Returns whether any table was written or deleted. `lazy` loads pages on demand (see `routes::table`).
+pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>, lazy: bool) -> Result<bool, String> {
     let mut changed = false;
     let mut groups: BTreeMap<PathBuf, Vec<&Compiled>> = BTreeMap::new();
     for u in units {
@@ -196,7 +196,7 @@ pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Resul
                 block: u.generated.routes_block.as_ref(),
             })
             .collect();
-        let (table, diags) = crate::routes::table(&root, &views);
+        let (table, diags) = crate::routes::table(&root, &views, lazy);
         if diags.is_empty() {
             changed |= write_if_changed(&path, &table)?;
             written.insert(root);
@@ -753,8 +753,9 @@ fn utf16_to_byte(text: &str, at: usize) -> usize {
 const BUNDLE_SCRIPT: &str = include_str!("bundle.ts");
 
 /// Bundles `entry` into `<dir>/dist`; returns the script's stdout (one output path per line).
-/// `hot` passes `--hot`; `watch` passes `--watch`, which keeps the script from touching `sw.js`.
-pub fn bundle(dir: &Path, entry: &str, hot: bool, watch: bool) -> Result<String, String> {
+/// `hot` passes `--hot`; `watch` passes `--watch`, which keeps the script from touching `sw.js`;
+/// `minify` minifies and splits the bundle into chunks.
+pub fn bundle(dir: &Path, entry: &str, hot: bool, watch: bool, minify: bool) -> Result<String, String> {
     let script = std::env::temp_dir().join(format!("xzor-bundle-{}.ts", env!("CARGO_PKG_VERSION")));
     if fs::read_to_string(&script).ok().as_deref() != Some(BUNDLE_SCRIPT) {
         fs::write(&script, BUNDLE_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
@@ -766,6 +767,9 @@ pub fn bundle(dir: &Path, entry: &str, hot: bool, watch: bool) -> Result<String,
     }
     if watch {
         cmd.arg("--watch");
+    }
+    if minify {
+        cmd.arg("--minify");
     }
     cmd.stderr(Stdio::inherit());
     let output = cmd.output().map_err(|e| format!("bundle: failed to run {:?}: {e}", cmd.get_program()))?;
@@ -797,6 +801,10 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Result<bool, String> {
+        super::write_routes(units, written, false)
     }
 
     #[test]

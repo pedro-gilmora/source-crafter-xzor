@@ -91,7 +91,7 @@ struct Parser<'a> {
 /// Words that follow `@` as directives; `@cascade`, `@ClientRoutes` and `@ServerRoutes` are
 /// directives only in certain shapes, so they are matched separately.
 const DIRECTIVES: &[&str] =
-    &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject", "fine", "render"];
+    &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject", "fine", "render", "async", "cached"];
 
 impl<'a> Parser<'a> {
     fn at_word(&self, w: &str) -> bool {
@@ -489,8 +489,12 @@ impl<'a> Parser<'a> {
                 self.doc.imports.push(stmt);
                 Ok(Transition::Nothing)
             }
-            word @ ("fine" | "render") => {
-                self.doc.fine = word == "fine";
+            word @ ("fine" | "render" | "async" | "cached") => {
+                match word {
+                    "async" => self.doc.lazy = true,
+                    "cached" => self.doc.cached = true,
+                    _ => self.doc.fine = word == "fine",
+                }
                 while matches!(self.peek(), Some(b' ' | b'\t')) {
                     self.pos += 1;
                 }
@@ -1692,6 +1696,14 @@ mod tests {
                 otherwise: None,
             }
         );
+    }
+
+    #[test]
+    fn async_and_cached_directives() {
+        let doc = parse("@async\n@cached\n<p/>").unwrap().0;
+        assert!(doc.lazy && doc.cached);
+        let doc = parse("<p/>").unwrap().0;
+        assert!(!doc.lazy && !doc.cached);
     }
 
     #[test]

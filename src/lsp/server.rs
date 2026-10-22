@@ -792,7 +792,7 @@ impl Server {
                 }
                 views.push(crate::routes::Unit { source: path, out: &outs[k], text, class: &classes[k], routes, block });
             }
-            let (table, diags) = crate::routes::table(root, &views);
+            let (table, diags) = crate::routes::table(root, &views, false);
             let mut marks: Vec<(PathBuf, Vec<Json>)> = Vec::new();
             for (file, d) in diags {
                 let text = views.iter().find(|v| same_path(v.source, &file)).map_or("", |v| v.text);

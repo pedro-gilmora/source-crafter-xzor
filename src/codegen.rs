@@ -237,6 +237,8 @@ pub struct ComponentInfo {
     /// Expression props typed as a union of type names (and string literals): the names to look up,
     /// since a name that is an alias of string literals makes the prop text.
     pub named_types: HashMap<String, Vec<String>>,
+    /// `@async`: used through a loader, so it loads on first use.
+    pub lazy: bool,
 }
 
 /// `components` describes the `.xzor` components this document uses, by name; `inherited` names
@@ -294,7 +296,17 @@ pub fn generate_with(
     let block = find_routes(&doc.nodes);
     // The runtime and table imports are inserted at the end, once the sections say which types they use.
     let head_at = g.out.len();
+    let mut uses_lazy = false;
     for import in &doc.imports {
+        // An `@async` component's class is a type here; the tree gets a loader, so its module ships on first use.
+        let name = import.split_whitespace().next().unwrap_or_default();
+        let spec = import.rsplit(['"', '\'']).nth(1).filter(|s| s.ends_with(".xzor"));
+        if let Some(spec) = spec.filter(|_| components.get(name).is_some_and(|c| c.lazy)) {
+            uses_lazy = true;
+            g.emit(M::lit("import type ").add(M::src(import, import.at)).lit_then(";"));
+            g.line(&format!("const __lazy_{name} = lazy<typeof {name}>(() => import({}));", js_string(spec)));
+            continue;
+        }
         g.emit(M::lit("import ").add(M::src(import, import.at)).lit_then(";"));
     }
     g.line("");
@@ -334,6 +346,9 @@ pub fn generate_with(
     g.depth = 1;
     if let Some(page) = doc.pages.first() {
         g.line(&format!("static readonly route = {};", js_string(&page.pattern)));
+    }
+    if doc.cached {
+        g.line("static readonly cached = true;");
     }
     if let Some(Node::Routes { sections, .. }) = block {
         for (i, section) in sections.iter().enumerate() {
@@ -412,7 +427,11 @@ pub fn generate_with(
         }
     }
     let types = g.route_types.get();
-    let mut head = String::from("import { ComponentBase, type RenderTreeBuilder");
+    let mut head = String::from("import { ComponentBase, ");
+    if uses_lazy {
+        head.push_str("lazy, ");
+    }
+    head.push_str("type RenderTreeBuilder");
     if !slots.is_empty() || types & ROUTE_FRAGMENT != 0 {
         head.push_str(", type RenderFragment");
     }
@@ -1862,7 +1881,7 @@ impl Gen<'_> {
 
         // Generic components take their type arguments as attributes (Blazor's `TItem="..."`).
         let type_names: Vec<&str> = info.type_params.iter().map(String::as_str).collect();
-        let mut name = M::src(&el.name, el.name.at);
+        let mut name = if info.lazy { M::lit("__lazy_").add(M::src(&el.name, el.name.at)) } else { M::src(&el.name, el.name.at) };
         let infer = !type_names.is_empty() && !type_names.iter().all(|t| attr(t).is_some());
         if !type_names.is_empty() && !infer {
             name = name.lit_then("<");
@@ -2468,7 +2487,7 @@ pub fn component_info(source: &str) -> ComponentInfo {
             props.insert(m.name, kind);
         }
     }
-    ComponentInfo { type_params, props, named_types }
+    ComponentInfo { type_params, props, named_types, lazy: doc.lazy }
 }
 
 /// The type annotation of a declaration like `size?: Size = "s"`, without its initializer.
@@ -3486,6 +3505,18 @@ mod tests {
         has("fine.textAt(_e21, () => total);");
         has("__p.appendChild(_e0);");
         assert!(!g.code.contains("__b.openElement"), "{}", g.code);
+    }
+
+    #[test]
+    fn async_components_load_on_first_use_and_cached_ones_say_so() {
+        let chart = "@async\n@code { label = \"\"; }\n<p>@label</p>";
+        let g = gen_with("@render\n@import Chart from \"./Chart.xzor\"\n@cached\n<Chart label=\"x\" />", &[("Chart", chart)]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("import { ComponentBase, lazy, type RenderTreeBuilder } from \"@source-crafter/xzor-runtime\";");
+        // The class stays a type for the props; the tree gets its loader.
+        has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
+        has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
+        has("static readonly cached = true;");
     }
 
     #[test]

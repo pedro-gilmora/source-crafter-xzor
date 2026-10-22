@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { ComponentBase, type RenderTreeBuilder, mount } from "./index";
+import { ComponentBase, type RenderTreeBuilder, lazy, mount } from "./index";
 
 // Components below are written the way xzor's codegen emits them.
 
@@ -79,6 +79,87 @@ const click = (el: Element) => el.dispatchEvent(new MouseEvent("click", { bubble
 const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCase());
 
 beforeEach(() => document.body.replaceChildren());
+
+test("a lazy component holds its place until its module arrives, then mounts there; later uses mount at once", async () => {
+  class Chart extends ComponentBase {
+    label = "";
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("em");
+      b.addContent(this.label);
+      b.closeElement();
+    }
+  }
+  let loads = 0;
+  const LazyChart = lazy(async () => (loads++, { default: Chart }));
+  class Page extends ComponentBase {
+    n = 1;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("p");
+      b.addText("a");
+      b.closeElement();
+      for (let i = 0; i < this.n; i++) b.addComponent(LazyChart, { label: `c${i}` });
+      b.openElement("p");
+      b.addText("b");
+      b.closeElement();
+    }
+  }
+  const host = document.createElement("main");
+  document.body.append(host);
+  const page = mount(Page, host);
+  expect(host.querySelector("em")).toBeNull();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(host.textContent).toBe("ac0b");
+  page.n = 2;
+  page.stateHasChanged();
+  expect(host.textContent).toBe("ac0c1b");
+  expect(loads).toBe(1);
+});
+
+test("a cached component leaving the tree keeps its instance and nodes, and comes back with them", () => {
+  let made = 0;
+  let disposed = 0;
+  class Tab extends ComponentBase {
+    static readonly cached = true;
+    label = "";
+    clicks = 0;
+    constructor() {
+      super();
+      made++;
+    }
+    protected override dispose(): void {
+      disposed++;
+    }
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("button");
+      b.addEventHandler("click", () => this.clicks++);
+      b.addContent(`${this.label}${this.clicks}`);
+      b.closeElement();
+    }
+  }
+  class Tabs extends ComponentBase {
+    show = true;
+    label = "a";
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      if (this.show) b.addComponent(Tab, { label: this.label });
+      else b.addText("none");
+    }
+  }
+  const host = document.createElement("main");
+  document.body.append(host);
+  const tabs = mount(Tabs, host);
+  const button = host.querySelector("button")!;
+  click(button);
+  expect(button.textContent).toBe("a1");
+  tabs.show = false;
+  tabs.stateHasChanged();
+  expect(host.textContent).toBe("none");
+  tabs.show = true;
+  tabs.label = "b";
+  tabs.stateHasChanged();
+  expect(host.querySelector("button")).toBe(button);
+  expect(button.textContent).toBe("b1");
+  expect([made, disposed]).toEqual([1, 0]);
+});
 
 test("@attr: sets the nearest open element past regions, and class adds to its own", () => {
   class Stock extends ComponentBase {
