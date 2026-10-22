@@ -683,6 +683,30 @@ test("@once: read once, untracked, even inside a region", async () => {
   expect(el.querySelector("b")!.textContent).toBe("2");
 });
 
+test("class:name toggles one class, leaving the element's others", async () => {
+  class Page extends FineComponent {
+    #err = ""; get err(): string { FineComponent.$reader?.(this, 0); return this.#err; } set err(v: string) { const p = this.#err; if (FineComponent.same(p, v)) return; this.#err = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["err"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const d = fine.el(__p, "div");
+        d.setAttribute("class", "field");
+        fine.attr(d, "class:invalid", () => this.err);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const d = el.querySelector("div")!;
+  expect(d.className).toBe("field");
+  p.err = "bad";
+  await tick();
+  expect(d.className).toBe("field invalid");
+  p.err = "";
+  await tick();
+  expect(d.className).toBe("field");
+});
+
 test("aria-* attributes write booleans as true and false", async () => {
   class Page extends FineComponent {
     #on = false; get on(): boolean { FineComponent.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (FineComponent.same(p, v)) return; this.#on = v; this.$changed(0, p); }

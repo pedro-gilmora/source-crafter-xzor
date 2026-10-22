@@ -1158,6 +1158,7 @@ impl Gen<'_> {
                     match &*a.name.text {
                         name @ ("@bind" | "@bind:input") => self.bind_element(el, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
                         "@bind:event" | "@bind:after" | "@bind:debounce" => {}
+                        n if n.starts_with("class:") => {}
                         "@key" => {
                             let line = M::lit("__b.setKey(").add(self.directive_expr(a)?).lit_then(");");
                             self.emit(line);
@@ -1171,6 +1172,14 @@ impl Gen<'_> {
                         }
                         _ => self.attribute(a)?,
                     }
+                }
+                // After the element's own class, whatever the order they were written in.
+                for a in el.attrs.iter().filter(|a| a.name.starts_with("class:")) {
+                    let on = match &a.value {
+                        AttrValue::Empty => M::lit("true"),
+                        v => self.value(v),
+                    };
+                    self.emit(M::lit(&format!("__b.toggleClass({}, ", js_string(&a.name[6..]))).add(on).lit_then(");"));
                 }
                 let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
                 self.nodes(&el.children)?;
@@ -1461,7 +1470,7 @@ impl Gen<'_> {
                         match &a.value {
                             // Rows are keyed by their item; an element `@key` adds nothing.
                             _ if name == "@key" => {}
-                            _ if name.starts_with('@') => dynamic = true,
+                            _ if name.starts_with('@') || name.starts_with("class:") => dynamic = true,
                             AttrValue::Empty => attrs.push((name.to_string(), String::new())),
                             AttrValue::Static(s) => attrs.push((name.to_string(), crate::entities::decode(s).into_owned())),
                             _ => dynamic = true,
@@ -1964,6 +1973,13 @@ impl Gen<'_> {
                     self.fine_on(var, &name[3..], handler);
                 }
                 _ if name.starts_with('@') => return Err(format!("unknown directive attribute {name}")),
+                _ if name.starts_with("class:") => {
+                    let on = match &a.value {
+                        AttrValue::Empty => M::lit("true"),
+                        v => self.value(v),
+                    };
+                    self.fine_bound("attr", &format!("{var}, {}", js_string(name)), on);
+                }
                 _ => match &a.value {
                     AttrValue::Empty if all => self.line(&format!("{var}.setAttribute({}, \"\");", js_string(name))),
                     AttrValue::Static(s) if all => {
@@ -3739,6 +3755,20 @@ mod tests {
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
         has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
         has("static readonly cached = true;");
+    }
+
+    #[test]
+    fn class_toggles() {
+        let src = "@code { err = \"\"; }\n<div class=\"field\" class:invalid=\"@err\" class:round>x</div>";
+        let g = gen_with(&format!("@fine\n{src}"), &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // The static class stays in the template; each toggle is its own binding.
+        has("[\"div\", [\"class\", \"field\"], \"x\"]");
+        has("fine.attr(_e0, \"class:invalid\", () => this.err);");
+        has("fine.attr(_e0, \"class:round\", () => true);");
+        let g = gen_with(&format!("@render\n{src}"), &[]);
+        // After the element's own class, whatever the order they were written in.
+        assert!(g.code.contains("__b.addAttribute(\"class\", \"field\");\n    __b.toggleClass(\"invalid\", this.err);\n    __b.toggleClass(\"round\", true);"), "{}", g.code);
     }
 
     #[test]

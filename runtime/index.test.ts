@@ -80,6 +80,26 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 
 beforeEach(() => document.body.replaceChildren());
 
+test("toggleClass adds to the element's class while on", () => {
+  class Field extends ComponentBase {
+    err = false;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("div");
+      b.addAttribute("class", "field");
+      b.toggleClass("invalid", this.err);
+      b.closeElement();
+    }
+  }
+  const host = document.createElement("main");
+  document.body.append(host);
+  const f = mount(Field, host);
+  const div = host.querySelector("div")!;
+  expect(div.className).toBe("field");
+  f.err = true;
+  f.stateHasChanged();
+  expect(div.className).toBe("field invalid");
+});
+
 test("aria-* attributes write booleans as true and false", () => {
   class Toggle extends ComponentBase {
     open = false;

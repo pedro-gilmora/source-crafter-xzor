@@ -328,6 +328,8 @@ const textOf = (value: unknown): string => (value === null || value === undefine
 function setAttr(el: Element, name: string, value: unknown): void {
   // `aria-*` states are the strings "true" and "false": a boolean writes its name, never removes it.
   if (typeof value === "boolean" && name.startsWith("aria-")) value = String(value);
+  // `class:name` toggles one class and leaves the element's others.
+  if (name.startsWith("class:")) return void el.classList.toggle(name.slice(6), !!value);
   // `--name`: a custom property from a component's `<style>`; reading first skips a costly same-value write.
   if (name.charCodeAt(0) === 45 && name.charCodeAt(1) === 45) {
     const style = (el as HTMLElement).style;

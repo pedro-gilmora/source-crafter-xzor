@@ -682,6 +682,14 @@ export class RenderTreeBuilder {
     else el.attrs[name] = value === true ? "" : String(value);
   }
 
+  /** `class:name="@on"`: adds `name` to the open element's class while `on` is truthy. */
+  toggleClass(name: string, on: unknown): void {
+    if (!on) return;
+    const attrs = this.#current().attrs;
+    const own = attrs["class"];
+    attrs["class"] = own ? `${own} ${name}` : name;
+  }
+
   /** `@attributes`: each entry is added in order, so later attributes override it. */
   addAttributes(attrs: Record<string, unknown> | null | undefined): void {
     for (const [name, value] of Object.entries(attrs ?? {})) this.addAttribute(name, value);
