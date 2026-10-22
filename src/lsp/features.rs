@@ -465,6 +465,7 @@ const BIND_ATTRS: &[(&str, &str)] = &[
     ("@bind:input", "Two-way binding written back on each input"),
     ("@bind:event", "Event that updates the binding, e.g. oninput"),
     ("@bind:after", "Handler to run after the bound value changes"),
+    ("@bind:debounce", "Write the bound value back once input pauses this many milliseconds"),
     ("@key", "Match this item by key when the list changes"),
     ("@ref", "Assign the DOM element to a field"),
 ];
@@ -789,7 +790,7 @@ mod tests {
 
         let doc = "<input @bi";
         let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]).into_iter().map(|i| i.label).collect();
-        assert_eq!(labels, ["@bind", "@bind:input", "@bind:event", "@bind:after"]);
+        assert_eq!(labels, ["@bind", "@bind:input", "@bind:event", "@bind:after", "@bind:debounce"]);
 
         let doc = "\n@i";
         let labels: Vec<_> = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]).into_iter().map(|i| i.label).collect();

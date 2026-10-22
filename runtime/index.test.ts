@@ -80,6 +80,22 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 
 beforeEach(() => document.body.replaceChildren());
 
+test("debounce runs the last call after a pause, once, and settles every call's promise", async () => {
+  const input = document.createElement("input");
+  const event = (): Event => {
+    const e = new Event("input");
+    Object.defineProperty(e, "target", { value: input });
+    return e;
+  };
+  let runs = 0;
+  const first = ComponentBase.debounce(event(), 20, () => runs++);
+  const second = ComponentBase.debounce(event(), 20, () => (runs++, "done"));
+  expect(runs).toBe(0);
+  expect(await second).toBe("done");
+  await first;
+  expect(runs).toBe(1);
+});
+
 test("a lazy component holds its place until its module arrives, then mounts there; later uses mount at once", async () => {
   class Chart extends ComponentBase {
     label = "";

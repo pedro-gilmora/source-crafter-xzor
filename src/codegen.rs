@@ -1157,7 +1157,7 @@ impl Gen<'_> {
                 for a in &el.attrs {
                     match &*a.name.text {
                         name @ ("@bind" | "@bind:input") => self.bind_element(el, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
-                        "@bind:event" | "@bind:after" => {}
+                        "@bind:event" | "@bind:after" | "@bind:debounce" => {}
                         "@key" => {
                             let line = M::lit("__b.setKey(").add(self.directive_expr(a)?).lit_then(");");
                             self.emit(line);
@@ -1953,7 +1953,7 @@ impl Gen<'_> {
             let name = &*a.name.text;
             match name {
                 name @ ("@bind" | "@bind:input") => self.fine_bind(el, var, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
-                "@bind:event" | "@bind:after" | "@key" => {}
+                "@bind:event" | "@bind:after" | "@bind:debounce" | "@key" => {}
                 "@ref" => {
                     let line = self.directive_expr(a)?.lit_then(&format!(" = {var};"));
                     self.emit(line);
@@ -1990,15 +1990,22 @@ impl Gen<'_> {
         let prop = if is_check { "checked" } else { "value" };
         let read = self.expr(target);
         self.fine_bound("attr", &format!("{var}, \"{prop}\""), read);
-        let handler = M::lit("(__e) => { ")
-            .add(self.expr(target))
-            .lit_then(" = ComponentBase.bindValue(__e, ")
-            .add(self.expr(target))
-            .lit_then(");")
-            .add(self.after_call(after)?)
-            .lit_then(" }");
+        let handler = self.bind_handler(el, target, after)?;
         self.fine_on(var, &event, handler);
         Ok(())
+    }
+
+    /// The handler writing a bound input back: at once, or after a `@bind:debounce` pause.
+    fn bind_handler(&self, el: &Element, target: &Src, after: Option<&AttrValue>) -> Result<M, String> {
+        let write = self.expr(target).lit_then(" = ComponentBase.bindValue(__e, ").add(self.expr(target)).lit_then(");").add(self.after_call(after)?);
+        let debounce = el.attrs.iter().find(|a| &*a.name.text == "@bind:debounce").map(|a| match &a.value {
+            AttrValue::Expr(ms) | AttrValue::Static(ms) if !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()) => Ok(ms.text.clone()),
+            _ => Err("@bind:debounce requires milliseconds, e.g. @bind:debounce=\"300\"".to_string()),
+        });
+        Ok(match debounce.transpose()? {
+            Some(ms) => M::lit(&format!("(__e) => ComponentBase.debounce(__e, {ms}, () => {{ ")).add(write).lit_then(" })"),
+            None => M::lit("(__e) => { ").add(write).lit_then(" }"),
+        })
     }
 
     /// Statement calling a `@bind:after` handler, returned so async work re-renders.
@@ -2021,13 +2028,7 @@ impl Gen<'_> {
         });
         let prop = if is_check { "checked" } else { "value" };
         self.emit(M::lit(&format!("__b.addAttribute(\"{prop}\", ")).add(self.expr(target)).lit_then(");"));
-        let line = M::lit(&format!("__b.addEventHandler({}, (__e) => {{ ", js_string(&event)))
-            .add(self.expr(target))
-            .lit_then(" = ComponentBase.bindValue(__e, ")
-            .add(self.expr(target))
-            .lit_then(");")
-            .add(self.after_call(after)?)
-            .lit_then(" });");
+        let line = M::lit(&format!("__b.addEventHandler({}, ", js_string(&event))).add(self.bind_handler(el, target, after)?).lit_then(");");
         self.emit(line);
         Ok(())
     }
@@ -3738,6 +3739,18 @@ mod tests {
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
         has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
         has("static readonly cached = true;");
+    }
+
+    #[test]
+    fn bind_debounce_waits_for_a_pause() {
+        let src = "@code { q = \"\"; filter() {} }\n<input @bind:input=\"q\" @bind:debounce=\"300\" @bind:after=\"filter\" />";
+        for mode in ["@render\n", "@fine\n"] {
+            let g = gen_with(&format!("{mode}{src}"), &[]);
+            // The value shown stays bound; the write back waits, and its promise re-renders after it.
+            assert!(g.code.contains("(__e) => ComponentBase.debounce(__e, 300, () => { this.q = ComponentBase.bindValue(__e, this.q); return this.filter(); })"), "{}", g.code);
+        }
+        let err = generate_with(&parse("<input @bind=\"q\" @bind:debounce=\"soon\" />").unwrap().0, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
+        assert!(err.contains("@bind:debounce requires milliseconds"), "{err}");
     }
 
     #[test]

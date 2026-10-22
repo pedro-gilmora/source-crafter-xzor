@@ -481,6 +481,10 @@ function isFragment(value: unknown): value is Fragment {
   return typeof value === "function" && FRAGMENT in value;
 }
 
+/** A pending `@bind:debounce` write, on the input it came from. */
+type Debounced = { timer: ReturnType<typeof setTimeout>; settle: (value: unknown) => void };
+const DEBOUNCED = Symbol("xzor.debounced");
+
 export abstract class ComponentBase {
   /** Wraps builder calls as a RenderFragment; xzor emits this for markup used as a value. */
   static fragment(build: (builder: RenderTreeBuilder) => void): RenderFragment {
@@ -493,6 +497,26 @@ export abstract class ComponentBase {
     if (typeof current === "boolean") return input.checked as T;
     if (typeof current === "number") return Number(input.value) as T;
     return input.value as T;
+  }
+
+  /**
+   * `@bind:debounce`: runs `run` once input on `e`'s target pauses for `ms`. Each call's promise settles: the
+   * last with what `run` returns, the ones it replaced with `undefined`.
+   */
+  static debounce<T>(e: Event, ms: number, run: () => T): Promise<Awaited<T> | undefined> {
+    const target = e.target as unknown as Record<symbol, Debounced | undefined>;
+    const prev = target[DEBOUNCED];
+    if (prev !== undefined) {
+      clearTimeout(prev.timer);
+      prev.settle(undefined);
+    }
+    return new Promise((settle) => {
+      const timer = setTimeout(() => {
+        target[DEBOUNCED] = undefined;
+        settle(run() as Awaited<T>);
+      }, ms);
+      target[DEBOUNCED] = { timer, settle: settle as (v: unknown) => void };
+    });
   }
 
   /** Content the parent passed for each `@slot`; xzor declares the exact type per component. */
