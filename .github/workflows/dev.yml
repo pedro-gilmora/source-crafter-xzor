@@ -449,8 +449,23 @@ jobs:
           return (subject $text) -replace '\|', '\|'
         }
 
+        # El cuerpo del commit (lo que sigue a la primera linea) va en el release y en Telegram.
+        function details ([string] $text)
+        {
+          return ((($text -split '\r?\n') | Select-Object -Skip 1) -join "`n").Trim()
+        }
+
+        # Escapado para Telegram, salvo la vineta de cada linea para que la lista siga siendo lista.
+        function tgLines ([string] $text)
+        {
+          return (($text -split "`n") | ForEach-Object {
+            if ($_ -match '^(\s*)[-*]\s+(.*)$') { "$($Matches[1])- $(escape $Matches[2])" } else { escape $_ }
+          }) -join "`n"
+        }
+
         $isRelease = '${{ needs.resolve.outputs.release }}' -eq 'true'
         $headCommit = subject $githubEvent.head_commit.message
+        $headDetails = details $githubEvent.head_commit.message
         # Los commits de la PR llegan del mas antiguo al mas nuevo y el titulo ya encabeza
         # el mensaje: se excluye por id el que coincida con la cabeza, y se listan del mas
         # reciente al mas antiguo.
@@ -489,7 +504,9 @@ jobs:
         ⚙️ **Job** [$jobName]($jobUrl)
 
         ---
-        ### $(escape ( subject $githubEvent.head_commit.message) )$(if($commits.Count -gt 0 ) { "
+        ### $(escape ( subject $githubEvent.head_commit.message) )$(if($headDetails) { "
+
+        $(tgLines $headDetails)" })$(if($commits.Count -gt 0 ) { "
         #### Other changes
 
         | Commit Id | Description | Author |
@@ -526,6 +543,7 @@ jobs:
         $githubPackages
         "@
           } else { "$githubPackages" }
+          if ($headDetails) { $releaseNotes = "$headDetails`n`n$releaseNotes" }
 
           $downloads = @"
 
