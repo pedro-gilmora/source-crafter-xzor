@@ -81,6 +81,7 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 beforeEach(() => document.body.replaceChildren());
 
 test("a data-leave element the diff removes leaves when its animations finish; without any, at once", async () => {
+  ComponentBase.$leaves = true;
   let finish!: () => void;
   const finished = new Promise<void>((r) => (finish = r));
   class Toast extends ComponentBase {

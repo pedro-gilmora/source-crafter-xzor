@@ -784,6 +784,7 @@ test("@await: a rejection shows catch; a plain value shows then at once", async 
 });
 
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
+  ComponentBase.$leaves = true;
   let finish!: () => void;
   const finished = new Promise<void>((r) => (finish = r));
   class Page extends FineComponent {

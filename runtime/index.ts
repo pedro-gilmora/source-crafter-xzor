@@ -486,6 +486,8 @@ type Debounced = { timer: ReturnType<typeof setTimeout>; settle: (value: unknown
 const DEBOUNCED = Symbol("xzor.debounced");
 
 export abstract class ComponentBase {
+  /** @internal Set by components that use `@leave`: until then, removal skips the `data-leave` check. */
+  static $leaves = false;
   /** Wraps builder calls as a RenderFragment; xzor emits this for markup used as a value. */
   static fragment(build: (builder: RenderTreeBuilder) => void): RenderFragment {
     return Object.assign(build, { [FRAGMENT]: true as const });
@@ -1275,7 +1277,7 @@ function remove(parent: Node, v: VNode): void {
  */
 export function $leave(node: Node): void {
   const el = node as Element;
-  if (el.nodeType !== 1 || !el.hasAttribute("data-leave") || el.hasAttribute("data-leaving")) return void node.parentNode?.removeChild(node);
+  if (!ComponentBase.$leaves || el.nodeType !== 1 || !el.hasAttribute("data-leave") || el.hasAttribute("data-leaving")) return void node.parentNode?.removeChild(node);
   el.setAttribute("data-leaving", "");
   const animations = (el as Partial<Element & { getAnimations(o?: object): Animation[] }>).getAnimations?.({ subtree: true }) ?? [];
   if (animations.length === 0) return void el.remove();

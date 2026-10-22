@@ -15,7 +15,7 @@ const ISLAND = 4;
 const KEYED = 5;
 /** Runs `read` for what it does (`@await`'s request): never re-run after handlers, so never loose. */
 const EFFECT = 6;
-/** A cached getter (`Memo`): a change to what it read marks it stale; it recomputes when read. */
+/** A cached getter (value in `data`): a change to what it read marks it stale; it recomputes when read. Always QUEUED, so never queued. */
 const MEMO = 7;
 const KIND = 7;
 /** The tracker has it queued; `at` reads 0 then, else -1. */
@@ -29,6 +29,8 @@ const LOOSE = 64;
 const ITEM = 128;
 /** An ATTR binding from `@attr:` on an enclosing element: disposing it takes its value back off (`data` is `Owned`). */
 const OWNED = 256;
+/** A MEMO's value is current. */
+const FRESH = 512;
 
 // Same bits as the model tracker: fields from the 30th share bit 30, `state` (-1) has bit 31.
 const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
@@ -49,7 +51,6 @@ type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
 type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
-type Memo = { value: unknown; fresh: boolean };
 /** A component's cached getters, created on first read. */
 const MEMOS = Symbol("xzor.fine.memos");
 /** The key of the row an empty list's else builds. */
@@ -129,18 +130,20 @@ class Binding {
   }
   set at(value: number) {
     if ((this.flags & DEAD) !== 0) return;
-    this.flags = value < 0 ? this.flags & ~QUEUED : this.flags | QUEUED;
     // Stale as soon as what it read changes, so no binding re-run in the same flush reads the old value.
-    if (value >= 0 && (this.flags & KIND) === MEMO) (this.data as Memo).fresh = false;
+    if ((this.flags & KIND) === MEMO) {
+      if (value >= 0) this.flags &= ~FRESH;
+      return;
+    }
+    this.flags = value < 0 ? this.flags & ~QUEUED : this.flags | QUEUED;
   }
 
   /** @internal A cached getter's value: computed again when stale, and its reads passed on to the reader. */
   $memo(): unknown {
-    const m = this.data as Memo;
-    if (!m.fresh) {
-      m.value = this.#run();
+    if ((this.flags & FRESH) === 0) {
+      this.data = this.#run();
       // What reads nothing tracked has nothing to tell it about changes: computed on every read.
-      m.fresh = this.model !== undefined && (this.flags & DEAD) === 0;
+      if (this.model !== undefined && (this.flags & DEAD) === 0) this.flags |= FRESH;
     }
     if (collecting !== undefined) {
       const own = this.model;
@@ -148,7 +151,7 @@ class Binding {
         if (own !== undefined) collectBits(own as Source, this.mask);
       } else for (const dep of (own as Map<Source, Dep>).values()) collectBits(dep.model, dep.mask);
     }
-    return m.value;
+    return this.data;
   }
 
   #reset(): void {
@@ -784,7 +787,7 @@ export const fine = {
         get(this: Record<symbol, unknown>) {
           let b = this[key] as Binding | undefined;
           if (b === undefined) {
-            b = this[key] = new Binding(MEMO, null as unknown as Node, () => get.call(this), { value: undefined, fresh: false } satisfies Memo);
+            b = this[key] = new Binding(MEMO | QUEUED, null as unknown as Node, () => get.call(this), undefined);
             ((this[MEMOS] ??= []) as Binding[]).push(b);
           }
           return b.$memo();
@@ -945,11 +948,13 @@ setFineHooks({
   },
   refresh(root) {
     // A whole-component pass recomputes the cached getters too: what changed may be untracked.
-    for (const m of ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS] ?? []) (m.data as Memo).fresh = false;
+    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS];
+    if (memos !== undefined) for (const m of memos) m.flags &= ~FRESH;
     refreshAll(root as FineRoot & Holder);
   },
   dispose(root) {
-    for (const m of ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS] ?? []) m.dispose();
+    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS];
+    if (memos !== undefined) for (const m of memos) m.dispose();
     disposeAll(root as FineRoot & Holder);
   },
   handled(owner: ComponentBase, result: unknown): void {

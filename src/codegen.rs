@@ -451,6 +451,10 @@ pub fn generate_with(
             g.line(&format!("const __t{i} = fine.template([{spec}]);"));
         }
     }
+    // Removal looks for `data-leave` only once a component that sets it is loaded.
+    if g.out[head_at..].contains("data-leave") {
+        g.line("ComponentBase.$leaves = true;");
+    }
     let types = g.route_types.get();
     let mut head = String::from("import { ComponentBase, ");
     if uses_lazy {
@@ -3863,8 +3867,11 @@ mod tests {
         let src = "@code { open = true; }\n@if (open) {<dialog @leave>x</dialog>}";
         let g = gen_with(&format!("@fine\n{src}"), &[]);
         assert!(g.code.contains("[\"dialog\", [\"data-leave\", \"\"], \"x\"]"), "{}", g.code);
+        assert!(g.code.contains("ComponentBase.$leaves = true;"), "{}", g.code);
         let g = gen_with(&format!("@render\n{src}"), &[]);
         assert!(g.code.contains("__b.addAttribute(\"data-leave\", \"\");"), "{}", g.code);
+        assert!(g.code.contains("ComponentBase.$leaves = true;"), "{}", g.code);
+        assert!(!gen_with("@code { open = true; }\n<p>x</p>", &[]).code.contains("$leaves"));
     }
 
     #[test]
