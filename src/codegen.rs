@@ -1719,7 +1719,8 @@ impl Gen<'_> {
                 ok.set(ok.get() && (locals.iter().any(|l| l == w) || matches!(w, "true" | "false" | "null" | "undefined")));
                 false
             });
-            ok.get() && !e.contains("this")
+            // Members, indexes and calls can read what changes while the pass's values stay the same.
+            ok.get() && !e.contains("this") && !e.contains(['.', '[', '('])
         };
         match node {
             Node::If { branches, .. } => branches.iter().all(|(c, _)| only(c)),
@@ -3777,6 +3778,9 @@ mod tests {
         has("[\"ol\", 0, null]");
         // A row that is only a pass-only `@if` builds it straight into the row.
         has("const __p = __pass(__i++, [k, v]);\n          if (__p !== undefined) {\n            if (v > 1) {");
+        // A member of a pass value can change while the value stays: `t.done` and `else if` conditions keep a region.
+        let g = gen_with("@fine\n@code { m: Record<string, { done: boolean }> = {}; }\n<ol>@for (const [k, t] of Object.entries(m)) {@if (k === \"a\") {<b/>} else if (t.done) {<i/>}}</ol>", &[]);
+        assert!(g.code.contains("fine.regionAt("), "{}", g.code);
     }
 
     #[test]
