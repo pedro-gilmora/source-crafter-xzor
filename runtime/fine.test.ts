@@ -603,6 +603,47 @@ test("a list of models matches rows by the model's @Key", async () => {
   expect(() => mount(Twice, host())).toThrow("xzor: duplicate @key 1");
 });
 
+test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRender; tracked writes update alone", async () => {
+  const log: string[] = [];
+  const outside = { n: 1 };
+  class Page extends FineComponent {
+    #count = 0; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["count"]); }
+    allow = true;
+    protected override shouldRender(): boolean {
+      log.push("should");
+      return this.allow;
+    }
+    protected override onAfterRender(first: boolean): void {
+      log.push(`after ${first}`);
+    }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.text(fine.el(__p, "b"), () => this.count);
+        fine.text(fine.el(__p, "i"), () => outside.n);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  await tick();
+  expect(log).toEqual(["after true"]);
+  p.count = 1;
+  await tick();
+  expect(el.querySelector("b")!.textContent).toBe("1");
+  expect(log).toEqual(["after true"]);
+  outside.n = 2;
+  p.stateHasChanged();
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("2");
+  expect(log).toEqual(["after true", "should", "after false"]);
+  p.allow = false;
+  outside.n = 3;
+  p.stateHasChanged();
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("2");
+});
+
 test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
