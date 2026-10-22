@@ -10,7 +10,7 @@ A `.xzor` file is HTML with `@` expressions plus a `@code` block. The xzor compi
 
 - **Types everywhere**: props, events, slots, routes and services are checked at build time, and your editor shows the errors as you type.
 - **No runtime magic**: routing and dependency injection are generated as plain code. There is no reflection and no container.
-- **A small, fast runtime**: it diffs the render tree and touches only the DOM nodes that changed.
+- **A small, fast runtime**: no render pass by default. The DOM is built once and each value, attribute and list updates on its own when what it reads changes. A virtual DOM is one `@render` away.
 
 The [documentation site](https://pedro-gilmora.github.io/source-crafter-xzor/) is itself an xzor app: see [`docs/site`](docs/site).
 
@@ -108,13 +108,10 @@ That's a working app. A few things to notice:
 
 - `@count` prints a value. Use `@(a + b)` for anything longer than a name or a member chain; an array literal is already balanced, so `@['a', 'b']` needs no parentheses.
 - You write `count`, not `this.count`: names that refer to `@code` members get `this.` added for you.
-- `@onclick` gets a typed DOM event and re-renders the component when the handler is done.
+- `@onclick` gets a typed DOM event; the fields it changes update the parts of the page that show them.
 - `@if`, `@for`, `@while` and `@switch` are ordinary TypeScript control flow wrapped around markup. `@for` and `@while` take an `else { }` (or `@else { }`) that renders when no pass ran.
-- Loops keep each pass's DOM while its key stays: `@for (const x of items)` matches by item, `@key(expr)` after the loop head by that expression (`@for (const [k, v] of Object.entries(m)) @key(k) { }`), a `@code` field marked `@Key("id")` by that member of its items, and a model's `@Key` property by itself. Other loops count their passes.
-- `@attr:name="value"` inside a branch sets an attribute of the enclosing element while that branch shows (`class` adds to the element's classes): `<span>@if (stock > 0) { @stock } else { @attr:class="error-text" Sold out }</span>`.
-- `@once(expr)` and `@once { … }` are read once and never updated: nothing in them is bound.
-- Getters are cached: one run per change, however many places read them. Mark one `@Volatile` when it reads what nothing tracks (`Date.now()`, the DOM) alongside fields: `@Volatile get age() { return Date.now() - born; }`.
-- `@async` at the top of a component loads it on first use; `@cached` keeps its instance and DOM when it leaves the tree, for when it comes back. `xzor build --minify` minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`.
+
+There's more for templates (keys, async data, forms, motion): see [More in templates](#more-in-templates) once you've done the six steps.
 
 ### 2. Components that talk to each other
 
@@ -148,7 +145,7 @@ A field in `@code` is a **prop**: the parent sets it as an attribute.
 
 - A capitalized tag is a component. A misspelled prop or a wrong type is a build error.
 - A callback prop such as `onChange?: EventCallback<number>` is set with `onChange="save"`, or like a DOM event with `@onchange="save"`.
-- In lists, add `@key="item.id"`: rows keep their DOM and state when they reorder.
+- In lists, rows keep their DOM and state when they reorder: see [Lists and keys](#lists-and-keys).
 - Lifecycle methods follow Blazor's order: `onInitialized(Async)`, then `onParametersSet(Async)`, then the render, then `onAfterRender(first)`. `dispose()` runs when the component leaves the page.
 
 ### 3. Slots: components that wrap content
@@ -281,6 +278,79 @@ export class Application implements IApplication {}
 ```
 
 xzor reads your types and generates the plain `new Database(new ConsoleLogger())` code. A missing service, an ambiguous one or a dependency cycle is a build error with a clear message. Async factories, keyed services (`@Singleton("key", factory)`) and disposal (`Symbol.dispose`) work too.
+
+---
+
+## More in templates
+
+### Lists and keys
+
+A loop keeps each pass's DOM (and the components in it) while the pass's key stays, so reordering moves rows instead of rebuilding them:
+
+```xzor
+@for (const user of users) { <UserRow user="@user" /> }                  @* keyed by the item itself *@
+@for (const [id, name] of Object.entries(names)) @key(id) { <li>@name</li> }
+@for (const user of users) { <li>@user.name</li> } else { <li>No one yet</li> }
+```
+
+- Without `@key(...)`, a `@code` field marked `@Key("id")` (`@Key("id") users: User[] = [];`) keys its loops by that member, also through `filter`, `slice`, `sort`, `toSorted`, `toReversed` and `reverse`. A model's `@Key` property keys it everywhere. Other loops count their passes.
+- A duplicate key is an error, not a silent mismatch.
+
+### Attributes from where they're decided
+
+```xzor
+<span>@if (stock > 0) { @stock } else { @attr:class="error-text" Sold out }</span>
+<div class="field" class:invalid="@error" class:round>...</div>
+<button aria-expanded="@open" aria-pressed="@active">Menu</button>
+```
+
+- `@attr:name="value"` inside a branch sets an attribute of the enclosing element while that branch shows (`class` adds to its classes). Ctrl+click it to go to that element.
+- `class:name="@cond"` toggles one class; a bare `class:name` always adds it. The static `class` stays as it is.
+- An `aria-*` attribute given `true` or `false` writes `"true"` or `"false"`, as ARIA expects (other attributes drop on `false`).
+
+### Forms
+
+```xzor
+<input @bind:input="query" @bind:debounce="300" @bind:after="search" />
+```
+
+- `@bind` writes back on `change`; `@bind:input` on every keystroke; `@bind:event="name"` on any event.
+- `@bind:debounce="ms"` waits for a pause in typing before writing; `@bind:after` runs once the value is written.
+- Numbers stay numbers, checkboxes give booleans.
+
+### Async data
+
+```xzor
+@await (load(query)) {
+  <p>Loading…</p>
+} then (rows) {
+  @for (const r of rows) { <li>@r.name</li> }
+} catch (e) {
+  <p class="error">@(String(e))</p>
+}
+```
+
+The request runs again when what the `@await (...)` expression reads changes (here `query`), and only the newest one shows. What `then` reads updates it without a new request. `then` and `catch` are optional.
+
+### Motion, in CSS
+
+```xzor
+@if (open) { <dialog open @leave>...</dialog> }
+
+<style>
+  dialog { transition: opacity .2s; @starting-style { opacity: 0; } }   /* entering */
+  dialog[data-leaving] { opacity: 0; }                                  /* leaving */
+</style>
+```
+
+An element marked `@leave` stays in the page with `data-leaving` until the animations and transitions that starts (in it and below) finish; with none, it goes at once. Entering needs nothing from xzor: `@starting-style` or a CSS animation does it.
+
+### Doing less work
+
+- **Cached getters.** A getter runs once per change, however many places read it. Mark one `@Volatile` when it reads what nothing tracks (`Date.now()`, the DOM) alongside fields: `@Volatile get age() { return Date.now() - born; }`.
+- **`@once(expr)` and `@once { … }`** are read once and never updated: nothing in them is bound.
+- **`@async`** at the top of a component loads it on first use. **`@cached`** keeps its instance and DOM when it leaves the tree, for when it comes back (matched by type and `@key`).
+- **`xzor build --minify`** minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`.
 
 ---
 
