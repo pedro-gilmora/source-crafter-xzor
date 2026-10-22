@@ -307,6 +307,7 @@ pub fn generate_with(
         list_keys,
         pass_locals: None,
         once: false,
+        branching: false,
         templates: Vec::new(),
         reads: None,
         uses_el: false,
@@ -675,6 +676,8 @@ struct Gen<'p> {
     pass_locals: Option<Vec<String>>,
     /// Emitting an `@once` block: values are set, not bound.
     once: bool,
+    /// The next `@if`/`@switch` of `fine_flow` is a `branchAt`'s: each branch first returns its index without a parent.
+    branching: bool,
     /// The specs of the `@fine` templates, emitted after the class as `__t<N>`.
     templates: Vec<String>,
     /// The row being emitted, whose bindings go through its list's shared reads.
@@ -750,6 +753,16 @@ fn is_island(el: &Element) -> bool {
 
 fn is_plain_code_node(node: &Node) -> bool {
     matches!(node, Node::Code(parts) if is_plain_code(parts))
+}
+
+/// An `@if`/`@switch` whose kept branch stays current: its branches run no `@{ }` code while building.
+fn branchable(node: &Node) -> bool {
+    let plain = |body: &[Node]| !body.iter().any(is_plain_code_node);
+    match node {
+        Node::If { branches, otherwise } => branches.iter().all(|(_, b)| plain(b)) && otherwise.as_deref().is_none_or(plain),
+        Node::Switch { cases, .. } => cases.iter().all(|c| plain(&c.body)),
+        _ => false,
+    }
 }
 
 /// Whether a pass of loop `node` can be skipped when its row is kept: it has values to compare (a key or loop
@@ -870,6 +883,7 @@ impl Gen<'_> {
             list_keys: HashMap::new(),
             pass_locals: None,
             once: false,
+            branching: false,
             templates: Vec::new(),
             reads: None,
             uses_el: false,
@@ -1616,6 +1630,19 @@ impl Gen<'_> {
                 self.line(&format!("{var}.replaceWith({f});"));
             }
             FinePart::Region(node) if keyable(node) => self.fine_keyed(node, var)?,
+            FinePart::Region(node) if !self.row_level() && branchable(node) => {
+                self.line(&format!("fine.branchAt({var}, (__p) => {{"));
+                let outer = std::mem::replace(&mut self.in_region, true);
+                let pass = self.pass_locals.take();
+                self.depth += 1;
+                self.branching = true;
+                let r = self.fine_flow(node, "__p");
+                self.depth -= 1;
+                self.pass_locals = pass;
+                self.in_region = outer;
+                r?;
+                self.line("});");
+            }
             FinePart::Region(node) => self.fine_region(var, |g| g.fine_flow(node, "__p"))?,
             FinePart::Code(code, rest) => {
                 let scope = self.locals.len();
@@ -1943,19 +1970,32 @@ impl Gen<'_> {
 
     /// Structure as plain control flow, inside a region.
     fn fine_flow(&mut self, node: &Node, p: &str) -> Result<(), String> {
+        let branching = std::mem::take(&mut self.branching);
+        let pick = |g: &mut Self, i: usize| {
+            if branching {
+                g.depth += 1;
+                g.line(&format!("if (!{p}) return {i};"));
+                g.depth -= 1;
+            }
+        };
         match node {
             Node::If { branches, otherwise } => {
                 for (i, (cond, body)) in branches.iter().enumerate() {
                     let kw = if i == 0 { "if (" } else { "} else if (" };
                     let line = M::lit(kw).add(self.expr(cond)).lit_then(") {");
                     self.emit(line);
+                    pick(self, i);
                     self.fine_block(body, p)?;
                 }
                 if let Some(body) = otherwise {
                     self.line("} else {");
+                    pick(self, branches.len());
                     self.fine_block(body, p)?;
                 }
                 self.line("}");
+                if branching {
+                    self.line(&format!("return {};", branches.len() + usize::from(otherwise.is_some())));
+                }
             }
             Node::For { head, body, otherwise, .. } => {
                 if otherwise.is_some() {
@@ -2004,7 +2044,7 @@ impl Gen<'_> {
                 let line = M::lit("switch (").add(self.expr(subject)).lit_then(") {");
                 self.emit(line);
                 self.depth += 1;
-                for case in cases {
+                for (n, case) in cases.iter().enumerate() {
                     let count = case.labels.len();
                     for (i, label) in case.labels.iter().enumerate() {
                         let label = match label {
@@ -2013,6 +2053,7 @@ impl Gen<'_> {
                         };
                         self.emit(label.lit_then(if i + 1 == count { ": {" } else { ":" }));
                     }
+                    pick(self, n);
                     self.fine_block(&case.body, p)?;
                     self.depth += 1;
                     self.line("break;");
@@ -2021,6 +2062,9 @@ impl Gen<'_> {
                 }
                 self.depth -= 1;
                 self.line("}");
+                if branching {
+                    self.line(&format!("return {};", cases.len()));
+                }
             }
             _ => unreachable!("only structure is control flow"),
         }
@@ -3805,7 +3849,7 @@ mod tests {
         has("fine.on(_e3, \"input\", (__e) => { this.label = ComponentBase.bindValue(__e, this.label); });");
         has("fine.attr(_e4, \"checked\", () => this.ok);");
         has("fine.on(_e4, \"change\", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); });");
-        has("fine.regionAt(_e5, (__p) => {\n        if (this.count > 1) {\n          const _e10 = __t1() as El<\"p\">;\n          __p.appendChild(_e10);");
+        has("fine.branchAt(_e5, (__p) => {\n        if (this.count > 1) {\n          if (!__p) return 0;\n          const _e10 = __t1() as El<\"p\">;\n          __p.appendChild(_e10);");
         // A row's bindings share the list's reads, which take the item.
         has("fine.listAt(_e6, () => this.team, [\n        (w) => w.name,\n        (w) => w.hours * 2,\n      ], (__p) => {\n        const _e12 = __t3() as El<\"li\">;");
         has("fine.textItem(_e13, 0);");
@@ -4011,7 +4055,7 @@ mod tests {
         has("const __p = __pass(__i++, [k, v]);\n          if (__p !== undefined) {\n            if (v > 1) {");
         // A member of a pass value can change while the value stays: `t.done` and `else if` conditions keep a region.
         let g = gen_with("@fine\n@code { m: Record<string, { done: boolean }> = {}; }\n<ol>@for (const [k, t] of Object.entries(m)) {@if (k === \"a\") {<b/>} else if (t.done) {<i/>}}</ol>", &[]);
-        assert!(g.code.contains("fine.regionAt("), "{}", g.code);
+        assert!(g.code.contains("fine.branchAt("), "{}", g.code);
     }
 
     #[test]
@@ -4020,10 +4064,28 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The outer region only reads `open`: the nested `@if` and `@for` bind on their own.
-        has("fine.regionAt(_e0, (__p) => {\n        if (this.open) {\n          const _e1 = __t0() as El<\"dialog\">;");
-        has("fine.regionAt(_e3, (__p) => {\n            if (this.text.length > 2) {");
+        has("fine.branchAt(_e0, (__p) => {\n        if (this.open) {\n          if (!__p) return 0;\n          const _e1 = __t0() as El<\"dialog\">;");
+        has("fine.branchAt(_e3, (__p) => {\n            if (this.text.length > 2) {");
         has("fine.listAt(_e5, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
         assert!(!g.code.contains("for (const it of"), "{}", g.code);
+    }
+
+    #[test]
+    fn fine_if_and_switch_rebuild_only_when_their_branch_changes() {
+        let src = "@fine\n@code { count = 3; list: { id: number }[] = []; kind = \"a\"; }\n@if (!count) {\n<p>none</p>\n} else if (count > 9) {\n<b>many</b>\n} else {\n<ul>@for (const n of list) @key(n.id) {<li>@n.id</li>}</ul>\n}\n@switch (kind) { case \"a\": case \"b\": <i>ab</i> default: <u>other</u> }";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // Called without a parent it only picks the branch: same branch, same DOM.
+        has("fine.branchAt(_e1, (__p) => {\n        if (!this.count) {\n          if (!__p) return 0;\n");
+        has("} else if (this.count > 9) {\n          if (!__p) return 1;\n");
+        has("} else {\n          if (!__p) return 2;\n");
+        has("        }\n        return 3;\n      });");
+        has("case \"b\": {\n            if (!__p) return 0;\n");
+        has("default: {\n            if (!__p) return 1;\n");
+        has("        }\n        return 2;\n      });");
+        // Code run while a branch builds would go stale in a kept branch: that one stays a plain region.
+        let g = gen_with("@fine\n@code { n = 1; }\n@if (n > 0) {\n@{ const twice = n * 2; }\n<p>@twice</p>\n}", &[]);
+        assert!(g.code.contains("fine.regionAt(") && !g.code.contains("branchAt"), "{}", g.code);
     }
 
     #[test]

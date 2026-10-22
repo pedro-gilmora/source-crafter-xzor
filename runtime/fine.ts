@@ -41,7 +41,7 @@ type Dep = { model: Source; owner: Binding; mask: number; slot: number };
 type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown; loose: Binding[] };
 /** Where bindings are chained: a fine root, a region or a list row. */
 type Holder = { bindings: unknown; ctx: Ctx };
-type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown };
+type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
 /** A row's shared reads, from the list: `(item, x) => value`; a handler's gives the handler. */
 type Reads = readonly ((item: any, x?: any) => any)[];
 type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined };
@@ -223,6 +223,13 @@ class Binding {
         return setAttr(this.node as Element, (flags & ITEM) !== 0 ? (this.read as unknown as Named).$n : this.data, this.#run());
       case REGION: {
         const region = this.data as Region;
+        const branch = region.branch;
+        // `@if`/`@switch`: `read` picks the branch, and the same one keeps its DOM (its parts bind themselves).
+        if (branch !== undefined) {
+          const index = this.#run() as number;
+          if (index === region.index) return;
+          region.index = index;
+        }
         disposeAll(region);
         const end = this.node;
         const parent = end.parentNode!;
@@ -233,7 +240,7 @@ class Binding {
           node = next;
         }
         const frag = document.createDocumentFragment();
-        within(region, () => this.#run(frag));
+        within(region, () => (branch !== undefined ? untracked(() => branch(frag)) : this.#run(frag)));
         parent.insertBefore(frag, end);
         return;
       }
@@ -357,9 +364,11 @@ function disposeAll(h: Holder): void {
 /** Re-runs every binding under `h`, rows included: what `stateHasChanged` does for changes nothing tracks. */
 function refreshAll(h: Holder): void {
   for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
-    b.stateHasChanged();
     const kind = b.flags & KIND;
+    const kept = kind === REGION ? (b.data as Region).index : -1;
+    b.stateHasChanged();
     if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) refreshAll(row);
+    else if (kept !== -1 && kept === (b.data as Region).index) refreshAll(b.data as Region);
   }
 }
 
@@ -638,8 +647,8 @@ function on(el: Element, event: string, handler: (e: any) => unknown, h: Holder)
   } else el.addEventListener(event, (e) => afterHandler(h.ctx, handler(e)));
 }
 
-function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number): void {
-  const region: Region = { bindings: undefined, ctx: holder!.ctx, start, item };
+function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number, branch?: Build): void {
+  const region: Region = { bindings: undefined, ctx: holder!.ctx, start, item, branch, index: -1 };
   track(new Binding(REGION | flags, end, build, region));
 }
 
@@ -746,6 +755,11 @@ export const fine = {
     region(end.previousSibling as Comment, end, build, undefined, 0);
   },
 
+  /** `@if`/`@switch` before `end`: `run()` gives the branch's index, `run(parent)` builds it; rebuilt only when the index changes. */
+  branchAt(end: Comment, run: (parent?: Node) => number): void {
+    region(end.previousSibling as Comment, end, run, undefined, 0, run as Build);
+  },
+
   /** `@once(expr)`: `read()` once, untracked, into `node`. */
   textOnce(node: Text, read: () => unknown): void {
     node.data = textOf(untracked(read));
@@ -815,7 +829,7 @@ export const fine = {
       if (state.phase === 0) pending?.(p);
       else if (state.phase === 1) then?.(p, state.value as Awaited<R>);
       else fail?.(p, state.value);
-    }, { bindings: undefined, ctx: holder!.ctx, start: end.previousSibling as Comment, item: undefined } satisfies Region);
+    }, { bindings: undefined, ctx: holder!.ctx, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1 } satisfies Region);
     const show = (phase: number, value: unknown): void => {
       if ((view.flags & DEAD) !== 0) return;
       state.phase = phase;

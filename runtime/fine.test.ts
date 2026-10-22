@@ -813,6 +813,42 @@ test("@await: a rejection shows catch; a plain value shows then at once", async 
   expect(el.textContent).toBe("no6");
 });
 
+test("a branch region keeps its branch's DOM while the chosen branch stays the same (#3)", async () => {
+  class Page extends FineComponent {
+    #count = 3; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["count"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const end = fine.anchors(__p);
+        fine.branchAt(end, (__p) => {
+          if (!this.count) {
+            if (!__p) return 0;
+            __p.appendChild(document.createElement("p")).textContent = "none";
+          } else {
+            if (!__p) return 1;
+            fine.textAt(__p.appendChild(document.createElement("ul")).appendChild(document.createTextNode("")), () => this.count);
+          }
+          return 2;
+        });
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const ul = el.querySelector("ul")!;
+  expect(ul.textContent).toBe("3");
+  p.count = 2;
+  await tick();
+  expect(el.querySelector("ul")).toBe(ul);
+  expect(ul.textContent).toBe("2");
+  p.count = 0;
+  await tick();
+  expect(el.textContent).toBe("none");
+  p.count = 1;
+  await tick();
+  expect(el.querySelector("ul")!.textContent).toBe("1");
+});
+
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
   ComponentBase.$leaves = true;
   let finish!: () => void;

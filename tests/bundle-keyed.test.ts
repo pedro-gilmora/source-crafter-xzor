@@ -21,8 +21,10 @@ const page = (member: string) => `@import { Product } from "./product"
   @Key("${member}") lines: { sku: string; qty: number }[] = [{ sku: "a", qty: 1 }, { sku: "b", qty: 2 }];
   team: Record<string, number> = { x: 1, y: 2 };
   products = [new Product({ id: 1, name: "p1" }), new Product({ id: 2, name: "p2" })];
+  notes = [{ id: 1 }, { id: 2 }, { id: 3 }];
 }
 
+<div class="notes">@if (!notes.length) {<p>Nothing pending.</p>} else {<ul>@for (const n of notes) @key(n.id) {<li>@n.id<button @onclick="() => notes = notes.filter((x) => x.id !== n.id)">x</button></li>}</ul>}</div>
 <ul class="lines">@for (const l of lines.filter((x) => x.qty > 0)) {<li>@l.sku</li>}</ul>
 <ol class="team">@for (const [k, v] of Object.entries(team)) @key(k) {<li>@k=@v @if (v > 1) {<b>!</b>}</li>} else {<p>none</p>}</ol>
 <div class="products">@for (const p of products) {<i>@p.name</i>}</div>
@@ -97,6 +99,17 @@ test("loops keep their rows by @key, a field's @Key and a model's @Key", async (
   // The model's `@Key` survives the bundle's tracked-field rewrite.
   expect((globalThis as { productKey?: unknown }).productKey).toBe("id");
   void b;
+
+  // Dismissing one notice keeps the `else` branch: the same <ul> and the rows left (#3).
+  const ul = document.querySelector(".notes ul")!;
+  const [n1, , n3] = q(".notes li");
+  (q(".notes li button")[1] as HTMLButtonElement).click();
+  await tick();
+  expect(document.querySelector(".notes ul")).toBe(ul);
+  expect(q(".notes li")).toEqual([n1!, n3!]);
+  for (const button of q(".notes li button")) (button as HTMLButtonElement).click();
+  await tick();
+  expect(document.querySelector(".notes")!.textContent).toBe("Nothing pending.");
 }, 120_000);
 
 test("a field's @Key naming a member its items lack fails the type check", () => {
