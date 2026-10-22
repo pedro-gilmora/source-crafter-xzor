@@ -127,12 +127,15 @@ pub enum Node {
     },
     For {
         head: Src,
+        /// `@key(expr)`: what matches a pass to its row; a pass counter when absent.
+        key: Option<Src>,
         body: Vec<Node>,
         /// `} else { }`: rendered when no pass ran.
         otherwise: Option<Vec<Node>>,
     },
     While {
         cond: Src,
+        key: Option<Src>,
         body: Vec<Node>,
         otherwise: Option<Vec<Node>>,
     },

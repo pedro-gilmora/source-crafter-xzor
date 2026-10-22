@@ -51,6 +51,8 @@ type Meta = {
   ignored: Set<string>;
   validators: [string, Validator[]][];
   serialized?: string[];
+  /** `@Key`: the member lists match rows by. */
+  key?: string;
 };
 
 /** `true` when the value is valid, otherwise the message. */
@@ -76,6 +78,7 @@ const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new
 // A class's member decorators all run before its `$define`, which takes these over.
 let pendingPersist: string[] | undefined;
 let pendingIgnored: string[] | undefined;
+let pendingKey: string | undefined;
 let pendingValidators: [string, Validator[]][] | undefined;
 
 // Writes made by `assign`, `revertChanges` and `confirmChanges` are not changes.
@@ -119,7 +122,9 @@ export abstract class Model extends EventTarget {
       persisted: base ? base.persisted.slice() : [],
       ignored: new Set(base?.ignored),
       validators: base ? base.validators.map(([name, list]) => [name, list.slice()]) : [],
+      key: pendingKey ?? base?.key,
     };
+    pendingKey = undefined;
     if (pendingValidators) {
       for (const [name, list] of pendingValidators) {
         const known = own.validators.find((entry) => entry[0] === name);
@@ -527,6 +532,16 @@ export function Ignore(
 
 /** Leaves a field plain: the bundle does not turn it into a tracked field. */
 export function Untracked(_value: undefined, _context: ClassFieldDecoratorContext): void {}
+
+/** The model's identity: `@for` matches a list's rows by it, so a refetched model keeps its row's place. */
+export function Key(_member: unknown, context: ClassGetterDecoratorContext | ClassFieldDecoratorContext): void {
+  pendingKey = context.name as string;
+}
+
+/** @internal The `@Key` member of `item`'s class, if it is a model with one. */
+export function $keyName(item: unknown): string | undefined {
+  return item instanceof Model ? metaOf(item).key : undefined;
+}
 
 /** @see Model.same */
 export function isLike(a: unknown, b: unknown): boolean {

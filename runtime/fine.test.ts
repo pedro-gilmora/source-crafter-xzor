@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ComponentBase, mount, type RenderTreeBuilder } from "./index";
-import { EntitySet, FineComponent, Model, fine } from "./model";
+import { EntitySet, FineComponent, Key, Model, fine } from "./model";
 
 // Models and fine components are written the way the bundle and codegen emit them.
 
@@ -493,6 +493,113 @@ test("@attr: in a region sets its element while the branch shows, and comes off 
   expect(span.getAttribute("class")).toBe("cell");
   expect(span.getAttribute("title")).toBe("stock");
   expect(span.textContent).toBe("2");
+});
+
+test("keyed passes keep their rows: same key and values keep the nodes, changed values rebuild only that row", async () => {
+  let builds = 0;
+  class Page extends FineComponent {
+    #team: Record<string, number> = { a: 1, b: 2, c: 3 }; get team(): Record<string, number> { FineComponent.$reader?.(this, 0); return this.#team; } set team(v: Record<string, number>) { const p = this.#team; if (FineComponent.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["team"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const ul = fine.el(__p, "ul");
+        fine.keyedAt(ul.appendChild(document.createComment("")), (__pass) => {
+          for (const [k, v] of Object.entries(this.team)) {
+            __pass(k, [k, v], (__p) => {
+              builds++;
+              __p.appendChild(document.createElement("li")).textContent = `${k}${v}`;
+            });
+          }
+        }, (__p) => {
+          __p.appendChild(document.createElement("p")).textContent = "none";
+        });
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const ul = el.querySelector("ul")!;
+  const [a, b] = [...ul.querySelectorAll("li")];
+  expect(ul.textContent).toBe("a1b2c3");
+  p.team = { b: 2, a: 9, d: 4 };
+  await tick();
+  expect(ul.textContent).toBe("b2a9d4");
+  const after = [...ul.querySelectorAll("li")];
+  expect(after[0]).toBe(b!);
+  expect(after[1]).not.toBe(a!);
+  expect(builds).toBe(3 + 2);
+  p.team = {};
+  await tick();
+  expect(ul.innerHTML).toBe("<p>none</p><!---->");
+});
+
+test("a keyed run with a duplicate key throws, naming it", () => {
+  class Page extends FineComponent {
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.keyedAt(__p.appendChild(document.createComment("")), (__pass) => {
+          for (const x of [1, 2, 1]) __pass(x, [x], () => {});
+        });
+      });
+    }
+  }
+  expect(() => mount(Page, host())).toThrow("xzor: duplicate @key 1");
+});
+
+test("a list keyed by a function keeps a row whose item is replaced by one with the same key", async () => {
+  type Row = { id: number; name: string };
+  class Page extends FineComponent {
+    #rows: Row[] = [{ id: 1, name: "a" }, { id: 2, name: "b" }]; get rows(): Row[] { FineComponent.$reader?.(this, 0); return this.#rows; } set rows(v: Row[]) { const p = this.#rows; if (FineComponent.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["rows"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const ul = fine.el(__p, "ul");
+        fine.listAt(ul.appendChild(document.createComment("")), () => this.rows, [(r: Row) => r.name], (__p) => {
+          fine.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
+        }, undefined, (r) => r.id);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const [first, second] = [...el.querySelectorAll("li")];
+  p.rows = [p.rows[1]!, { id: 1, name: "a2" }];
+  await tick();
+  const after = [...el.querySelectorAll("li")];
+  expect(el.querySelector("ul")!.textContent).toBe("ba2");
+  // Same key, another object: its row is rebuilt in place; the other row only moved.
+  expect(after[0]).toBe(second!);
+  expect(after[1]).not.toBe(first!);
+});
+
+test("a list of models matches rows by the model's @Key", async () => {
+  class Item extends Model { constructor(data?: object) { super(data); this.assign(data); }
+    #id = 0; @Key get id(): number { Model.$reader?.(this, 0); return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(0, p); }
+  static { Model.$define(this, ["id"]); } }
+  class Page extends FineComponent {
+    #items: Item[] = [new Item({ id: 1 }), new Item({ id: 2 })]; get items(): Item[] { FineComponent.$reader?.(this, 0); return this.#items; } set items(v: Item[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["items"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.listAt(__p.appendChild(document.createComment("")), () => this.items, [], (__p, it: Item) => {
+          __p.appendChild(document.createElement("li")).textContent = String(it.id);
+        });
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  expect([...el.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["1", "2"]);
+  p.items = [p.items[1]!, new Item({ id: 3 })];
+  await tick();
+  expect([...el.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["2", "3"]);
+  // Two objects with one id are one key, unlike identity.
+  class Twice extends Page {
+    override get items(): Item[] {
+      return [new Item({ id: 1 }), new Item({ id: 1 })];
+    }
+  }
+  expect(() => mount(Twice, host())).toThrow("xzor: duplicate @key 1");
 });
 
 test("a fine child removed by a vdom parent stops writing", async () => {

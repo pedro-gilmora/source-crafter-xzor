@@ -357,6 +357,7 @@
       "end": "(?<=\\})(?!\\s*@?else\\b)",
       "patterns": [
         { "match": "(@)(else)\\b", "captures": { "1": { "name": "keyword.control.transition.xzor" }, "2": { "name": "keyword.control.xzor" } } },
+        { "match": "(@)(key)(?=\\s*\\()", "captures": { "1": { "name": "keyword.control.transition.xzor" }, "2": { "name": "keyword.control.xzor" } } },
         { "match": "\\b(else|if)\\b", "name": "keyword.control.xzor" },
         { "include": "#condition" },
         { "include": "#block" }

@@ -537,16 +537,18 @@ impl<'a> Parser<'a> {
             }
             "while" => {
                 let cond = self.condition()?;
+                let key = self.loop_key()?;
                 let body = self.block()?;
                 let otherwise = self.else_block()?;
-                Ok(Transition::Node(Node::While { cond, body, otherwise }))
+                Ok(Transition::Node(Node::While { cond, key, body, otherwise }))
             }
             "if" => self.if_block().map(Transition::Node),
             "for" => {
                 let head = self.condition()?;
+                let key = self.loop_key()?;
                 let body = self.block()?;
                 let otherwise = self.else_block()?;
-                Ok(Transition::Node(Node::For { head, body, otherwise }))
+                Ok(Transition::Node(Node::For { head, key, body, otherwise }))
             }
             "switch" => self.switch_block().map(Transition::Node),
             "slot" => self.slot().map(Transition::Node),
@@ -853,6 +855,20 @@ impl<'a> Parser<'a> {
         let (s, e) = self.balanced(b'(', b')')?;
         self.mark(TokenKind::Code, s, e);
         Ok(self.span(s + 1, e - 1))
+    }
+
+    /// A loop's `@key(expr)` between its head and its body.
+    fn loop_key(&mut self) -> PResult<Option<Src>> {
+        let save = self.pos;
+        self.skip_ws();
+        if !self.starts_with("@key") || self.b.get(self.pos + 4).is_some_and(|&c| is_ident_char(c)) {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.mark(TokenKind::Transition, self.pos, self.pos + 1);
+        self.pos += 1;
+        self.keyword("key");
+        self.condition().map(Some)
     }
 
     fn block(&mut self) -> PResult<Vec<Node>> {
@@ -1694,6 +1710,7 @@ mod tests {
                 head: "const i of xs".into(),
                 body: vec![el("i", vec![], vec![Node::Expr("i".into())])],
                 otherwise: None,
+                key: None,
             }
         );
     }
@@ -1715,6 +1732,14 @@ mod tests {
         assert!(matches!(&o[2], Node::ParentAttr(a) if a.name == "hidden" && a.value == AttrValue::Empty), "{o:?}");
         // Without `:` it is a member reference.
         assert_eq!(n[1], Node::Expr("attr".into()));
+    }
+
+    #[test]
+    fn loops_take_a_key() {
+        let n = nodes("@for (const [k, v] of es) @key(k) { x }\n@while (c.next()) @key(c.id) { y } else { z }\n@for (const a of b) { }");
+        assert!(matches!(&n[0], Node::For { key: Some(k), .. } if *k == "k" && k.at == 31), "{n:?}");
+        assert!(matches!(&n[1], Node::While { key: Some(k), otherwise: Some(_), .. } if *k == "c.id"), "{n:?}");
+        assert!(matches!(&n[2], Node::For { key: None, .. }), "{n:?}");
     }
 
     #[test]

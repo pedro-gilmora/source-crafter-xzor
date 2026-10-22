@@ -3,7 +3,7 @@
 // per microtask) when one of them changes. A binding is its own dep for the first source it reads.
 
 import { $inSvg as inSvg, $isFragment, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
-import { $flush, $notify, Model } from "./model";
+import { $flush, $keyName, $notify, Model } from "./model";
 
 const TEXT = 0;
 const ATTR = 1;
@@ -11,6 +11,8 @@ const REGION = 2;
 const LIST = 3;
 /** A virtual-DOM subtree (child components, slots, `@cascade`, routes, markup values), patched on change. */
 const ISLAND = 4;
+/** A loop run in place whose passes keep their rows by key (`Keyed`). */
+const KEYED = 5;
 const KIND = 7;
 /** The tracker has it queued; `at` reads 0 then, else -1. */
 const QUEUED = 8;
@@ -39,7 +41,10 @@ type Reads = readonly ((item: any, x?: any) => any)[];
 type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
-type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined };
+type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
+/** One pass of a keyed loop: its key, the loop variables it saw (compared to keep its row) and its markup. */
+type Pass = (key: unknown, values: readonly unknown[], build: Build) => void;
+type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.fine.empty");
 
@@ -196,6 +201,13 @@ class Binding {
       }
       case LIST:
         return reconcile(this, this.#run() as Iterable<unknown>);
+      case KEYED: {
+        const keyed = this.data as Keyed;
+        const order = this.#run() as Row[];
+        place(this.node, keyed.order, order);
+        keyed.order = order;
+        return;
+      }
       case ISLAND:
         this.#run();
         return;
@@ -224,7 +236,7 @@ class Binding {
     if ((this.flags & DEAD) !== 0) return;
     const kind = this.flags & KIND;
     if (kind === REGION) disposeAll(this.data as Region);
-    else if (kind === LIST) for (const row of (this.data as ListState).order) disposeAll(row);
+    else if (kind === LIST || kind === KEYED) for (const row of (this.data as ListState | Keyed).order) disposeAll(row);
     else if (kind === ISLAND) {
       disposeIsland((this.data as Island).tree);
       (this.data as Island).tree = [];
@@ -293,7 +305,8 @@ function disposeAll(h: Holder): void {
 function refreshAll(h: Holder): void {
   for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
     b.stateHasChanged();
-    if ((b.flags & KIND) === LIST) for (const row of (b.data as ListState).order) refreshAll(row);
+    const kind = b.flags & KIND;
+    if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) refreshAll(row);
   }
 }
 
@@ -357,40 +370,34 @@ function removeRange(head: Node, tail: Node): void {
   }
 }
 
-// Rows are matched by identity: kept rows keep their nodes and bindings, and only move when out of place.
-function reconcile(list: Binding, items: Iterable<unknown>): void {
-  const state = list.data as ListState;
-  const end = list.node;
+/** A row built by `build` (given the item), its nodes in a fragment until `place` puts them. */
+function newRow(ctx: Ctx, item: unknown, reads: Reads | undefined, build: (parent: Node, item: any) => void): Row {
+  const frag = document.createDocumentFragment();
+  const row: Row = { bindings: undefined, ctx, head: frag, tail: frag, item, reads };
+  within(row, () => build(frag, item));
+  // A row keeps at least one node, so it always has a place.
+  if (frag.firstChild === null) frag.appendChild(document.createComment(""));
+  row.head = frag.firstChild!;
+  row.tail = frag.lastChild!;
+  return row;
+}
+
+function dropRow(row: Row): void {
+  disposeAll(row);
+  removeRange(row.head, row.tail);
+}
+
+// Kept rows keep their nodes and bindings, and only move when out of place; new ones come out of their fragment.
+function place(end: Node, old: Row[], order: Row[]): void {
   const parent = end.parentNode!;
-  let next = Array.isArray(items) ? (items as unknown[]) : [...items];
-  if (next.length === 0 && state.empty !== undefined) next = [EMPTY];
-  const keep = new Set(next);
-  for (const [item, row] of state.rows)
-    if (!keep.has(item)) {
-      disposeAll(row);
-      removeRange(row.head, row.tail);
-      state.rows.delete(item);
-    }
   let cursor: Node = end;
-  for (const row of state.order)
+  for (const row of old)
     if (row.head.parentNode === parent) {
       cursor = row.head;
       break;
     }
-  const order: Row[] = [];
-  for (const item of next) {
-    let row = state.rows.get(item);
-    if (row === undefined) {
-      const frag = document.createDocumentFragment();
-      const made: Row = { bindings: undefined, ctx: state.ctx, head: frag, tail: frag, item, reads: item === EMPTY ? undefined : state.reads };
-      within(made, () => (item === EMPTY ? state.empty!(frag) : state.build(frag, item)));
-      // A row keeps at least one node, so it always has a place.
-      if (frag.firstChild === null) frag.appendChild(document.createComment(""));
-      made.head = frag.firstChild!;
-      made.tail = frag.lastChild!;
-      parent.insertBefore(frag, cursor);
-      state.rows.set(item, (row = made));
-    } else if (row.head !== cursor) {
+  for (const row of order) {
+    if (row.head !== cursor) {
       for (let node = row.head; ; ) {
         const after = node.nextSibling!;
         parent.insertBefore(node, cursor);
@@ -398,9 +405,89 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
         node = after;
       }
     } else cursor = row.tail.nextSibling!;
+  }
+}
+
+const duplicate = (key: unknown): Error => new Error(`xzor: duplicate @key ${String(key)}`);
+
+// Rows are matched by key (the list's, the models' `@Key`, else the item itself); a key whose item changed is rebuilt.
+// ponytail: a rebuilt row loses its nodes; patching it needs every row binding to read through `row.item`.
+function reconcile(list: Binding, items: Iterable<unknown>): void {
+  const state = list.data as ListState;
+  const rows = state.rows;
+  let next = Array.isArray(items) ? (items as unknown[]) : [...items];
+  if (next.length === 0 && state.empty !== undefined) next = [EMPTY];
+  const named = state.key === undefined ? $keyName(next[0]) : undefined;
+  const keyOf = state.key ?? (named === undefined ? undefined : (item: any) => item[named]);
+  let keys = next;
+  if (keyOf === undefined) {
+    const keep = new Set(next);
+    for (const [item, row] of rows)
+      if (!keep.has(item)) {
+        dropRow(row);
+        rows.delete(item);
+      }
+  } else {
+    const at = new Map<unknown, unknown>();
+    keys = next.map((item) => (item === EMPTY ? EMPTY : keyOf(item)));
+    for (let i = 0; i < next.length; i++) {
+      if (at.has(keys[i])) throw duplicate(keys[i]);
+      at.set(keys[i], next[i]);
+    }
+    for (const [key, row] of rows)
+      if (!at.has(key) || at.get(key) !== row.item) {
+        dropRow(row);
+        rows.delete(key);
+      }
+  }
+  const order: Row[] = [];
+  for (let i = 0; i < next.length; i++) {
+    const item = next[i];
+    let row = rows.get(keys[i]);
+    if (row === undefined) {
+      row = item === EMPTY ? newRow(state.ctx, item, undefined, state.empty!) : newRow(state.ctx, item, state.reads, state.build);
+      rows.set(keys[i], row);
+    }
     order.push(row);
   }
+  place(list.node, state.order, order);
   state.order = order;
+}
+
+function sameValues(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
+  return true;
+}
+
+// Runs the loop: each pass keeps the row of its key when it saw the same values, else builds one there and then,
+// while the loop's state is the pass's own.
+function runKeyed(s: Keyed, run: (pass: Pass) => void): Row[] {
+  const order: Row[] = [];
+  const seen = new Set<unknown>();
+  run((key, values, build) => {
+    if (seen.has(key)) throw duplicate(key);
+    seen.add(key);
+    let row = s.rows.get(key);
+    if (row !== undefined && !sameValues(row.item as unknown[], values)) {
+      dropRow(row);
+      row = undefined;
+    }
+    if (row === undefined) s.rows.set(key, (row = newRow(s.ctx, values, undefined, build)));
+    order.push(row);
+  });
+  if (order.length === 0 && s.empty !== undefined) {
+    let row = s.rows.get(EMPTY);
+    if (row === undefined) s.rows.set(EMPTY, (row = newRow(s.ctx, EMPTY, undefined, s.empty)));
+    order.push(row);
+    seen.add(EMPTY);
+  }
+  for (const [key, row] of s.rows)
+    if (!seen.has(key)) {
+      dropRow(row);
+      s.rows.delete(key);
+    }
+  return order;
 }
 
 type Named = { $n: string };
@@ -471,8 +558,8 @@ function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unkno
   track(new Binding(REGION | flags, end, build, region));
 }
 
-function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void, empty?: Build): void {
-  const state: ListState = { build, ctx: holder!.ctx, rows: new Map(), order: [], reads, empty };
+function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void, empty?: Build, key?: (item: any) => unknown): void {
+  const state: ListState = { build, ctx: holder!.ctx, rows: new Map(), order: [], reads, empty, key };
   track(new Binding(LIST, end, items, state));
 }
 
@@ -585,9 +672,15 @@ export const fine = {
     list(anchor(parent), items, undefined, build);
   },
 
-  /** A list before `end`; its rows' bindings use `reads`, shared by the rows. `empty` builds its `else`. */
-  listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void, empty?: Build): void {
-    list(end, items, reads, build, empty);
+  /** A list before `end`; its rows' bindings use `reads`, shared by the rows. `empty` builds its `else`; `key` matches rows. */
+  listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void, empty?: Build, key?: (item: T) => unknown): void {
+    list(end, items, reads, build, empty, key);
+  },
+
+  /** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
+  keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
+    const state: Keyed = { ctx: holder!.ctx, rows: new Map(), order: [], empty };
+    track(new Binding(KEYED, end, () => runKeyed(state, run), state));
   },
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */

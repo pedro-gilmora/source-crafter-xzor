@@ -260,9 +260,16 @@ pub fn generate_with(
     }
     let mut cascades: Vec<(String, String)> = Vec::new();
     let mut blanks: Vec<(usize, usize)> = Vec::new();
+    let mut list_keys = HashMap::new();
     for (code, decls) in doc.code.iter().zip(&decls) {
         cascade_members(code, decls, &mut cascades, &mut blanks).map_err(|(message, _)| message)?;
         for m in decls {
+            for &(s, e) in &m.decorators {
+                if let Some(member) = key_member(&code[s..e]) {
+                    list_keys.insert(m.name.clone(), member);
+                    blanks.push((code.at + s, code.at + e));
+                }
+            }
             if m.is_static {
                 statics.insert(m.name.clone());
             }
@@ -286,6 +293,8 @@ pub fn generate_with(
         in_region: false,
         in_loop: false,
         owner: None,
+        list_keys,
+        pass_locals: None,
         templates: Vec::new(),
         reads: None,
         uses_el: false,
@@ -638,6 +647,10 @@ struct Gen<'p> {
     in_loop: bool,
     /// The node variable of the element `@attr:` sets, when the nodes being emitted are its children.
     owner: Option<String>,
+    /// `@Key("member")` fields: loops over them match rows by that member of each item.
+    list_keys: HashMap<String, String>,
+    /// Emitting a keyed pass's row: its loop variables, which keep the row only while they are the same.
+    pass_locals: Option<Vec<String>>,
     /// The specs of the `@fine` templates, emitted after the class as `__t<N>`.
     templates: Vec<String>,
     /// The row being emitted, whose bindings go through its list's shared reads.
@@ -705,6 +718,26 @@ fn is_island(el: &Element) -> bool {
 
 fn is_plain_code_node(node: &Node) -> bool {
     matches!(node, Node::Code(parts) if is_plain_code(parts))
+}
+
+/// Whether a pass of loop `node` can be skipped when its row is kept: it has values to compare (a key or loop
+/// variables) and runs no `@{ }` code, whose effects a skipped pass would lose.
+fn keyable(node: &Node) -> bool {
+    fn has_code(nodes: &[Node]) -> bool {
+        nodes.iter().any(|n| match n {
+            Node::Code(_) => true,
+            Node::Element(el) => has_code(&el.children),
+            Node::If { branches, otherwise } => branches.iter().any(|(_, b)| has_code(b)) || otherwise.as_deref().is_some_and(has_code),
+            Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => has_code(body) || otherwise.as_deref().is_some_and(has_code),
+            Node::Switch { cases, .. } => cases.iter().any(|c| has_code(&c.body)),
+            _ => false,
+        })
+    }
+    match node {
+        Node::For { head, key, body, .. } => (key.is_some() || !loop_locals(head).is_empty()) && !has_code(body),
+        Node::While { key, body, .. } => key.is_some() && !has_code(body),
+        _ => false,
+    }
 }
 
 /// Whether `nodes` hold an `@attr:` for their enclosing element (one inside a child element is that child's).
@@ -802,6 +835,8 @@ impl Gen<'_> {
             in_region: false,
             in_loop: false,
             owner: None,
+            list_keys: HashMap::new(),
+            pass_locals: None,
             templates: Vec::new(),
             reads: None,
             uses_el: false,
@@ -1030,7 +1065,7 @@ impl Gen<'_> {
                     self.emit_block(block);
                 }
             }
-            Node::While { cond, body, otherwise } => {
+            Node::While { cond, body, otherwise, .. } => {
                 if otherwise.is_some() {
                     self.open_none();
                 }
@@ -1145,7 +1180,7 @@ impl Gen<'_> {
                 }
                 self.line("}");
             }
-            Node::For { head, body, otherwise } => {
+            Node::For { head, body, otherwise, .. } => {
                 if otherwise.is_some() {
                     self.open_none();
                 }
@@ -1413,7 +1448,12 @@ impl Gen<'_> {
                     parts.push((at(kids), FinePart::List(node)));
                     kids.push(Tpl::Anchor);
                 }
-                // Destructured items (entries, tuples) are new on every run: keyed rows would all be rebuilt.
+                Node::If { .. } | Node::Switch { .. } if self.reads_only_pass(node) => {
+                    // Built once with its row: one anchor, replaced by its content.
+                    parts.push((at(kids), FinePart::Region(node)));
+                    kids.push(Tpl::Anchor);
+                }
+                // Destructured items (entries, tuples) are new on every run: keyed passes, not a list.
                 Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => {
                     kids.push(Tpl::Anchor);
                     parts.push((at(kids), FinePart::Region(node)));
@@ -1479,6 +1519,14 @@ impl Gen<'_> {
                 self.fine_bound("text", var, read);
             }
             FinePart::Element(el) => self.fine_attrs(el, var, false)?,
+            FinePart::Region(node) if self.reads_only_pass(node) => {
+                // Its pass's values keep the row only while they are the same: a region would add nothing.
+                let f = self.fine_var();
+                self.line(&format!("const {f} = document.createDocumentFragment();"));
+                self.fine_flow(node, &f)?;
+                self.line(&format!("{var}.replaceWith({f});"));
+            }
+            FinePart::Region(node) if keyable(node) => self.fine_keyed(node, var)?,
             FinePart::Region(node) => self.fine_region(var, |g| g.fine_flow(node, "__p"))?,
             FinePart::Code(code, rest) => {
                 let scope = self.locals.len();
@@ -1543,9 +1591,12 @@ impl Gen<'_> {
     fn fine_region(&mut self, end: &str, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<(), String> {
         let row = self.row_level();
         let outer = std::mem::replace(&mut self.in_region, true);
+        // A region is its own binding: its conditions are tracked, whatever they read.
+        let pass = self.pass_locals.take();
         self.depth += 1;
         let code = self.capture(body);
         self.depth -= 1;
+        self.pass_locals = pass;
         self.in_region = outer;
         let code = code?;
         // A region setting the row's element by `@attr:` closes over it: it builds in the row.
@@ -1564,16 +1615,24 @@ impl Gen<'_> {
 
     /// `@for (const item of items)` before comment `end`: its rows' bindings share the reads it collects.
     fn fine_list(&mut self, node: &Node, end: &str) -> Result<(), String> {
-        let Node::For { head, body, otherwise } = node else { unreachable!("a list is a for") };
-        let (binding, items) = for_of(head).expect("a list is a for...of");
+        let Node::For { head, key, body, otherwise } = node else { unreachable!("a list is a for") };
+        let (binding, source) = for_of(head).expect("a list is a for...of");
         let scope = self.locals.len();
         self.locals.extend(loop_locals(head));
-        let items = self.expr(&items);
+        let items = self.expr(&source);
         let name = binding.split(':').next().unwrap_or_default().trim().to_string();
+        // `@key(expr)`, else the `@Key("member")` of the field the items come from.
+        let key = match key {
+            Some(k) => Some(self.expr(k)),
+            None => self.field_key(&source).map(|member| M::lit(&format!("{name}.{member}"))),
+        }
+        .map(|k| M::lit("(").add(M::src(&binding, binding.at)).lit_then(") => ").add(k));
         let outer = self.reads.replace(Reads { param: binding.text.clone(), name, list: Vec::new() });
         // Rows share the list's reads even when the list sits in a region.
         let in_region = std::mem::replace(&mut self.in_region, false);
+        let pass = self.pass_locals.take();
         let row = self.capture(|g| g.fine_block(body, "__p"));
+        self.pass_locals = pass;
         self.in_region = in_region;
         let reads = std::mem::replace(&mut self.reads, outer).expect("set above");
         self.locals.truncate(scope);
@@ -1597,12 +1656,94 @@ impl Gen<'_> {
         let item = if mentions(&row.text, &reads.name) { M::lit(", ").add(M::src(&binding, binding.at)) } else { M::default() };
         self.emit(M::lit("], (__p").add(item).lit_then(") => {"));
         self.splice(row);
+        let has_empty = empty.is_some();
         if let Some(empty) = empty {
             self.line("}, (__p) => {");
             self.splice(empty);
         }
-        self.line("});");
+        match key {
+            Some(key) => self.emit(M::lit(if has_empty { "}, " } else { "}, undefined, " }).add(key).lit_then(");")),
+            None => self.line("});"),
+        }
         Ok(())
+    }
+
+    /// The `@Key("member")` of the field `items` iterates, directly or through array methods that keep its items.
+    fn field_key(&self, items: &str) -> Option<String> {
+        const KEEPING: &[&str] = &["filter(", "slice(", "sort(", "toSorted(", "toReversed(", "reverse("];
+        let items = items.strip_prefix("this.").unwrap_or(items);
+        let root = items.find(|c: char| !c.is_ascii() || !is_ident_char(c as u8)).map_or(items, |i| &items[..i]);
+        let rest = &items[root.len()..];
+        if self.locals.iter().any(|l| l == root) || !(rest.is_empty() || rest.strip_prefix('.').is_some_and(|r| KEEPING.iter().any(|m| r.starts_with(m)))) {
+            return None;
+        }
+        self.list_keys.get(root).cloned()
+    }
+
+    /// Whether `node` is an `@if`/`@switch` of a keyed pass's row whose conditions read only the pass's values.
+    fn reads_only_pass(&self, node: &Node) -> bool {
+        let Some(locals) = &self.pass_locals else { return false };
+        let only = |e: &Src| {
+            let ok = std::cell::Cell::new(true);
+            rewrite(e, &|w| {
+                ok.set(ok.get() && (locals.iter().any(|l| l == w) || matches!(w, "true" | "false" | "null" | "undefined")));
+                false
+            });
+            ok.get() && !e.contains("this")
+        };
+        match node {
+            Node::If { branches, .. } => branches.iter().all(|(c, _)| only(c)),
+            Node::Switch { subject, cases } => only(subject) && cases.iter().flat_map(|c| &c.labels).flatten().all(only),
+            _ => false,
+        }
+    }
+
+    /// A `@for`/`@while` that is not a plain list, run in place: each pass keeps its row by key (`@key`, else a
+    /// pass counter) while it sees the same loop variables. Its body is a region per pass.
+    fn fine_keyed(&mut self, node: &Node, end: &str) -> Result<(), String> {
+        let (key, body, otherwise, locals) = match node {
+            Node::For { head, key, body, otherwise } => (key, body, otherwise, loop_locals(head)),
+            Node::While { key, body, otherwise, .. } => (key, body, otherwise, Vec::new()),
+            _ => unreachable!("only loops are keyed"),
+        };
+        self.line(&format!("fine.keyedAt({end}, (__pass) => {{"));
+        self.depth += 1;
+        if key.is_none() {
+            self.line("let __i = 0;");
+        }
+        let scope = self.locals.len();
+        self.locals.extend(locals.iter().cloned());
+        let lead = match node {
+            Node::For { head, .. } => M::lit("for (").add(self.expr(head)),
+            Node::While { cond, .. } => M::lit("while (").add(self.expr(cond)),
+            _ => unreachable!("only loops are keyed"),
+        };
+        self.emit(lead.lit_then(") {"));
+        self.depth += 1;
+        let key = key.as_ref().map_or_else(|| M::lit("__i++"), |k| self.expr(k));
+        self.emit(M::lit("__pass(").add(key).lit_then(&format!(", [{}], (__p) => {{", locals.join(", "))));
+        let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
+        let outer_pass = self.pass_locals.replace(locals.clone());
+        let r = self.fine_block(body, "__p");
+        self.pass_locals = outer_pass;
+        self.locals.truncate(scope);
+        let r = r.and_then(|()| {
+            self.line("});");
+            self.depth -= 1;
+            self.line("}");
+            self.depth -= 1;
+            match otherwise {
+                Some(body) => {
+                    self.line("}, (__p) => {");
+                    self.fine_block(body, "__p")?;
+                    self.line("});");
+                }
+                None => self.line("});"),
+            }
+            Ok(())
+        });
+        (self.in_region, self.in_loop) = flags;
+        r
     }
 
     /// What `body` emits, taken out of the output.
@@ -1663,7 +1804,7 @@ impl Gen<'_> {
                 }
                 self.line("}");
             }
-            Node::For { head, body, otherwise } => {
+            Node::For { head, body, otherwise, .. } => {
                 if otherwise.is_some() {
                     self.open_none();
                 }
@@ -1686,7 +1827,7 @@ impl Gen<'_> {
                     self.close_none();
                 }
             }
-            Node::While { cond, body, otherwise } => {
+            Node::While { cond, body, otherwise, .. } => {
                 if otherwise.is_some() {
                     self.open_none();
                 }
@@ -2195,6 +2336,13 @@ pub fn collect_members(code: &str) -> Vec<String> {
     member_decls(code).into_iter().map(|m| m.name).collect()
 }
 
+/// `sku` for `@Key("sku")` on an array field: the member its items are matched by.
+fn key_member(decorator: &str) -> Option<String> {
+    let arg = decorator.strip_prefix("@Key")?.trim_start().strip_prefix('(')?.strip_suffix(')')?.trim();
+    let inner = arg.strip_prefix(['"', '\''])?.strip_suffix(['"', '\''])?;
+    is_identifier(inner).then(|| inner.to_string())
+}
+
 /// The cascade name of a `@Cascade` or `@Cascade("name")` decorator on `prop`; `None` for others.
 fn cascade_name(decorator: &str, prop: &str) -> Result<Option<String>, String> {
     let Some(rest) = decorator.strip_prefix("@Cascade").map(str::trim_start) else { return Ok(None) };
@@ -2281,7 +2429,7 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
                     collect_slots(body, members, loops, out)?;
                 }
             }
-            Node::For { head, body, otherwise } => {
+            Node::For { head, body, otherwise, .. } => {
                 let scope = loops.len();
                 if let Some(var) = loop_var_type(head, members, loops) {
                     loops.push(var);
@@ -3498,11 +3646,11 @@ mod tests {
         // Destructured items (entries, tuples) are new on every run: a keyed list would rebuild every row.
         has("for (const [k, v] of Object.entries(this.team)) {");
         assert!(!g.code.contains("[k, v]) =>"), "{}", g.code);
-        // Inside a plain loop the loop's region rebuilds whole: nested structure stays inline, not a region per pass.
-        has("for (const [k, v] of Object.entries(this.team)) {\n          if (v) {\n            const _e18 = __t5() as El<\"u\">;");
+        // Keyed by a pass counter: a pass that saw the same `k` and `v` keeps its row, and its `@if` is a region.
+        has("for (const [k, v] of Object.entries(this.team)) {\n          __pass(__i++, [k, v], (__p) => {");
         // A `@{ }` block and the siblings after it are one region: its locals stay in scope and current.
         has("fine.regionAt(_e9, (__p) => {\n        const total = this.count * 2;");
-        has("fine.textAt(_e21, () => total);");
+        has("() => total);");
         has("__p.appendChild(_e0);");
         assert!(!g.code.contains("__b.openElement"), "{}", g.code);
     }
@@ -3554,7 +3702,35 @@ mod tests {
         has("], (__p) => {\n        const _e");
         has("}, (__p) => {\n        const _e");
         has("fine.textAt(");
-        has("let __none = true;\n          for (let i = 0; i < this.xs.length; i++) {\n            __none = false;");
+        has("for (let i = 0; i < this.xs.length; i++) {\n          __pass(__i++, [i], (__p) => {");
+        has("}, (__p) => {\n        const _e10 = __t4() as El<\"u\">;");
+    }
+
+    #[test]
+    fn fine_loops_key_their_passes() {
+        let src = "@fine\n@code {\n  @Key(\"sku\") lines: { sku: string; qty: number }[] = [];\n  team: Record<string, number> = {};\n  n = 0;\n}\n<ul>@for (const l of lines.filter((x) => x.qty > 0)) {<li>@l.sku</li>}</ul>\n<ol>@for (const [k, v] of Object.entries(team)) {<li>@k @if (v > 1) {<b>many</b>}</li>} else {<p>none</p>}</ol>\n<p>@for (let i = 0; i < n; i++) @key(i * 2) {<i>@i</i>}</p>\n@for (const r of lines) @key(r.sku + r.qty) {<s>@r.sku</s>}\n@for (const [a, b] of Object.entries(team)) { @{ const c = b; } <u>@a @c</u> }";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // The field's `@Key` keys the loops over it, through array methods that keep its items.
+        has("}, undefined, (l) => l.sku);");
+        assert!(!g.code.contains("@Key"), "{}", g.code);
+        // No key: a pass counter; the row's nested `@if` is a region of its own.
+        has("fine.keyedAt(");
+        has("let __i = 0;");
+        has("for (const [k, v] of Object.entries(this.team)) {");
+        has("__pass(__i++, [k, v], (__p) => {");
+        has("}, (__p) => {");
+        has("if (v > 1) {");
+        // That `@if` reads only the pass's values, which the row is kept by: inline at its anchor, no region.
+        let at = g.code.find("if (v > 1) {").unwrap();
+        assert!(!g.code[at - 80..at].contains("regionAt"), "{}", g.code);
+        has(".replaceWith(");
+        // `@key(expr)` on the loop.
+        has("__pass(i * 2, [i], (__p) => {");
+        has("}, undefined, (r) => r.sku + r.qty);");
+        // A pass running `@{ }` code is not skipped: that loop rebuilds whole.
+        has("for (const [a, b] of Object.entries(this.team)) {\n");
+        assert!(!g.code.contains("[a, b], (__p)"), "{}", g.code);
     }
 
     #[test]
