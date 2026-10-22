@@ -446,6 +446,10 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("attribute", "attribute $1", "Decorator on the component class"),
     ("slot", "slot", "Where slot content renders"),
     ("cascade", "cascade:$1($2) {\n\t$0\n}", "Cascading value for the components inside"),
+    ("once", "once { $0 }", "Read once, nothing bound: @once(expr) or @once { markup }"),
+    ("attr", "attr:$1=\"$2\"", "An attribute of the enclosing element while this branch shows"),
+    ("key", "key($1)", "After a @for/@while head: what keeps each pass's DOM"),
+    ("else", "else {\n\t$0\n}", "After @if, @for or @while: rendered when no branch or pass ran"),
     ("ClientRoutes", "ClientRoutes(${1:route}) {\n\t$0\n}", "Routes block for a browser SPA"),
     ("ServerRoutes", "ServerRoutes(${1:route}) {\n\t$0\n}", "Routes block for one page per route"),
 ];
@@ -798,6 +802,15 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "inject");
         assert_eq!(items[0].insert, "inject $1 $2");
+    }
+
+    #[test]
+    fn directive_completions_include_the_new_syntax() {
+        let labels = |doc: &str| completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]).into_iter().map(|i| (i.label, i.insert)).collect::<Vec<_>>();
+        assert_eq!(labels("\n@onc"), [("once".to_string(), "once { $0 }".to_string())]);
+        assert!(labels("<p>@att").contains(&("attr".to_string(), "attr:$1=\"$2\"".to_string())));
+        assert_eq!(labels("\n@ke"), [("key".to_string(), "key($1)".to_string())]);
+        assert_eq!(labels("\n@el"), [("else".to_string(), "else {\n\t$0\n}".to_string())]);
     }
 
     #[test]
