@@ -688,6 +688,15 @@ export const fine = {
     region(end.previousSibling as Comment, end, build, undefined, 0);
   },
 
+  /** A comment appended to `parent`: where a lone list, keyed loop or island goes. */
+  anchor,
+
+  /** Two comments appended to `parent`, for a lone region; the end one. */
+  anchors(parent: Node): Comment {
+    anchor(parent);
+    return anchor(parent);
+  },
+
   /** A row's region: `reads[i](item, parent)` builds it. */
   regionItem(end: Comment, i: number): void {
     const row = holder as Row;

@@ -1347,6 +1347,19 @@ impl Gen<'_> {
             }
             return Ok(());
         }
+        // One control-flow block alone: its anchors go straight in, with no template to clone.
+        if parts.len() == 1 && kids.iter().all(|k| matches!(k, Tpl::Anchor)) {
+            let part = &parts[0].1;
+            if let FinePart::Region(node) = part
+                && self.reads_only_pass(node)
+            {
+                return self.fine_flow(node, parent);
+            }
+            let var = self.fine_var();
+            let call = if kids.len() == 2 { "anchors" } else { "anchor" };
+            self.line(&format!("const {var} = fine.{call}({parent});"));
+            return self.fine_part(part, &var);
+        }
         let t = self.templates.len();
         self.templates.push(kids.iter().map(spec_js).collect::<Vec<_>>().join(", "));
         // A single element is cloned alone; anything else comes in a fragment, so anchors have a parent.
@@ -1465,6 +1478,11 @@ impl Gen<'_> {
                     }
                 }
                 // Destructured items (entries, tuples) are new on every run: keyed passes, not a list.
+                // A keyed loop places its rows before its end: one anchor.
+                Node::For { .. } | Node::While { .. } if keyable(node) => {
+                    parts.push((at(kids), FinePart::Region(node)));
+                    kids.push(Tpl::Anchor);
+                }
                 Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => {
                     kids.push(Tpl::Anchor);
                     parts.push((at(kids), FinePart::Region(node)));
@@ -3639,7 +3657,7 @@ mod tests {
         has("export default class C extends FineComponent {");
         has("__b.addFine((__p) => {");
         // Elements and static text are a template, cloned; each dynamic part binds the node it has in place.
-        has("const __t0 = fine.template([[\"div\", [\"class\", \"team\"], [\"button\", 0, \"\"], [\"input\", 0], [\"input\", [\"type\", \"checkbox\"]], null, null, null, null, null, null, null, null, null]]);");
+        has("const __t0 = fine.template([[\"div\", [\"class\", \"team\"], [\"button\", 0, \"\"], [\"input\", 0], [\"input\", [\"type\", \"checkbox\"]], null, null, null, null, null, null, null]]);");
         has("const _e0 = __t0() as El<\"div\">;\n      const _e1 = _e0.firstChild! as El<\"button\">;\n      const _e2 = _e1.firstChild! as Text;\n      const _e3 = _e1.nextSibling! as El<\"input\">;");
         has("fine.attr(_e0, \"title\", () => \"n \" + String(this.label));");
         has("fine.on(_e1, \"click\", this.inc.bind(this));");
@@ -3748,14 +3766,28 @@ mod tests {
     }
 
     #[test]
+    fn a_lone_control_flow_block_takes_its_place_without_a_template() {
+        let src = "@fine\n@code { items: { done: boolean }[] = []; team: Record<string, number> = {}; sel = \"\"; }\n<ul>@for (const it of items) {@if (it.done) {<li>done</li>}}</ul>\n<ol>@for (const [k, v] of Object.entries(team)) {@if (sel === k) {<li>@k</li>}}</ol>\n<div>@for (const [k, v] of Object.entries(team)) {@if (v > 1) {<b>@k</b>}}</div>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // No two-comment templates: the anchors go straight in.
+        assert!(!g.code.contains("fine.template([null, null])") && !g.code.contains("fine.template([null])"), "{}", g.code);
+        has("= fine.anchors(__p);\n");
+        // A keyed loop only needs its end: one anchor in its element's template.
+        has("[\"ol\", 0, null]");
+        // A row that is only a pass-only `@if` builds it straight into the row.
+        has("const __p = __pass(__i++, [k, v]);\n          if (__p !== undefined) {\n            if (v > 1) {");
+    }
+
+    #[test]
     fn fine_nested_flow_in_a_region_gets_its_own_regions_and_lists() {
         let src = "@fine\n@code { open = false; items = [\"a\"]; text = \"\"; }\n@if (open) {\n<dialog>\n<input @bind=\"text\" />\n@if (text.length > 2) {\n<p>long</p>\n}\n<ul>\n@for (const it of items) {\n<li>@it</li>\n}\n</ul>\n</dialog>\n}";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The outer region only reads `open`: the nested `@if` and `@for` bind on their own.
-        has("fine.regionAt(_e1, (__p) => {\n        if (this.open) {\n          const _e2 = __t1() as El<\"dialog\">;");
-        has("fine.regionAt(_e4, (__p) => {\n            if (this.text.length > 2) {");
-        has("fine.listAt(_e6, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
+        has("fine.regionAt(_e0, (__p) => {\n        if (this.open) {\n          const _e1 = __t0() as El<\"dialog\">;");
+        has("fine.regionAt(_e3, (__p) => {\n            if (this.text.length > 2) {");
+        has("fine.listAt(_e5, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
         assert!(!g.code.contains("for (const it of"), "{}", g.code);
     }
 
@@ -3782,9 +3814,8 @@ mod tests {
         let src = "@fine\n@code { n = 1; show = true; extra = {}; }\n<div>\n<Card title=\"@(n)\"><b>@n</b></Card>\n<p @onclick:preventDefault @onclick=\"() => n++\">x</p>\n<p @attributes=\"extra\" />\n@cascade:theme(n) { <i>@n</i> }\n@slot\n@if (show) {\n<Card />\n}\n</div>";
         let g = gen_with(src, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        // A lone anchor is cloned in a fragment: the island needs its parent.
-        has("const __t1 = fine.template([null]);");
-        assert!(!g.code.contains("() as Comment"), "{}", g.code);
+        // A lone island needs no template: its anchor goes straight into the region's fragment.
+        has("const _e7 = fine.anchor(__p);\n          fine.islandAt(_e7, (__b) => { __b.addComponent(Card, {}); });");
         has("fine.islandAt(_e1, (__b) => { __b.addComponent(Card, { title: this.n }, { default: () => ComponentBase.fragment((__b) => { __b.openElement(\"b\"); __b.addContent(this.n); __b.closeElement(); }) }); });");
         has("fine.islandAt(_e2, (__b) => { __b.openElement(\"p\"); __b.addEventModifier(\"click\", \"preventDefault\", true);");
         has("fine.islandAt(_e3, (__b) => { __b.openElement(\"p\"); __b.addAttributes(this.extra);");
