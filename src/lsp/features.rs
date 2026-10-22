@@ -163,6 +163,10 @@ fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
             Node::SlotFill(f) => collect_slot_names(&f.body, out),
             Node::Cascade { body, .. } => collect_slot_names(body, out),
             Node::Once(body) => collect_slot_names(body, out),
+            Node::Await { pending, then, catch, .. } => {
+                collect_slot_names(pending, out);
+                then.iter().chain(catch).for_each(|(_, b)| collect_slot_names(b, out));
+            }
             Node::Routes { sections, .. } => sections.iter().for_each(|s| collect_slot_names(&s.body, out)),
             Node::Text(_) | Node::Expr(_) | Node::ParentAttr(_) => {}
         }
@@ -447,6 +451,7 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("slot", "slot", "Where slot content renders"),
     ("cascade", "cascade:$1($2) {\n\t$0\n}", "Cascading value for the components inside"),
     ("once", "once { $0 }", "Read once, nothing bound: @once(expr) or @once { markup }"),
+    ("await", "await ($1) {\n\t$2\n} then (${3:value}) {\n\t$0\n} catch (${4:error}) {\n}", "Pending markup, then the value, or the error"),
     ("attr", "attr:$1=\"$2\"", "An attribute of the enclosing element while this branch shows"),
     ("key", "key($1)", "After a @for/@while head: what keeps each pass's DOM"),
     ("else", "else {\n\t$0\n}", "After @if, @for or @while: rendered when no branch or pass ran"),

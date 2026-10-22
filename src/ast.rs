@@ -167,6 +167,13 @@ pub enum Node {
     ParentAttr(Attr),
     /// `@once(expr)` (one `Expr`) or `@once { }`: built once, with nothing bound.
     Once(Vec<Node>),
+    /// `@await (promise) { pending } then (value) { } catch (error) { }`; each arm's name is optional.
+    Await {
+        promise: Src,
+        pending: Vec<Node>,
+        then: Option<(Option<Src>, Vec<Node>)>,
+        catch: Option<(Option<Src>, Vec<Node>)>,
+    },
 }
 
 /// One section of a routes block and the markup it renders.

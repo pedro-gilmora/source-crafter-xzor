@@ -442,6 +442,10 @@ fn visit(node: &mut Node, attrs: &[Attr], root: bool) {
         }
         Node::Cascade { body, .. } => all(body, root),
         Node::Once(body) => all(body, root),
+        Node::Await { pending, then, catch, .. } => {
+            all(pending, root);
+            then.iter_mut().chain(catch.iter_mut()).for_each(|(_, b)| all(b, root));
+        }
         Node::Switch { cases, .. } => cases.iter_mut().for_each(|c| all(&mut c.body, root)),
         Node::Routes { sections, .. } => sections.iter_mut().for_each(|s| all(&mut s.body, root)),
         Node::Slot(s) => {

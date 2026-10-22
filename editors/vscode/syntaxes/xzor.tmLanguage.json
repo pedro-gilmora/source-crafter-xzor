@@ -442,7 +442,15 @@
             "1": { "name": "keyword.control.transition.xzor" },
             "2": { "name": "keyword.control.xzor" }
           }
-        }
+        },
+        {
+          "match": "(?<![[:alnum:]])(@)(await)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "keyword.control.xzor" }
+          }
+        },
+        { "match": "(?<=\\})\\s*(then|catch)\\b(?=\\s*[({])", "captures": { "1": { "name": "keyword.control.xzor" } } }
       ]
     },
     "cascade": {

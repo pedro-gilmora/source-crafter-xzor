@@ -480,6 +480,7 @@ fn find_routes(nodes: &[Node]) -> Option<&Node> {
         Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => find_routes(body).or_else(|| otherwise.as_deref().and_then(find_routes)),
         Node::Cascade { body, .. } => find_routes(body),
         Node::Once(body) => find_routes(body),
+        Node::Await { pending, then, catch, .. } => find_routes(pending).or_else(|| then.iter().chain(catch).find_map(|(_, b)| find_routes(b))),
         Node::Switch { cases, .. } => cases.iter().find_map(|c| find_routes(&c.body)),
         Node::SlotFill(fill) => find_routes(&fill.body),
         Node::Slot(slot) => slot.fallback.as_deref().and_then(find_routes),
@@ -690,6 +691,8 @@ enum FinePart<'n> {
     /// `@once(expr)`: its text hole, set once.
     OnceText(&'n Src),
     /// `@once { }`: built once before its anchor.
+    /// `@await`, between its two anchors.
+    Await(&'n Node),
     Once(&'n [Node]),
 }
 
@@ -1120,6 +1123,7 @@ impl Gen<'_> {
             }
             // A render pass has no "once": it renders as usual.
             Node::Once(body) => self.nodes(body)?,
+            Node::Await { .. } => return Err("@await needs a fine component (remove @render)".into()),
             Node::Cascade { name, value, fixed, body } => {
                 let quoted = js_string(name);
                 // The mapping stays on the name only while the literal is a straight copy of it.
@@ -1515,6 +1519,11 @@ impl Gen<'_> {
                     kids.push(Tpl::Anchor);
                 }
                 Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
+                Node::Await { .. } => {
+                    kids.push(Tpl::Anchor);
+                    parts.push((at(kids), FinePart::Await(node)));
+                    kids.push(Tpl::Anchor);
+                }
                 Node::ParentAttr(a) => parts.push((path.to_vec(), FinePart::ParentAttr(a))),
                 Node::Once(body) => match body.as_slice() {
                     [Node::Expr(e)] => {
@@ -1600,6 +1609,7 @@ impl Gen<'_> {
                 r?;
             }
             FinePart::List(node) => self.fine_list(node, var)?,
+            FinePart::Await(node) => self.fine_await(node, var)?,
             FinePart::Flow(node) => self.fine_flow(node, var)?,
             FinePart::OnceText(e) => {
                 let read = self.expr(e);
@@ -1829,6 +1839,47 @@ impl Gen<'_> {
         r
     }
 
+    /// `@await` before comment `end`: the promise as a read, and each arm a region body taking its value.
+    fn fine_await(&mut self, node: &Node, end: &str) -> Result<(), String> {
+        let Node::Await { promise, pending, then, catch } = node else { unreachable!("an @await") };
+        let read = self.expr(promise);
+        self.emit(M::lit(&format!("fine.awaitAt({end}, () => ")).add(read).lit_then(", (__p) => {"));
+        let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
+        let pass = self.pass_locals.take();
+        let r = (|| {
+            self.fine_block(pending, "__p")?;
+            // Whether an arm's function body is open, to be closed by what comes next.
+            let mut open = true;
+            for arm in [then, catch] {
+                let close = if open { "}, " } else { ", " };
+                let Some((name, body)) = arm else {
+                    self.line(&format!("{close}undefined"));
+                    open = false;
+                    continue;
+                };
+                let scope = self.locals.len();
+                let head = match name {
+                    Some(n) => {
+                        self.locals.push(n.text.clone());
+                        M::lit(&format!("{close}(__p, ")).add(M::src(n, n.at)).lit_then(") => {")
+                    }
+                    None => M::lit(&format!("{close}(__p) => {{")),
+                };
+                self.emit(head);
+                let r = self.fine_block(body, "__p");
+                self.locals.truncate(scope);
+                r?;
+                open = true;
+            }
+            self.line(if open { "});" } else { ");" });
+            Ok(())
+        })();
+        self.pass_locals = pass;
+        (self.in_region, self.in_loop) = flags;
+        r
+    }
+
+    /// 
     /// What `body` emits, taken out of the output.
     fn capture(&mut self, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<M, String> {
         let out = std::mem::take(&mut self.out);
@@ -2541,6 +2592,12 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
             Node::SlotFill(fill) => collect_slots(&fill.body, members, loops, out)?,
             Node::Cascade { body, .. } => collect_slots(body, members, loops, out)?,
             Node::Once(body) => collect_slots(body, members, loops, out)?,
+            Node::Await { pending, then, catch, .. } => {
+                collect_slots(pending, members, loops, out)?;
+                for (_, body) in then.iter().chain(catch) {
+                    collect_slots(body, members, loops, out)?;
+                }
+            }
             Node::Routes { sections, .. } => {
                 for section in sections {
                     collect_slots(&section.body, members, loops, out)?;
@@ -3759,6 +3816,21 @@ mod tests {
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
         has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
         has("static readonly cached = true;");
+    }
+
+    #[test]
+    fn await_blocks_show_pending_then_and_catch() {
+        let src = "@fine\n@code { q = \"\"; load(q: string): Promise<string[]> { return Promise.resolve([q]); } }\n<ul>@await (load(q)) {<li>…</li>} then (rows) {@for (const r of rows) {<li>@r</li>}} catch (e) {<li>@String(e)</li>}</ul>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("fine.awaitAt(_e1, () => this.load(this.q), (__p) => {");
+        has("}, (__p, rows) => {");
+        has("fine.listAt(");
+        has("}, (__p, e) => {");
+        has("() => String(e)");
+        let doc = parse("@render\n@await (p) { } then { }").unwrap().0;
+        let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
+        assert!(err.contains("@await needs a fine component"), "{err}");
     }
 
     #[test]

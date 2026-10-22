@@ -683,6 +683,67 @@ test("@once: read once, untracked, even inside a region", async () => {
   expect(el.querySelector("b")!.textContent).toBe("2");
 });
 
+test("@await: pending, then the value; a newer promise wins; what then reads re-renders it without a new request", async () => {
+  const gates: ((v: string[]) => void)[] = [];
+  let requests = 0;
+  class Page extends FineComponent {
+    #q = "a"; get q(): string { FineComponent.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (FineComponent.same(p, v)) return; this.#q = v; this.$changed(0, p); }
+    #suffix = "!"; get suffix(): string { FineComponent.$reader?.(this, 1); return this.#suffix; } set suffix(v: string) { const p = this.#suffix; if (FineComponent.same(p, v)) return; this.#suffix = v; this.$changed(1, p); }
+    static { FineComponent.$define(this, ["q", "suffix"]); }
+    load(q: string): Promise<string[]> {
+      requests++;
+      return new Promise((r) => gates.push(() => r([q])));
+    }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const end = fine.anchors(__p);
+        fine.awaitAt(end, () => this.load(this.q), (__p) => {
+          __p.appendChild(document.createTextNode("wait"));
+        }, (__p, rows) => {
+          fine.text(__p, () => rows.join() + this.suffix);
+        }, undefined);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  expect(el.textContent).toBe("wait");
+  p.q = "b";
+  await tick();
+  expect(requests).toBe(2);
+  gates[1]!(["b"]);
+  await tick();
+  expect(el.textContent).toBe("b!");
+  // The older request lands late: ignored.
+  gates[0]!(["a"]);
+  await tick();
+  expect(el.textContent).toBe("b!");
+  p.suffix = "?";
+  await tick();
+  expect(el.textContent).toBe("b?");
+  expect(requests).toBe(2);
+});
+
+test("@await: a rejection shows catch; a plain value shows then at once", async () => {
+  class Page extends FineComponent {
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.awaitAt(fine.anchors(__p), () => Promise.reject(new Error("no")), undefined, undefined, (__p, e) => {
+          __p.appendChild(document.createTextNode(String((e as Error).message)));
+        });
+        fine.awaitAt(fine.anchors(__p), () => 5, undefined, (__p, n) => {
+          __p.appendChild(document.createTextNode(String(n + 1)));
+        }, undefined);
+      });
+    }
+  }
+  const el = host();
+  mount(Page, el);
+  expect(el.textContent).toBe("6");
+  await tick();
+  expect(el.textContent).toBe("no6");
+});
+
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
   let finish!: () => void;
   const finished = new Promise<void>((r) => (finish = r));

@@ -420,6 +420,8 @@ impl<'a> Parser<'a> {
         let parent_attr = word == "attr" && self.peek() == Some(b':') && matches!(self.peek_at(1), Some(c) if is_ident_start(c));
         // `@once(expr)` or `@once { }`; bare `@once` is a member reference.
         let once = word == "once" && (self.peek() == Some(b'(') || self.next_non_blank() == Some(b'{'));
+        // `@await (promise) { }`; bare `@await` is a member reference.
+        let awaits = word == "await" && self.next_non_blank() == Some(b'(');
         self.mark(TokenKind::Transition, at, at + 1);
         if self.bound.iter().any(|b| b == word) {
             return self.implicit_expression(word_start);
@@ -431,6 +433,14 @@ impl<'a> Parser<'a> {
                 return Ok(Transition::Node(Node::Once(vec![Node::Expr(expr)])));
             }
             return Ok(Transition::Node(Node::Once(self.block()?)));
+        }
+        if awaits {
+            self.mark(TokenKind::Keyword, word_start, self.pos);
+            let promise = self.condition()?;
+            let pending = self.block()?;
+            let then = self.await_arm("then")?;
+            let catch = self.await_arm("catch")?;
+            return Ok(Transition::Node(Node::Await { promise, pending, then, catch }));
         }
         if parent_attr {
             self.mark(TokenKind::Keyword, word_start, self.pos);
@@ -865,6 +875,20 @@ impl<'a> Parser<'a> {
         let (s, e) = self.balanced(b'(', b')')?;
         self.mark(TokenKind::Code, s, e);
         Ok(self.span(s + 1, e - 1))
+    }
+
+    /// An `@await`'s `then (value) { }` or `catch (error) { }`, the name optional.
+    fn await_arm(&mut self, kw: &str) -> PResult<Option<(Option<Src>, Vec<Node>)>> {
+        let save = self.pos;
+        let tokens = self.tokens.len();
+        self.skip_ws();
+        if !self.keyword(kw) {
+            self.pos = save;
+            self.tokens.truncate(tokens);
+            return Ok(None);
+        }
+        let name = if self.next_non_blank() == Some(b'(') { Some(self.condition()?) } else { None };
+        Ok(Some((name, self.block()?)))
     }
 
     /// A loop's `@key(expr)` between its head and its body.
@@ -1731,6 +1755,17 @@ mod tests {
         assert!(doc.lazy && doc.cached);
         let doc = parse("<p/>").unwrap().0;
         assert!(!doc.lazy && !doc.cached);
+    }
+
+    #[test]
+    fn await_blocks() {
+        let n = nodes("@await (load(q)) { <p>wait</p> } then (rows) { @rows.length } catch (e) { @e }\n@await (p) { } then { ok }");
+        let Node::Await { promise, pending, then, catch } = &n[0] else { panic!("{n:?}") };
+        assert_eq!(*promise, "load(q)");
+        assert!(matches!(&pending[0], Node::Element(p) if &*p.name == "p"));
+        assert!(matches!(then, Some((Some(b), body)) if *b == "rows" && body.len() == 1), "{then:?}");
+        assert!(matches!(catch, Some((Some(e), _)) if *e == "e"));
+        assert!(matches!(&n[1], Node::Await { then: Some((None, _)), catch: None, .. }), "{n:?}");
     }
 
     #[test]

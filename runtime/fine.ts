@@ -13,6 +13,8 @@ const LIST = 3;
 const ISLAND = 4;
 /** A loop run in place whose passes keep their rows by key (`Keyed`). */
 const KEYED = 5;
+/** Runs `read` for what it does (`@await`'s request): never re-run after handlers, so never loose. */
+const EFFECT = 6;
 const KIND = 7;
 /** The tracker has it queued; `at` reads 0 then, else -1. */
 const QUEUED = 8;
@@ -153,7 +155,7 @@ class Binding {
 
   // Nothing tracked tells it about changes: its component re-runs it after each of its handlers.
   #loose(): void {
-    if ((this.flags & (LOOSE | DEAD)) !== 0 || holder === undefined) return;
+    if ((this.flags & (LOOSE | DEAD)) !== 0 || (this.flags & KIND) === EFFECT || holder === undefined) return;
     this.flags |= LOOSE;
     holder.ctx.loose.push(this);
   }
@@ -212,6 +214,7 @@ class Binding {
         return;
       }
       case ISLAND:
+      case EFFECT:
         this.#run();
         return;
     }
@@ -734,6 +737,41 @@ export const fine = {
 
   /** A comment appended to `parent`: where a lone list, keyed loop or island goes. */
   anchor,
+
+  /**
+   * `@await (read()) { pending } then (v) { } catch (e) { }` between `end` and the comment before it. `read`
+   * runs again when what it reads changes, and a promise it replaced is ignored when it settles; the arms re-run
+   * on their own reads like a region's. A rejection without `catch` is reported.
+   */
+  awaitAt<R>(end: Comment, read: () => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
+    const state = { phase: 0, value: undefined as unknown, seq: 0 };
+    const view = new Binding(REGION, end, (p: Node) => {
+      if (state.phase === 0) pending?.(p);
+      else if (state.phase === 1) then?.(p, state.value as Awaited<R>);
+      else fail?.(p, state.value);
+    }, { bindings: undefined, ctx: holder!.ctx, start: end.previousSibling as Comment, item: undefined } satisfies Region);
+    const show = (phase: number, value: unknown): void => {
+      if ((view.flags & DEAD) !== 0) return;
+      state.phase = phase;
+      state.value = value;
+      view.stateHasChanged();
+    };
+    track(view);
+    track(new Binding(EFFECT, end, () => {
+      const result = read();
+      const seq = ++state.seq;
+      if (typeof (result as PromiseLike<unknown> | null)?.then !== "function") return show(1, result);
+      if (state.phase !== 0) show(0, undefined);
+      (result as PromiseLike<unknown>).then(
+        (value) => seq === state.seq && show(1, value),
+        (error) => {
+          if (seq !== state.seq) return;
+          show(2, error);
+          if (fail === undefined) queueMicrotask(() => { throw error; });
+        },
+      );
+    }, undefined));
+  },
 
   /** Two comments appended to `parent`, for a lone region; the end one. */
   anchors(parent: Node): Comment {
