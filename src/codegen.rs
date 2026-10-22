@@ -1156,7 +1156,7 @@ impl Gen<'_> {
                 let directive = |n: &str| el.attrs.iter().find(|a| &*a.name.text == n).map(|a| &a.value);
                 for a in &el.attrs {
                     match &*a.name.text {
-                        "@bind" => self.bind_element(el, a, directive("@bind:event"), directive("@bind:after"))?,
+                        name @ ("@bind" | "@bind:input") => self.bind_element(el, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
                         "@bind:event" | "@bind:after" => {}
                         "@key" => {
                             let line = M::lit("__b.setKey(").add(self.directive_expr(a)?).lit_then(");");
@@ -1952,7 +1952,7 @@ impl Gen<'_> {
         for a in &el.attrs {
             let name = &*a.name.text;
             match name {
-                "@bind" => self.fine_bind(el, var, a, directive("@bind:event"), directive("@bind:after"))?,
+                name @ ("@bind" | "@bind:input") => self.fine_bind(el, var, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
                 "@bind:event" | "@bind:after" | "@key" => {}
                 "@ref" => {
                     let line = self.directive_expr(a)?.lit_then(&format!(" = {var};"));
@@ -1982,16 +1982,11 @@ impl Gen<'_> {
     }
 
     /// `@bind`: an attribute binding plus a listener that writes the field back.
-    fn fine_bind(&mut self, el: &Element, var: &str, a: &Attr, event: Option<&AttrValue>, after: Option<&AttrValue>) -> Result<(), String> {
+    fn fine_bind(&mut self, el: &Element, var: &str, a: &Attr, event: String, after: Option<&AttrValue>) -> Result<(), String> {
         let AttrValue::Expr(target) = &a.value else { return Err("@bind requires an expression".into()) };
         let is_check = el.attrs.iter().any(|x| {
             &*x.name.text == "type" && matches!(&x.value, AttrValue::Static(s) if matches!(&*s.text, "checkbox" | "radio"))
         });
-        let event = match event {
-            Some(AttrValue::Expr(e)) => e.trim_start_matches("on").to_string(),
-            Some(_) => return Err("@bind:event requires an event name".into()),
-            None => "change".into(),
-        };
         let prop = if is_check { "checked" } else { "value" };
         let read = self.expr(target);
         self.fine_bound("attr", &format!("{var}, \"{prop}\""), read);
@@ -2019,16 +2014,11 @@ impl Gen<'_> {
     }
 
     /// `@bind="x"` on an element: a value (or checked) attribute plus a change handler.
-    fn bind_element(&mut self, el: &Element, a: &Attr, event: Option<&AttrValue>, after: Option<&AttrValue>) -> Result<(), String> {
+    fn bind_element(&mut self, el: &Element, a: &Attr, event: String, after: Option<&AttrValue>) -> Result<(), String> {
         let AttrValue::Expr(target) = &a.value else { return Err("@bind requires an expression".into()) };
         let is_check = el.attrs.iter().any(|x| {
             &*x.name.text == "type" && matches!(&x.value, AttrValue::Static(s) if matches!(&*s.text, "checkbox" | "radio"))
         });
-        let event = match event {
-            Some(AttrValue::Expr(e)) => e.trim_start_matches("on").to_string(),
-            Some(_) => return Err("@bind:event requires an event name".into()),
-            None => "change".into(),
-        };
         let prop = if is_check { "checked" } else { "value" };
         self.emit(M::lit(&format!("__b.addAttribute(\"{prop}\", ")).add(self.expr(target)).lit_then(");"));
         let line = M::lit(&format!("__b.addEventHandler({}, (__e) => {{ ", js_string(&event)))
@@ -2406,6 +2396,16 @@ fn skip_string(b: &[u8], start: usize) -> usize {
 /// Names of class members declared at the top level of an `@code` block.
 pub fn collect_members(code: &str) -> Vec<String> {
     member_decls(code).into_iter().map(|m| m.name).collect()
+}
+
+/// The event a `@bind` writes back on: `input` for `@bind:input`, else `@bind:event`'s, else `change`.
+fn bind_event(name: &str, event: Option<&AttrValue>) -> Result<String, String> {
+    match event {
+        _ if name == "@bind:input" => Ok("input".into()),
+        Some(AttrValue::Expr(e)) => Ok(e.trim_start_matches("on").to_string()),
+        Some(_) => Err("@bind:event requires an event name".into()),
+        None => Ok("change".into()),
+    }
 }
 
 /// `sku` for `@Key("sku")` on an array field: the member its items are matched by.
@@ -3738,6 +3738,17 @@ mod tests {
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
         has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
         has("static readonly cached = true;");
+    }
+
+    #[test]
+    fn bind_input_is_bind_on_input() {
+        let src = "@code { q = \"\"; }\n<input @bind:input=\"q\" />";
+        for (mode, attr, on) in [("@render\n", "__b.addAttribute(\"value\", this.q);", "__b.addEventHandler(\"input\", "), ("@fine\n", "fine.attr(", "fine.on(_e0, \"input\", ")] {
+            let g = gen_with(&format!("{mode}{src}"), &[]);
+            let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+            has(attr);
+            has(&format!("{on}(__e) => {{ this.q = ComponentBase.bindValue(__e, this.q); }}"));
+        }
     }
 
     #[test]
