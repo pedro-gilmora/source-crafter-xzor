@@ -80,6 +80,38 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 
 beforeEach(() => document.body.replaceChildren());
 
+test("a data-leave element the diff removes leaves when its animations finish; without any, at once", async () => {
+  let finish!: () => void;
+  const finished = new Promise<void>((r) => (finish = r));
+  class Toast extends ComponentBase {
+    show = true;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openRegion();
+      if (this.show) {
+        b.openElement("output");
+        b.addAttribute("data-leave", "");
+        b.closeElement();
+        b.openElement("b");
+        b.closeElement();
+      }
+      b.closeRegion();
+    }
+  }
+  const host = document.createElement("main");
+  document.body.append(host);
+  const t = mount(Toast, host);
+  const output = host.querySelector("output")!;
+  (output as unknown as { getAnimations(): unknown[] }).getAnimations = () => [{ finished }];
+  t.show = false;
+  t.stateHasChanged();
+  expect(output.isConnected).toBe(true);
+  expect(output.hasAttribute("data-leaving")).toBe(true);
+  expect(host.querySelector("b")).toBeNull();
+  finish();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(output.isConnected).toBe(false);
+});
+
 test("toggleClass adds to the element's class while on", () => {
   class Field extends ComponentBase {
     err = false;

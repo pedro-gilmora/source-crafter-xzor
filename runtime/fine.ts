@@ -2,7 +2,7 @@
 // is a binding: it collects the tracked fields it reads while it runs, and re-runs through the model queue (once
 // per microtask) when one of them changes. A binding is its own dep for the first source it reads.
 
-import { $inSvg as inSvg, $isFragment, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { $inSvg as inSvg, $isFragment, $leave as leave, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
 import { $flush, $keyName, $notify, Model } from "./model";
 
 const TEXT = 0;
@@ -193,7 +193,12 @@ class Binding {
         disposeAll(region);
         const end = this.node;
         const parent = end.parentNode!;
-        while (region.start.nextSibling !== end) parent.removeChild(region.start.nextSibling!);
+        // A leaving element stays where it was: the new content goes after it.
+        for (let node = region.start.nextSibling!; node !== end; ) {
+          const next = node.nextSibling!;
+          leave(node);
+          node = next;
+        }
         const frag = document.createDocumentFragment();
         within(region, () => this.#run(frag));
         parent.insertBefore(frag, end);
@@ -377,10 +382,9 @@ function undoAttr(el: Element, s: Owned): void {
 }
 
 function removeRange(head: Node, tail: Node): void {
-  const parent = head.parentNode!;
   for (let node = head; ; ) {
     const next = node.nextSibling;
-    parent.removeChild(node);
+    leave(node);
     if (node === tail) return;
     node = next!;
   }

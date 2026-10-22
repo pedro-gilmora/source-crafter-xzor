@@ -1265,8 +1265,22 @@ function disposeInstance(c: ComponentBase): void {
 }
 
 function remove(parent: Node, v: VNode): void {
-  for (const node of nodesOf(v)) parent.removeChild(node);
+  for (const node of nodesOf(v)) $leave(node);
   dispose(v);
+}
+
+/**
+ * @internal Removes `node`. A `data-leave` element gets `data-leaving` first and goes when the animations that
+ * starts (in it and below) finish; with none, or removed again meanwhile, it goes at once.
+ */
+export function $leave(node: Node): void {
+  const el = node as Element;
+  if (el.nodeType !== 1 || !el.hasAttribute("data-leave") || el.hasAttribute("data-leaving")) return void node.parentNode?.removeChild(node);
+  el.setAttribute("data-leaving", "");
+  const animations = (el as Partial<Element & { getAnimations(o?: object): Animation[] }>).getAnimations?.({ subtree: true }) ?? [];
+  if (animations.length === 0) return void el.remove();
+  const gone = (): void => el.remove();
+  void Promise.all(animations.map((a) => a.finished)).then(gone, gone);
 }
 
 function patch(

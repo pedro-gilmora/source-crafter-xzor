@@ -1159,6 +1159,7 @@ impl Gen<'_> {
                         name @ ("@bind" | "@bind:input") => self.bind_element(el, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
                         "@bind:event" | "@bind:after" | "@bind:debounce" => {}
                         n if n.starts_with("class:") => {}
+                        "@leave" => self.line("__b.addAttribute(\"data-leave\", \"\");"),
                         "@key" => {
                             let line = M::lit("__b.setKey(").add(self.directive_expr(a)?).lit_then(");");
                             self.emit(line);
@@ -1470,6 +1471,7 @@ impl Gen<'_> {
                         match &a.value {
                             // Rows are keyed by their item; an element `@key` adds nothing.
                             _ if name == "@key" => {}
+                            _ if name == "@leave" => attrs.push(("data-leave".to_string(), String::new())),
                             _ if name.starts_with('@') || name.starts_with("class:") => dynamic = true,
                             AttrValue::Empty => attrs.push((name.to_string(), String::new())),
                             AttrValue::Static(s) => attrs.push((name.to_string(), crate::entities::decode(s).into_owned())),
@@ -1963,6 +1965,8 @@ impl Gen<'_> {
             match name {
                 name @ ("@bind" | "@bind:input") => self.fine_bind(el, var, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
                 "@bind:event" | "@bind:after" | "@bind:debounce" | "@key" => {}
+                "@leave" if all => self.line(&format!("{var}.setAttribute(\"data-leave\", \"\");")),
+                "@leave" => {}
                 "@ref" => {
                     let line = self.directive_expr(a)?.lit_then(&format!(" = {var};"));
                     self.emit(line);
@@ -3755,6 +3759,15 @@ mod tests {
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
         has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
         has("static readonly cached = true;");
+    }
+
+    #[test]
+    fn leave_marks_the_element() {
+        let src = "@code { open = true; }\n@if (open) {<dialog @leave>x</dialog>}";
+        let g = gen_with(&format!("@fine\n{src}"), &[]);
+        assert!(g.code.contains("[\"dialog\", [\"data-leave\", \"\"], \"x\"]"), "{}", g.code);
+        let g = gen_with(&format!("@render\n{src}"), &[]);
+        assert!(g.code.contains("__b.addAttribute(\"data-leave\", \"\");"), "{}", g.code);
     }
 
     #[test]

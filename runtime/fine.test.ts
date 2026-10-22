@@ -683,6 +683,37 @@ test("@once: read once, untracked, even inside a region", async () => {
   expect(el.querySelector("b")!.textContent).toBe("2");
 });
 
+test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
+  let finish!: () => void;
+  const finished = new Promise<void>((r) => (finish = r));
+  class Page extends FineComponent {
+    #open = true; get open(): boolean { FineComponent.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (FineComponent.same(p, v)) return; this.#open = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["open"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.region(__p, (__p) => {
+          if (this.open) {
+            const d = __p.appendChild(document.createElement("dialog"));
+            d.setAttribute("data-leave", "");
+            (d as unknown as { getAnimations(): unknown[] }).getAnimations = () => (d.hasAttribute("data-leaving") ? [{ finished }] : []);
+          } else __p.appendChild(document.createElement("p"));
+        });
+      });
+    }
+  }
+  const el = host();
+  const page = mount(Page, el);
+  const dialog = el.querySelector("dialog")!;
+  page.open = false;
+  await tick();
+  expect(dialog.isConnected).toBe(true);
+  expect(dialog.hasAttribute("data-leaving")).toBe(true);
+  expect(el.querySelector("p")).not.toBeNull();
+  finish();
+  await tick();
+  expect(dialog.isConnected).toBe(false);
+});
+
 test("class:name toggles one class, leaving the element's others", async () => {
   class Page extends FineComponent {
     #err = ""; get err(): string { FineComponent.$reader?.(this, 0); return this.#err; } set err(v: string) { const p = this.#err; if (FineComponent.same(p, v)) return; this.#err = v; this.$changed(0, p); }
