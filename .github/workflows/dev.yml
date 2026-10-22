@@ -429,11 +429,16 @@ jobs:
           return ((($text -split '\r?\n') | Select-Object -Skip 1) -join "`n").Trim()
         }
 
-        # Escapado para Telegram, salvo la vineta de cada linea para que la lista siga siendo lista.
+        # Escapado para Telegram, salvo la vineta de cada linea y el codigo entre comillas invertidas.
+        function tgText ([string] $text)
+        {
+          return ($text -split '(`[^`]*`)' | ForEach-Object { if ($_ -match '^`[^`]*`$') { $_ -replace '\\', '\\' } else { escape $_ } }) -join ''
+        }
+
         function tgLines ([string] $text)
         {
           return (($text -split "`n") | ForEach-Object {
-            if ($_ -match '^(\s*)[-*]\s+(.*)$') { "$($Matches[1])- $(escape $Matches[2])" } else { escape $_ }
+            if ($_ -match '^(\s*)[-*]\s+(.*)$') { "$($Matches[1])- $(tgText $Matches[2])" } else { tgText $_ }
           }) -join "`n"
         }
 
