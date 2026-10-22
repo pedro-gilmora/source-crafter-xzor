@@ -113,6 +113,7 @@ That's a working app. A few things to notice:
 - Loops keep each pass's DOM while its key stays: `@for (const x of items)` matches by item, `@key(expr)` after the loop head by that expression (`@for (const [k, v] of Object.entries(m)) @key(k) { }`), a `@code` field marked `@Key("id")` by that member of its items, and a model's `@Key` property by itself. Other loops count their passes.
 - `@attr:name="value"` inside a branch sets an attribute of the enclosing element while that branch shows (`class` adds to the element's classes): `<span>@if (stock > 0) { @stock } else { @attr:class="error-text" Sold out }</span>`.
 - `@once(expr)` and `@once { … }` are read once and never updated: nothing in them is bound.
+- Getters are cached: one run per change, however many places read them. Mark one `@Volatile` when it reads what nothing tracks (`Date.now()`, the DOM) alongside fields: `@Volatile get age() { return Date.now() - born; }`.
 - `@async` at the top of a component loads it on first use; `@cached` keeps its instance and DOM when it leaves the tree, for when it comes back. `xzor build --minify` minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`.
 
 ### 2. Components that talk to each other
