@@ -21,7 +21,6 @@ Before any task, check whether a skill applies and follow it. Use superpowers, p
 - `cargo run -- build examples/counter`: full pipeline (compile, run `bun x tsc` type check, Bun bundle).
 - `cargo run -- highlight examples/counter/Counter.xzor`: prints the template with colors.
 - `bun run ui` (`xzor compile ui`): compiles the xzor-ui kit in `ui/`; run it before building anything that imports the kit. `bun run examples` builds `examples/{dashboard,blog,sales}` on it. Kit rules: `.github/skills/xzor-ui/SKILL.md`; design sub-agents: `.github/agents/`.
-- `./editors/vs/build.ps1 -version x.y.z [-server target/release/xzor.exe] [-out file.vsix] [-offline]`: builds the Visual Studio 2022/2026 extension with Visual Studio's MSBuild (`-offline` compiles against the installed Visual Studio when NuGet is unreachable; that build only loads in the installed version). CI builds it on the Windows runner.
 - `./Package.ps1 [-test true] [-specificVersion x.y.z]`: restore, build, test and pack into `publish/` (npm tarballs `@source-crafter/xzor-runtime`, `@source-crafter/xzor` (the CLI, command `xzor`), `@source-crafter/xzor-cli-<platform>`, plus `xzor-<version>.vsix`). Locally it packs the host binary only; CI (`.github/workflows/dev.yml`, on push to `main`; it publishes only when the head commit starts with `[Release]`) builds every platform, publishes to npm, and attaches the `.vsix`, the binaries and the npm tarballs to the GitHub release. Launcher and package manifests live in `npm/`.
 
 ## Conventions

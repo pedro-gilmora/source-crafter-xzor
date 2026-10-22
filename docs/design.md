@@ -371,7 +371,6 @@ Full design: [the design kit spec](superpowers/specs/2026-10-17-design-kit-desig
 - DI diagnostics appear where the problem is defined or referenced: registration decorators and constructor and factory parameters in `.ts` files, and `@inject` lines in `.xzor` files.
 - They update live. Ranges shift as you type. 300 ms after the last change, the analysis reruns with the unsaved text of open documents. Nothing is written to disk until you save.
 - The language server opens `.ts` files only for these diagnostics. Every other `.ts` feature stays with VS Code's TypeScript.
-- Visual Studio 2022 and 2026 (`editors/vs`, a VSSDK extension): an `ILanguageClient` starts the same `xzor lsp` the first time a `.xzor` opens, found like the VS Code client (`XZOR_SERVER_PATH`, the newest `target/{release,debug}/xzor.exe` of the solution folder, the npm platform package, then the copy shipped in the `.vsix`), and a `.pkgdef` registers the shared TextMate grammars. The out-of-process VisualStudio.Extensibility model can't ship grammars yet, hence the classic model.
 
 ## Module code (`@module`)
 

@@ -15,7 +15,7 @@
         ["Cascading values and inherited members", "@cascade blocks and @inherits base classes, checked by TypeScript."],
         ["Models and validation", "Trackable models with field state for forms."],
         ["Builds", "Parallel compile, event-driven --watch with hot reload, PWA output."],
-        ["Editor", "VS Code and Visual Studio 2022/2026: completion, hover, definition, rename, references, live errors."],
+        ["Editor", "VS Code: completion, hover, definition, rename, references, live errors."],
         ["xzor-ui", "Liquid glass kit: buttons, sheets, dialogs, menus, tables, stats, forms, icons."],
         ["Kit IntelliSense", "Prop values, page ids and kit classes complete inside attribute values."],
         ["Scoped styles", "A <style> block or X.css.xzor per component, scoped with @scope, with reactive @expr values and @if blocks."],
