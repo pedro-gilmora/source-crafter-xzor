@@ -37,7 +37,7 @@ The generated TypeScript is an internal step, like Blazor's `obj/`. Editors get 
 | `@switch (v) { case a: case b: ... break; default: ... }` | Each case is block-scoped and always ends in `break` (no fall-through into a body). Stacked labels share one body. `break;` is optional. |
 | `@@`, `a@b.com` | Literal `@` |
 | `&lt;`, `&eacute;`, `&#233;`, `&#xE9;` | Character references in text and in text attribute values (including string props) are decoded at compile time, like Razor: numeric ones and the HTML 4 names. Unknown names stay as written; `<script>`/`<style>` content and expression values are not decoded. |
-| `attr="text @expr"`, `attr="@expr"` | Interpolated and typed attribute values (`false`/`null` removes the attribute) |
+| `attr="text @expr"`, `attr="@expr"` | Interpolated and typed attribute values (`false`/`null` removes the attribute; on `aria-*` a boolean writes `"true"`/`"false"`) |
 | `@onclick="handler"`, `@onclick="() => ..."` | DOM event; typed through `HTMLElementEventMap`; triggers a re-render |
 | `@onclick:preventDefault`, `@onclick:stopPropagation="cond"` | Event modifiers. They work without a handler, and take an optional boolean expression. |
 | `@attributes="dict"` | Attribute splatting on elements, where later attributes override it. On components, props are spread: `{ ...dict, title: "t" }`. |

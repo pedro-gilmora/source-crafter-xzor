@@ -683,6 +683,29 @@ test("@once: read once, untracked, even inside a region", async () => {
   expect(el.querySelector("b")!.textContent).toBe("2");
 });
 
+test("aria-* attributes write booleans as true and false", async () => {
+  class Page extends FineComponent {
+    #on = false; get on(): boolean { FineComponent.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (FineComponent.same(p, v)) return; this.#on = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["on"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const b = fine.el(__p, "button");
+        fine.attr(b, "aria-pressed", () => this.on);
+        fine.attr(b, "disabled", () => this.on);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const b = el.querySelector("button")!;
+  expect(b.getAttribute("aria-pressed")).toBe("false");
+  expect(b.hasAttribute("disabled")).toBe(false);
+  p.on = true;
+  await tick();
+  expect(b.getAttribute("aria-pressed")).toBe("true");
+  expect(b.getAttribute("disabled")).toBe("");
+});
+
 test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });

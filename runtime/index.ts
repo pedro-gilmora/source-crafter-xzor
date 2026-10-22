@@ -676,6 +676,8 @@ export class RenderTreeBuilder {
 
   addAttribute(name: string, value: unknown): void {
     const el = this.#current();
+    // `aria-*` states are the strings "true" and "false".
+    if (typeof value === "boolean" && name.startsWith("aria-")) value = String(value);
     if (value === false || value == null) delete el.attrs[name];
     else el.attrs[name] = value === true ? "" : String(value);
   }

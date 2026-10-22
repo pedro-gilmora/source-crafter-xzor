@@ -80,6 +80,27 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 
 beforeEach(() => document.body.replaceChildren());
 
+test("aria-* attributes write booleans as true and false", () => {
+  class Toggle extends ComponentBase {
+    open = false;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("button");
+      b.addAttribute("aria-expanded", this.open);
+      b.addAttribute("hidden", this.open);
+      b.closeElement();
+    }
+  }
+  const host = document.createElement("main");
+  document.body.append(host);
+  const t = mount(Toggle, host);
+  const button = host.querySelector("button")!;
+  expect(button.getAttribute("aria-expanded")).toBe("false");
+  t.open = true;
+  t.stateHasChanged();
+  expect(button.getAttribute("aria-expanded")).toBe("true");
+  expect(button.getAttribute("hidden")).toBe("");
+});
+
 test("debounce runs the last call after a pause, once, and settles every call's promise", async () => {
   const input = document.createElement("input");
   const event = (): Event => {
