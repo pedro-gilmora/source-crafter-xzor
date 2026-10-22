@@ -1272,14 +1272,18 @@ function remove(parent: Node, v: VNode): void {
 }
 
 /**
- * @internal Removes `node`. A `data-leave` element gets `data-leaving` first and goes when the animations that
- * starts (in it and below) finish; with none, or removed again meanwhile, it goes at once.
+ * @internal Removes `node`. A `data-leave` element gets `data-leaving` first and goes when the finite animations
+ * that starts (in it and below) finish; with none, or removed again meanwhile, it goes at once.
  */
 export function $leave(node: Node): void {
   const el = node as Element;
   if (!ComponentBase.$leaves || el.nodeType !== 1 || !el.hasAttribute("data-leave") || el.hasAttribute("data-leaving")) return void node.parentNode?.removeChild(node);
+  type Running = { finished: Promise<unknown>; effect?: { getComputedTiming(): { endTime?: number | CSSNumericValue } } | null };
+  const running = (): Running[] => (el as Partial<{ getAnimations(o?: object): Running[] }>).getAnimations?.({ subtree: true }) ?? [];
+  // Animations already running (a spinner inside) aren't the leave's; an endless one would never let it go.
+  const before = new Set(running());
   el.setAttribute("data-leaving", "");
-  const animations = (el as Partial<Element & { getAnimations(o?: object): Animation[] }>).getAnimations?.({ subtree: true }) ?? [];
+  const animations = running().filter((a) => !before.has(a) && a.effect?.getComputedTiming().endTime !== Infinity);
   if (animations.length === 0) return void el.remove();
   const gone = (): void => el.remove();
   void Promise.all(animations.map((a) => a.finished)).then(gone, gone);

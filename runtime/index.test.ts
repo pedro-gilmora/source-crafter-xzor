@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { ComponentBase, type RenderTreeBuilder, lazy, mount } from "./index";
+import { $leave, ComponentBase, type RenderTreeBuilder, lazy, mount } from "./index";
 
 // Components below are written the way xzor's codegen emits them.
 
@@ -111,6 +111,30 @@ test("a data-leave element the diff removes leaves when its animations finish; w
   finish();
   await new Promise((r) => setTimeout(r, 0));
   expect(output.isConnected).toBe(false);
+});
+
+test("a leaving element waits only for the finite animations its leaving started, not an endless spinner inside (#2)", async () => {
+  ComponentBase.$leaves = true;
+  const endless = (): { finished: Promise<void>; effect: { getComputedTiming(): { endTime: number } } } => ({
+    finished: new Promise<void>(() => {}),
+    effect: { getComputedTiming: () => ({ endTime: Infinity }) },
+  });
+  const spinner = endless();
+  let finish!: () => void;
+  const fade = { finished: new Promise<void>((r) => (finish = r)), effect: { getComputedTiming: () => ({ endTime: 150 }) } };
+  const pulse = endless();
+  const dialog = document.createElement("dialog");
+  dialog.setAttribute("data-leave", "");
+  (dialog as unknown as { getAnimations(): unknown[] }).getAnimations = () => (dialog.hasAttribute("data-leaving") ? [spinner, fade, pulse] : [spinner]);
+  const host = document.createElement("main");
+  host.append(dialog);
+  document.body.append(host);
+  $leave(dialog);
+  expect(dialog.hasAttribute("data-leaving")).toBe(true);
+  expect(dialog.isConnected).toBe(true);
+  finish();
+  await new Promise((r) => setTimeout(r, 0));
+  expect(dialog.isConnected).toBe(false);
 });
 
 test("toggleClass adds to the element's class while on", () => {

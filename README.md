@@ -343,7 +343,7 @@ The request runs again when what the `@await (...)` expression reads changes (he
 </style>
 ```
 
-An element marked `@leave` stays in the page with `data-leaving` until the animations and transitions that starts (in it and below) finish; with none, it goes at once. Entering needs nothing from xzor: `@starting-style` or a CSS animation does it.
+An element marked `@leave` stays in the page with `data-leaving` until the animations and transitions that starts (in it and below) finish; with none, it goes at once. Animations already running inside it, such as a spinner, and endless ones don't hold it. Entering needs nothing from xzor: `@starting-style` or a CSS animation does it.
 
 ### Doing less work
 
