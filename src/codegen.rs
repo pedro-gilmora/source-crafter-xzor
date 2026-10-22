@@ -283,6 +283,7 @@ pub fn generate_with(
         fine_ids: 0,
         in_region: false,
         in_loop: false,
+        owner: None,
         templates: Vec::new(),
         reads: None,
         uses_el: false,
@@ -447,7 +448,8 @@ fn find_routes(nodes: &[Node]) -> Option<&Node> {
         Node::If { branches, otherwise } => {
             branches.iter().map(|(_, b)| b).chain(otherwise).find_map(|b| find_routes(b))
         }
-        Node::For { body, .. } | Node::While { body, .. } | Node::Cascade { body, .. } => find_routes(body),
+        Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => find_routes(body).or_else(|| otherwise.as_deref().and_then(find_routes)),
+        Node::Cascade { body, .. } => find_routes(body),
         Node::Switch { cases, .. } => cases.iter().find_map(|c| find_routes(&c.body)),
         Node::SlotFill(fill) => find_routes(&fill.body),
         Node::Slot(slot) => slot.fallback.as_deref().and_then(find_routes),
@@ -456,7 +458,7 @@ fn find_routes(nodes: &[Node]) -> Option<&Node> {
             CodePart::Markup(el) => find_routes(&el.children),
             CodePart::Ts(_) => None,
         }),
-        Node::Text(_) | Node::Expr(_) => None,
+        Node::Text(_) | Node::Expr(_) | Node::ParentAttr(_) => None,
     })
 }
 
@@ -615,6 +617,8 @@ struct Gen<'p> {
     in_region: bool,
     /// Emitting a plain loop's body in a region: nested structure stays inline, the region rebuilds it whole.
     in_loop: bool,
+    /// The node variable of the element `@attr:` sets, when the nodes being emitted are its children.
+    owner: Option<String>,
     /// The specs of the `@fine` templates, emitted after the class as `__t<N>`.
     templates: Vec<String>,
     /// The row being emitted, whose bindings go through its list's shared reads.
@@ -643,6 +647,8 @@ enum FinePart<'n> {
     Code(&'n [CodePart], &'n [Node]),
     List(&'n Node),
     Island(&'n [Node]),
+    /// `@attr:`, bound to the element that holds it.
+    ParentAttr(&'n Attr),
 }
 
 struct Reads {
@@ -680,6 +686,18 @@ fn is_island(el: &Element) -> bool {
 
 fn is_plain_code_node(node: &Node) -> bool {
     matches!(node, Node::Code(parts) if is_plain_code(parts))
+}
+
+/// Whether `nodes` hold an `@attr:` for their enclosing element (one inside a child element is that child's).
+fn has_parent_attr(nodes: &[Node]) -> bool {
+    nodes.iter().any(|n| match n {
+        Node::ParentAttr(_) => true,
+        Node::If { branches, otherwise } => branches.iter().any(|(_, b)| has_parent_attr(b)) || otherwise.as_deref().is_some_and(has_parent_attr),
+        Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => has_parent_attr(body) || otherwise.as_deref().is_some_and(has_parent_attr),
+        Node::Switch { cases, .. } => cases.iter().any(|c| has_parent_attr(&c.body)),
+        Node::Element(el) if &*el.name.text == "text" => has_parent_attr(&el.children),
+        _ => false,
+    })
 }
 
 /// Control flow inside a plain loop: structure, a plain `@{ }`, or an element holding one.
@@ -764,6 +782,7 @@ impl Gen<'_> {
             fine_ids: 0,
             in_region: false,
             in_loop: false,
+            owner: None,
             templates: Vec::new(),
             reads: None,
             uses_el: false,
@@ -992,11 +1011,22 @@ impl Gen<'_> {
                     self.emit_block(block);
                 }
             }
-            Node::While { cond, body } => {
+            Node::While { cond, body, otherwise } => {
+                if otherwise.is_some() {
+                    self.open_none();
+                }
                 let line = M::lit("while (").add(self.expr(cond)).lit_then(") {");
                 self.emit(line);
+                if otherwise.is_some() {
+                    self.mark_pass();
+                }
                 self.block(body)?;
                 self.line("}");
+                if let Some(body) = otherwise {
+                    self.line("if (__none) {");
+                    self.block(body)?;
+                    self.close_none();
+                }
             }
             Node::Element(el) if &*el.name.text == "text" => self.nodes(&el.children)?,
             Node::Slot(slot) => {
@@ -1019,6 +1049,10 @@ impl Gen<'_> {
                 self.emit(line.lit_then(") ?? ").add(fallback).lit_then(");"));
             }
             Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
+            Node::ParentAttr(a) => {
+                let line = M::lit(&format!("__b.addParentAttribute({}, ", js_string(&a.name))).add(self.value(&a.value)).lit_then(");");
+                self.emit(line);
+            }
             Node::Cascade { name, value, fixed, body } => {
                 let quoted = js_string(name);
                 // The mapping stays on the name only while the literal is a straight copy of it.
@@ -1092,14 +1126,25 @@ impl Gen<'_> {
                 }
                 self.line("}");
             }
-            Node::For { head, body } => {
+            Node::For { head, body, otherwise } => {
+                if otherwise.is_some() {
+                    self.open_none();
+                }
                 let scope = self.locals.len();
                 self.locals.extend(loop_locals(head));
                 let line = M::lit("for (").add(self.expr(head)).lit_then(") {");
                 self.emit(line);
+                if otherwise.is_some() {
+                    self.mark_pass();
+                }
                 self.block(body)?;
                 self.line("}");
                 self.locals.truncate(scope);
+                if let Some(body) = otherwise {
+                    self.line("if (__none) {");
+                    self.block(body)?;
+                    self.close_none();
+                }
             }
             Node::Switch { subject, cases } => {
                 let line = M::lit("switch (").add(self.expr(subject)).lit_then(") {");
@@ -1128,6 +1173,26 @@ impl Gen<'_> {
             self.line("__b.closeRegion();");
         }
         Ok(())
+    }
+
+    /// A loop with an `else` is in a block whose `__none` stays true unless a pass runs.
+    fn open_none(&mut self) {
+        self.line("{");
+        self.depth += 1;
+        self.line("let __none = true;");
+    }
+
+    fn mark_pass(&mut self) {
+        self.depth += 1;
+        self.line("__none = false;");
+        self.depth -= 1;
+    }
+
+    /// Ends the `if (__none) {` of the else and the loop's block.
+    fn close_none(&mut self) {
+        self.line("}");
+        self.depth -= 1;
+        self.line("}");
     }
 
     /// `this.m.bind(this)` for a bare member name, else the rewritten expression.
@@ -1205,7 +1270,9 @@ impl Gen<'_> {
         self.line(&format!("const {var} = fine.el({parent}, {});", js_string(&el.name)));
         self.fine_attrs(el, &var, true)?;
         let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
+        let owner = self.owner.replace(var.clone());
         let r = self.fine_inline(&el.children, &var);
+        self.owner = owner;
         self.raw_text = raw;
         r
     }
@@ -1216,6 +1283,12 @@ impl Gen<'_> {
         let mut parts = Vec::new();
         self.tpl_nodes(nodes, &[], self.raw_text, &mut kids, &mut parts)?;
         if kids.is_empty() {
+            // Only `@attr:`s: no clone, they bind the owner.
+            for (_, part) in &parts {
+                let FinePart::ParentAttr(a) = part else { unreachable!("other parts have a node") };
+                let owner = self.owner.clone().ok_or_else(|| format!("@attr:{} needs an enclosing element", &*a.name))?;
+                self.fine_part(part, &owner)?;
+            }
             return Ok(());
         }
         let t = self.templates.len();
@@ -1227,9 +1300,42 @@ impl Gen<'_> {
         self.line(&format!("const {root} = __t{t}(){cast};"));
         let mut vars = vec![(if alone { vec![0] } else { vec![] }, root.clone())];
         // Every node a part binds gets its variable first: regions, lists and islands insert nodes.
-        let targets: Vec<String> = parts.iter().map(|(path, _)| self.fine_path(&kids, path, &mut vars)).collect();
-        for ((_, part), var) in parts.iter().zip(&targets) {
-            self.fine_part(part, var)?;
+        let mut targets = Vec::with_capacity(parts.len());
+        for (path, part) in &parts {
+            // A part's `@attr:`s set the element holding it: the run's own owner at its top level.
+            let owner = |g: &mut Self, vars: &mut Vec<(Vec<usize>, String)>, up: &[usize]| match up {
+                [] => g.owner.clone(),
+                up => Some(g.fine_path(&kids, up, vars)),
+            };
+            let target = match part {
+                FinePart::ParentAttr(a) => match owner(self, &mut vars, path) {
+                    Some(var) => (var, None),
+                    None => return Err(format!("@attr:{} needs an enclosing element", &*a.name)),
+                },
+                FinePart::Region(node) if has_parent_attr(std::slice::from_ref(*node)) => {
+                    let var = self.fine_path(&kids, path, &mut vars);
+                    (var, owner(self, &mut vars, &path[..path.len() - 1]))
+                }
+                FinePart::Code(_, rest) if has_parent_attr(rest) => {
+                    let var = self.fine_path(&kids, path, &mut vars);
+                    (var, owner(self, &mut vars, &path[..path.len() - 1]))
+                }
+                FinePart::List(Node::For { body, otherwise, .. }) if has_parent_attr(body) || otherwise.as_deref().is_some_and(has_parent_attr) => {
+                    let var = self.fine_path(&kids, path, &mut vars);
+                    (var, owner(self, &mut vars, &path[..path.len() - 1]))
+                }
+                _ => (self.fine_path(&kids, path, &mut vars), None),
+            };
+            targets.push(target);
+        }
+        for ((_, part), (var, owner)) in parts.iter().zip(&targets) {
+            let outer = match owner {
+                Some(o) => self.owner.replace(o.clone()),
+                None => self.owner.clone(),
+            };
+            let r = self.fine_part(part, var);
+            self.owner = outer;
+            r?;
         }
         self.line(&format!("{parent}.appendChild({root});"));
         Ok(())
@@ -1299,6 +1405,7 @@ impl Gen<'_> {
                     kids.push(Tpl::Anchor);
                 }
                 Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
+                Node::ParentAttr(a) => parts.push((path.to_vec(), FinePart::ParentAttr(a))),
             }
         }
         Ok(())
@@ -1365,6 +1472,10 @@ impl Gen<'_> {
                 r?;
             }
             FinePart::List(node) => self.fine_list(node, var)?,
+            FinePart::ParentAttr(a) => {
+                let read = self.value(&a.value);
+                self.emit(M::lit(&format!("fine.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
+            }
             // Virtual-DOM builder calls, in a binding that patches them when what they read changes.
             FinePart::Island(nodes) => {
                 let body = self.inline_nodes(nodes, true, &[])?;
@@ -1418,6 +1529,8 @@ impl Gen<'_> {
         self.depth -= 1;
         self.in_region = outer;
         let code = code?;
+        // A region setting the row's element by `@attr:` closes over it: it builds in the row.
+        let row = row && !self.owner.as_ref().is_some_and(|o| mentions(&code.text, o));
         if row {
             let close = format!("{}}}", "  ".repeat(self.depth));
             let i = self.push_read(", __p", M::lit("{\n").add(code).lit_then(&close));
@@ -1432,7 +1545,7 @@ impl Gen<'_> {
 
     /// `@for (const item of items)` before comment `end`: its rows' bindings share the reads it collects.
     fn fine_list(&mut self, node: &Node, end: &str) -> Result<(), String> {
-        let Node::For { head, body } = node else { unreachable!("a list is a for") };
+        let Node::For { head, body, otherwise } = node else { unreachable!("a list is a for") };
         let (binding, items) = for_of(head).expect("a list is a for...of");
         let scope = self.locals.len();
         self.locals.extend(loop_locals(head));
@@ -1446,6 +1559,16 @@ impl Gen<'_> {
         let reads = std::mem::replace(&mut self.reads, outer).expect("set above");
         self.locals.truncate(scope);
         let row = row?;
+        // The else builds like a region: its bindings close over their values.
+        let empty = match otherwise {
+            Some(body) => {
+                let in_region = std::mem::replace(&mut self.in_region, true);
+                let empty = self.capture(|g| g.fine_block(body, "__p"));
+                self.in_region = in_region;
+                Some(empty?)
+            }
+            None => None,
+        };
         self.emit(M::lit(&format!("fine.listAt({end}, () => ")).add(items).lit_then(", ["));
         self.depth += 1;
         for read in reads.list {
@@ -1455,6 +1578,10 @@ impl Gen<'_> {
         let item = if mentions(&row.text, &reads.name) { M::lit(", ").add(M::src(&binding, binding.at)) } else { M::default() };
         self.emit(M::lit("], (__p").add(item).lit_then(") => {"));
         self.splice(row);
+        if let Some(empty) = empty {
+            self.line("}, (__p) => {");
+            self.splice(empty);
+        }
         self.line("});");
         Ok(())
     }
@@ -1517,26 +1644,48 @@ impl Gen<'_> {
                 }
                 self.line("}");
             }
-            Node::For { head, body } => {
+            Node::For { head, body, otherwise } => {
+                if otherwise.is_some() {
+                    self.open_none();
+                }
                 let scope = self.locals.len();
                 self.locals.extend(loop_locals(head));
                 let line = M::lit("for (").add(self.expr(head)).lit_then(") {");
                 self.emit(line);
+                if otherwise.is_some() {
+                    self.mark_pass();
+                }
                 let in_loop = std::mem::replace(&mut self.in_loop, true);
                 let r = self.fine_block(body, p);
                 self.in_loop = in_loop;
                 self.locals.truncate(scope);
                 r?;
                 self.line("}");
+                if let Some(body) = otherwise {
+                    self.line("if (__none) {");
+                    self.fine_block(body, p)?;
+                    self.close_none();
+                }
             }
-            Node::While { cond, body } => {
+            Node::While { cond, body, otherwise } => {
+                if otherwise.is_some() {
+                    self.open_none();
+                }
                 let line = M::lit("while (").add(self.expr(cond)).lit_then(") {");
                 self.emit(line);
+                if otherwise.is_some() {
+                    self.mark_pass();
+                }
                 let in_loop = std::mem::replace(&mut self.in_loop, true);
                 let r = self.fine_block(body, p);
                 self.in_loop = in_loop;
                 r?;
                 self.line("}");
+                if let Some(body) = otherwise {
+                    self.line("if (__none) {");
+                    self.fine_block(body, p)?;
+                    self.close_none();
+                }
             }
             Node::Switch { subject, cases } => {
                 let line = M::lit("switch (").add(self.expr(subject)).lit_then(") {");
@@ -2113,13 +2262,16 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
                     collect_slots(body, members, loops, out)?;
                 }
             }
-            Node::For { head, body } => {
+            Node::For { head, body, otherwise } => {
                 let scope = loops.len();
                 if let Some(var) = loop_var_type(head, members, loops) {
                     loops.push(var);
                 }
                 collect_slots(body, members, loops, out)?;
                 loops.truncate(scope);
+                if let Some(body) = otherwise {
+                    collect_slots(body, members, loops, out)?;
+                }
             }
             Node::Switch { cases, .. } => {
                 for case in cases {
@@ -2133,7 +2285,12 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
                     collect_slots(&section.body, members, loops, out)?;
                 }
             }
-            Node::While { body, .. } => collect_slots(body, members, loops, out)?,
+            Node::While { body, otherwise, .. } => {
+                collect_slots(body, members, loops, out)?;
+                if let Some(body) = otherwise {
+                    collect_slots(body, members, loops, out)?;
+                }
+            }
             Node::Code(parts) => {
                 for part in parts {
                     match part {
@@ -2157,7 +2314,7 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
                     .collect::<Result<_, _>>()?;
                 out.push((key, params));
             }
-            Node::Text(_) | Node::Expr(_) => {}
+            Node::Text(_) | Node::Expr(_) | Node::ParentAttr(_) => {}
         }
     }
     Ok(())
@@ -3329,6 +3486,44 @@ mod tests {
         has("fine.textAt(_e21, () => total);");
         has("__p.appendChild(_e0);");
         assert!(!g.code.contains("__b.openElement"), "{}", g.code);
+    }
+
+    #[test]
+    fn parent_attributes_set_the_enclosing_element() {
+        let g = gen_with("@render\n@code { n = 0; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text @n\" none }</span>", &[]);
+        assert!(g.code.contains("__b.addParentAttribute(\"class\", \"error-text \" + String(this.n));"), "{}", g.code);
+        let src = "@fine\n@code { n = 0; items: string[] = []; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text\" none }</span>\n<ul>@for (const it of items) {<li>@if (it) { @attr:title=\"@it\" }</li>}</ul>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("fine.attrOf(_e1, \"class\", () => \"error-text\");");
+        // In a row, a region naming the row's element builds in the row, not in the list's shared reads.
+        has("fine.regionAt(");
+        has("fine.attrOf(_e");
+        has(", \"title\", () => it);");
+        let doc = parse("@fine\n@attr:class=\"x\"").unwrap().0;
+        let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
+        assert!(err.contains("@attr:class needs an enclosing element"), "{err}");
+    }
+
+    #[test]
+    fn loops_render_their_else_when_no_pass_ran() {
+        let g = gen_with("@code { xs: number[] = []; n = 0; }\n@for (const x of xs) {<i>@x</i>} else {<p>none</p>}\n@while (n < 0) { <b/> } else { <u/> }", &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("{\n      let __none = true;\n      for (const x of this.xs) {\n        __none = false;");
+        has("if (__none) {\n        __b.openElement(\"p\");");
+        has("while (this.n < 0) {\n        __none = false;");
+    }
+
+    #[test]
+    fn fine_loops_render_their_else_when_no_pass_ran() {
+        let src = "@fine\n@code { xs: string[] = []; }\n<ul>\n@for (const x of xs) {\n<li>@x</li>\n} else {\n<li>@xs.length</li>\n}\n</ul>\n@for (let i = 0; i < xs.length; i++) {\n<b>@i</b>\n} else {\n<u/>\n}";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // The else is the list's empty build: its bindings close over their values, as in a region.
+        has("], (__p) => {\n        const _e");
+        has("}, (__p) => {\n        const _e");
+        has("fine.textAt(");
+        has("let __none = true;\n          for (let i = 0; i < this.xs.length; i++) {\n            __none = false;");
     }
 
     #[test]

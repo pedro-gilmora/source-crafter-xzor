@@ -434,7 +434,13 @@ fn visit(node: &mut Node, attrs: &[Attr], root: bool) {
                 all(b, root);
             }
         }
-        Node::For { body, .. } | Node::While { body, .. } | Node::Cascade { body, .. } => all(body, root),
+        Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => {
+            all(body, root);
+            if let Some(b) = otherwise {
+                all(b, root);
+            }
+        }
+        Node::Cascade { body, .. } => all(body, root),
         Node::Switch { cases, .. } => cases.iter_mut().for_each(|c| all(&mut c.body, root)),
         Node::Routes { sections, .. } => sections.iter_mut().for_each(|s| all(&mut s.body, root)),
         Node::Slot(s) => {
@@ -451,7 +457,7 @@ fn visit(node: &mut Node, attrs: &[Attr], root: bool) {
                 }
             }
         }
-        Node::Text(_) | Node::Expr(_) => {}
+        Node::Text(_) | Node::Expr(_) | Node::ParentAttr(_) => {}
     }
 }
 

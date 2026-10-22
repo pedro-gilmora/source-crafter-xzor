@@ -62,6 +62,8 @@ const spec: [string, A[]][] = [
   ["@for (const item of items) {", [["for", "keyword.control.xzor"], ["const", "storage.type.ts"]]],
   ["  <li>@item</li>", [["@", "keyword.control.transition.xzor"], ["item", "variable.other.readwrite.xzor"]]],
   ["}", []],
+  ["@while (more()) { <b/> } @else { <i/> }", [["while", "keyword.control.xzor"], ["@", "keyword.control.transition.xzor", 1], ["else", "keyword.control.xzor"], ["i", "entity.name.tag.html"]]],
+  ['  @attr:class="error @kind" @attr:hidden', [["@", "keyword.control.transition.xzor"], ["attr", "keyword.control.xzor"], ["class", "entity.other.attribute-name.html"], ["error", "string.quoted.html"], ["kind", "variable.other.readwrite.xzor"], ["hidden", "entity.other.attribute-name.html"]]],
   ["<p>@#secret @this.#secret</p>", [["@", "keyword.control.transition.xzor"], ["#secret", "variable.other.readwrite.xzor"], ["this.#secret", "variable.other.readwrite.xzor"]]],
   ["@switch (kind) {", [["switch", "keyword.control.xzor"]]],
   ['  case "a":', [["case", "keyword.control.xzor"], ['"a"', "string.quoted.double.ts"]]],

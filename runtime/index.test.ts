@@ -80,6 +80,36 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 
 beforeEach(() => document.body.replaceChildren());
 
+test("@attr: sets the nearest open element past regions, and class adds to its own", () => {
+  class Stock extends ComponentBase {
+    n = 0;
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("span");
+      b.addAttribute("class", "cell");
+      b.openRegion();
+      if (this.n > 0) b.addContent(this.n);
+      else {
+        b.addParentAttribute("class", "error-text");
+        b.addParentAttribute("title", "none");
+        b.addText("Agotado");
+      }
+      b.closeRegion();
+      b.closeElement();
+    }
+  }
+  const host = document.createElement("main");
+  document.body.append(host);
+  const c = mount(Stock, host);
+  const span = host.querySelector("span")!;
+  expect(span.getAttribute("class")).toBe("cell error-text");
+  expect(span.getAttribute("title")).toBe("none");
+  c.n = 3;
+  c.stateHasChanged();
+  expect(host.querySelector("span")).toBe(span);
+  expect(span.getAttribute("class")).toBe("cell");
+  expect(span.hasAttribute("title")).toBe(false);
+});
+
 test("an event re-renders only the owning component and patches nodes in place", () => {
   const { host, a, b, buttons } = setup();
   const span = a.querySelector("span")!;

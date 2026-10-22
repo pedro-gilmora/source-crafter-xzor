@@ -93,6 +93,7 @@
         { "include": "#inject" },
         { "include": "#import" },
         { "include": "#escape" },
+        { "include": "#parent-attribute" },
         { "include": "#cascade" },
         { "include": "#slot-definition-args" },
         { "include": "#slot-fill-params" },
@@ -353,8 +354,9 @@
         "2": { "name": "keyword.control.xzor" },
         "3": { "name": "keyword.control.xzor" }
       },
-      "end": "(?<=\\})(?!\\s*else\\b)",
+      "end": "(?<=\\})(?!\\s*@?else\\b)",
       "patterns": [
+        { "match": "(@)(else)\\b", "captures": { "1": { "name": "keyword.control.transition.xzor" }, "2": { "name": "keyword.control.xzor" } } },
         { "match": "\\b(else|if)\\b", "name": "keyword.control.xzor" },
         { "include": "#condition" },
         { "include": "#block" }
@@ -378,6 +380,42 @@
           "endCaptures": { "0": { "name": "punctuation.section.parens.end.xzor" } },
           "contentName": "meta.embedded.expression.typescript",
           "patterns": [{ "include": "source.ts#expression" }]
+        }
+      ]
+    },
+    "parent-attribute": {
+      "comment": "@attr:name=\"value\" or @attr:name: an attribute of the enclosing element.",
+      "patterns": [
+        {
+          "begin": "(?<![[:alnum:]])(@)(attr)(:)([^\\s=/>\"']+)\\s*(=)\\s*([\"'])",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "keyword.control.xzor" },
+            "3": { "name": "punctuation.separator.attr.xzor" },
+            "4": { "name": "entity.other.attribute-name.html" },
+            "5": { "name": "punctuation.separator.key-value.html" },
+            "6": { "name": "string.quoted.html punctuation.definition.string.begin.html" }
+          },
+          "end": "\\6",
+          "endCaptures": { "0": { "name": "string.quoted.html punctuation.definition.string.end.html" } },
+          "contentName": "string.quoted.html",
+          "patterns": [
+            { "include": "#escape" },
+            { "include": "#explicit" },
+            { "include": "#array" },
+            { "include": "#implicit-call" },
+            { "include": "#implicit" },
+            { "include": "#entity" }
+          ]
+        },
+        {
+          "match": "(?<![[:alnum:]])(@)(attr)(:)([^\\s=/>\"'<]+)",
+          "captures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "keyword.control.xzor" },
+            "3": { "name": "punctuation.separator.attr.xzor" },
+            "4": { "name": "entity.other.attribute-name.html" }
+          }
         }
       ]
     },

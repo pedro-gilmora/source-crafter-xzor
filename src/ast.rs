@@ -124,10 +124,13 @@ pub enum Node {
     For {
         head: Src,
         body: Vec<Node>,
+        /// `} else { }`: rendered when no pass ran.
+        otherwise: Option<Vec<Node>>,
     },
     While {
         cond: Src,
         body: Vec<Node>,
+        otherwise: Option<Vec<Node>>,
     },
     /// `@{ statements }` inside the template.
     Code(Vec<CodePart>),
@@ -153,6 +156,8 @@ pub enum Node {
     Slot(Slot),
     /// `@slot name(params) { body }` as a direct child of a component tag.
     SlotFill(SlotFill),
+    /// `@attr:name="value"`: an attribute of the enclosing element while this node renders.
+    ParentAttr(Attr),
 }
 
 /// One section of a routes block and the markup it renders.

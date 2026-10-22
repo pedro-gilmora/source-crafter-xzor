@@ -101,6 +101,32 @@ fn doc_comment(before: &str) -> String {
         .join(" ")
 }
 
+/// The tag name span of the element an `@attr:name` at `offset` sets.
+pub fn attr_owner(text: &str, offset: usize) -> Option<(usize, usize)> {
+    fn walk<'a>(nodes: &'a [Node], owner: Option<&'a crate::ast::Src>, off: usize) -> Option<&'a crate::ast::Src> {
+        let in_body = |b: &'a Vec<Node>| walk(b, owner, off);
+        nodes.iter().find_map(|n| match n {
+            Node::ParentAttr(a) if (a.name.at.saturating_sub("@attr:".len())..=a.name.at + a.name.len()).contains(&off) => owner,
+            Node::Element(el) if &*el.name.text == "text" => walk(&el.children, owner, off),
+            Node::Element(el) => walk(&el.children, Some(&el.name), off),
+            Node::If { branches, otherwise } => branches.iter().map(|(_, b)| b).chain(otherwise).find_map(in_body),
+            Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => in_body(body).or_else(|| otherwise.as_ref().and_then(in_body)),
+            Node::Switch { cases, .. } => cases.iter().find_map(|c| in_body(&c.body)),
+            Node::Cascade { body, .. } => in_body(body),
+            Node::Slot(s) => s.fallback.as_ref().and_then(in_body),
+            Node::Routes { sections, .. } => sections.iter().find_map(|s| in_body(&s.body)),
+            Node::Code(parts) => parts.iter().find_map(|p| match p {
+                crate::ast::CodePart::Render(nodes) => walk(nodes, owner, off),
+                crate::ast::CodePart::Markup(el) => walk(&el.children, Some(&el.name), off),
+                crate::ast::CodePart::Ts(_) => None,
+            }),
+            _ => None,
+        })
+    }
+    let (doc, _) = parser::parse(text).ok()?;
+    walk(&doc.nodes, None, offset).map(|name| (name.at, name.at + name.len()))
+}
+
 fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
     for node in nodes {
         match node {
@@ -118,7 +144,12 @@ fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
                     collect_slot_names(body, out);
                 }
             }
-            Node::For { body, .. } | Node::While { body, .. } => collect_slot_names(body, out),
+            Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => {
+                collect_slot_names(body, out);
+                if let Some(body) = otherwise {
+                    collect_slot_names(body, out);
+                }
+            }
             Node::Code(parts) => {
                 for part in parts {
                     match part {
@@ -132,7 +163,7 @@ fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
             Node::SlotFill(f) => collect_slot_names(&f.body, out),
             Node::Cascade { body, .. } => collect_slot_names(body, out),
             Node::Routes { sections, .. } => sections.iter().for_each(|s| collect_slot_names(&s.body, out)),
-            Node::Text(_) | Node::Expr(_) => {}
+            Node::Text(_) | Node::Expr(_) | Node::ParentAttr(_) => {}
         }
     }
 }
@@ -625,6 +656,15 @@ mod tests {
     fn counter() -> Component {
         let src = "@code {\n  label: string = \"Count\";\n  step = 1;\n  increment() {}\n}\n<p>@label</p>";
         component_from_source(Path::new("/app/Counter.xzor"), src)
+    }
+
+    #[test]
+    fn attr_goes_to_its_owning_element() {
+        let doc = "<span class=\"x\">\n@if (a) { <b/> } else {\n  @attr:class=\"error\" none\n}\n</span>";
+        let at = doc.find("attr:").unwrap();
+        assert_eq!(attr_owner(doc, at), Some((1, 5)));
+        assert_eq!(attr_owner(doc, at + "attr:cl".len()), Some((1, 5)));
+        assert_eq!(attr_owner(doc, doc.find("none").unwrap()), None);
     }
 
     #[test]

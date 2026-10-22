@@ -1237,6 +1237,10 @@ impl Server {
         let uri = params["textDocument"]["uri"].as_str().unwrap_or_default().to_string();
         let Some(doc) = self.docs.get(&uri) else { return self.respond(id, Json::Null) };
         let off = offset_of(&doc.text, &params["position"]);
+        if let Some((start, end)) = features::attr_owner(&doc.text, off) {
+            let loc = Json::obj([("uri", uri.clone().into()), ("range", range_json(&doc.text, start, end))]);
+            return self.respond(id, Json::Arr(vec![loc]));
+        }
         if let Some((symbol, _, _)) = features::symbol_at(&doc.text, off) {
             let comps = self.components(&doc.path);
             let target = match &symbol {

@@ -416,9 +416,16 @@ impl<'a> Parser<'a> {
         let routes = matches!(word, "ClientRoutes" | "ServerRoutes") && self.next_non_blank() == Some(b'(');
         // `@module` opens the module block only when `{` follows; otherwise it is a member reference.
         let module = word == "module" && self.next_non_blank() == Some(b'{');
+        // `@attr:name=value` sets an attribute of the enclosing element; bare `@attr` is a member reference.
+        let parent_attr = word == "attr" && self.peek() == Some(b':') && matches!(self.peek_at(1), Some(c) if is_ident_start(c));
         self.mark(TokenKind::Transition, at, at + 1);
         if self.bound.iter().any(|b| b == word) {
             return self.implicit_expression(word_start);
+        }
+        if parent_attr {
+            self.mark(TokenKind::Keyword, word_start, self.pos);
+            self.pos += 1;
+            return Ok(Transition::Node(Node::ParentAttr(self.attribute()?)));
         }
         let is_keyword = cascade || routes || module || DIRECTIVES.contains(&word);
         if is_keyword {
@@ -527,13 +534,15 @@ impl<'a> Parser<'a> {
             "while" => {
                 let cond = self.condition()?;
                 let body = self.block()?;
-                Ok(Transition::Node(Node::While { cond, body }))
+                let otherwise = self.else_block()?;
+                Ok(Transition::Node(Node::While { cond, body, otherwise }))
             }
             "if" => self.if_block().map(Transition::Node),
             "for" => {
                 let head = self.condition()?;
                 let body = self.block()?;
-                Ok(Transition::Node(Node::For { head, body }))
+                let otherwise = self.else_block()?;
+                Ok(Transition::Node(Node::For { head, body, otherwise }))
             }
             "switch" => self.switch_block().map(Transition::Node),
             "slot" => self.slot().map(Transition::Node),
@@ -702,18 +711,39 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether `else` or `@else` follows (past whitespace); consumes it if so.
+    fn else_keyword(&mut self) -> bool {
+        let save = self.pos;
+        let tokens = self.tokens.len();
+        self.skip_ws();
+        if self.peek() == Some(b'@') && self.b.get(self.pos + 1..self.pos + 5) == Some(b"else") {
+            self.mark(TokenKind::Transition, self.pos, self.pos + 1);
+            self.pos += 1;
+        }
+        if self.keyword("else") {
+            return true;
+        }
+        self.pos = save;
+        self.tokens.truncate(tokens);
+        false
+    }
+
+    /// A loop's `else { }`, rendered when no pass ran.
+    fn else_block(&mut self) -> PResult<Option<Vec<Node>>> {
+        if !self.else_keyword() {
+            return Ok(None);
+        }
+        self.skip_ws();
+        self.block().map(Some)
+    }
+
     fn if_block(&mut self) -> PResult<Node> {
         let cond = self.condition()?;
         let body = self.block()?;
         let mut branches = vec![(cond, body)];
         let mut otherwise = None;
         loop {
-            let save = self.pos;
-            let tokens = self.tokens.len();
-            self.skip_ws();
-            if !self.keyword("else") {
-                self.pos = save;
-                self.tokens.truncate(tokens);
+            if !self.else_keyword() {
                 break;
             }
             self.skip_ws();
@@ -1659,8 +1689,27 @@ mod tests {
             Node::For {
                 head: "const i of xs".into(),
                 body: vec![el("i", vec![], vec![Node::Expr("i".into())])],
+                otherwise: None,
             }
         );
+    }
+
+    #[test]
+    fn parent_attributes_in_markup() {
+        let n = nodes("<span>@if (ok) { x } else { @attr:class=\"error-text\" @attr:hidden Agotado }</span>@attr");
+        let Node::Element(span) = &n[0] else { panic!("{n:?}") };
+        let Node::If { otherwise: Some(o), .. } = &span.children[0] else { panic!("{n:?}") };
+        assert!(matches!(&o[0], Node::ParentAttr(a) if a.name == "class" && a.name.at == 34 && matches!(&a.value, AttrValue::Static(s) if *s == "error-text")), "{o:?}");
+        assert!(matches!(&o[2], Node::ParentAttr(a) if a.name == "hidden" && a.value == AttrValue::Empty), "{o:?}");
+        // Without `:` it is a member reference.
+        assert_eq!(n[1], Node::Expr("attr".into()));
+    }
+
+    #[test]
+    fn loops_take_an_else_for_no_pass() {
+        let n = nodes("@for (const i of xs) {<i>@i</i>} else {<p>none</p>}\n@while (more()) { x } @else { y }");
+        assert!(matches!(&n[0], Node::For { otherwise: Some(o), .. } if *o == vec![el("p", vec![], vec![Node::Text("none".into())])]));
+        assert!(matches!(&n[1], Node::While { otherwise: Some(o), .. } if *o == vec![Node::Text(" y ".into())]), "{n:?}");
     }
 
     #[test]

@@ -661,6 +661,19 @@ export class RenderTreeBuilder {
     for (const [name, value] of Object.entries(attrs ?? {})) this.addAttribute(name, value);
   }
 
+  /** `@attr:name`: an attribute of the nearest open element; `class` adds to its classes. */
+  addParentAttribute(name: string, value: unknown): void {
+    const open = this.#open;
+    let i = open.length - 1;
+    while (i >= 0 && open[i]!.kind !== "element") i--;
+    if (i < 0) throw new Error(`xzor: @attr:${name} outside of an element`);
+    const el = open[i] as VElement;
+    const own = el.attrs[name];
+    if (name === "class" && own && value !== false && value != null) el.attrs["class"] = `${own} ${value === true ? "" : String(value)}`.trimEnd();
+    else if (value === false || value == null) delete el.attrs[name];
+    else el.attrs[name] = value === true ? "" : String(value);
+  }
+
   /** `@onclick:preventDefault` and `@onclick:stopPropagation`, with or without a handler. */
   addEventModifier(event: string, modifier: Modifier, enabled: boolean): void {
     const el = this.#current();

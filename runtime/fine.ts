@@ -21,6 +21,8 @@ const DEAD = 32;
 const LOOSE = 64;
 /** A row's binding: `read` is shared by the list's rows and takes the row's item (`data.item`). */
 const ITEM = 128;
+/** An ATTR binding from `@attr:` on an enclosing element: disposing it takes its value back off (`data` is `Owned`). */
+const OWNED = 256;
 
 // Same bits as the model tracker: fields from the 30th share bit 30, `state` (-1) has bit 31.
 const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
@@ -37,7 +39,9 @@ type Reads = readonly ((item: any, x?: any) => any)[];
 type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
-type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined };
+type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined };
+/** The key of the row an empty list's else builds. */
+const EMPTY = Symbol("xzor.fine.empty");
 
 /** The element type of tag `K`. */
 export type El<K extends string> = K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : HTMLElement;
@@ -177,6 +181,7 @@ class Binding {
         return;
       }
       case ATTR:
+        if ((flags & OWNED) !== 0) return ownAttr(this.node as Element, this.data as Owned, this.#run());
         return setAttr(this.node as Element, (flags & ITEM) !== 0 ? (this.read as unknown as Named).$n : this.data, this.#run());
       case REGION: {
         const region = this.data as Region;
@@ -223,7 +228,7 @@ class Binding {
     else if (kind === ISLAND) {
       disposeIsland((this.data as Island).tree);
       (this.data as Island).tree = [];
-    }
+    } else if ((this.flags & OWNED) !== 0) undoAttr(this.node as Element, this.data as Owned);
     this.#reset();
     this.#sweep();
     this.flags = DEAD;
@@ -316,6 +321,32 @@ function setAttr(el: Element, name: string, value: unknown): void {
   else if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = true;
 }
 
+/** `class` adds the tokens the element lacks; other names keep the element's value to restore. */
+type Owned = { name: string; text: string | undefined; prev: string | null | undefined; added: string[] };
+
+// ponytail: two `@attr:class` adding one token share it, so the first undone removes it for both.
+function ownAttr(el: Element, s: Owned, value: unknown): void {
+  if (s.name !== "class") {
+    if (s.prev === undefined) s.prev = el.getAttribute(s.name);
+    return setAttr(el, s.name, value);
+  }
+  const text = value === null || value === undefined || value === false || value === true ? "" : String(value);
+  if (text === s.text) return;
+  s.text = text;
+  for (const t of s.added) el.classList.remove(t);
+  s.added = [];
+  for (const t of text.split(/\s+/))
+    if (t !== "" && !el.classList.contains(t)) {
+      el.classList.add(t);
+      s.added.push(t);
+    }
+}
+
+function undoAttr(el: Element, s: Owned): void {
+  if (s.name === "class") for (const t of s.added) el.classList.remove(t);
+  else if (s.prev !== undefined) setAttr(el, s.name, s.prev);
+}
+
 function removeRange(head: Node, tail: Node): void {
   const parent = head.parentNode!;
   for (let node = head; ; ) {
@@ -331,7 +362,8 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
   const state = list.data as ListState;
   const end = list.node;
   const parent = end.parentNode!;
-  const next = Array.isArray(items) ? (items as unknown[]) : [...items];
+  let next = Array.isArray(items) ? (items as unknown[]) : [...items];
+  if (next.length === 0 && state.empty !== undefined) next = [EMPTY];
   const keep = new Set(next);
   for (const [item, row] of state.rows)
     if (!keep.has(item)) {
@@ -350,8 +382,8 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
     let row = state.rows.get(item);
     if (row === undefined) {
       const frag = document.createDocumentFragment();
-      const made: Row = { bindings: undefined, ctx: state.ctx, head: frag, tail: frag, item, reads: state.reads };
-      within(made, () => state.build(frag, item));
+      const made: Row = { bindings: undefined, ctx: state.ctx, head: frag, tail: frag, item, reads: item === EMPTY ? undefined : state.reads };
+      within(made, () => (item === EMPTY ? state.empty!(frag) : state.build(frag, item)));
       // A row keeps at least one node, so it always has a place.
       if (frag.firstChild === null) frag.appendChild(document.createComment(""));
       made.head = frag.firstChild!;
@@ -439,8 +471,8 @@ function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unkno
   track(new Binding(REGION | flags, end, build, region));
 }
 
-function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void): void {
-  const state: ListState = { build, ctx: holder!.ctx, rows: new Map(), order: [], reads };
+function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void, empty?: Build): void {
+  const state: ListState = { build, ctx: holder!.ctx, rows: new Map(), order: [], reads, empty };
   track(new Binding(LIST, end, items, state));
 }
 
@@ -527,6 +559,11 @@ export const fine = {
     track(new Binding(ATTR | ITEM, el, read, row));
   },
 
+  /** `@attr:name` on the enclosing `el`, taken back off when the region or row holding it goes. */
+  attrOf(el: Element, name: string, read: () => unknown): void {
+    track(new Binding(ATTR | OWNED, el, read, { name, text: undefined, prev: undefined, added: [] } satisfies Owned));
+  },
+
   /** `@if`, `@switch`, a `@for` that is not a plain list, `@{ }`: rebuilt whenever what `build` read changes. */
   region(parent: Node, build: Build): void {
     region(anchor(parent), anchor(parent), build, undefined, 0);
@@ -548,9 +585,9 @@ export const fine = {
     list(anchor(parent), items, undefined, build);
   },
 
-  /** A list before `end`; its rows' bindings use `reads`, shared by the rows. */
-  listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void): void {
-    list(end, items, reads, build);
+  /** A list before `end`; its rows' bindings use `reads`, shared by the rows. `empty` builds its `else`. */
+  listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void, empty?: Build): void {
+    list(end, items, reads, build, empty);
   },
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */

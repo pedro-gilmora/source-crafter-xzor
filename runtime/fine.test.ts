@@ -435,6 +435,66 @@ test("nested regions and lists in a region change alone: the outer block keeps i
   expect(el.querySelector("dialog")).toBeNull();
 });
 
+test("a list's else shows while it has no rows, and leaves with the first one", async () => {
+  class Page extends FineComponent {
+    #items: string[] = []; get items(): string[] { FineComponent.$reader?.(this, 0); return this.#items; } set items(v: string[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["items"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const ul = fine.el(__p, "ul");
+        const end = ul.appendChild(document.createComment(""));
+        fine.listAt(end, () => this.items, [(it: string) => it], (__p) => {
+          const li = __p.appendChild(document.createElement("li"));
+          fine.textItem(li.appendChild(document.createTextNode("")), 0);
+        }, (__p) => {
+          fine.textAt(__p.appendChild(document.createElement("p")).appendChild(document.createTextNode("")), () => `none ${this.items.length}`);
+        });
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  expect(el.querySelector("ul")!.innerHTML).toBe("<p>none 0</p><!---->");
+  p.items = ["a", "b"];
+  await tick();
+  expect(el.querySelector("ul")!.innerHTML).toBe("<li>a</li><li>b</li><!---->");
+  p.items = [];
+  await tick();
+  expect(el.querySelector("ul")!.innerHTML).toBe("<p>none 0</p><!---->");
+});
+
+test("@attr: in a region sets its element while the branch shows, and comes off when it goes", async () => {
+  class Stock extends FineComponent {
+    #n = 0; get n(): number { FineComponent.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["n"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const span = fine.el(__p, "span");
+        span.setAttribute("class", "cell");
+        span.setAttribute("title", "stock");
+        fine.region(span, (__p) => {
+          if (this.n > 0) fine.text(__p, () => this.n);
+          else {
+            fine.attrOf(span, "class", () => "error-text cell");
+            fine.attrOf(span, "title", () => `none ${this.n}`);
+            fine.t(__p, "Agotado");
+          }
+        });
+      });
+    }
+  }
+  const el = host();
+  const c = mount(Stock, el);
+  const span = el.querySelector("span")!;
+  expect(span.getAttribute("class")).toBe("cell error-text");
+  expect(span.getAttribute("title")).toBe("none 0");
+  c.n = 2;
+  await tick();
+  expect(span.getAttribute("class")).toBe("cell");
+  expect(span.getAttribute("title")).toBe("stock");
+  expect(span.textContent).toBe("2");
+});
+
 test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
