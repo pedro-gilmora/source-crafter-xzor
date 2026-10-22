@@ -683,6 +683,45 @@ test("@once: read once, untracked, even inside a region", async () => {
   expect(el.querySelector("b")!.textContent).toBe("2");
 });
 
+test("a cached getter runs once per change for all its readers, and is never stale", async () => {
+  let runs = 0;
+  const outside = { n: 1 };
+  class Page extends FineComponent {
+    #a = 1; get a(): number { FineComponent.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (FineComponent.same(p, v)) return; this.#a = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["a"]); }
+    get total(): number {
+      runs++;
+      return this.a * 10;
+    }
+    get loose(): number {
+      return outside.n;
+    }
+    static { fine.memo(this, ["total", "loose"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.text(fine.el(__p, "b"), () => this.total);
+        fine.text(fine.el(__p, "i"), () => this.total + 1);
+        fine.text(fine.el(__p, "u"), () => `${this.total}/${this.loose}`);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  expect(el.textContent).toBe("101110/1");
+  expect(runs).toBe(1);
+  p.a = 2;
+  await tick();
+  expect(el.textContent).toBe("202120/1");
+  expect(runs).toBe(2);
+  // Read outside a binding, between changes: still cached.
+  expect(p.total).toBe(20);
+  expect(runs).toBe(2);
+  // What nothing tracks is never cached.
+  outside.n = 5;
+  p.stateHasChanged();
+  expect(el.querySelector("u")!.textContent).toBe("20/5");
+});
+
 test("@await: pending, then the value; a newer promise wins; what then reads re-renders it without a new request", async () => {
   const gates: ((v: string[]) => void)[] = [];
   let requests = 0;

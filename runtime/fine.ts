@@ -15,6 +15,8 @@ const ISLAND = 4;
 const KEYED = 5;
 /** Runs `read` for what it does (`@await`'s request): never re-run after handlers, so never loose. */
 const EFFECT = 6;
+/** A cached getter (`Memo`): a change to what it read marks it stale; it recomputes when read. */
+const MEMO = 7;
 const KIND = 7;
 /** The tracker has it queued; `at` reads 0 then, else -1. */
 const QUEUED = 8;
@@ -47,6 +49,9 @@ type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
 type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
+type Memo = { value: unknown; fresh: boolean };
+/** A component's cached getters, created on first read. */
+const MEMOS = Symbol("xzor.fine.memos");
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.fine.empty");
 
@@ -57,8 +62,11 @@ let collecting: Binding | undefined;
 let holder: Holder | undefined;
 
 function collect(source: Source, index: number): void {
+  collectBits(source, bitOf(index));
+}
+
+function collectBits(source: Source, bit: number): void {
   const b = collecting!;
-  const bit = bitOf(index);
   const own = b.model;
   if (own === source) {
     b.mask |= bit;
@@ -120,7 +128,27 @@ class Binding {
     return (this.flags & (QUEUED | DEAD)) !== 0 ? 0 : -1;
   }
   set at(value: number) {
-    if ((this.flags & DEAD) === 0) this.flags = value < 0 ? this.flags & ~QUEUED : this.flags | QUEUED;
+    if ((this.flags & DEAD) !== 0) return;
+    this.flags = value < 0 ? this.flags & ~QUEUED : this.flags | QUEUED;
+    // Stale as soon as what it read changes, so no binding re-run in the same flush reads the old value.
+    if (value >= 0 && (this.flags & KIND) === MEMO) (this.data as Memo).fresh = false;
+  }
+
+  /** @internal A cached getter's value: computed again when stale, and its reads passed on to the reader. */
+  $memo(): unknown {
+    const m = this.data as Memo;
+    if (!m.fresh) {
+      m.value = this.#run();
+      // What reads nothing tracked has nothing to tell it about changes: computed on every read.
+      m.fresh = this.model !== undefined && (this.flags & DEAD) === 0;
+    }
+    if (collecting !== undefined) {
+      const own = this.model;
+      if ((this.flags & MANY) === 0) {
+        if (own !== undefined) collectBits(own as Source, this.mask);
+      } else for (const dep of (own as Map<Source, Dep>).values()) collectBits(dep.model, dep.mask);
+    }
+    return m.value;
   }
 
   #reset(): void {
@@ -155,7 +183,7 @@ class Binding {
 
   // Nothing tracked tells it about changes: its component re-runs it after each of its handlers.
   #loose(): void {
-    if ((this.flags & (LOOSE | DEAD)) !== 0 || (this.flags & KIND) === EFFECT || holder === undefined) return;
+    if ((this.flags & (LOOSE | DEAD)) !== 0 || (this.flags & KIND) >= EFFECT || holder === undefined) return;
     this.flags |= LOOSE;
     holder.ctx.loose.push(this);
   }
@@ -216,6 +244,8 @@ class Binding {
       case ISLAND:
       case EFFECT:
         this.#run();
+        return;
+      case MEMO:
         return;
     }
   }
@@ -739,6 +769,31 @@ export const fine = {
   anchor,
 
   /**
+   * Caches the getters `names` of `cls` per instance: computed once per change of what they read, whoever
+   * reads them. One that reads nothing tracked is computed on every read; `@Volatile` getters are left out.
+   */
+  memo(cls: Function, names: readonly string[]): void {
+    const proto = cls.prototype as object;
+    for (const name of names) {
+      const desc = Object.getOwnPropertyDescriptor(proto, name);
+      const get = desc?.get;
+      if (get === undefined) continue;
+      const key = Symbol(name);
+      Object.defineProperty(proto, name, {
+        ...desc,
+        get(this: Record<symbol, unknown>) {
+          let b = this[key] as Binding | undefined;
+          if (b === undefined) {
+            b = this[key] = new Binding(MEMO, null as unknown as Node, () => get.call(this), { value: undefined, fresh: false } satisfies Memo);
+            ((this[MEMOS] ??= []) as Binding[]).push(b);
+          }
+          return b.$memo();
+        },
+      });
+    }
+  },
+
+  /**
    * `@await (read()) { pending } then (v) { } catch (e) { }` between `end` and the comment before it. `read`
    * runs again when what it reads changes, and a promise it replaced is ignored when it settles; the arms re-run
    * on their own reads like a region's. A rejection without `catch` is reported.
@@ -888,8 +943,15 @@ setFineHooks({
     root.end = frag.appendChild(document.createComment(""));
     return root;
   },
-  refresh: (root) => refreshAll(root as FineRoot & Holder),
-  dispose: (root) => disposeAll(root as FineRoot & Holder),
+  refresh(root) {
+    // A whole-component pass recomputes the cached getters too: what changed may be untracked.
+    for (const m of ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS] ?? []) (m.data as Memo).fresh = false;
+    refreshAll(root as FineRoot & Holder);
+  },
+  dispose(root) {
+    for (const m of ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, Binding[] | undefined>)[MEMOS] ?? []) m.dispose();
+    disposeAll(root as FineRoot & Holder);
+  },
   handled(owner: ComponentBase, result: unknown): void {
     const ctx = (owner as unknown as Record<symbol, Ctx | undefined>)[CTX];
     if (ctx !== undefined) afterHandler(ctx, result);

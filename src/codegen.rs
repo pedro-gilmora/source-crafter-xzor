@@ -261,14 +261,25 @@ pub fn generate_with(
     let mut cascades: Vec<(String, String)> = Vec::new();
     let mut blanks: Vec<(usize, usize)> = Vec::new();
     let mut list_keys = HashMap::new();
+    // A fine component's own instance getters, cached unless `@Volatile`.
+    let mut memos: Vec<String> = Vec::new();
     for (code, decls) in doc.code.iter().zip(&decls) {
         cascade_members(code, decls, &mut cascades, &mut blanks).map_err(|(message, _)| message)?;
         for m in decls {
+            let mut volatile = false;
             for &(s, e) in &m.decorators {
                 if let Some(member) = key_member(&code[s..e]) {
                     list_keys.insert(m.name.clone(), member);
                     blanks.push((code.at + s, code.at + e));
+                } else if code[s..e].trim_end() == "@Volatile" {
+                    volatile = true;
+                    blanks.push((code.at + s, code.at + e));
                 }
+            }
+            let before = code[..m.offset].trim_end();
+            let getter = before.ends_with("get") && !before[..before.len() - 3].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+            if doc.fine && getter && !volatile && !m.is_static && !m.name.starts_with('#') && !memos.contains(&m.name) {
+                memos.push(m.name.clone());
             }
             if m.is_static {
                 statics.insert(m.name.clone());
@@ -359,6 +370,10 @@ pub fn generate_with(
     }
     if doc.cached {
         g.line("static readonly cached = true;");
+    }
+    if !memos.is_empty() {
+        let names: Vec<String> = memos.iter().map(|n| js_string(n)).collect();
+        g.line(&format!("static {{ fine.memo(this, [{}]); }}", names.join(", ")));
     }
     if let Some(Node::Routes { sections, .. }) = block {
         for (i, section) in sections.iter().enumerate() {
@@ -3816,6 +3831,16 @@ mod tests {
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
         has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
         has("static readonly cached = true;");
+    }
+
+    #[test]
+    fn fine_getters_are_cached_unless_volatile() {
+        let src = "@fine\n@code {\n  n = 1;\n  get total(): number { return this.n * 2; }\n  @Volatile get now(): number { return Date.now(); }\n  static get shared(): number { return 1; }\n  set total2(v: number) {}\n}\n<p>@total @now</p>";
+        let g = gen_with(src, &[]);
+        assert!(g.code.contains("static { fine.memo(this, [\"total\"]); }"), "{}", g.code);
+        assert!(!g.code.contains("@Volatile"), "{}", g.code);
+        let g = gen_with("@render\n@code { get total(): number { return 1; } }\n<p/>", &[]);
+        assert!(!g.code.contains("fine.memo"), "{}", g.code);
     }
 
     #[test]
