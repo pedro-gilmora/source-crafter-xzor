@@ -10,6 +10,7 @@ Before any task, check whether a skill applies and follow it. Use superpowers, p
 - All code: `test-driven-development` (write a failing test first, then make it pass).
 - Bugs: `systematic-debugging`.
 - Before claiming done: `verification-before-completion`, which means running the commands below and reading their output.
+- **Docs are mandatory.** Any change to the surface (syntax, directives, attributes, CLI flags, runtime or editor behavior) or to the design ships, in the same commit, with updates to every doc it affects: `README.md`, `docs/design.md`, the documentation site (`docs/site/pages`), the user skill `npm/xzor/skills/xzor/SKILL.md`, and `.github/skills/xzor-ui/SKILL.md` for kit changes. Compile any new snippet before committing it.
 
 ## Commands
 
