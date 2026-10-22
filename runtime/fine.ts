@@ -42,8 +42,8 @@ type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; it
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
 type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
-/** One pass of a keyed loop: its key, the loop variables it saw (compared to keep its row) and its markup. */
-type Pass = (key: unknown, values: readonly unknown[], build: Build) => void;
+/** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
+type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
 type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.fine.empty");
@@ -203,9 +203,7 @@ class Binding {
         return reconcile(this, this.#run() as Iterable<unknown>);
       case KEYED: {
         const keyed = this.data as Keyed;
-        const order = this.#run() as Row[];
-        place(this.node, keyed.order, order);
-        keyed.order = order;
+        keyed.order = this.#run() as Row[];
         return;
       }
       case ISLAND:
@@ -375,11 +373,16 @@ function newRow(ctx: Ctx, item: unknown, reads: Reads | undefined, build: (paren
   const frag = document.createDocumentFragment();
   const row: Row = { bindings: undefined, ctx, head: frag, tail: frag, item, reads };
   within(row, () => build(frag, item));
-  // A row keeps at least one node, so it always has a place.
+  seal(row, frag);
+  return row;
+}
+
+// ponytail: a fragment per row, not one per run: in happy-dom a shared one costs heap and saves no time; recheck in a real browser.
+/** Gives `row` its fragment's nodes; at least one, so it always has a place. */
+function seal(row: Row, frag: DocumentFragment): void {
   if (frag.firstChild === null) frag.appendChild(document.createComment(""));
   row.head = frag.firstChild!;
   row.tail = frag.lastChild!;
-  return row;
 }
 
 function dropRow(row: Row): void {
@@ -460,22 +463,45 @@ function sameValues(a: readonly unknown[], b: readonly unknown[]): boolean {
   return true;
 }
 
-// Runs the loop: each pass keeps the row of its key when it saw the same values, else builds one there and then,
-// while the loop's state is the pass's own.
-function runKeyed(s: Keyed, run: (pass: Pass) => void): Row[] {
+// Runs the loop: a pass that saw the same values as its key's row keeps it; else the generated code builds the
+// row there and then, while the loop's state is the pass's own, into the node `pass` returns.
+function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
   const order: Row[] = [];
   const seen = new Set<unknown>();
-  run((key, values, build) => {
-    if (seen.has(key)) throw duplicate(key);
-    seen.add(key);
-    let row = s.rows.get(key);
-    if (row !== undefined && !sameValues(row.item as unknown[], values)) {
-      dropRow(row);
-      row = undefined;
-    }
-    if (row === undefined) s.rows.set(key, (row = newRow(s.ctx, values, undefined, build)));
-    order.push(row);
-  });
+  const outer = holder;
+  let building: Row | undefined;
+  const finish = (): void => {
+    if (building === undefined) return;
+    seal(building, building.head as DocumentFragment);
+    building = undefined;
+    holder = outer;
+  };
+  try {
+    run((key, values) => {
+      finish();
+      if (seen.has(key)) throw duplicate(key);
+      seen.add(key);
+      let row = s.rows.get(key);
+      if (row !== undefined && !sameValues(row.item as unknown[], values)) {
+        dropRow(row);
+        row = undefined;
+      }
+      if (row !== undefined) {
+        order.push(row);
+        return undefined;
+      }
+      const frag = document.createDocumentFragment();
+      row = { bindings: undefined, ctx: s.ctx, head: frag, tail: frag, item: values, reads: undefined };
+      s.rows.set(key, row);
+      order.push(row);
+      building = row;
+      holder = row;
+      return frag;
+    });
+    finish();
+  } finally {
+    holder = outer;
+  }
   if (order.length === 0 && s.empty !== undefined) {
     let row = s.rows.get(EMPTY);
     if (row === undefined) s.rows.set(EMPTY, (row = newRow(s.ctx, EMPTY, undefined, s.empty)));
@@ -487,6 +513,7 @@ function runKeyed(s: Keyed, run: (pass: Pass) => void): Row[] {
       dropRow(row);
       s.rows.delete(key);
     }
+  place(end, s.order, order);
   return order;
 }
 
@@ -680,7 +707,7 @@ export const fine = {
   /** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
   keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
     const state: Keyed = { ctx: holder!.ctx, rows: new Map(), order: [], empty };
-    track(new Binding(KEYED, end, () => runKeyed(state, run), state));
+    track(new Binding(KEYED, end, () => runKeyed(state, end, run), state));
   },
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */

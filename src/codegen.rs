@@ -681,6 +681,8 @@ enum FinePart<'n> {
     Island(&'n [Node]),
     /// `@attr:`, bound to the element that holds it.
     ParentAttr(&'n Attr),
+    /// An `@if`/`@switch` of a keyed pass's row that reads only the pass's values, appended to its element.
+    Flow(&'n Node),
 }
 
 struct Reads {
@@ -1378,6 +1380,11 @@ impl Gen<'_> {
                     let var = self.fine_path(&kids, path, &mut vars);
                     (var, owner(self, &mut vars, &path[..path.len() - 1]))
                 }
+                // Its `@attr:`s set the element it is appended to.
+                FinePart::Flow(_) => {
+                    let var = self.fine_path(&kids, path, &mut vars);
+                    (var.clone(), Some(var))
+                }
                 _ => (self.fine_path(&kids, path, &mut vars), None),
             };
             targets.push(target);
@@ -1449,9 +1456,13 @@ impl Gen<'_> {
                     kids.push(Tpl::Anchor);
                 }
                 Node::If { .. } | Node::Switch { .. } if self.reads_only_pass(node) => {
-                    // Built once with its row: one anchor, replaced by its content.
-                    parts.push((at(kids), FinePart::Region(node)));
-                    kids.push(Tpl::Anchor);
+                    // Built once with its row: as an element's last child it appends to it, else it replaces an anchor.
+                    if i + 1 == nodes.len() && !path.is_empty() {
+                        parts.push((path.to_vec(), FinePart::Flow(node)));
+                    } else {
+                        parts.push((at(kids), FinePart::Region(node)));
+                        kids.push(Tpl::Anchor);
+                    }
                 }
                 // Destructured items (entries, tuples) are new on every run: keyed passes, not a list.
                 Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => {
@@ -1539,6 +1550,7 @@ impl Gen<'_> {
                 r?;
             }
             FinePart::List(node) => self.fine_list(node, var)?,
+            FinePart::Flow(node) => self.fine_flow(node, var)?,
             FinePart::ParentAttr(a) => {
                 let read = self.value(&a.value);
                 self.emit(M::lit(&format!("fine.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
@@ -1721,14 +1733,16 @@ impl Gen<'_> {
         self.emit(lead.lit_then(") {"));
         self.depth += 1;
         let key = key.as_ref().map_or_else(|| M::lit("__i++"), |k| self.expr(k));
-        self.emit(M::lit("__pass(").add(key).lit_then(&format!(", [{}], (__p) => {{", locals.join(", "))));
+        // A kept pass skips its body: `__pass` returns where to build only for a new row.
+        self.emit(M::lit("const __p = __pass(").add(key).lit_then(&format!(", [{}]);", locals.join(", "))));
+        self.line("if (__p !== undefined) {");
         let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
         let outer_pass = self.pass_locals.replace(locals.clone());
         let r = self.fine_block(body, "__p");
         self.pass_locals = outer_pass;
         self.locals.truncate(scope);
         let r = r.and_then(|()| {
-            self.line("});");
+            self.line("}");
             self.depth -= 1;
             self.line("}");
             self.depth -= 1;
@@ -3647,7 +3661,7 @@ mod tests {
         has("for (const [k, v] of Object.entries(this.team)) {");
         assert!(!g.code.contains("[k, v]) =>"), "{}", g.code);
         // Keyed by a pass counter: a pass that saw the same `k` and `v` keeps its row, and its `@if` is a region.
-        has("for (const [k, v] of Object.entries(this.team)) {\n          __pass(__i++, [k, v], (__p) => {");
+        has("for (const [k, v] of Object.entries(this.team)) {\n          const __p = __pass(__i++, [k, v]);");
         // A `@{ }` block and the siblings after it are one region: its locals stay in scope and current.
         has("fine.regionAt(_e9, (__p) => {\n        const total = this.count * 2;");
         has("() => total);");
@@ -3702,7 +3716,7 @@ mod tests {
         has("], (__p) => {\n        const _e");
         has("}, (__p) => {\n        const _e");
         has("fine.textAt(");
-        has("for (let i = 0; i < this.xs.length; i++) {\n          __pass(__i++, [i], (__p) => {");
+        has("for (let i = 0; i < this.xs.length; i++) {\n          const __p = __pass(__i++, [i]);\n          if (__p !== undefined) {");
         has("}, (__p) => {\n        const _e10 = __t4() as El<\"u\">;");
     }
 
@@ -3718,19 +3732,19 @@ mod tests {
         has("fine.keyedAt(");
         has("let __i = 0;");
         has("for (const [k, v] of Object.entries(this.team)) {");
-        has("__pass(__i++, [k, v], (__p) => {");
+        has("const __p = __pass(__i++, [k, v]);\n");
         has("}, (__p) => {");
         has("if (v > 1) {");
-        // That `@if` reads only the pass's values, which the row is kept by: inline at its anchor, no region.
+        // That `@if` reads only the pass's values, which the row is kept by: built with the row, appended to its `<li>`.
         let at = g.code.find("if (v > 1) {").unwrap();
         assert!(!g.code[at - 80..at].contains("regionAt"), "{}", g.code);
-        has(".replaceWith(");
+        assert!(!g.code.contains(".replaceWith("), "{}", g.code);
         // `@key(expr)` on the loop.
-        has("__pass(i * 2, [i], (__p) => {");
+        has("const __p = __pass(i * 2, [i]);");
         has("}, undefined, (r) => r.sku + r.qty);");
         // A pass running `@{ }` code is not skipped: that loop rebuilds whole.
         has("for (const [a, b] of Object.entries(this.team)) {\n");
-        assert!(!g.code.contains("[a, b], (__p)"), "{}", g.code);
+        assert!(!g.code.contains("__pass(__i++, [a, b])"), "{}", g.code);
     }
 
     #[test]

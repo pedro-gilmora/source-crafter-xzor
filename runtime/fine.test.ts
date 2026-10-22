@@ -505,10 +505,11 @@ test("keyed passes keep their rows: same key and values keep the nodes, changed 
         const ul = fine.el(__p, "ul");
         fine.keyedAt(ul.appendChild(document.createComment("")), (__pass) => {
           for (const [k, v] of Object.entries(this.team)) {
-            __pass(k, [k, v], (__p) => {
+            const __p = __pass(k, [k, v]);
+            if (__p !== undefined) {
               builds++;
               __p.appendChild(document.createElement("li")).textContent = `${k}${v}`;
-            });
+            }
           }
         }, (__p) => {
           __p.appendChild(document.createElement("p")).textContent = "none";
@@ -538,7 +539,7 @@ test("a keyed run with a duplicate key throws, naming it", () => {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         fine.keyedAt(__p.appendChild(document.createComment("")), (__pass) => {
-          for (const x of [1, 2, 1]) __pass(x, [x], () => {});
+          for (const x of [1, 2, 1]) __pass(x, [x]);
         });
       });
     }
