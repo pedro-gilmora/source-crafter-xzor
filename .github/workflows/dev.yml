@@ -157,6 +157,8 @@ jobs:
         GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         PR_NUMBER: ${{ needs.resolve.outputs.number }}
         TITLE: ${{ needs.resolve.outputs.title }}
+        # Entero, con el cuerpo, que va al release y a Telegram; en una PR solo hay titulo.
+        HEAD_MESSAGE: ${{ github.event.head_commit.message }}
       run: |
         # Los tests de la gramatica la incrustan en la de TypeScript de VS Code (1.141.1),
         # que en local se lee de la instalacion y aqui se descarga de ese mismo commit.
@@ -192,7 +194,7 @@ jobs:
         fi
 
         jq -n \
-          --arg title "${TITLE}" \
+          --arg title "${HEAD_MESSAGE:-$TITLE}" \
           --arg sha "${{ needs.resolve.outputs.head_sha }}" \
           --arg url "${{ needs.resolve.outputs.url }}" \
           --slurpfile commits pr_commits.json \
