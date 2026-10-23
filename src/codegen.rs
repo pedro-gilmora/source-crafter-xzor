@@ -755,6 +755,65 @@ fn is_plain_code_node(node: &Node) -> bool {
     matches!(node, Node::Code(parts) if is_plain_code(parts))
 }
 
+/// `f(a, b)` or `x.y.f(a, b)`, the whole of `text`: the callee's range and each argument's. `None` for anything
+/// else, a call without arguments, a spread argument or a template literal.
+fn call_parts(text: &str) -> Option<((usize, usize), Vec<(usize, usize)>)> {
+    if text.contains('`') {
+        return None;
+    }
+    let lead = text.len() - text.trim_start().len();
+    let last = text.trim_end().len();
+    let open = text.find('(')?;
+    let ident = |s: &str| s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$') && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    let callee_end = lead + text[lead..open].trim_end().len();
+    if !text[lead..callee_end].split('.').all(ident) {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let (mut depth, mut quote, mut start, mut i) = (0, None, open + 1, open);
+    let mut args = Vec::new();
+    loop {
+        let b = *bytes.get(i)?;
+        if let Some(q) = quote {
+            if b == b'\\' {
+                i += 1;
+            } else if b == q {
+                quote = None;
+            }
+        } else {
+            match b {
+                b'\'' | b'"' => quote = Some(b),
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if i + 1 != last {
+                            return None;
+                        }
+                        args.push((start, i));
+                        break;
+                    }
+                }
+                b',' if depth == 1 => {
+                    args.push((start, i));
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    let trim = |(a, b): (usize, usize)| (a + text[a..b].len() - text[a..b].trim_start().len(), a + text[a..b].trim_end().len());
+    let mut args: Vec<_> = args.into_iter().map(trim).collect();
+    if args.last().is_some_and(|&(a, b)| a >= b) {
+        args.pop();
+    }
+    if args.is_empty() || args.iter().any(|&(a, b)| a >= b || text[a..b].starts_with("...")) {
+        return None;
+    }
+    Some(((lead, callee_end), args))
+}
+
 /// An `@if`/`@switch` whose kept branch stays current: its branches run no `@{ }` code while building.
 fn branchable(node: &Node) -> bool {
     let plain = |body: &[Node]| !body.iter().any(is_plain_code_node);
@@ -1888,8 +1947,23 @@ impl Gen<'_> {
     /// `@await` before comment `end`: the promise as a read, and each arm a region body taking its value.
     fn fine_await(&mut self, node: &Node, end: &str) -> Result<(), String> {
         let Node::Await { promise, pending, then, catch } = node else { unreachable!("an @await") };
-        let read = self.expr(promise);
-        self.emit(M::lit(&format!("fine.awaitAt({end}, () => ")).add(read).lit_then(", (__p) => {"));
+        let head = match call_parts(&promise.text) {
+            // Its arguments are a binding of their own: the call runs again only when one of them changes.
+            Some((callee, args)) => {
+                let part = |(a, b): (usize, usize)| Src::new(&promise.text[a..b], if promise.at == Src::UNMAPPED { Src::UNMAPPED } else { promise.at + a });
+                let params = (0..args.len()).map(|i| format!("__a{i}")).collect::<Vec<_>>().join(", ");
+                let mut m = M::lit(&format!("fine.awaitCallAt({end}, () => ["));
+                for (i, &range) in args.iter().enumerate() {
+                    if i > 0 {
+                        m = m.lit_then(", ");
+                    }
+                    m = m.add(self.expr(&part(range)));
+                }
+                m.lit_then(&format!("], ({params}) => ")).add(self.expr(&part(callee))).lit_then(&format!("({params}), (__p) => {{"))
+            }
+            None => M::lit(&format!("fine.awaitAt({end}, () => ")).add(self.expr(promise)).lit_then(", (__p) => {"),
+        };
+        self.emit(head);
         let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
         let pass = self.pass_locals.take();
         let r = (|| {
@@ -3896,11 +3970,19 @@ mod tests {
         let src = "@fine\n@code { q = \"\"; load(q: string): Promise<string[]> { return Promise.resolve([q]); } }\n<ul>@await (load(q)) {<li>…</li>} then (rows) {@for (const r of rows) {<li>@r</li>}} catch (e) {<li>@String(e)</li>}</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("fine.awaitAt(_e1, () => this.load(this.q), (__p) => {");
+        has("fine.awaitCallAt(_e1, () => [this.q], (__a0) => this.load(__a0), (__p) => {");
         has("}, (__p, rows) => {");
         has("fine.listAt(");
         has("}, (__p, e) => {");
         has("() => String(e)");
+        // Arguments with nested calls, strings and commas; a callee through a member chain.
+        let g = gen_with("@fine\n@code { q = \"\"; api = { find: (a: string, b: number[]) => Promise.resolve(a) }; }\n@await (api.find(q.trim(), [1, 2])) {} then (v) {@v}", &[]);
+        assert!(g.code.contains("fine.awaitCallAt(_e0, () => [this.q.trim(), [1, 2]], (__a0, __a1) => this.api.find(__a0, __a1), "), "{}", g.code);
+        // Anything else, or a call without arguments, runs whole on every change.
+        for promise in ["load()", "q ? load(q) : load(\"\")", "load(q).then((r) => r)", "load(...qs)", "load(`${q}`)"] {
+            let g = gen_with(&format!("@fine\n@code {{ q = \"\"; qs: string[] = []; load(...a: string[]) {{ return Promise.resolve(a); }} }}\n@await ({promise}) {{}}"), &[]);
+            assert!(g.code.contains("fine.awaitAt(") && !g.code.contains("awaitCallAt"), "{promise}:\n{}", g.code);
+        }
         let doc = parse("@render\n@await (p) { } then { }").unwrap().0;
         let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
         assert!(err.contains("@await needs a fine component"), "{err}");

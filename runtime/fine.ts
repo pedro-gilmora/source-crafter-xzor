@@ -659,6 +659,36 @@ function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undef
 
 const anchor = (parent: Node): Comment => parent.appendChild(document.createComment(""));
 
+/** `@await`'s view before `end`; the function it gives shows what a request returned, a promise once it settles. */
+function awaiting<R>(end: Comment, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): (result: R) => void {
+  const state = { phase: 0, value: undefined as unknown, seq: 0 };
+  const view = new Binding(REGION, end, (p: Node) => {
+    if (state.phase === 0) pending?.(p);
+    else if (state.phase === 1) then?.(p, state.value as Awaited<R>);
+    else fail?.(p, state.value);
+  }, { bindings: undefined, ctx: holder!.ctx, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1 } satisfies Region);
+  const show = (phase: number, value: unknown): void => {
+    if ((view.flags & DEAD) !== 0) return;
+    state.phase = phase;
+    state.value = value;
+    view.stateHasChanged();
+  };
+  track(view);
+  return (result) => {
+    const seq = ++state.seq;
+    if (typeof (result as PromiseLike<unknown> | null)?.then !== "function") return show(1, result);
+    if (state.phase !== 0) show(0, undefined);
+    (result as PromiseLike<unknown>).then(
+      (value) => seq === state.seq && show(1, value),
+      (error) => {
+        if (seq !== state.seq) return;
+        show(2, error);
+        if (fail === undefined) queueMicrotask(() => { throw error; });
+      },
+    );
+  };
+}
+
 /**
  * What generated `@fine` code calls. A run of nodes is a `template` clone; the `...At` calls bind the nodes it
  * has in place, and the `...Item` ones bind a row's nodes to a read its list shares (`reads[i]`, given the item).
@@ -824,33 +854,26 @@ export const fine = {
    * on their own reads like a region's. A rejection without `catch` is reported.
    */
   awaitAt<R>(end: Comment, read: () => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
-    const state = { phase: 0, value: undefined as unknown, seq: 0 };
-    const view = new Binding(REGION, end, (p: Node) => {
-      if (state.phase === 0) pending?.(p);
-      else if (state.phase === 1) then?.(p, state.value as Awaited<R>);
-      else fail?.(p, state.value);
-    }, { bindings: undefined, ctx: holder!.ctx, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1 } satisfies Region);
-    const show = (phase: number, value: unknown): void => {
-      if ((view.flags & DEAD) !== 0) return;
-      state.phase = phase;
-      state.value = value;
-      view.stateHasChanged();
-    };
-    track(view);
+    const show = awaiting(end, pending, then, fail);
+    track(new Binding(EFFECT, end, () => show(read()), undefined));
+  },
+
+  /**
+   * `@await (f(a, b))`: as `awaitAt`, but `f` is called again only when an argument changes (`Object.is`) or
+   * what `f` itself reads does, not on every change to what the arguments read.
+   */
+  awaitCallAt<A extends unknown[], R>(end: Comment, args: () => [...A], call: (...args: A) => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
+    const show = awaiting(end, pending, then, fail);
+    let last: A | undefined;
+    const request = new Binding(EFFECT, end, () => show(call(...last!)), undefined);
     track(new Binding(EFFECT, end, () => {
-      const result = read();
-      const seq = ++state.seq;
-      if (typeof (result as PromiseLike<unknown> | null)?.then !== "function") return show(1, result);
-      if (state.phase !== 0) show(0, undefined);
-      (result as PromiseLike<unknown>).then(
-        (value) => seq === state.seq && show(1, value),
-        (error) => {
-          if (seq !== state.seq) return;
-          show(2, error);
-          if (fail === undefined) queueMicrotask(() => { throw error; });
-        },
-      );
+      const next = args();
+      if (last !== undefined && next.every((v, i) => Object.is(v, last![i]))) return;
+      const first = last === undefined;
+      last = next;
+      if (!first) request.stateHasChanged();
     }, undefined));
+    track(request);
   },
 
   /** Two comments appended to `parent`, for a lone region; the end one. */

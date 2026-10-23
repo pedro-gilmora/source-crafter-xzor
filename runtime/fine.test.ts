@@ -752,6 +752,45 @@ test("a getter with one reader, or read outside bindings, gets no cache", async 
   expect(memos(p)).toBe(0);
 });
 
+test("@await of a call requests again only when an argument changes, or what the call itself reads", async () => {
+  const requests: string[] = [];
+  class Page extends FineComponent {
+    #q = "Ab"; get q(): string { FineComponent.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (FineComponent.same(p, v)) return; this.#q = v; this.$changed(0, p); }
+    #lang = "en"; get lang(): string { FineComponent.$reader?.(this, 1); return this.#lang; } set lang(v: string) { const p = this.#lang; if (FineComponent.same(p, v)) return; this.#lang = v; this.$changed(1, p); }
+    static { FineComponent.$define(this, ["q", "lang"]); }
+    get key(): string {
+      return this.q.toLowerCase();
+    }
+    load(key: string): Promise<string> {
+      requests.push(`${key}/${this.lang}`);
+      return Promise.resolve(key);
+    }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        const end = fine.anchors(__p);
+        fine.awaitCallAt(end, () => [this.key], (__a0) => this.load(__a0), undefined, (__p, v) => {
+          fine.textAt(__p.appendChild(document.createTextNode("")), () => v);
+        }, undefined);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  await tick();
+  expect(el.textContent).toBe("ab");
+  // `key` reads `q` but gives the same value: no new request.
+  p.q = "AB";
+  await tick();
+  expect(requests).toEqual(["ab/en"]);
+  p.q = "cd";
+  await tick();
+  expect(el.textContent).toBe("cd");
+  // What the call reads inside still asks again.
+  p.lang = "es";
+  await tick();
+  expect(requests).toEqual(["ab/en", "cd/en", "cd/es"]);
+});
+
 test("@await: pending, then the value; a newer promise wins; what then reads re-renders it without a new request", async () => {
   const gates: ((v: string[]) => void)[] = [];
   let requests = 0;

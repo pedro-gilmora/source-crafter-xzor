@@ -330,7 +330,7 @@ A loop keeps each pass's DOM (and the components in it) while the pass's key sta
 }
 ```
 
-The request runs again when what the `@await (...)` expression reads changes (here `query`), and only the newest one shows. What `then` reads updates it without a new request. `then` and `catch` are optional.
+The request runs again when what the `@await (...)` expression reads changes (here `query`), and only the newest one shows. For a call like `load(key)`, it runs again only when an argument's value changes (or what `load` itself reads), so a derived `key` that comes out the same costs no request. What `then` reads updates it without a new request. `then` and `catch` are optional.
 
 ### Motion, in CSS
 
