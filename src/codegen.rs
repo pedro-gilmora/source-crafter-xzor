@@ -308,6 +308,7 @@ pub fn generate_with(
         pass_locals: None,
         once: false,
         branching: false,
+        in_show: 0,
         templates: Vec::new(),
         reads: None,
         uses_el: false,
@@ -500,6 +501,8 @@ fn find_routes(nodes: &[Node]) -> Option<&Node> {
         Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => find_routes(body).or_else(|| otherwise.as_deref().and_then(find_routes)),
         Node::Cascade { body, .. } => find_routes(body),
         Node::Once(body) => find_routes(body),
+        Node::Show(inner) => find_routes(std::slice::from_ref(&**inner)),
+        Node::Pause(body) => body.as_deref().and_then(find_routes),
         Node::Await { pending, then, catch, .. } => find_routes(pending).or_else(|| then.iter().chain(catch).find_map(|(_, b)| find_routes(b))),
         Node::Switch { cases, .. } => cases.iter().find_map(|c| find_routes(&c.body)),
         Node::SlotFill(fill) => find_routes(&fill.body),
@@ -678,6 +681,8 @@ struct Gen<'p> {
     once: bool,
     /// The next `@if`/`@switch` of `fine_flow` is a `branchAt`'s: each branch first returns its index without a parent.
     branching: bool,
+    /// Emitting the branches of a show block, where `@pause { }` may go.
+    in_show: usize,
     /// The specs of the `@fine` templates, emitted after the class as `__t<N>`.
     templates: Vec<String>,
     /// The row being emitted, whose bindings go through its list's shared reads.
@@ -716,6 +721,10 @@ enum FinePart<'n> {
     /// `@await`, between its two anchors.
     Await(&'n Node),
     Once(&'n [Node]),
+    /// `@show:if`/`@show:switch` (the `If` or `Switch`), between its two anchors.
+    Show(&'n Node),
+    /// `@pause { }`, between its two anchors.
+    Pause(&'n [Node]),
 }
 
 struct Reads {
@@ -753,6 +762,44 @@ fn is_island(el: &Element) -> bool {
 
 fn is_plain_code_node(node: &Node) -> bool {
     matches!(node, Node::Code(parts) if is_plain_code(parts))
+}
+
+/// A show block's `If`/`Switch` with each branch checked, and a leading bare `@pause` holding the rest of its branch.
+fn show_branches(node: &Node) -> Result<Node, String> {
+    fn branch(body: &[Node]) -> Result<Vec<Node>, String> {
+        let blank = |n: &Node| matches!(n, Node::Text(t) if t.trim().is_empty());
+        let first = body.iter().position(|n| !blank(n));
+        let body = match first.map(|i| (i, &body[i])) {
+            Some((i, Node::Pause(None))) => vec![Node::Pause(Some(body[i + 1..].to_vec()))],
+            _ => body.to_vec(),
+        };
+        top_level(&body)?;
+        Ok(body)
+    }
+    // What shows up later at a branch's top level could not be hidden: elements only.
+    fn top_level(nodes: &[Node]) -> Result<(), String> {
+        for n in nodes {
+            match n {
+                Node::Text(t) if t.trim().is_empty() => {}
+                Node::Element(el) if &*el.name.text != "text" && !el.is_component() => {}
+                Node::Pause(Some(body)) => top_level(body)?,
+                Node::Pause(None) => return Err("bare @pause goes first in a @show branch; use @pause { } for a part of it".into()),
+                _ => return Err("a @show branch holds elements at its top level, which it hides: wrap it in an element".into()),
+            }
+        }
+        Ok(())
+    }
+    match node {
+        Node::If { branches, otherwise } => Ok(Node::If {
+            branches: branches.iter().map(|(c, b)| Ok((c.clone(), branch(b)?))).collect::<Result<_, String>>()?,
+            otherwise: otherwise.as_deref().map(branch).transpose()?,
+        }),
+        Node::Switch { subject, cases } => Ok(Node::Switch {
+            subject: subject.clone(),
+            cases: cases.iter().map(|c| Ok(Case { labels: c.labels.clone(), body: branch(&c.body)? })).collect::<Result<_, String>>()?,
+        }),
+        _ => unreachable!("a show block holds an if or a switch"),
+    }
 }
 
 /// `f(a, b)` or `x.y.f(a, b)`, the whole of `text`: the callee's range and each argument's. `None` for anything
@@ -943,6 +990,7 @@ impl Gen<'_> {
             pass_locals: None,
             once: false,
             branching: false,
+            in_show: 0,
             templates: Vec::new(),
             reads: None,
             uses_el: false,
@@ -1216,6 +1264,7 @@ impl Gen<'_> {
             // A render pass has no "once": it renders as usual.
             Node::Once(body) => self.nodes(body)?,
             Node::Await { .. } => return Err("@await needs a fine component (remove @render)".into()),
+            Node::Show(_) | Node::Pause(_) => return Err("@show:if, @show:switch and @pause need a fine component (remove @render)".into()),
             Node::Cascade { name, value, fixed, body } => {
                 let quoted = js_string(name);
                 // The mapping stays on the name only while the literal is a straight copy of it.
@@ -1616,6 +1665,18 @@ impl Gen<'_> {
                     parts.push((at(kids), FinePart::Await(node)));
                     kids.push(Tpl::Anchor);
                 }
+                Node::Show(inner) => {
+                    kids.push(Tpl::Anchor);
+                    parts.push((at(kids), FinePart::Show(inner)));
+                    kids.push(Tpl::Anchor);
+                }
+                Node::Pause(None) => return Err("bare @pause goes first in a @show branch; use @pause { } for a part of it".into()),
+                Node::Pause(Some(_)) if self.in_show == 0 => return Err("@pause belongs in a @show:if or @show:switch branch".into()),
+                Node::Pause(Some(body)) => {
+                    kids.push(Tpl::Anchor);
+                    parts.push((at(kids), FinePart::Pause(body)));
+                    kids.push(Tpl::Anchor);
+                }
                 Node::ParentAttr(a) => parts.push((path.to_vec(), FinePart::ParentAttr(a))),
                 Node::Once(body) => match body.as_slice() {
                     [Node::Expr(e)] => {
@@ -1715,6 +1776,32 @@ impl Gen<'_> {
             }
             FinePart::List(node) => self.fine_list(node, var)?,
             FinePart::Await(node) => self.fine_await(node, var)?,
+            FinePart::Show(node) => {
+                let node = show_branches(node)?;
+                self.line(&format!("fine.showAt({var}, (__p) => {{"));
+                let outer = std::mem::replace(&mut self.in_region, true);
+                let pass = self.pass_locals.take();
+                self.depth += 1;
+                self.in_show += 1;
+                self.branching = true;
+                let r = self.fine_flow(&node, "__p");
+                self.in_show -= 1;
+                self.depth -= 1;
+                self.pass_locals = pass;
+                self.in_region = outer;
+                r?;
+                self.line("});");
+            }
+            FinePart::Pause(body) => {
+                self.line(&format!("fine.pauseAt({var}, (__p) => {{"));
+                let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
+                let pass = self.pass_locals.take();
+                let r = self.fine_block(body, "__p");
+                self.pass_locals = pass;
+                (self.in_region, self.in_loop) = flags;
+                r?;
+                self.line("});");
+            }
             FinePart::Flow(node) => self.fine_flow(node, var)?,
             FinePart::OnceText(e) => {
                 let read = self.expr(e);
@@ -2729,6 +2816,8 @@ fn collect_slots(nodes: &[Node], members: &HashSet<String>, loops: &mut Vec<(Str
             Node::SlotFill(fill) => collect_slots(&fill.body, members, loops, out)?,
             Node::Cascade { body, .. } => collect_slots(body, members, loops, out)?,
             Node::Once(body) => collect_slots(body, members, loops, out)?,
+            Node::Show(inner) => collect_slots(std::slice::from_ref(&**inner), members, loops, out)?,
+            Node::Pause(body) => collect_slots(body.as_deref().unwrap_or_default(), members, loops, out)?,
             Node::Await { pending, then, catch, .. } => {
                 collect_slots(pending, members, loops, out)?;
                 for (_, body) in then.iter().chain(catch) {
@@ -4150,6 +4239,28 @@ mod tests {
         has("fine.branchAt(_e3, (__p) => {\n            if (this.text.length > 2) {");
         has("fine.listAt(_e5, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
         assert!(!g.code.contains("for (const it of"), "{}", g.code);
+    }
+
+    #[test]
+    fn show_blocks_hide_their_branches_and_pause_what_asks() {
+        let src = "@fine\n@code { tab = \"a\"; n = 1; }\n@show:if (tab === \"a\") {\n<p>@n</p>\n} else {\n@pause\n<section>@n</section>\n}\n<div>@show:switch (n) { case 1: <b>one</b> default: <i>@pause { <u>@n</u> }</i> }</div>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("fine.showAt(_e1, (__p) => {\n        if (this.tab === \"a\") {\n          if (!__p) return 0;\n");
+        has("} else {\n          if (!__p) return 1;\n");
+        has("        }\n        return 2;\n      });");
+        // Bare `@pause` takes the whole branch; `@pause { }` its block, at any depth.
+        assert_eq!(g.code.matches("fine.pauseAt(").count(), 2, "{}", g.code);
+        has("case 1: {\n            if (!__p) return 0;\n");
+        let err = |src: &str| generate_with(&parse(&format!("@fine\n@code {{ a = 1; }}\n{src}")).unwrap().0, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
+        for top in ["text", "@a", "@if (a) {<b/>}", "<Child />"] {
+            assert!(err(&format!("@show:if (a) {{ {top} }}")).contains("wrap it in an element"), "{top}");
+        }
+        assert!(err("@show:if (a) { <b/> @pause <i/> }").contains("bare @pause goes first in a @show branch"));
+        assert!(err("<p>@pause { <b/> }</p>").contains("@pause belongs in a @show:if or @show:switch branch"));
+        let doc = parse("@render\n@code { a = 1; }\n@show:if (a) { <b/> }").unwrap().0;
+        let e = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
+        assert!(e.contains("need a fine component"), "{e}");
     }
 
     #[test]

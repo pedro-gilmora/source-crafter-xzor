@@ -167,6 +167,10 @@ pub enum Node {
     ParentAttr(Attr),
     /// `@once(expr)` (one `Expr`) or `@once { }`: built once, with nothing bound.
     Once(Vec<Node>),
+    /// `@show:if` / `@show:switch`: the `If` or `Switch` inside hides its branches instead of removing them.
+    Show(Box<Node>),
+    /// `@pause { }`, or bare `@pause` (`None`) first in a show branch for all of it: stops while the branch is hidden.
+    Pause(Option<Vec<Node>>),
     /// `@await (promise) { pending } then (value) { } catch (error) { }`; each arm's name is optional.
     Await {
         promise: Src,

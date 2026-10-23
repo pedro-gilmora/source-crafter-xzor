@@ -22,7 +22,10 @@ const page = (member: string) => `@import { Product } from "./product"
   team: Record<string, number> = { x: 1, y: 2 };
   products = [new Product({ id: 1, name: "p1" }), new Product({ id: 2, name: "p2" })];
   notes = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  tab = "form";
 }
+
+<div class="tabs">@show:switch (tab) { case "form": <form><input name="who" /></form> case "list": @pause <ol>@for (const n of notes) @key(n.id) {<li>@n.id</li>}</ol> }</div>
 
 <div class="notes">@if (!notes.length) {<p>Nothing pending.</p>} else {<ul>@for (const n of notes) @key(n.id) {<li>@n.id<button @onclick="() => notes = notes.filter((x) => x.id !== n.id)">x</button></li>}</ul>}</div>
 <ul class="lines">@for (const l of lines.filter((x) => x.qty > 0)) {<li>@l.sku</li>}</ul>
@@ -110,6 +113,28 @@ test("loops keep their rows by @key, a field's @Key and a model's @Key", async (
   for (const button of q(".notes li button")) (button as HTMLButtonElement).click();
   await tick();
   expect(document.querySelector(".notes")!.textContent).toBe("Nothing pending.");
+
+  // `@show:switch`: the form stays, hidden, with what was typed; the paused list catches up when shown.
+  const input = document.querySelector<HTMLInputElement>(".tabs input")!;
+  input.value = "Ada";
+  page.tab = "list";
+  await tick();
+  const form = document.querySelector<HTMLElement>(".tabs form")!;
+  expect(form.style.display).toBe("none");
+  expect(document.querySelector(".tabs ol")!.textContent).toBe("");
+  page.tab = "form";
+  await tick();
+  page.notes = [{ id: 7 }];
+  await tick();
+  expect(document.querySelector(".tabs ol")!.textContent).toBe("");
+  page.tab = "list";
+  await tick();
+  expect(document.querySelector(".tabs ol")!.textContent).toBe("7");
+  page.tab = "form";
+  await tick();
+  expect(document.querySelector(".tabs input")).toBe(input);
+  expect(input.value).toBe("Ada");
+  expect(form.style.display).toBe("");
 }, 120_000);
 
 test("a field's @Key naming a member its items lack fails the type check", () => {

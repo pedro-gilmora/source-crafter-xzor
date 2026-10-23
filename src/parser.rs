@@ -51,6 +51,7 @@ pub fn parse(src: &str) -> PResult<(Document, Vec<Token>)> {
         in_component: false,
         bound: Vec::new(),
         routes_seen: false,
+        show: 0,
     };
     p.doc.nodes = p.nodes(Until::Eof)?;
     Ok((p.doc, p.tokens))
@@ -86,6 +87,8 @@ struct Parser<'a> {
     bound: Vec<String>,
     /// A routes block was already opened in this document.
     routes_seen: bool,
+    /// Inside the branches of a `@show:if`/`@show:switch`, where bare `@pause` is a directive.
+    show: usize,
 }
 
 /// Words that follow `@` as directives; `@cascade`, `@ClientRoutes` and `@ServerRoutes` are
@@ -422,9 +425,30 @@ impl<'a> Parser<'a> {
         let once = word == "once" && (self.peek() == Some(b'(') || self.next_non_blank() == Some(b'{'));
         // `@await (promise) { }`; bare `@await` is a member reference.
         let awaits = word == "await" && self.next_non_blank() == Some(b'(');
+        // `@show:if (...)` / `@show:switch (...)`; anything else is a member reference.
+        let show = word == "show" && self.peek() == Some(b':') && ["if", "switch"].iter().any(|k| self.src[self.pos + 1..].starts_with(k) && !self.b.get(self.pos + 1 + k.len()).is_some_and(|&c| is_ident_char(c)));
+        // `@pause { }` anywhere; bare `@pause` only inside a show block.
+        let pause = word == "pause" && (self.next_non_blank() == Some(b'{') || self.show > 0);
         self.mark(TokenKind::Transition, at, at + 1);
         if self.bound.iter().any(|b| b == word) {
             return self.implicit_expression(word_start);
+        }
+        if show {
+            self.pos += 1;
+            let flow = if self.keyword("if") { "if" } else { "switch" };
+            if flow == "switch" {
+                self.keyword("switch");
+            }
+            self.mark(TokenKind::Keyword, word_start, self.pos);
+            self.show += 1;
+            let node = if flow == "if" { self.if_block() } else { self.switch_block() };
+            self.show -= 1;
+            return Ok(Transition::Node(Node::Show(Box::new(node?))));
+        }
+        if pause {
+            self.mark(TokenKind::Keyword, word_start, self.pos);
+            let body = if self.next_non_blank() == Some(b'{') { Some(self.block()?) } else { None };
+            return Ok(Transition::Node(Node::Pause(body)));
         }
         if once {
             self.mark(TokenKind::Keyword, word_start, self.pos);
@@ -1776,6 +1800,20 @@ mod tests {
         assert!(matches!(&p.children[2], Node::Once(body) if matches!(&body[0], Node::Element(i) if &*i.name == "i")), "{p:?}");
         // Bare, it is a member reference.
         assert_eq!(p.children[4], Node::Expr("once".into()));
+    }
+
+    #[test]
+    fn show_blocks_wrap_if_and_switch_and_pause_inside_them() {
+        let n = nodes("@show:if (a) { @pause <i/> } else { <b>@pause { <u/> }</b> }\n@show:switch (k) { case 1: <p/> default: <s/> }\n@pause @show");
+        let Node::Show(inner) = &n[0] else { panic!("{n:?}") };
+        let Node::If { branches, otherwise: Some(o) } = &**inner else { panic!("{n:?}") };
+        assert_eq!(branches[0].1[0], Node::Pause(None));
+        let Node::Element(b) = &o[0] else { panic!("{o:?}") };
+        assert!(matches!(&b.children[0], Node::Pause(Some(body)) if matches!(&body[0], Node::Element(u) if &*u.name == "u")), "{b:?}");
+        assert!(matches!(&n[1], Node::Show(s) if matches!(&**s, Node::Switch { cases, .. } if cases.len() == 2)), "{n:?}");
+        // Outside a show block, bare `@pause` and `@show` are member references.
+        assert_eq!(n[2], Node::Expr("pause".into()));
+        assert_eq!(n[4], Node::Expr("show".into()));
     }
 
     #[test]

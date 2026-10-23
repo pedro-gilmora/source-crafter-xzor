@@ -113,6 +113,8 @@ pub fn attr_owner(text: &str, offset: usize) -> Option<(usize, usize)> {
             Node::For { body, otherwise, .. } | Node::While { body, otherwise, .. } => in_body(body).or_else(|| otherwise.as_ref().and_then(in_body)),
             Node::Switch { cases, .. } => cases.iter().find_map(|c| in_body(&c.body)),
             Node::Cascade { body, .. } => in_body(body),
+            Node::Show(inner) => walk(std::slice::from_ref(&**inner), owner, off),
+            Node::Pause(Some(body)) | Node::Once(body) => in_body(body),
             Node::Slot(s) => s.fallback.as_ref().and_then(in_body),
             Node::Routes { sections, .. } => sections.iter().find_map(|s| in_body(&s.body)),
             Node::Code(parts) => parts.iter().find_map(|p| match p {
@@ -163,6 +165,8 @@ fn collect_slot_names(nodes: &[Node], out: &mut Vec<(String, usize)>) {
             Node::SlotFill(f) => collect_slot_names(&f.body, out),
             Node::Cascade { body, .. } => collect_slot_names(body, out),
             Node::Once(body) => collect_slot_names(body, out),
+            Node::Show(inner) => collect_slot_names(std::slice::from_ref(&**inner), out),
+            Node::Pause(body) => collect_slot_names(body.as_deref().unwrap_or_default(), out),
             Node::Await { pending, then, catch, .. } => {
                 collect_slot_names(pending, out);
                 then.iter().chain(catch).for_each(|(_, b)| collect_slot_names(b, out));
