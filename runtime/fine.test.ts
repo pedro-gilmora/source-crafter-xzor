@@ -888,6 +888,89 @@ test("a branch region keeps its branch's DOM while the chosen branch stays the s
   expect(el.querySelector("ul")!.textContent).toBe("1");
 });
 
+test("@show: a chosen branch is built once and kept, the others hidden; hidden ones stay live, @pause ones catch up when shown", async () => {
+  let builds = 0;
+  let liveRuns = 0;
+  let pausedRuns = 0;
+  class Page extends FineComponent {
+    #tab = "a"; get tab(): string { FineComponent.$reader?.(this, 0); return this.#tab; } set tab(v: string) { const p = this.#tab; if (FineComponent.same(p, v)) return; this.#tab = v; this.$changed(0, p); }
+    #n = 1; get n(): number { FineComponent.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+    #on = true; get on(): boolean { FineComponent.$reader?.(this, 2); return this.#on; } set on(v: boolean) { const p = this.#on; if (FineComponent.same(p, v)) return; this.#on = v; this.$changed(2, p); }
+    static { FineComponent.$define(this, ["tab", "n", "on"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.branchAt(fine.anchors(__p), (__p) => {
+          if (this.on) {
+            if (!__p) return 0;
+            fine.showAt(fine.anchors(__p), (__p) => {
+              if (this.tab === "a") {
+                if (!__p) return 0;
+                builds++;
+                const a = __p.appendChild(document.createElement("section"));
+                a.className = "a";
+                a.setAttribute("style", "display: flex");
+                fine.textAt(a.appendChild(document.createTextNode("")), () => (liveRuns++, this.n));
+              } else {
+                if (!__p) return 1;
+                builds++;
+                const b = __p.appendChild(document.createElement("section"));
+                b.className = "b";
+                fine.pauseAt(fine.anchors(b), (__p) => {
+                  fine.textAt(__p.appendChild(document.createTextNode("")), () => (pausedRuns++, this.n));
+                });
+              }
+              return 2;
+            });
+          }
+          return 1;
+        });
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const a = el.querySelector<HTMLElement>(".a")!;
+  expect(a.textContent).toBe("1");
+  expect(el.querySelector(".b")).toBeNull();
+  p.tab = "b";
+  await tick();
+  const b = el.querySelector<HTMLElement>(".b")!;
+  expect(a.style.display).toBe("none");
+  expect(b.textContent).toBe("1");
+  // Hidden and live: it keeps up.
+  p.n = 2;
+  await tick();
+  expect(a.textContent).toBe("2");
+  expect(b.textContent).toBe("2");
+  p.tab = "a";
+  await tick();
+  expect(el.querySelector(".a")).toBe(a);
+  expect(a.style.display).toBe("flex");
+  expect(b.style.display).toBe("none");
+  // Hidden and paused: nothing runs, and showing it brings it up to date once.
+  const paused = pausedRuns;
+  p.n = 3;
+  await tick();
+  p.n = 4;
+  await tick();
+  expect(pausedRuns).toBe(paused);
+  expect(b.textContent).toBe("2");
+  p.tab = "b";
+  await tick();
+  expect(b.textContent).toBe("4");
+  expect(pausedRuns).toBe(paused + 1);
+  expect(b.style.display).toBe("");
+  expect(builds).toBe(2);
+  // Removed with its region: hidden branches go too.
+  p.on = false;
+  await tick();
+  const live = liveRuns;
+  p.n = 5;
+  await tick();
+  expect(liveRuns).toBe(live);
+  expect(el.querySelector("section")).toBeNull();
+});
+
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
   ComponentBase.$leaves = true;
   let finish!: () => void;

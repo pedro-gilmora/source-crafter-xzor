@@ -31,6 +31,13 @@ const ITEM = 128;
 const OWNED = 256;
 /** A MEMO's value is current. */
 const FRESH = 512;
+/** A REGION that is `@show:if`/`@show:switch` (`data` is `Show`). */
+const SHOW = 1024;
+/** A REGION that is `@pause { }`: what it holds stops while its show branch is hidden. */
+const PAUSE = 2048;
+/** Under a `@pause` of a hidden branch: changes only mark it STALE. */
+const PAUSED = 4096;
+const STALE = 8192;
 
 // Same bits as the model tracker: fields from the 30th share bit 30, `state` (-1) has bit 31.
 const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
@@ -42,6 +49,9 @@ type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown
 /** Where bindings are chained: a fine root, a region or a list row. */
 type Holder = { bindings: unknown; ctx: Ctx };
 type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
+/** A built branch of a show block: its top-level elements, and their inline `display` while hidden. */
+type ShowBranch = Region & { first: Node | null; els: HTMLElement[]; display: string[] };
+type Show = { ctx: Ctx; start: Comment; index: number; build: (parent: Node) => unknown; branches: (ShowBranch | undefined)[] };
 /** A row's shared reads, from the list: `(item, x) => value`; a handler's gives the handler. */
 type Reads = readonly ((item: any, x?: any) => any)[];
 type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined };
@@ -186,7 +196,7 @@ class Binding {
 
   // Nothing tracked tells it about changes: its component re-runs it after each of its handlers.
   #loose(): void {
-    if ((this.flags & (LOOSE | DEAD)) !== 0 || (this.flags & KIND) >= EFFECT || holder === undefined) return;
+    if ((this.flags & (LOOSE | DEAD | PAUSE)) !== 0 || (this.flags & KIND) >= EFFECT || holder === undefined) return;
     this.flags |= LOOSE;
     holder.ctx.loose.push(this);
   }
@@ -208,7 +218,11 @@ class Binding {
 
   stateHasChanged(): void {
     const flags = this.flags;
-    if ((flags & DEAD) !== 0) return;
+    if ((flags & (DEAD | PAUSED)) !== 0) {
+      if ((flags & DEAD) === 0) this.flags |= STALE;
+      return;
+    }
+    if ((flags & SHOW) !== 0) return this.#show();
     switch (flags & KIND) {
       case TEXT: {
         const value = this.#run();
@@ -260,6 +274,34 @@ class Binding {
     }
   }
 
+  // `@show:if`/`@show:switch`: hides the branch it showed and shows the one `read` picks, built the first time.
+  #show(): void {
+    const show = this.data as Show;
+    const index = this.#run() as number;
+    if (index === show.index) return;
+    const shown = show.branches[show.index];
+    if (shown !== undefined) hideBranch(shown);
+    show.index = index;
+    let branch = show.branches[index];
+    if (branch !== undefined) return showBranch(branch);
+    branch = { bindings: undefined, ctx: show.ctx, start: show.start, item: undefined, branch: undefined, index: -1, first: null, els: [], display: [] };
+    show.branches[index] = branch;
+    const frag = document.createDocumentFragment();
+    within(branch, () => untracked(() => show.build(frag)));
+    branch.first = frag.firstChild;
+    for (let node = frag.firstChild; node !== null; node = node.nextSibling) if (node.nodeType === 1) branch.els.push(node as HTMLElement);
+    // In source order: before the next branch built, else before the end.
+    let before: Node = this.node;
+    for (let i = index + 1; i < show.branches.length; i++) {
+      const next = show.branches[i]?.first;
+      if (next) {
+        before = next;
+        break;
+      }
+    }
+    before.parentNode!.insertBefore(frag, before);
+  }
+
   // `@expr` gave markup: from now on it renders through the virtual DOM, whatever it gives.
   #becomeIsland(): void {
     const read = this.read;
@@ -281,7 +323,8 @@ class Binding {
   dispose(): void {
     if ((this.flags & DEAD) !== 0) return;
     const kind = this.flags & KIND;
-    if (kind === REGION) disposeAll(this.data as Region);
+    if ((this.flags & SHOW) !== 0) for (const branch of (this.data as Show).branches) branch !== undefined && disposeAll(branch);
+    else if (kind === REGION) disposeAll(this.data as Region);
     else if (kind === LIST || kind === KEYED) for (const row of (this.data as ListState | Keyed).order) disposeAll(row);
     else if (kind === ISLAND) {
       disposeIsland((this.data as Island).tree);
@@ -367,9 +410,57 @@ function refreshAll(h: Holder): void {
     const kind = b.flags & KIND;
     const kept = kind === REGION ? (b.data as Region).index : -1;
     b.stateHasChanged();
-    if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) refreshAll(row);
+    if ((b.flags & SHOW) !== 0) for (const branch of (b.data as Show).branches) branch !== undefined && refreshAll(branch);
+    else if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) refreshAll(row);
     else if (kept !== -1 && kept === (b.data as Region).index) refreshAll(b.data as Region);
   }
+}
+
+/** Calls `f` with each holder right under `b`: a region's, a list's rows, a show block's built branches. */
+function under(b: Binding, f: (h: Holder) => void): void {
+  const kind = b.flags & KIND;
+  if ((b.flags & SHOW) !== 0) for (const branch of (b.data as Show).branches) branch !== undefined && f(branch);
+  else if (kind === REGION) f(b.data as Region);
+  else if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) f(row);
+}
+
+/** Pauses everything under the `@pause` regions of `h`. */
+function pauseIn(h: Holder): void {
+  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+    if ((b.flags & PAUSE) !== 0) under(b, freeze);
+    else under(b, pauseIn);
+  }
+}
+
+function freeze(h: Holder): void {
+  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+    b.flags |= PAUSED;
+    under(b, freeze);
+  }
+}
+
+/** Resumes what `freeze` paused: a binding that missed a change runs once, then what is under it resumes. */
+function thaw(h: Holder): void {
+  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+    const stale = (b.flags & STALE) !== 0;
+    b.flags &= ~(PAUSED | STALE);
+    if (stale) b.stateHasChanged();
+    under(b, thaw);
+  }
+}
+
+function hideBranch(branch: ShowBranch): void {
+  for (let i = 0; i < branch.els.length; i++) {
+    const style = branch.els[i]!.style;
+    branch.display[i] = style.display;
+    style.display = "none";
+  }
+  pauseIn(branch);
+}
+
+function showBranch(branch: ShowBranch): void {
+  for (let i = 0; i < branch.els.length; i++) branch.els[i]!.style.display = branch.display[i] ?? "";
+  thaw(branch);
 }
 
 const textOf = (value: unknown): string => (value === null || value === undefined || value === false ? "" : String(value));
@@ -788,6 +879,17 @@ export const fine = {
   /** `@if`/`@switch` before `end`: `run()` gives the branch's index, `run(parent)` builds it; rebuilt only when the index changes. */
   branchAt(end: Comment, run: (parent?: Node) => number): void {
     region(end.previousSibling as Comment, end, run, undefined, 0, run as Build);
+  },
+
+  /** `@show:if`/`@show:switch` before `end`: `run()` picks a branch, `run(parent)` builds the one picked; see `#show`. */
+  showAt(end: Comment, run: (parent?: Node) => number): void {
+    const show: Show = { ctx: holder!.ctx, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
+    track(new Binding(REGION | SHOW, end, run, show));
+  },
+
+  /** `@pause { }` in a show branch, before `end`: built once; what it holds stops while the branch is hidden. */
+  pauseAt(end: Comment, build: Build): void {
+    region(end.previousSibling as Comment, end, () => 0, undefined, PAUSE, build);
   },
 
   /** `@once(expr)`: `read()` once, untracked, into `node`. */
