@@ -39,12 +39,12 @@ test("every field of a model class becomes a private slot with a getter and a se
   expect(out.split("\n")).toHaveLength(WORKER.split("\n").length);
 });
 
-test("project sources and generated fine components get tracked fields; other generated files do not", () => {
+test("project sources and generated components get tracked fields; other generated files do not", () => {
   const root = join(repo, "examples", "counter");
-  const fineText = `import { FineComponent, fine } from "@source-crafter/xzor-runtime/model";`;
+  const fineText = `import { fine } from "@source-crafter/xzor-runtime/model";`;
   expect(tracksFields(join(root, "models", "worker.ts"), root, "")).toBe(true);
   expect(tracksFields(join(root, ".xzor", "pages", "TeamFine.xzor.ts"), root, fineText)).toBe(true);
-  expect(tracksFields(join(root, ".xzor", "pages", "Team.xzor.ts"), root, "class Team extends ComponentBase {}")).toBe(false);
+  expect(tracksFields(join(root, ".xzor", "pages", "Team.xzor.ts"), root, "class Team extends ComponentBase {}")).toBe(true);
   expect(tracksFields(join(root, ".xzor", "routes.ts"), root, fineText)).toBe(false);
   expect(tracksFields(join(root, "node_modules", "x", "y.xzor.ts"), root, fineText)).toBe(false);
 });
@@ -69,9 +69,17 @@ test("a fine component's fields are tracked like a model's, with no generated co
   expect(out).toContain(`export default class Counter extends FineComponent {\n  #count = 0; get count() { FineComponent.$reader?.(this, 0); return this.#count; } set count(v) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }\n`);
   expect(out).toContain(`static { FineComponent.$define(this, ["count"]); } }`);
   // The derived class continues after its base's fields, through the offset `$define` returns.
-  expect(out).toContain(`get step() { Counter.$reader?.(this, Twice.#at + 0); return this.#step; }`);
+  expect(out).toContain(`get step() { Counter.$reader?.(this, Twice.$at + 0); return this.#step; }`);
   expect(out).not.toContain("constructor(");
   expect(out).not.toContain("this.assign(");
+});
+
+test("a component extending ComponentBase gets tracked fields too, with no generated constructor", () => {
+  const src = FINE.replace(`import { FineComponent, fine }`, `import { fine }`).replace("extends FineComponent", "extends ComponentBase");
+  const out = trackModelFields(src);
+  expect(out).toContain(`get count() { ComponentBase.$reader?.(this, 0); return this.#count; }`);
+  expect(out).toContain(`static { ComponentBase.$define(this, ["count"]); } }`);
+  expect(out).not.toContain("constructor(");
 });
 
 const SHAPES = `${IMPORT}
@@ -185,15 +193,15 @@ test("a class extending a model of the same file continues its base's field inde
   // A direct subclass of Model always starts at 0, so its indexes stay literal.
   expect(out).toContain(`static { Model.$define(this, ["name", "hours", "rate"]); } }`);
   expect(out).toContain(`export class Manager extends Worker { constructor(data?: object) { super(data); if (new.target === Manager) this.assign(data); }`);
-  expect(out).toContain(`  #team = 0; get team() { Worker.$reader?.(this, Manager.#at + 0); return this.#team; } set team(v) { const p = this.#team; if (Worker.same(p, v)) return; this.#team = v; this.$changed(Manager.#at + 0, p); }\n`);
-  expect(out).toContain(`  #bonus = 0; get bonus() { Worker.$reader?.(this, Manager.#at + 1); return this.#bonus; }`);
-  expect(out).toContain(`static #at = 0; static { this.#at = Worker.$define(this, ["team", "bonus"]); } }\n`);
+  expect(out).toContain(`  #team = 0; get team() { Worker.$reader?.(this, Manager.$at + 0); return this.#team; } set team(v) { const p = this.#team; if (Worker.same(p, v)) return; this.#team = v; this.$changed(Manager.$at + 0, p); }\n`);
+  expect(out).toContain(`  #bonus = 0; get bonus() { Worker.$reader?.(this, Manager.$at + 1); return this.#bonus; }`);
+  expect(out).toContain(`static { Worker.$define(this, ["team", "bonus"]); } }\n`);
 });
 
 test("a base declared after its subclass is still followed", () => {
   const src = `${IMPORT}export class Manager extends Worker {\n  team = 0;\n}\nexport class Worker extends Model {\n  name = "";\n}\n`;
   const out = trackModelFields(src, "src/models.ts");
-  expect(out).toContain(`static { this.#at = Worker.$define(this, ["team"]); } }`);
+  expect(out).toContain(`static { Worker.$define(this, ["team"]); } }`);
   expect(out).toContain(`static { Model.$define(this, ["name"]); } }`);
 });
 
@@ -210,8 +218,8 @@ test("a base in a relative module is read through the resolver", () => {
   };
   const src = `import Worker from "./worker";\nimport { Lead } from "./team";\nexport class Manager extends Worker {\n  team = 0;\n}\nexport class Senior extends Lead {\n  level = 0;\n}\n`;
   const out = trackModelFields(src, "src/manager.ts", resolve);
-  expect(out).toContain(`static { this.#at = Worker.$define(this, ["team"]); } }`);
-  expect(out).toContain(`static { this.#at = Lead.$define(this, ["level"]); } }`);
+  expect(out).toContain(`static { Worker.$define(this, ["team"]); } }`);
+  expect(out).toContain(`static { Lead.$define(this, ["level"]); } }`);
   expect(seen.filter((s) => s.endsWith("./worker"))).toHaveLength(1); // read once, cached per resolved path
 });
 
@@ -227,7 +235,7 @@ test("a base shared by many files is read and parsed once when the cache is shar
   const cache = new Map();
   for (const file of ["a", "b"]) {
     const src = `import Worker from "./worker";\nexport class ${file.toUpperCase()} extends Worker {\n  x = 1;\n}\n`;
-    expect(trackModelFields(src, `src/${file}.ts`, resolve, cache)).toContain(`this.#at = Worker.$define(this, ["x"])`);
+    expect(trackModelFields(src, `src/${file}.ts`, resolve, cache)).toContain(`Worker.$define(this, ["x"])`);
   }
   expect(reads).toBe(1);
 });

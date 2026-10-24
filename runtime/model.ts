@@ -11,7 +11,7 @@
 // Importing this module also makes the components that read a model re-render when it changes.
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
 
-import { setRenderObserver, type ComponentBase } from "./index";
+import { setRenderObserver, setTracking, type ComponentBase } from "./index";
 
 export { EntitySet } from "./entity-set";
 export { FineComponent, fine, type El } from "./fine";
@@ -142,7 +142,9 @@ export abstract class Model extends EventTarget {
       pendingIgnored = undefined;
     }
     Object.defineProperty(cls, meta, { value: own });
-    return base ? base.names.length : 0;
+    const at = base ? base.names.length : 0;
+    Object.defineProperty(cls, "$at", { value: at });
+    return at;
   }
 
   /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */
@@ -740,6 +742,8 @@ function flush(): void {
 export const $notify = changed as (dep: object, index: number) => void;
 /** @internal Runs what is queued now instead of in a microtask. */
 export const $flush = flush;
+
+setTracking({ model: Model, notify: $notify });
 
 // Drops the deps the render that just ended did not read again.
 function sweep(own: Reads): void {

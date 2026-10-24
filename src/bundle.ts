@@ -128,11 +128,11 @@ function rewritable(path: string, root: string): boolean {
   return p.endsWith(".ts") && inProject(path, root) && !p.includes("/node_modules/") && !p.includes("/.xzor/");
 }
 
-/** Files whose model and fine component fields become tracked: project sources, and generated fine components (the app's or a kit's). */
-export function tracksFields(path: string, root: string, text: string): boolean {
+/** Files whose model and component fields become tracked: project sources, and generated components (the app's or a kit's). */
+export function tracksFields(path: string, root: string, _text?: string): boolean {
   if (rewritable(path, root)) return true;
   const p = path.replaceAll("\\", "/");
-  return p.includes("/.xzor/") && p.endsWith(".xzor.ts") && !p.includes("/node_modules/") && text.includes("FineComponent");
+  return p.includes("/.xzor/") && p.endsWith(".xzor.ts") && !p.includes("/node_modules/");
 }
 
 function generatedPath(source: string): string {
@@ -330,11 +330,18 @@ type Field = {
 
 type ClassHead = { name: string; model: string; open: number; close: number };
 
-/** Local names bound to `Model`, `FineComponent` and `Untracked` by value imports from the runtime's model entry. */
+/** Local names bound to `Model`, a component base (`ComponentBase`, or its old name `FineComponent`) and `Untracked` by value imports from the runtime. */
 function modelLocals(src: string): { model: Set<string>; fine: Set<string>; untracked: Set<string> } {
   const model = new Set<string>();
   const fine = new Set<string>();
   const untracked = new Set<string>();
+  for (const m of src.matchAll(RUNTIME_IMPORT)) {
+    if (m[1]) continue;
+    for (const spec of m[2]!.split(",")) {
+      const [name, as, alias] = spec.trim().split(/\s+/);
+      if (name === "ComponentBase") fine.add(as === "as" && alias ? alias : name);
+    }
+  }
   for (const m of src.matchAll(MODEL_IMPORT)) {
     if (m[1]) continue;
     for (const spec of m[2]!.split(",")) {
@@ -755,10 +762,10 @@ function blank(text: string): string {
 
 function classBody(src: string, head: ClassHead, fields: Field[], hasCtor: boolean, derived: boolean): string {
   const names = fields.map((field) => JSON.stringify(field.name)).join(", ");
-  // A derived class's fields continue after its base's, a count only the base knows: `$define` returns it.
-  // The call stays in a static block, which runs after the member decorators `$define` takes over.
-  const slot = derived ? privateName(src.slice(head.open, head.close), fields) : "";
-  const at = derived ? `${head.name}.#${slot} + ` : "";
+  // A derived class's fields continue after its base's, a count only the base knows: `$define` stores it as the
+  // class's `$at`. The call stays in a static block, which runs after the member decorators `$define` takes over;
+  // Bun moves a decorated class's static blocks out of it, so the block names nothing private.
+  const at = derived ? `${head.name}.$at + ` : "";
   let out = hasCtor || !head.name ? "" : ` constructor(data?: object) { super(data); if (new.target === ${head.name}) this.assign(data); }`;
   let copied = head.open + 1;
   fields.forEach((field, index) => {
@@ -784,15 +791,8 @@ function classBody(src: string, head: ClassHead, fields: Field[], hasCtor: boole
     out += ` ${access}set ${field.name}(v${type && `: ${type}`}) { const p = this.#${field.name}; if (${head.model}.same(p, v)) return; this.#${field.name} = v; this.$changed(${at}${index}, p); }`;
     copied = field.end;
   });
-  const define = `static { ${derived ? `this.#${slot} = ` : ""}${head.model}.$define(this, [${names}]); } `;
-  return `${out}${src.slice(copied, head.close)}${derived ? `static #${slot} = 0; ` : ""}${define}}`;
-}
-
-/** `at`, else `at$`, `at$$`...: not a tracked field (its slot is `#name`) and not a `#name` the class declares. */
-function privateName(body: string, fields: Field[]): string {
-  let name = "at";
-  while (fields.some((f) => f.name === name) || new RegExp(`#${name.replaceAll("$", "\\$")}(?![\\w$])`).test(body)) name += "$";
-  return name;
+  const define = `static { ${head.model}.$define(this, [${names}]); } `;
+  return `${out}${src.slice(copied, head.close)}${define}}`;
 }
 
 const IMPORT_CLAUSE = /^import\s+([^"']+?)\s+from\s*["'][^"']+["']/gm;

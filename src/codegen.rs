@@ -358,7 +358,6 @@ pub fn generate_with(
     }
     let base = match &doc.inherits {
         Some(b) => M::src(b, b.at),
-        None if doc.fine => M::lit("FineComponent"),
         None => M::lit("ComponentBase"),
     };
     let mut header = M::lit(&format!("export default class {class_name}")).add(generics).lit_then(" extends ").add(base);
@@ -471,9 +470,8 @@ pub fn generate_with(
     }
     head.push_str(" } from \"@source-crafter/xzor-runtime\";\n");
     if doc.fine {
-        let base = if doc.inherits.is_some() { "" } else { "FineComponent, " };
         let el = if g.uses_el { ", type El" } else { "" };
-        head.push_str(&format!("import {{ {base}fine{el} }} from \"@source-crafter/xzor-runtime/model\";\n"));
+        head.push_str(&format!("import {{ fine{el} }} from \"@source-crafter/xzor-runtime/model\";\n"));
     }
     if block.is_some() {
         let params = if types & ROUTE_PARAMS != 0 { ", type RouteParams as __RouteParams" } else { "" };
@@ -4006,8 +4004,8 @@ mod tests {
         let src = "@fine\n@code {\ncount = 0;\nlabel = \"\";\nok = false;\nteam: Worker[] = [];\nel?: HTMLElement;\ninc() { this.count++; }\n}\n<div class=\"team\" title=\"n @label\">\n<button @onclick=\"inc\" @ref=\"el\">@count</button>\n<input @bind=\"label\" @bind:event=\"oninput\" />\n<input type=\"checkbox\" @bind=\"ok\" />\n@if (count > 1) {\n<p>many</p>\n} else {\n<p>few</p>\n}\n@for (const w of team) {\n<li>@w.name <b>@(w.hours * 2)</b></li>\n}\n@for (let i = 0; i < count; i++) {\n<i>@i</i>\n}\n@for (const [k, v] of Object.entries(team)) {\n@if (v) {\n<u>@k</u>\n}\n}\n@{ const total = count * 2; }\n<span>@total</span>\n</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("import { FineComponent, fine, type El } from \"@source-crafter/xzor-runtime/model\";");
-        has("export default class C extends FineComponent {");
+        has("import { fine, type El } from \"@source-crafter/xzor-runtime/model\";");
+        has("export default class C extends ComponentBase {");
         has("__b.addFine((__p) => {");
         // Elements and static text are a template, cloned; each dynamic part binds the node it has in place.
         has("const __t0 = fine.template([[\"div\", [\"class\", \"team\"], [\"button\", 0, \"\"], [\"input\", 0], [\"input\", [\"type\", \"checkbox\"]], null, null, null, null, null, null, null]]);");

@@ -3,7 +3,7 @@
 // per microtask) when one of them changes. A binding is its own dep for the first source it reads.
 
 import { $inSvg as inSvg, $isFragment, $leave as leave, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
-import { $flush, $keyName, $notify, Model } from "./model";
+import { $flush, $keyName, Model } from "./model";
 
 const TEXT = 0;
 const ATTR = 1;
@@ -1048,67 +1048,16 @@ export const fine = {
 
 const noop = (): void => {};
 
-const FIELDS = Symbol("xzor.fine.fields");
-
-/**
- * Base of `@fine` components. The bundle turns their fields into tracked ones, as it does a model's, so a
- * handler that writes a field updates what reads it. `stateHasChanged()` re-runs every binding.
- */
-export abstract class FineComponent extends ComponentBase {
-  #subs: object[] | undefined;
-
-  /** @internal What tracked getters report to; the bundle emits `FineComponent.$reader?.(this, i)`. */
-  static get $reader(): ((source: object, index: number) => void) | undefined {
-    return Model.$reader as ((source: object, index: number) => void) | undefined;
-  }
-
-  static same(a: unknown, b: unknown): boolean {
-    return Model.same(a, b);
-  }
-
-  /** @internal Records a class's tracked fields after its base's; returns where they start. */
-  static $define(cls: Function, names: string[]): number {
-    const counts = cls as unknown as Record<symbol, number | undefined>;
-    const at = counts[FIELDS] ?? 0;
-    counts[FIELDS] = at + names.length;
-    return at;
-  }
-
-  /** @internal */
-  $watch(dep: object): void {
-    const subs = (this.#subs ??= []);
-    (dep as Dep).slot = subs.length;
-    subs.push(dep);
-  }
-
-  /** @internal */
-  $unwatch(dep: object): void {
-    const subs = this.#subs;
-    if (subs === undefined || subs.length === 0) return;
-    const last = subs.pop() as Dep;
-    if (last !== dep) {
-      subs[(dep as Dep).slot] = last;
-      last.slot = (dep as Dep).slot;
-    }
-  }
-
-  /** @internal What a tracked setter reports once it stored a different value. */
-  protected $changed(index: number, _previous: unknown): void {
-    const subs = this.#subs;
-    if (subs !== undefined) for (let i = 0; i < subs.length; i++) $notify(subs[i]!, index);
-  }
-}
-
-(FineComponent.prototype as unknown as Record<symbol, boolean>)[FINE] = true;
-
-const CTX = Symbol("xzor.fine.ctx");
+/** @deprecated Every component is fine: `ComponentBase` does what this did. */
+export const FineComponent = ComponentBase;
+export type FineComponent = ComponentBase;
 
 setFineHooks({
   create(build: Build, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot {
     const frag = document.createDocumentFragment();
     const start = frag.appendChild(document.createComment(""));
     const ctx: Ctx = { owner, app, scope, loose: [] };
-    (owner as unknown as Record<symbol, Ctx>)[CTX] = ctx;
+    (owner as unknown as Record<symbol, Ctx>)[FINE] = ctx;
     const root: FineRoot & Holder = { bindings: undefined, ctx, start, end: start };
     // Reads outside a binding subscribe nothing: a fine component is never re-rendered by what it reads.
     const reader = Model.$reader;
@@ -1133,7 +1082,7 @@ setFineHooks({
     disposeAll(root as FineRoot & Holder);
   },
   handled(owner: ComponentBase, result: unknown): void {
-    const ctx = (owner as unknown as Record<symbol, Ctx | undefined>)[CTX];
+    const ctx = (owner as unknown as Record<symbol, Ctx | undefined>)[FINE];
     if (ctx !== undefined) afterHandler(ctx, result);
   },
 });

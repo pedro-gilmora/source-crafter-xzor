@@ -6,7 +6,7 @@ fn example_components_compile() {
     let app = std::fs::read_to_string(dir.join("Home.xzor")).unwrap();
     let ts = xzor::compile(&app, &dir.join("Home.xzor")).unwrap();
     assert!(ts.contains("import Counter from \"../Counter.xzor\";"));
-    assert!(ts.contains("export default class Home extends FineComponent {"));
+    assert!(ts.contains("export default class Home extends ComponentBase {"));
     assert!(ts.contains("static readonly route = \"/\";"));
     assert!(ts.contains("__b.addComponent(Counter, { label: \"Fives\", step: 5 });"));
     assert!(app.contains("step=\"5\""));

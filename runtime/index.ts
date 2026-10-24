@@ -74,15 +74,26 @@ type FineHooks = {
 
 let fineHooks: FineHooks | undefined;
 
-/** @internal On `FineComponent.prototype`: its handlers and callbacks write tracked fields, so nothing re-renders it. */
+/** @internal On a component whose fine root was built (its fine context): its handlers and callbacks write tracked fields, so nothing re-renders it. */
 export const FINE: unique symbol = Symbol("xzor.fine");
 
-const isFine = (c: ComponentBase): boolean => (c as unknown as Record<symbol, unknown>)[FINE] === true;
+const isFine = (c: ComponentBase): boolean => (c as unknown as Record<symbol, unknown>)[FINE] !== undefined;
 
 /** @internal Set by `fine.ts` (the model entry), so the renderer pays nothing without it. */
 export function setFineHooks(h: FineHooks): void {
   fineHooks = h;
 }
+
+type Tracking = { model: { $reader: ((source: any, index: number) => void) | undefined; same(a: unknown, b: unknown): boolean }; notify(dep: object, index: number): void };
+let tracking: Tracking | undefined;
+
+/** @internal Set by the model entry: what a component's tracked fields report to. */
+export function setTracking(t: Tracking): void {
+  tracking = t;
+}
+
+const FIELDS = Symbol("xzor.fields");
+type Watcher = { slot: number };
 
 /**
  * @internal A virtual-DOM island inside a fine template: renders `build` before `end`, patching `old`.
@@ -485,9 +496,57 @@ function isFragment(value: unknown): value is Fragment {
 type Debounced = { timer: ReturnType<typeof setTimeout>; settle: (value: unknown) => void };
 const DEBOUNCED = Symbol("xzor.debounced");
 
+/**
+ * Base of every component. A `.xzor` component's fields are tracked like a model's (the bundle rewrites them), so a
+ * handler that writes one updates what reads it; `stateHasChanged()` re-runs every binding.
+ */
 export abstract class ComponentBase {
+  #subs: Watcher[] | undefined;
   /** @internal Set by components that use `@leave`: until then, removal skips the `data-leave` check. */
   static $leaves = false;
+
+  /** @internal What tracked getters report to; the bundle emits `ComponentBase.$reader?.(this, i)`. */
+  static get $reader(): ((source: object, index: number) => void) | undefined {
+    return tracking?.model.$reader;
+  }
+
+  static same(a: unknown, b: unknown): boolean {
+    return tracking === undefined ? Object.is(a, b) : tracking.model.same(a, b);
+  }
+
+  /** @internal Records a class's tracked fields after its base's; where they start is the class's `$at`. */
+  static $define(cls: Function, names: string[]): number {
+    const counts = cls as unknown as Record<symbol, number | undefined>;
+    const at = counts[FIELDS] ?? 0;
+    counts[FIELDS] = at + names.length;
+    Object.defineProperty(cls, "$at", { value: at });
+    return at;
+  }
+
+  /** @internal */
+  $watch(dep: object): void {
+    const subs = (this.#subs ??= []);
+    (dep as Watcher).slot = subs.length;
+    subs.push(dep as Watcher);
+  }
+
+  /** @internal */
+  $unwatch(dep: object): void {
+    const subs = this.#subs;
+    if (subs === undefined || subs.length === 0) return;
+    const last = subs.pop()!;
+    if (last !== dep) {
+      subs[(dep as Watcher).slot] = last;
+      last.slot = (dep as Watcher).slot;
+    }
+  }
+
+  /** @internal What a tracked setter reports once it stored a different value. */
+  protected $changed(index: number, _previous: unknown): void {
+    const subs = this.#subs;
+    if (subs !== undefined) for (let i = 0; i < subs.length; i++) tracking!.notify(subs[i]!, index);
+  }
+
   /** Wraps builder calls as a RenderFragment; xzor emits this for markup used as a value. */
   static fragment(build: (builder: RenderTreeBuilder) => void): RenderFragment {
     return Object.assign(build, { [FRAGMENT]: true as const });
