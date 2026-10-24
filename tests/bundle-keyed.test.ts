@@ -16,6 +16,7 @@ export class Product extends Model {
 `;
 
 const page = (member: string) => `@import { Product } from "./product"
+@import Card from "./Card.xzor"
 
 @code {
   @Key("${member}") lines: { sku: string; qty: number }[] = [{ sku: "a", qty: 1 }, { sku: "b", qty: 2 }];
@@ -23,7 +24,11 @@ const page = (member: string) => `@import { Product } from "./product"
   products = [new Product({ id: 1, name: "p1" }), new Product({ id: 2, name: "p2" })];
   notes = [{ id: 1 }, { id: 2 }, { id: 3 }];
   tab = "form";
+  people = [{ id: 1, name: "Ana", roles: ["a"] }, { id: 2, name: "Luis", roles: [] as string[] }];
+  readonly ROLES = ["a", "b"];
 }
+
+<ul class="people">@for (const p of people) @key(p.id) {<li>@for (const r of ROLES) @key(r) {<b>@(p.roles.includes(r) ? r : "-")</b>}<Card person="p" /></li>}</ul>
 
 <div class="tabs">@show:switch (tab) { case "form": <form><input name="who" /></form> case "list": @pause <ol>@for (const n of notes) @key(n.id) {<li>@n.id</li>}</ol> }</div>
 
@@ -33,6 +38,16 @@ const page = (member: string) => `@import { Product } from "./product"
 <div class="products">@for (const p of products) {<i>@p.name</i>}</div>
 <u class="once">@once(lines.length) @once { <s>@(lines[0]!.sku)</s> }</u>
 <p class="await">@await (Promise.resolve(lines.length)) {…} then (n) {@(n * 10)}</p>
+`;
+
+const CARD = `@code {
+  person = { id: 0, name: "" };
+  protected override onInitialized(): void {
+    const g = globalThis as { cardInits?: number };
+    g.cardInits = (g.cardInits ?? 0) + 1;
+  }
+}
+<em>@person.name</em>
 `;
 
 const main = `import { mount } from "@source-crafter/xzor-runtime";
@@ -53,6 +68,7 @@ function build(member: string): { code: number; out: string } {
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "product.ts"), product);
   writeFileSync(join(dir, "Page.xzor"), page(member));
+  writeFileSync(join(dir, "Card.xzor"), CARD);
   writeFileSync(join(dir, "main.ts"), main);
   const run = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
   return { code: run.exitCode, out: run.stdout.toString() + run.stderr.toString() };
@@ -139,6 +155,18 @@ test("loops keep their rows by @key, a field's @Key and a model's @Key", async (
   expect(document.querySelector(".tabs input")).toBe(input);
   expect(input.value).toBe("Ada");
   expect(form.style.display).toBe("");
+
+  // A row with a nested keyed loop and a child component, both using its item: new objects keep it all (#6).
+  const people = q(".people li");
+  const chips = q(".people b");
+  const inits = (globalThis as { cardInits?: number }).cardInits;
+  expect(people.map((li) => li.textContent)).toEqual(["a-Ana", "--Luis"]);
+  page.people = page.people.map((x: { name: string; roles: string[] }) => ({ ...x, name: `${x.name}!`, roles: ["b"] }));
+  await tick();
+  expect(q(".people li")).toEqual(people);
+  expect(q(".people b")).toEqual(chips);
+  expect(q(".people li").map((li) => li.textContent)).toEqual(["-bAna!", "-bLuis!"]);
+  expect((globalThis as { cardInits?: number }).cardInits).toBe(inits);
 }, 120_000);
 
 test("a field's @Key naming a member its items lack fails the type check", () => {

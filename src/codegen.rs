@@ -1939,7 +1939,14 @@ impl Gen<'_> {
         }
         self.depth -= 1;
         let item = if mentions(&row.text, &reads.name) { M::lit(", ").add(M::src(&binding, binding.at)) } else { M::default() };
+        let takes_item = !item.text.is_empty();
         self.emit(M::lit("], (__p").add(item).lit_then(") => {"));
+        if takes_item {
+            // What closes over the item gets the one that replaces it under the same key: the row is kept.
+            self.depth += 1;
+            self.line(&format!("fine.rowItem((__v: typeof {0}) => {{ {0} = __v; }});", reads.name));
+            self.depth -= 1;
+        }
         self.splice(row);
         let has_empty = empty.is_some();
         if let Some(empty) = empty {
@@ -4289,6 +4296,9 @@ mod tests {
         let g = gen_with("@fine\n@code { lines: { qty: number }[] = []; }\n<ul>@for (const l of lines) {<li>@if (l.qty > 1) {<b/>} else {<i/>}</li>}</ul>", &[]);
         assert!(g.code.contains("fine.branchItem(") && g.code.contains("(l, __p) => {\n"), "{}", g.code);
         assert!(g.code.contains("if (!__p) return 0;"), "{}", g.code);
+        // A row whose nested list or child component closes over the item can be given a new one (#6).
+        let g = gen_with("@fine\n@code { people: { id: number; roles: string[] }[] = []; ROLES = [\"a\"]; }\n<ul>@for (const p of people) @key(p.id) {<li>@for (const r of ROLES) @key(r) {<b>@(p.roles.includes(r) ? r : \"\")</b>}</li>}</ul>", &[]);
+        assert!(g.code.contains("], (__p, p) => {\n        fine.rowItem((__v: typeof p) => { p = __v; });\n"), "{}", g.code);
     }
 
     #[test]

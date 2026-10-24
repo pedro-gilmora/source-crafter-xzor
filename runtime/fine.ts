@@ -54,7 +54,8 @@ type ShowBranch = Region & { first: Node | null; els: HTMLElement[]; display: st
 type Show = { ctx: Ctx; start: Comment; index: number; build: (parent: Node) => unknown; branches: (ShowBranch | undefined)[] };
 /** A row's shared reads, from the list: `(item, x) => value`; a handler's gives the handler. */
 type Reads = readonly ((item: any, x?: any) => any)[];
-type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined };
+/** `set`: a build that closes over its item gives it the new one (`fine.rowItem`). */
+type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
 type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
@@ -548,7 +549,7 @@ function removeRange(head: Node, tail: Node): void {
 /** A row built by `build` (given the item), its nodes in a fragment until `place` puts them. */
 function newRow(ctx: Ctx, item: unknown, reads: Reads | undefined, build: (parent: Node, item: any) => void): Row {
   const frag = document.createDocumentFragment();
-  const row: Row = { bindings: undefined, ctx, head: frag, tail: frag, item, reads };
+  const row: Row = { bindings: undefined, ctx, head: frag, tail: frag, item, reads, set: undefined };
   within(row, () => build(frag, item));
   seal(row, frag);
   return row;
@@ -622,8 +623,8 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
       }
       const item = at.get(key);
       if (item === row.item) continue;
-      // A build that takes the item as a parameter closes over it: only a new row sees the new one.
-      if (state.build.length > 1) {
+      // A build that takes the item but can't be given a new one (compiled before `rowItem`) is rebuilt.
+      if (row.set === undefined && state.build.length > 1) {
         dropRow(row);
         rows.delete(key);
       } else retake(row, item);
@@ -643,14 +644,20 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
   state.order = order;
 }
 
-/** Gives a kept row its key's new item: the row's own bindings read it through the row, and run again. */
+/**
+ * Gives a kept row its key's new item. Its own bindings read it through the row and run again; a build that closes
+ * over it gets it through `set`, and then everything in the row runs again (nested lists keep their rows, child
+ * components their instances).
+ */
 function retake(row: Row, item: unknown): void {
   row.item = item;
+  if (row.set !== undefined) row.set(item);
   for (let b = row.bindings; b !== undefined; b = b.next) {
     if ((b.flags & ITEM) === 0) continue;
     if ((b.flags & KIND) === REGION) (b.data as Region).item = item;
-    b.stateHasChanged();
+    if (row.set === undefined) b.stateHasChanged();
   }
+  if (row.set !== undefined) refreshAll(row);
 }
 
 function sameValues(a: readonly unknown[], b: readonly unknown[]): boolean {
@@ -687,7 +694,7 @@ function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
         return undefined;
       }
       const frag = document.createDocumentFragment();
-      row = { bindings: undefined, ctx: s.ctx, head: frag, tail: frag, item: values, reads: undefined };
+      row = { bindings: undefined, ctx: s.ctx, head: frag, tail: frag, item: values, reads: undefined, set: undefined };
       s.rows.set(key, row);
       order.push(row);
       building = row;
@@ -1020,6 +1027,11 @@ export const fine = {
   anchors(parent: Node): Comment {
     anchor(parent);
     return anchor(parent);
+  },
+
+  /** A row's build closes over its item: `set` gives it the item that replaces it under the same key. */
+  rowItem(set: (item: any) => void): void {
+    (holder as Row).set = set;
   },
 
   /** A row's region: `reads[i](item, parent)` builds it. */

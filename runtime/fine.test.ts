@@ -1046,6 +1046,53 @@ test("rows dropped outside a handler leave nothing in the component's loose list
   expect(loose()).toHaveLength(20);
 });
 
+test("a keyed row that closes over its item keeps its nodes, nested rows and child components for a new item (#6)", async () => {
+  type Person = { id: number; name: string; roles: string[] };
+  const ROLES = ["a", "b"];
+  const children: Card[] = [];
+  let inits = 0;
+  class Card extends ComponentBase {
+    person!: Person;
+    protected override onInitialized(): void {
+      inits++;
+      children.push(this);
+    }
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("em");
+      b.addContent(this.person.name);
+      b.closeElement();
+    }
+  }
+  class Page extends FineComponent {
+    #people: Person[] = [{ id: 1, name: "Ana", roles: ["a"] }, { id: 2, name: "Luis", roles: [] }]; get people(): Person[] { FineComponent.$reader?.(this, 0); return this.#people; } set people(v: Person[]) { const p = this.#people; if (FineComponent.same(p, v)) return; this.#people = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["people"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.listAt(fine.anchors(__p), () => this.people, [], (__p, p: Person) => {
+          fine.rowItem((__v: typeof p) => { p = __v; });
+          const li = __p.appendChild(document.createElement("li"));
+          fine.listAt(fine.anchors(li), () => ROLES, [(r: string) => (p.roles.includes(r) ? r : "-")], (__p) => {
+            fine.textItem(__p.appendChild(document.createElement("b")).appendChild(document.createTextNode("")), 0);
+          }, undefined, (r: string) => r);
+          fine.islandAt(fine.anchor(li), (__b) => __b.addComponent(Card, { person: p }));
+        }, undefined, (p: Person) => p.id);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const lis = [...el.querySelectorAll("li")];
+  const bs = [...el.querySelectorAll("b")];
+  expect(el.querySelector("li")!.textContent).toBe("a-Ana");
+  p.people = p.people.map((x) => (x.id === 1 ? { ...x, name: "Ana M", roles: ["b"] } : { ...x }));
+  await tick();
+  expect([...el.querySelectorAll("li")]).toEqual(lis);
+  expect([...el.querySelectorAll("b")]).toEqual(bs);
+  expect(el.querySelector("li")!.textContent).toBe("-bAna M");
+  expect(inits).toBe(2);
+  expect(children[0]!.person.name).toBe("Ana M");
+});
+
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
   ComponentBase.$leaves = true;
   let finish!: () => void;
