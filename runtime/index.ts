@@ -90,6 +90,9 @@ let tracking: Tracking | undefined;
 /** @internal Set by the model entry: what a component's tracked fields report to. */
 export function setTracking(t: Tracking): void {
   tracking = t;
+  // Every tracked read goes through `$reader`: read the model directly, not through `tracking`.
+  const model = t.model;
+  Object.defineProperty(ComponentBase, "$reader", { get: () => model.$reader, configurable: true });
 }
 
 const FIELDS = Symbol("xzor.fields");
