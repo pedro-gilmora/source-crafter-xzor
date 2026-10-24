@@ -349,7 +349,7 @@
     },
     "control": {
       "comment": "@if/@for, plus `else` chains; ends after a block that is not followed by `else` on the same line.",
-      "begin": "(?:(?<![[:alnum:]])(@)(if|for|while)\\b|^\\s*(else)\\b(?=\\s*(?:if\\s*\\(|\\{)))",
+      "begin": "(?:(?<![[:alnum:]])(@)((?:show:)?if|for|while)\\b|^\\s*(else)\\b(?=\\s*(?:if\\s*\\(|\\{)))",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "keyword.control.xzor" },
@@ -444,6 +444,14 @@
           }
         },
         {
+          "comment": "@pause { } or bare @pause before markup or at the end of a line.",
+          "match": "(?<![[:alnum:]])(@)(pause)(?=\\s*(?:\\{|<|$))",
+          "captures": {
+            "1": { "name": "keyword.control.transition.xzor" },
+            "2": { "name": "keyword.control.xzor" }
+          }
+        },
+        {
           "match": "(?<![[:alnum:]])(@)(await)(?=\\s*\\()",
           "captures": {
             "1": { "name": "keyword.control.transition.xzor" },
@@ -506,7 +514,7 @@
       }
     },
     "switch": {
-      "begin": "(?<![[:alnum:]])(@)(switch)\\b",
+      "begin": "(?<![[:alnum:]])(@)((?:show:)?switch)\\b",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "keyword.control.xzor" }

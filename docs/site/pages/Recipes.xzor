@@ -170,5 +170,12 @@
         <Code name="recipe-skeleton" />
       </div>
     </Panel>
+
+    <Panel title="Tabs that keep their state">
+      <div class="specimen">
+        <p class="xz-muted"><code>@@show:switch</code> hides the tab it leaves instead of removing it: a half-filled form keeps what was typed, and switching back is instant. A heavy tab marked <code>@@pause</code> stops updating while hidden and catches up when shown.</p>
+        <Code name="recipe-show-tabs" />
+      </div>
+    </Panel>
   </div>
 </section>

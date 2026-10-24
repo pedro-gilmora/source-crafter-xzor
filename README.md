@@ -345,6 +345,19 @@ The request runs again when what the `@await (...)` expression reads changes (he
 
 An element marked `@leave` stays in the page with `data-leaving` until the animations and transitions that starts (in it and below) finish; with none, it goes at once. Animations already running inside it, such as a spinner, and endless ones don't hold it. Entering needs nothing from xzor: `@starting-style` or a CSS animation does it.
 
+### Show and hide instead of rebuilding
+
+```xzor
+@show:switch (tab) {
+  case "form": <form>...</form>                     @* keeps what was typed while hidden *@
+  case "list": @pause <ol>@for (const o of orders) @key(o.id) { <li>@o.name</li> }</ol>
+}
+```
+
+- `@show:if (...) { } else if (...) { } else { }` and `@show:switch` work like `@if` and `@switch`, but a branch they leave is hidden (`display: none` on its top-level elements), not removed. It is built the first time it is chosen and kept: switching back is instant, and inputs, child components and lists keep their state.
+- Hidden branches stay live: they keep updating, so they are never stale. Write `@pause` first in a branch to stop it while hidden, or `@pause { … }` around a part of it; it catches up once when shown.
+- A branch holds elements at its top level (text or a component there would not hide): wrap anything else in an element.
+
 ### Doing less work
 
 - **Cached getters.** A getter runs once per change, however many places read it. Mark one `@Volatile` when it reads what nothing tracks (`Date.now()`, the DOM) alongside fields: `@Volatile get age() { return Date.now() - born; }`.

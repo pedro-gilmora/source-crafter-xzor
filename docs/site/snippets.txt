@@ -278,3 +278,12 @@ viewTransitions(true);
 } else {
   <div class="loaded">…</div>   @* @starting-style fades it in *@
 }
+--- recipe-show-tabs | Orders.xzor | xzor
+<Tabs options="@(['New', 'History'])" value="@tab" valueChanged="(t) => tab = t" label="Orders" />
+@show:switch (tab) {
+  case "New":
+    <form>…</form>                @* hidden, not removed: keeps what was typed *@
+  case "History":
+    @pause                         @* stops while hidden, catches up when shown *@
+    <ol>@for (const o of orders) @key(o.id) { <li>@o.name</li> }</ol>
+}

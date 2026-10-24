@@ -86,6 +86,7 @@ Generated `.xzor/` and `dist/` are build output: never edit them. Don't create `
 | Condition | `@if (x) { ... } else if (y) { ... } else { ... }` |
 | Loop | `@for (const item of items) { <li @key="item.id">@item.name</li> }` (any JS `for` head; there is no `@foreach`) |
 | Switch | `@switch (v) { case "a": <p>A</p> break; default: <p>?</p> }` |
+| Hide instead of remove (tabs, steps) | `@show:if (tab === "a") { <form>…</form> } else { <ol>…</ol> }`, `@show:switch (step) { case 1: <form>…</form> default: <section>…</section> }`: a branch is built once, then hidden (`display: none`) and kept with its state; elements only at a branch's top level. Hidden branches stay live; `@pause` first in a branch (or `@pause { … }` around part of it) stops it while hidden |
 | Statements | `@{ const total = sum(items); }` then `@total` |
 | No wrapper | `<text>...</text>` |
 | Comment | `@* ... *@` |

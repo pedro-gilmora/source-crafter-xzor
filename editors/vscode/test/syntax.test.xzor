@@ -14,6 +14,10 @@
 <!-- <- keyword.control.transition.xzor
 <!-- <~---- keyword.control.directive.xzor
 <!--  ^^^^^^^^^^^^^^^^^ comment.line.double-slash.xzor
+@async
+<!-- <~----- keyword.control.directive.xzor
+@cached
+<!-- <~------ keyword.control.directive.xzor
 @render
 <!-- <- keyword.control.transition.xzor
 <!-- <~------ keyword.control.directive.xzor
@@ -132,6 +136,39 @@ else {
 <!--  ^ keyword.control.transition.xzor
 <!--   ^^^^ variable.other.readwrite.xzor
 }
+@while (more()) { <b/> } @else { <i/> }
+<!-- <~----- keyword.control.xzor
+<!--                     ^ keyword.control.transition.xzor
+<!--                      ^^^^ keyword.control.xzor
+<!--                              ^ entity.name.tag.html
+@await (load()) { <i/> } then (rows) { <b/> } catch (e) { <u/> }
+<!-- <~----- keyword.control.xzor
+<!--                     ^^^^ keyword.control.xzor
+<!--                                          ^^^^^ keyword.control.xzor
+<p>@once(a.b) @once { <i/> }</p>
+<!-- <~~~~---- keyword.control.xzor
+<!--     ^ meta.embedded.expression.typescript variable.other.object.ts
+<!--           ^^^^ keyword.control.xzor
+@show:if (tab === 1) { @pause <i/> } else { <b>@pause { <u/> }</b> }
+<!-- <~------- keyword.control.xzor
+<!--      ^^^ variable.other.readwrite.ts
+<!--                    ^^^^^ keyword.control.xzor
+<!--                                 ^^^^ keyword.control.xzor
+<!--                                            ^^^^^ keyword.control.xzor
+@show:switch (step) { }
+<!-- <~----------- keyword.control.xzor
+<!--          ^^^^ variable.other.readwrite.ts
+@for (const [k, v] of es) @key(k) { <b/> }
+<!-- <~--- keyword.control.xzor
+<!--                       ^^^ keyword.control.xzor
+<!--                           ^ meta.embedded.expression.typescript variable.other.readwrite.ts
+  @attr:class="error @kind" @attr:hidden
+<!-- <~~- keyword.control.transition.xzor
+<!-- <~~~---- keyword.control.xzor
+<!--    ^^^^^ entity.other.attribute-name.html
+<!--           ^^^^^ string.quoted.html
+<!--                  ^^^^ variable.other.readwrite.xzor
+<!--                              ^^^^^^ entity.other.attribute-name.html
 <p>@#secret @this.#secret</p>
 <!-- <~~~- keyword.control.transition.xzor
 <!-- <~~~~------- variable.other.readwrite.xzor

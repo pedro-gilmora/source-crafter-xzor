@@ -459,6 +459,9 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("attr", "attr:$1=\"$2\"", "An attribute of the enclosing element while this branch shows"),
     ("key", "key($1)", "After a @for/@while head: what keeps each pass's DOM"),
     ("else", "else {\n\t$0\n}", "After @if, @for or @while: rendered when no branch or pass ran"),
+    ("show:if", "show:if ($1) {\n\t$0\n}", "Like @if, but a branch it leaves is hidden and kept, not removed"),
+    ("show:switch", "show:switch ($1) {\n\tcase $2:\n\t\t$0\n}", "Like @switch, but a case it leaves is hidden and kept, not removed"),
+    ("pause", "pause", "In a @show branch: stops it (bare, first) or a block of it (@pause { }) while hidden"),
     ("ClientRoutes", "ClientRoutes(${1:route}) {\n\t$0\n}", "Routes block for a browser SPA"),
     ("ServerRoutes", "ServerRoutes(${1:route}) {\n\t$0\n}", "Routes block for one page per route"),
 ];
@@ -822,6 +825,9 @@ mod tests {
         assert!(labels("<p>@att").contains(&("attr".to_string(), "attr:$1=\"$2\"".to_string())));
         assert_eq!(labels("\n@ke"), [("key".to_string(), "key($1)".to_string())]);
         assert_eq!(labels("\n@el"), [("else".to_string(), "else {\n\t$0\n}".to_string())]);
+        let show: Vec<_> = labels("\n@sho").into_iter().map(|(l, _)| l).collect();
+        assert_eq!(show, ["show:if", "show:switch"]);
+        assert_eq!(labels("\n@pau"), [("pause".to_string(), "pause".to_string())]);
     }
 
     #[test]
