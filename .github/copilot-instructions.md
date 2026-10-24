@@ -12,6 +12,16 @@ Before any task, check whether a skill applies and follow it. Use superpowers, p
 - Before claiming done: `verification-before-completion`, which means running the commands below and reading their output.
 - **Docs are mandatory.** Any change to the surface (syntax, directives, attributes, CLI flags, runtime or editor behavior) or to the design ships, in the same commit, with updates to every doc it affects: `README.md`, `docs/design.md`, the documentation site (`docs/site/pages`), the user skill `npm/xzor/skills/xzor/SKILL.md`, and `.github/skills/xzor-ui/SKILL.md` for kit changes. Compile any new snippet before committing it.
 
+## Deploy / release (non-negotiable)
+
+When the user says deploy, deployment, release or publish, the pushed head commit **must** start with `[Release]`: CI publishes only then. Never push for a deployment otherwise. Steps, each its own command:
+
+1. Run every check in Commands and read the output; all must pass.
+2. Write the message to a file (first line `[Release] <summary>`, then a markdown bullet body for the GitHub release and Telegram) and commit with `git commit --allow-empty --cleanup=verbatim -F <file>`.
+3. Verify before pushing: `git log -1 --format=%s` must start with `[Release]`. If the commit failed or the subject differs, stop and fix it; do not push.
+4. Only then `git push origin main`, in a separate command. Never chain `commit; push` in one line: a failed commit would push a plain head.
+5. Track the CI run to the end (`gh run watch`) and check the GitHub release.
+
 ## Commands
 
 - `cargo test`: unit tests (in the modules) and `tests/` integration tests.
