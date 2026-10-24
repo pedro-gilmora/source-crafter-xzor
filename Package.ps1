@@ -64,7 +64,8 @@ Invoke-Step "Building the editor extension" { bun run build:vscode }
 
 if ($test -eq "true") {
     Invoke-Step "Testing the compiler" { cargo test }
-    Invoke-Step "Testing the runtime, the build and the language server" { bun test }
+    # Bare `bun test` would also run the scratch copies under target/.
+    Invoke-Step "Testing the runtime, the build and the language server" { bun test ./runtime ./tests }
     Invoke-Step "Testing the grammar" { bun run test:grammar }
 }
 
