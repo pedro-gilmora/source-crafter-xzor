@@ -45,7 +45,7 @@ const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
 /** Where the fine component was mounted: what an island needs to mount components. */
-type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown; loose: Binding[] };
+type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown; loose: Binding[]; sweep: boolean };
 /** Where bindings are chained: a fine root, a region or a list row. */
 type Holder = { bindings: unknown; ctx: Ctx };
 type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
@@ -400,8 +400,27 @@ function track(b: Binding): void {
 }
 
 function disposeAll(h: Holder): void {
-  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) b.dispose();
+  let loose = false;
+  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+    if ((b.flags & LOOSE) !== 0) loose = true;
+    b.dispose();
+  }
   h.bindings = undefined;
+  if (loose) sweepLoose(h.ctx);
+}
+
+// The loose list holds its bindings, and they their nodes, until a handler would drop them: a change from
+// elsewhere (a timer, a server update) could grow it without end. One pass per component per microtask.
+function sweepLoose(ctx: Ctx): void {
+  if (ctx.sweep) return;
+  ctx.sweep = true;
+  queueMicrotask(() => {
+    ctx.sweep = false;
+    const loose = ctx.loose;
+    let kept = 0;
+    for (const b of loose) if ((b.flags & DEAD) === 0) loose[kept++] = b;
+    loose.length = kept;
+  });
 }
 
 /** Re-runs every binding under `h`, rows included: what `stateHasChanged` does for changes nothing tracks. */
@@ -1056,7 +1075,7 @@ setFineHooks({
   create(build: Build, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot {
     const frag = document.createDocumentFragment();
     const start = frag.appendChild(document.createComment(""));
-    const ctx: Ctx = { owner, app, scope, loose: [] };
+    const ctx: Ctx = { owner, app, scope, loose: [], sweep: false };
     (owner as unknown as Record<symbol, Ctx>)[FINE] = ctx;
     const root: FineRoot & Holder = { bindings: undefined, ctx, start, end: start };
     // Reads outside a binding subscribe nothing: a fine component is never re-rendered by what it reads.

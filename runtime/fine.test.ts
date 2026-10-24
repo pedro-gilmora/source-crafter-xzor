@@ -1020,6 +1020,32 @@ test("a keyed row whose item is a new object keeps its nodes and takes the new i
   expect(first!.querySelector("b")).toBe(b);
 });
 
+test("rows dropped outside a handler leave nothing in the component's loose list", async () => {
+  type Row = { id: number; name: string };
+  let next = 0;
+  const rows = (): Row[] => Array.from({ length: 20 }, () => ({ id: ++next, name: "r" }));
+  class Page extends FineComponent {
+    #items: Row[] = rows(); get items(): Row[] { FineComponent.$reader?.(this, 0); return this.#items; } set items(v: Row[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["items"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.listAt(fine.anchors(__p), () => this.items, [(r: Row) => r.name], (__p) => {
+          fine.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
+        }, undefined, (r: Row) => r.id);
+      });
+    }
+  }
+  const p = mount(Page, host());
+  const loose = (): unknown[] => (p as unknown as Record<symbol, { loose: unknown[] }>)[Object.getOwnPropertySymbols(p).find((s) => s.description === "xzor.fine")!]!.loose;
+  // Plain objects: each row's text reads nothing tracked, so it waits in the loose list for handlers.
+  expect(loose()).toHaveLength(20);
+  for (let i = 0; i < 5; i++) {
+    p.items = rows();
+    await tick();
+  }
+  expect(loose()).toHaveLength(20);
+});
+
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
   ComponentBase.$leaves = true;
   let finish!: () => void;
