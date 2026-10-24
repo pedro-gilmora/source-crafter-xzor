@@ -100,7 +100,7 @@ Generated `.xzor/` and `dist/` are build output: never edit them. Don't create `
 
 Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A callback prop (`onSave?: EventCallback<T>`) can also be set like a DOM event: `@onsave="save"`. A prop typed `string`, a union of string literals, an imported alias of string literals (`type Size = "s" | "m"`), or given a string default (`name: Kind = "a"`) takes text; any other type takes a TypeScript expression. Misspelled or mistyped props are build errors.
 
-An event re-renders **only the component that owns the handler**, and that render reads everything again (its fields, props and injected services). If shared state changes in *another* component's handler, call `this.stateHasChanged()` on the components that show it, or pass the value down as a prop.
+A tracked field written anywhere (this component's handler, another component, a service, a timer) updates what reads it. Call `this.stateHasChanged()` only after changing something nothing tracks (a plain array's `push`, an object's property); it re-runs the component's bindings.
 
 ## Styles and module code
 
@@ -239,9 +239,9 @@ export class Worker extends Model {
 - `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed. Read it through `view` or `for...of` (not `length`, an index or `set.map`) so the reader follows pushes and deletes.
 - Needs `"ESNext.Decorators"` in the tsconfig `lib`. Not supported: plain object graphs with cycles, one set held by two models.
 
-## Fine components (the default)
+## Fine components
 
-Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. Write `@render` on the first line only to get the virtual-DOM render pass instead.
+Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. There is no other mode: `@render` was removed (it is a compile error), and `@fine` is accepted and changes nothing.
 
 - Its `@code` fields are tracked like a model's: `count++` in a handler updates the page. Never call `stateHasChanged()` for that; call it only after changing something untracked (a plain array's `push`, an object's property).
 - Put list data in an `EntitySet` (or reassign a plain array) and loop with `@for (const x of list.view)`: rows are kept by identity.

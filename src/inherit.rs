@@ -624,7 +624,7 @@ mod tests {
             }
             map.get(p).cloned()
         };
-        let code = crate::compile_mapped_with(&format!("@render\n{main}"), &root.join("C.xzor"), &read).unwrap().code;
+        let code = crate::compile_mapped_with(main, &root.join("C.xzor"), &read).unwrap().code;
         (code, reads.into_inner())
     }
 
@@ -636,7 +636,7 @@ mod tests {
     fn compile_at(files: &[(&str, &str)], main: &str, at: &str) -> String {
         let root = Path::new("/p");
         let map: HashMap<PathBuf, String> = files.iter().map(|(n, t)| (root.join(n), t.to_string())).collect();
-        crate::compile_mapped_with(&format!("@render\n{main}"), &root.join(at), &|p| map.get(p).cloned()).unwrap().code
+        crate::compile_mapped_with(main, &root.join(at), &|p| map.get(p).cloned()).unwrap().code
     }
 
     fn unresolved_in(files: &[(&str, &str)], main: &str) -> Option<String> {
@@ -761,16 +761,16 @@ export class After { late = 1; }
     #[test]
     fn unresolvable_base_leaves_names_bare() {
         let code = compile(&[], "@import { Pkg } from \"some-pkg\"\n@inherits Pkg\n<p>@title</p>\n");
-        assert!(code.contains("addContent(title)"), "{code}");
+        assert!(code.contains("() => title)"), "{code}");
         let code = compile(&[], "@import { Gone } from \"./gone\"\n@inherits Gone\n<p>@title</p>\n");
-        assert!(code.contains("addContent(title)"), "{code}");
+        assert!(code.contains("() => title)"), "{code}");
     }
 
     #[test]
     fn locals_shadow_inherited_members() {
         let main = "@import { Titled } from \"./base\"\n@inherits Titled\n<p>@title</p>\n@for (const title of [\"a\"]) { <i>@title</i> }\n";
         let code = compile(&[("base.ts", TITLED)], main);
-        assert!(code.contains("addContent(this.title)") && code.contains("addContent(title)"), "{code}");
+        assert!(code.contains("() => this.title)") && code.contains("(title) => title"), "{code}");
     }
 
     #[test]
@@ -828,7 +828,7 @@ export class After { late = 1; }
     fn star_export_cycles_terminate() {
         let files = [("a.ts", "export * from \"./b\";\n"), ("b.ts", "export * from \"./a\";\n")];
         let main = "@import { X } from \"./a\"\n@inherits X\n<p>@title</p>\n";
-        assert!(compile(&files, main).contains("addContent(title)"));
+        assert!(compile(&files, main).contains("() => title)"));
         assert_eq!(unresolved_in(&files, main), Some("X".to_string()));
     }
 
@@ -926,10 +926,10 @@ export class After { late = 1; }
     fn an_unterminated_string_literal_does_not_panic() {
         let star = [("q.ts", "export * from \"")];
         let main = "@import { X } from \"./q\"\n@inherits X\n<p>@title</p>\n";
-        assert!(compile(&star, main).contains("addContent(title)"));
+        assert!(compile(&star, main).contains("() => title)"));
         let clause = [("q.ts", "export { A };\nimport { A } from \"")];
         let main = "@import { A } from \"./q\"\n@inherits A\n<p>@title</p>\n";
-        assert!(compile(&clause, main).contains("addContent(title)"));
+        assert!(compile(&clause, main).contains("() => title)"));
     }
 
     #[test]

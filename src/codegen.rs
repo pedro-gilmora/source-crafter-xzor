@@ -1263,8 +1263,8 @@ impl Gen<'_> {
             }
             // A render pass has no "once": it renders as usual.
             Node::Once(body) => self.nodes(body)?,
-            Node::Await { .. } => return Err("@await needs a fine component (remove @render)".into()),
-            Node::Show(_) | Node::Pause(_) => return Err("@show:if, @show:switch and @pause need a fine component (remove @render)".into()),
+            Node::Await { .. } => return Err("@await can't go inside a component's content, a routes block, @cascade or markup in @{ }: put it around them, or inside the child component".into()),
+            Node::Show(_) | Node::Pause(_) => return Err("@show:if, @show:switch and @pause can't go inside a component's content, a routes block, @cascade or markup in @{ }: put them around them, or inside the child component".into()),
             Node::Cascade { name, value, fixed, body } => {
                 let quoted = js_string(name);
                 // The mapping stays on the name only while the literal is a straight copy of it.
@@ -3386,10 +3386,13 @@ pub fn class_name(stem: &str) -> String {
 mod tests {
     use super::*;
 
-    /// These tests cover the virtual-DOM backend (`@render`) unless the source asks for `@fine`.
+    /// These tests cover the virtual-DOM emitter (what islands use) unless the source asks for `@fine`; a leading
+    /// `@render` (removed from the language) is blanked out for them.
     fn parse(src: &str) -> Result<(Document, Vec<crate::parser::Token>), crate::parser::ParseError> {
-        crate::parser::parse(src).map(|(mut doc, tokens)| {
-            doc.fine = src.contains("@fine");
+        let fine = src.contains("@fine");
+        let src = src.strip_prefix("@render\n").map(|s| format!("{}{s}", " ".repeat("@render\n".len()))).unwrap_or_else(|| src.to_string());
+        crate::parser::parse(&src).map(|(mut doc, tokens)| {
+            doc.fine = fine;
             (doc, tokens)
         })
     }
@@ -4074,7 +4077,7 @@ mod tests {
         }
         let doc = parse("@render\n@await (p) { } then { }").unwrap().0;
         let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
-        assert!(err.contains("@await needs a fine component"), "{err}");
+        assert!(err.contains("@await can't go inside a component's content"), "{err}");
     }
 
     #[test]
@@ -4260,7 +4263,7 @@ mod tests {
         assert!(err("<p>@pause { <b/> }</p>").contains("@pause belongs in a @show:if or @show:switch branch"));
         let doc = parse("@render\n@code { a = 1; }\n@show:if (a) { <b/> }").unwrap().0;
         let e = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
-        assert!(e.contains("need a fine component"), "{e}");
+        assert!(e.contains("can't go inside a component's content"), "{e}");
     }
 
     #[test]

@@ -10,7 +10,7 @@ A `.xzor` file is HTML with `@` expressions plus a `@code` block. The xzor compi
 
 - **Types everywhere**: props, events, slots, routes and services are checked at build time, and your editor shows the errors as you type.
 - **No runtime magic**: routing and dependency injection are generated as plain code. There is no reflection and no container.
-- **A small, fast runtime**: no render pass by default. The DOM is built once and each value, attribute and list updates on its own when what it reads changes. A virtual DOM is one `@render` away.
+- **A small, fast runtime**: no render pass. The DOM is built once and each value, attribute and list updates on its own when what it reads changes.
 
 The [documentation site](https://pedro-gilmora.github.io/source-crafter-xzor/) is itself an xzor app: see [`docs/site`](docs/site).
 
@@ -471,7 +471,7 @@ Components are compiled without a render pass. The DOM is built once; each `@val
 <b>@team.view.reduce((sum, w) => sum + w.hours, 0)</b>
 ```
 
-The component's own fields are tracked like a model's, so `count++` in a handler is enough. Write `@render` at the top of a component to get a virtual-DOM render pass instead. See [`examples/counter/pages/TeamFine.xzor`](examples/counter/pages/TeamFine.xzor).
+The component's own fields are tracked like a model's, so `count++` in a handler is enough. See [`examples/counter/pages/TeamFine.xzor`](examples/counter/pages/TeamFine.xzor).
 
 ## A design kit: xzor-ui
 

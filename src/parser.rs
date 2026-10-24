@@ -537,7 +537,8 @@ impl<'a> Parser<'a> {
                 match word {
                     "async" => self.doc.lazy = true,
                     "cached" => self.doc.cached = true,
-                    _ => self.doc.fine = word == "fine",
+                    "render" => return Err(ParseError { message: "@render was removed: every component is compiled with fine bindings; delete this line".into(), offset: at }),
+                    _ => {}
                 }
                 while matches!(self.peek(), Some(b' ' | b'\t')) {
                     self.pos += 1;
@@ -2042,10 +2043,9 @@ after"#;
         let (doc, _) = parse("@fine // no render pass\n<p>@x</p>").unwrap();
         assert!(doc.fine);
         assert_eq!(doc.nodes.len(), 1);
-        // Fine is the default; `@render` opts out.
+        // Every component is fine; `@fine` is a leftover that changes nothing, `@render` is gone.
         assert!(parse("<p/>").unwrap().0.fine);
-        assert!(!parse("@render\n<p/>").unwrap().0.fine);
-        assert!(parse("@render x\n<p/>").is_err());
+        assert!(parse("@render\n<p/>").unwrap_err().message.contains("@render was removed"));
         assert!(parse("@fine x\n<p/>").is_err());
     }
 

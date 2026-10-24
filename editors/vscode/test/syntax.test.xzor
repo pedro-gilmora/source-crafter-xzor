@@ -18,9 +18,6 @@
 <!-- <~----- keyword.control.directive.xzor
 @cached
 <!-- <~------ keyword.control.directive.xzor
-@render
-<!-- <- keyword.control.transition.xzor
-<!-- <~------ keyword.control.directive.xzor
 @module { export const n = 1; }
 <!-- <- keyword.control.transition.xzor
 <!-- <~------ keyword.control.directive.xzor

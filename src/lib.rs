@@ -468,8 +468,6 @@ mod tests {
         // The content passed to `Box` renders in its DOM: it carries the scope and the bindings too.
         assert!(g.code.contains(&format!("__b.addAttribute(\"data-xz\", \"{id}\")")), "{}", g.code);
         assert!(!g.code.contains("<style"), "{}", g.code);
-        let render = styled(&format!("@render\n{src}"), None).unwrap();
-        assert!(render.code.contains(&format!("__b.addAttribute(\"--{id}-0\", String(this.w) + \"%\");")), "{}", render.code);
     }
 
     #[test]

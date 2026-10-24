@@ -74,7 +74,8 @@ pub struct Document {
     pub type_params: Vec<Src>,
     /// `@inherits Base<T>`: the base class instead of `ComponentBase`.
     pub inherits: Option<Src>,
-    /// Compiled to DOM bindings with no render pass (base `FineComponent`): the default; `@render` opts out.
+    /// Compiled to DOM bindings with no render pass (base `FineComponent`). Always, outside the compiler's own
+    /// tests of the virtual-DOM emitter that islands use.
     pub fine: bool,
     /// `@async`: importers load the component on first use (a chunk of its own in a split bundle).
     pub lazy: bool,
