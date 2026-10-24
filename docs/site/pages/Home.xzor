@@ -12,7 +12,7 @@
     </p>
     <div class="actions">
       <a class="xz-button" data-variant="solid" data-tone="accent" data-size="lg" href="@href.Start()">Get started</a>
-      <a class="xz-button" data-variant="soft" data-tone="neutral" data-size="lg" href="@href.Learn({ step: 1 })">Learn in seven steps</a>
+      <a class="xz-button" data-variant="soft" data-tone="neutral" data-size="lg" href="@href.Learn({ step: 1 })">Learn in eight steps</a>
     </div>
   </div>
   <figure class="hero-demo" data-depth="2">

@@ -13,6 +13,7 @@
     "Pages and routing",
     "Services",
     "Models",
+    "More in templates",
   ];
 
   get title(): string {
@@ -48,8 +49,8 @@
         <ul>
           <li><code>@@count</code> prints a value. Use <code>@@(a + b)</code> for anything longer than a name or a member chain.</li>
           <li>You write <code>count</code>, not <code>this.count</code>: names that refer to <code>@@code</code> members get <code>this.</code> added for you.</li>
-          <li><code>@@onclick</code> gets a typed DOM event and re-renders the component when the handler is done.</li>
-          <li><code>@@if</code>, <code>@@for</code>, <code>@@while</code> and <code>@@switch</code> are ordinary TypeScript control flow around markup.</li>
+          <li><code>@@onclick</code> gets a typed DOM event. The fields it changes update the parts of the page that show them.</li>
+          <li><code>@@if</code>, <code>@@for</code>, <code>@@while</code> and <code>@@switch</code> are ordinary TypeScript control flow around markup. <code>@@for</code> and <code>@@while</code> take an <code>else { }</code> for when nothing ran.</li>
         </ul>
         break;
       case 2:
@@ -59,7 +60,7 @@
         <Code name="counter-bind" />
         <ul>
           <li>A capitalized tag is a component. A misspelled prop or a wrong type is a build error.</li>
-          <li>In lists, add <code>@@key="item.id"</code>: rows keep their DOM and state when they reorder.</li>
+          <li>In lists, add <code>@@key(item.id)</code> after the loop head: rows keep their DOM and state when they reorder or get a new object with the same key. Step 8 has the details.</li>
           <li>Lifecycle methods follow Blazor's order: <code>onInitialized</code>, <code>onParametersSet</code>, the render, <code>onAfterRender</code>, and <code>dispose()</code> when the component leaves the page. The first two have <code>Async</code> versions.</li>
         </ul>
         break;
@@ -74,7 +75,7 @@
         <p>For things such as the theme or the current user: provide a value once, and every component below can read it, at any depth, without passing props.</p>
         <Code name="cascade-provide" />
         <Code name="cascade-consume" />
-        <p>When the value changes, the components reading it re-render.</p>
+        <p>When the value changes, the components reading it update.</p>
         break;
       case 5:
         <p>Give a component a URL with <code>@@page</code>. URL parameters fill the props with the same name, converted to the prop's type.</p>
@@ -111,6 +112,41 @@
           <li><code>revertChanges()</code> undoes the edits. <code>confirmChanges()</code> accepts them after you save.</li>
           <li><code>errors</code> and <code>hasErrors</code> come from the <code>@@Validate</code> checks.</li>
           <li>A model must extend <code>Model</code> directly, and the tsconfig <code>lib</code> needs <code>"ESNext.Decorators"</code>.</li>
+        </ul>
+        break;
+      case 8:
+        <p>The rest of the template language: keys, attributes from where they're decided, forms, async data, show and hide, motion, and ways to do less work.</p>
+        <h2>Lists and keys</h2>
+        <p>A loop keeps each row's DOM, and the components in it, while the row's key stays. A new object with the same key (an immutable update) keeps the row too.</p>
+        <Code name="more-keys" />
+        <ul>
+          <li>Keys come from <code>@@key(expr)</code> after the loop head, a field's <code>@@Key("id")</code>, a model's <code>@@Key</code> property, or the item itself. A duplicate key is an error.</li>
+        </ul>
+        <h2>Attributes</h2>
+        <Code name="more-attrs" />
+        <ul>
+          <li><code>@@attr:name="value"</code> inside a branch sets an attribute on the element around it while that branch shows. Ctrl+click goes to that element.</li>
+          <li><code>class:name</code> toggles one class; <code>aria-*</code> writes <code>true</code> and <code>false</code> as text.</li>
+        </ul>
+        <h2>Forms</h2>
+        <Code name="more-forms" />
+        <p><code>@@bind</code> writes back on <code>change</code>, <code>@@bind:input</code> on every keystroke; <code>@@bind:debounce</code> waits for a pause, and <code>@@bind:after</code> runs once the value is written.</p>
+        <h2>Async data</h2>
+        <Code name="more-await" />
+        <p>The request runs again only when an argument's value changes (here <code>query</code>), and only the newest one shows.</p>
+        <h2>Show and hide</h2>
+        <Code name="more-show" />
+        <p><code>@@show:if</code> and <code>@@show:switch</code> hide the branch they leave instead of removing it, so it keeps its state and comes back at once. Hidden branches stay live; <code>@@pause</code> stops one (or <code>@@pause { }</code> a part of it) until it shows again.</p>
+        <h2>Motion</h2>
+        <Code name="more-leave" />
+        <p>An element marked <code>@@leave</code> stays, with <code>data-leaving</code>, until its exit animation ends. Entering is plain CSS.</p>
+        <h2>Doing less work</h2>
+        <Code name="more-less" />
+        <ul>
+          <li>Getters are cached: one run per change, however many places read them. <code>@@Volatile</code> opts one out.</li>
+          <li><code>@@once(expr)</code> and <code>@@once { }</code> are read once and never updated.</li>
+          <li><code>@@async</code> loads a component the first time it's used; <code>@@cached</code> keeps it, DOM and all, when it leaves the page.</li>
+          <li><code>xzor build --minify</code> ships each page and <code>@@async</code> component in a chunk of its own.</li>
         </ul>
         break;
     }

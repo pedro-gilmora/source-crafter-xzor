@@ -287,3 +287,50 @@ viewTransitions(true);
     @pause                         @* stops while hidden, catches up when shown *@
     <ol>@for (const o of orders) @key(o.id) { <li>@o.name</li> }</ol>
 }
+--- more-keys | Team.xzor | xzor
+@code {
+  @Key("id") people: Person[] = [];
+  names: Record<string, string> = {};
+}
+
+@for (const p of people) { <PersonRow person="p" /> }               @* keyed by p.id *@
+@for (const [id, name] of Object.entries(names)) @key(id) { <li>@name</li> }
+@for (const p of people) { <li>@p.name</li> } else { <li>No one yet</li> }
+--- more-attrs | Stock.xzor | xzor
+<span>@if (stock > 0) { @stock } else { @attr:class="error-text" Sold out }</span>
+<div class="field" class:invalid="@error" class:round>…</div>
+<button aria-expanded="@open" aria-pressed="@active">Menu</button>
+--- more-forms | Search.xzor | xzor
+<input @bind:input="query" @bind:debounce="300" @bind:after="search" />
+--- more-await | Results.xzor | xzor
+@await (load(query)) {
+  <p>Loading…</p>
+} then (rows) {
+  @for (const r of rows) @key(r.id) { <li>@r.name</li> }
+} catch (e) {
+  <p class="error">@(String(e))</p>
+}
+--- more-show | Checkout.xzor | xzor
+@show:switch (step) {
+  case 1: <form class="address">…</form>
+  case 2: <form class="payment">…</form>
+  default: @pause <section class="review">…</section>
+}
+--- more-leave | Toast.xzor | xzor
+@if (open) { <dialog open @leave>…</dialog> }
+
+<style>
+  dialog { transition: opacity .2s; @starting-style { opacity: 0; } }
+  dialog[data-leaving] { opacity: 0; }
+</style>
+--- more-less | Report.xzor | xzor
+@async
+
+@code {
+  get total() { return this.lines.reduce((s, l) => s + l.qty, 0); }   // runs once per change
+  @Volatile get age() { return Date.now() - this.created; }           // runs on every read
+}
+
+<h2>@once(title)</h2>
+<p>@total items</p>
+
