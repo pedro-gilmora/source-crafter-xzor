@@ -110,6 +110,10 @@ test("loops keep their rows by @key, a field's @Key and a model's @Key", async (
   await tick();
   expect(document.querySelector(".notes ul")).toBe(ul);
   expect(q(".notes li")).toEqual([n1!, n3!]);
+  // New objects with the same keys (an immutable update): the rows stay and show them (#5).
+  page.notes = page.notes.map((n: { id: number }) => ({ id: n.id }));
+  await tick();
+  expect(q(".notes li")).toEqual([n1!, n3!]);
   for (const button of q(".notes li button")) (button as HTMLButtonElement).click();
   await tick();
   expect(document.querySelector(".notes")!.textContent).toBe("Nothing pending.");

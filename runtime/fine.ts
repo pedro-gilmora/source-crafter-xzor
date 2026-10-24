@@ -571,8 +571,8 @@ function place(end: Node, old: Row[], order: Row[]): void {
 
 const duplicate = (key: unknown): Error => new Error(`xzor: duplicate @key ${String(key)}`);
 
-// Rows are matched by key (the list's, the models' `@Key`, else the item itself); a key whose item changed is rebuilt.
-// ponytail: a rebuilt row loses its nodes; patching it needs every row binding to read through `row.item`.
+// Rows are matched by key (the list's, the models' `@Key`, else the item itself). A key whose item is a new object
+// keeps its row, which takes the item, unless its build closes over the item (it is rebuilt then).
 function reconcile(list: Binding, items: Iterable<unknown>): void {
   const state = list.data as ListState;
   const rows = state.rows;
@@ -595,11 +595,20 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
       if (at.has(keys[i])) throw duplicate(keys[i]);
       at.set(keys[i], next[i]);
     }
-    for (const [key, row] of rows)
-      if (!at.has(key) || at.get(key) !== row.item) {
+    for (const [key, row] of rows) {
+      if (!at.has(key)) {
         dropRow(row);
         rows.delete(key);
+        continue;
       }
+      const item = at.get(key);
+      if (item === row.item) continue;
+      // A build that takes the item as a parameter closes over it: only a new row sees the new one.
+      if (state.build.length > 1) {
+        dropRow(row);
+        rows.delete(key);
+      } else retake(row, item);
+    }
   }
   const order: Row[] = [];
   for (let i = 0; i < next.length; i++) {
@@ -613,6 +622,16 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
   }
   place(list.node, state.order, order);
   state.order = order;
+}
+
+/** Gives a kept row its key's new item: the row's own bindings read it through the row, and run again. */
+function retake(row: Row, item: unknown): void {
+  row.item = item;
+  for (let b = row.bindings; b !== undefined; b = b.next) {
+    if ((b.flags & ITEM) === 0) continue;
+    if ((b.flags & KIND) === REGION) (b.data as Region).item = item;
+    b.stateHasChanged();
+  }
 }
 
 function sameValues(a: readonly unknown[], b: readonly unknown[]): boolean {
@@ -988,6 +1007,15 @@ export const fine = {
   regionItem(end: Comment, i: number): void {
     const row = holder as Row;
     region(end.previousSibling as Comment, end, row.reads![i]!, row.item, ITEM);
+  },
+
+  /** A row's `@if`/`@switch`: `reads[i](item)` picks the branch, `reads[i](item, parent)` builds it; see `branchAt`. */
+  branchItem(end: Comment, i: number): void {
+    const row = holder as Row;
+    const read = row.reads![i]!;
+    const state: Region = { bindings: undefined, ctx: row.ctx, start: end.previousSibling as Comment, item: row.item, branch: undefined, index: -1 };
+    state.branch = (p) => read(state.item, p);
+    track(new Binding(REGION | ITEM, end, read, state));
   },
 
   /** `@for (const item of items)`: one row per item, matched by identity; a row is built once. */

@@ -1763,10 +1763,14 @@ impl Gen<'_> {
                 r?;
                 self.line("});");
             }
-            FinePart::Region(node) => self.fine_region(var, |g| g.fine_flow(node, "__p"))?,
+            FinePart::Region(node) if branchable(node) => self.fine_region(var, true, |g| {
+                g.branching = true;
+                g.fine_flow(node, "__p")
+            })?,
+            FinePart::Region(node) => self.fine_region(var, false, |g| g.fine_flow(node, "__p"))?,
             FinePart::Code(code, rest) => {
                 let scope = self.locals.len();
-                let r = self.fine_region(var, |g| {
+                let r = self.fine_region(var, false, |g| {
                     let block = g.fine_code_block(code)?;
                     g.emit_block(block);
                     g.fine_nodes(rest, "__p")
@@ -1869,8 +1873,9 @@ impl Gen<'_> {
         }
     }
 
-    /// A region before comment `end` (after the comment before it), whose `body` is plain control flow.
-    fn fine_region(&mut self, end: &str, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<(), String> {
+    /// A region before comment `end` (after the comment before it), whose `body` is plain control flow; with
+    /// `branch`, an `@if`/`@switch` emitted for `branchAt`/`branchItem`.
+    fn fine_region(&mut self, end: &str, branch: bool, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<(), String> {
         let row = self.row_level();
         let outer = std::mem::replace(&mut self.in_region, true);
         // A region is its own binding: its conditions are tracked, whatever they read.
@@ -1886,9 +1891,9 @@ impl Gen<'_> {
         if row {
             let close = format!("{}}}", "  ".repeat(self.depth));
             let i = self.push_read(", __p", M::lit("{\n").add(code).lit_then(&close));
-            self.line(&format!("fine.regionItem({end}, {i});"));
+            self.line(&format!("fine.{}({end}, {i});", if branch { "branchItem" } else { "regionItem" }));
         } else {
-            self.line(&format!("fine.regionAt({end}, (__p) => {{"));
+            self.line(&format!("fine.{}({end}, (__p) => {{", if branch { "branchAt" } else { "regionAt" }));
             self.splice(code);
             self.line("});");
         }
@@ -4158,7 +4163,7 @@ mod tests {
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("fine.attrOf(_e1, \"class\", () => \"error-text\");");
         // In a row, a region naming the row's element builds in the row, not in the list's shared reads.
-        has("fine.regionAt(");
+        has("fine.branchAt(");
         has("fine.attrOf(_e");
         has(", \"title\", () => it);");
         let doc = parse("@fine\n@attr:class=\"x\"").unwrap().0;
@@ -4282,6 +4287,10 @@ mod tests {
         // Code run while a branch builds would go stale in a kept branch: that one stays a plain region.
         let g = gen_with("@fine\n@code { n = 1; }\n@if (n > 0) {\n@{ const twice = n * 2; }\n<p>@twice</p>\n}", &[]);
         assert!(g.code.contains("fine.regionAt(") && !g.code.contains("branchAt"), "{}", g.code);
+        // A row's `@if` picks its branch from the row's item, so a row that takes a new item keeps it too.
+        let g = gen_with("@fine\n@code { lines: { qty: number }[] = []; }\n<ul>@for (const l of lines) {<li>@if (l.qty > 1) {<b/>} else {<i/>}</li>}</ul>", &[]);
+        assert!(g.code.contains("fine.branchItem(") && g.code.contains("(l, __p) => {\n"), "{}", g.code);
+        assert!(g.code.contains("if (!__p) return 0;"), "{}", g.code);
     }
 
     #[test]
@@ -4296,7 +4305,7 @@ mod tests {
         has("fine.onItem(_e2, \"click\", 1);");
         has("fine.attrItem(_e3, \"value\", 2);");
         has("fine.onItem(_e3, \"change\", 3);");
-        has("fine.regionItem(_e4, 4);");
+        has("fine.branchItem(_e4, 4);");
         // Inside the row's region, bindings close over the item as usual.
         has("fine.textAt(_e8, () => w.name);");
     }

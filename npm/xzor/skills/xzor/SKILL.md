@@ -244,7 +244,7 @@ export class Worker extends Model {
 Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. There is no other mode: `@render` was removed (it is a compile error), and `@fine` is accepted and changes nothing.
 
 - Its `@code` fields are tracked like a model's: `count++` in a handler updates the page. Never call `stateHasChanged()` for that; call it only after changing something untracked (a plain array's `push`, an object's property).
-- Put list data in an `EntitySet` (or reassign a plain array) and loop with `@for (const x of list.view)`: rows are kept by identity.
+- Put list data in an `EntitySet` (or reassign a plain array) and loop with `@for (const x of list.view)`: rows are kept by identity, or by `@key(x.id)` (then a new object with the same key keeps its row, so immutable updates like `list.map((x) => x.id === id ? { ...x, qty } : x)` patch it in place).
 - Totals and other derived values are plain expressions (`@team.view.reduce((s, w) => s + w.hours, 0)`); no extra fields or setters.
 - The tsconfig `paths` (when used) must map `@source-crafter/xzor-runtime/model` as well as `@source-crafter/xzor-runtime`.
 

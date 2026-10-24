@@ -568,9 +568,9 @@ test("a list keyed by a function keeps a row whose item is replaced by one with 
   await tick();
   const after = [...el.querySelectorAll("li")];
   expect(el.querySelector("ul")!.textContent).toBe("ba2");
-  // Same key, another object: its row is rebuilt in place; the other row only moved.
+  // Same key, another object: its row is kept and takes it; the other row only moved.
   expect(after[0]).toBe(second!);
-  expect(after[1]).not.toBe(first!);
+  expect(after[1]).toBe(first!);
 });
 
 test("a list of models matches rows by the model's @Key", async () => {
@@ -969,6 +969,55 @@ test("@show: a chosen branch is built once and kept, the others hidden; hidden o
   await tick();
   expect(liveRuns).toBe(live);
   expect(el.querySelector("section")).toBeNull();
+});
+
+test("a keyed row whose item is a new object keeps its nodes and takes the new item (#5)", async () => {
+  type Line = { id: number; qty: number };
+  let clicked: Line | undefined;
+  class Page extends FineComponent {
+    #lines: Line[] = [{ id: 1, qty: 1 }, { id: 2, qty: 1 }]; get lines(): Line[] { FineComponent.$reader?.(this, 0); return this.#lines; } set lines(v: Line[]) { const p = this.#lines; if (FineComponent.same(p, v)) return; this.#lines = v; this.$changed(0, p); }
+    static { FineComponent.$define(this, ["lines"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        fine.listAt(fine.anchors(__p), () => this.lines, [
+          (l: Line) => l.qty,
+          (l: Line) => () => (clicked = l),
+          (l: Line, __p?: Node) => {
+            if (l.qty > 1) {
+              if (!__p) return 0;
+              __p.appendChild(document.createElement("b"));
+            } else {
+              if (!__p) return 1;
+              __p.appendChild(document.createElement("i"));
+            }
+            return 2;
+          },
+        ], (__p) => {
+          const li = __p.appendChild(document.createElement("li"));
+          fine.textItem(li.appendChild(document.createTextNode("")), 0);
+          fine.onItem(li.appendChild(document.createElement("button")), "click", 1);
+          fine.branchItem(fine.anchors(li), 2);
+        }, undefined, (l: Line) => l.id);
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const [first, second] = [...el.querySelectorAll("li")];
+  expect(first!.querySelector("i")).not.toBeNull();
+  p.lines = p.lines.map((l) => (l.id === 1 ? { id: 1, qty: 2 } : l));
+  await tick();
+  expect([...el.querySelectorAll("li")]).toEqual([first!, second!]);
+  expect(first!.textContent).toBe("2");
+  const b = first!.querySelector("b")!;
+  expect(b).not.toBeNull();
+  first!.querySelector("button")!.click();
+  expect(clicked).toEqual({ id: 1, qty: 2 });
+  // Same branch for the new item: its nodes stay too.
+  p.lines = p.lines.map((l) => (l.id === 1 ? { id: 1, qty: 3 } : l));
+  await tick();
+  expect(first!.textContent).toBe("3");
+  expect(first!.querySelector("b")).toBe(b);
 });
 
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
