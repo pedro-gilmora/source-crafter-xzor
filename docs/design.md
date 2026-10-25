@@ -374,6 +374,8 @@ Full design: [the design kit spec](superpowers/specs/2026-10-17-design-kit-desig
 - DI diagnostics appear where the problem is defined or referenced: registration decorators and constructor and factory parameters in `.ts` files, and `@inject` lines in `.xzor` files.
 - They update live. Ranges shift as you type. 300 ms after the last change, the analysis reruns with the unsaved text of open documents. Nothing is written to disk until you save.
 - The language server opens `.ts` files only for these diagnostics. Every other `.ts` feature stays with VS Code's TypeScript.
+- Semantic tokens are TypeScript's, mapped back to the `.xzor`. A client with no xzor grammar sends `initializationOptions: { "syntaxTokens": true }` (the Zed extension does): the server then adds the rest of the syntax where TypeScript gave no token, from the parser's spans (`@` transitions, directives and keywords, `@* *@` comments, tags and attributes) and a small lexer over the TypeScript regions (keywords, strings, template literals, numbers, comments, operators, built-in types), and appends the types the legend lacks. VS Code, which has the TextMate grammar, gets TypeScript's tokens alone.
+- Zed (`editors/zed`): a Rust extension built to WebAssembly by Zed. It starts `xzor lsp`, found as `lsp.xzor.binary` in the settings, else the project's `@source-crafter/xzor-cli-<platform>` package, else `xzor` on the `PATH`, and asks for `syntaxTokens`. The `XZor` language reuses the `html` grammar of Zed's HTML extension (Zed needs a Tree-sitter grammar for every language), so the colors come from `"semantic_tokens": "combined"`.
 
 ## Module code (`@module`)
 

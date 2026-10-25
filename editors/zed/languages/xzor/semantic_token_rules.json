@@ -1,0 +1,14 @@
+[
+  {
+    "token_type": "tag",
+    "style": ["tag"]
+  },
+  {
+    "token_type": "attribute",
+    "style": ["attribute"]
+  },
+  {
+    "token_type": "punctuation",
+    "style": ["punctuation.bracket", "punctuation"]
+  }
+]

@@ -53,6 +53,8 @@ No `experimentalDecorators`: xzor uses standard decorators.
 
 Generated `.xzor/` and `dist/` are build output: never edit them. Don't create `routes.ts` at the root, and never import `./main` from a component.
 
+Editors: VS Code uses the xzor extension. In Zed, the `editors/zed` dev extension of the xzor repo runs the same language server; set `{"languages": {"XZor": {"semantic_tokens": "combined"}}}` in `.zed/settings.json` for its colors.
+
 ## Component anatomy
 
 ```xzor

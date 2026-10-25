@@ -1,0 +1,14 @@
+name = "XZor"
+grammar = "html"
+path_suffixes = ["xzor"]
+block_comment = { start = "@*", prefix = "", end = "*@", tab_size = 0 }
+autoclose_before = ">})"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["comment", "string"] },
+    { start = "<", end = ">", close = false, newline = true, not_in = ["comment", "string"] },
+]
+word_characters = ["@", "-", "$", "#"]
+tab_size = 2

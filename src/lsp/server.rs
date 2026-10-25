@@ -135,8 +135,11 @@ struct Server {
     routes: Vec<RoutesRoot>,
     /// The client's `initialize` capabilities.
     client_caps: Json,
-    /// TypeScript's semantic token legend.
+    /// TypeScript's semantic token legend; with `syntax`, extended by `syntax::TYPES` it lacks.
     legend: Option<Json>,
+    /// `initializationOptions.syntaxTokens`: the client has no xzor grammar (Zed), so the server colors the syntax too.
+    /// The legend index of each `syntax::TYPES` entry.
+    syntax: Option<Vec<usize>>,
 }
 
 pub fn run() -> io::Result<()> {
@@ -176,6 +179,7 @@ pub fn run() -> io::Result<()> {
         routes: Vec::new(),
         client_caps: Json::Null,
         legend: None,
+        syntax: None,
     };
     loop {
         let event = match server.di_deadline {
@@ -444,6 +448,9 @@ impl Server {
         match method {
             "initialize" => {
                 self.client_caps = params["capabilities"].clone();
+                if params["initializationOptions"]["syntaxTokens"] == Json::Bool(true) {
+                    self.syntax = Some(Vec::new());
+                }
                 let root_uri = params["rootUri"].as_str().or(params["workspaceFolders"][0]["uri"].as_str());
                 match root_uri.and_then(uri_to_path) {
                     Some(root) => {
@@ -1363,7 +1370,19 @@ impl Server {
                         let _ = write_message(&mut ts.stdin, &body);
                     }
                 }
-                let legend = result["capabilities"]["semanticTokensProvider"]["legend"].clone();
+                let mut legend = result["capabilities"]["semanticTokensProvider"]["legend"].clone();
+                if self.syntax.is_some() && !legend.is_null() {
+                    let mut types = legend["tokenTypes"].as_array().cloned().unwrap_or_default();
+                    let mut at = Vec::with_capacity(super::syntax::TYPES.len());
+                    for name in super::syntax::TYPES {
+                        at.push(types.iter().position(|t| t.as_str() == Some(name)).unwrap_or_else(|| {
+                            types.push(name.into());
+                            types.len() - 1
+                        }));
+                    }
+                    legend.set("tokenTypes", Json::Arr(types));
+                    self.syntax = Some(at);
+                }
                 self.legend = (!legend.is_null()).then_some(legend);
                 if let Some(client_id) = client_id {
                     self.respond(client_id, capabilities(&self.legend, &self.client_caps))?;
@@ -1413,7 +1432,7 @@ impl Server {
                             },
                             (Some(_), Kind::References) => self.map_references(&result),
                             (Some(_), Kind::Rename) if !result.is_null() => self.map_workspace_edit(&result),
-                            (Some(c), Kind::SemanticTokens) => map_semantic_tokens(c, &doc.text, &result),
+                            (Some(c), Kind::SemanticTokens) => map_semantic_tokens(c, &doc.text, &result, self.syntax.as_deref()),
                             _ => Json::Null,
                         },
                         None => Json::Null,
@@ -1675,7 +1694,7 @@ fn registrations(legend: &Option<Json>, client: &Json) -> Vec<Json> {
 }
 
 /// Keeps TypeScript's semantic tokens that fall inside one mapping, at their `.xzor` position.
-fn map_semantic_tokens(c: &Compiled, text: &str, result: &Json) -> Json {
+fn map_semantic_tokens(c: &Compiled, text: &str, result: &Json, syntax: Option<&[usize]>) -> Json {
     let g = &c.g;
     let data: Vec<usize> = result["data"].as_array().map(|a| a.iter().filter_map(Json::as_usize).collect()).unwrap_or_default();
     let mut tokens: Vec<[usize; 5]> = Vec::new();
@@ -1719,6 +1738,9 @@ fn map_semantic_tokens(c: &Compiled, text: &str, result: &Json) -> Json {
             }
         }
     }
+    if let Some(at) = syntax {
+        tokens = with_syntax(text, tokens, at);
+    }
     tokens.sort();
     tokens.dedup_by(|a, b| a[0] == b[0] && a[1] == b[1]);
     let mut out = Vec::with_capacity(tokens.len() * 5);
@@ -1729,6 +1751,37 @@ fn map_semantic_tokens(c: &Compiled, text: &str, result: &Json) -> Json {
         (prev_line, prev_ch) = (l, c);
     }
     Json::obj([("data", Json::Arr(out))])
+}
+
+/// TypeScript's `tokens` plus the syntax `syntax::paint` finds where they leave a gap, one token per run of a type
+/// on a line. `at` maps a painted type to its legend index.
+fn with_syntax(text: &str, tokens: Vec<[usize; 5]>, at: &[usize]) -> Vec<[usize; 5]> {
+    let mut paint = super::syntax::paint(text);
+    for t in &tokens {
+        let start = super::offset_at(text, t[0], t[1]);
+        let end = super::offset_at(text, t[0], t[1] + t[2]);
+        paint[start..end].fill(0);
+    }
+    let mut out = tokens;
+    let mut i = 0;
+    while i < paint.len() {
+        let k = paint[i];
+        if k == 0 || text.as_bytes()[i] == b'\n' {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < paint.len() && paint[j] == k && text.as_bytes()[j] != b'\n' {
+            j += 1;
+        }
+        let (line, ch) = super::position_at(text, i);
+        let len = text[i..j].encode_utf16().count();
+        if text[i..j].trim().len() > 0 {
+            out.push([line, ch, len, at[k as usize - 1], 0]);
+        }
+        i = j;
+    }
+    out
 }
 
 /// Auto-import edits would target the generated file, so they are removed.
@@ -1742,6 +1795,19 @@ fn strip_edits(mut item: Json) -> Json {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn syntax_tokens_fill_the_gaps_typescripts_leave_one_per_line() {
+        let text = "@code {\n  n = 1;\n}\n@if (n > 0) {\n<b>@n</b>\n}\n";
+        let at: Vec<usize> = (100..100 + super::super::syntax::TYPES.len()).collect();
+        // TypeScript colored the `n` in `n = 1` (line 1, column 2) as a property, index 8.
+        let out = with_syntax(text, vec![[1, 2, 1, 8, 0]], &at);
+        let find = |line: usize, ch: usize| out.iter().find(|t| t[0] == line && t[1] == ch).copied();
+        assert_eq!(find(1, 2), Some([1, 2, 1, 8, 0]));
+        assert_eq!(find(1, 6).map(|t| t[3]), Some(103)); // `1`, a number
+        assert_eq!(find(3, 0).map(|t| (t[2], t[3])), Some((3, 100))); // `@if`, a keyword
+        assert!(out.iter().all(|t| !text.lines().nth(t[0]).unwrap().is_empty()));
+    }
 
     fn diag(text: &str, needle: &str) -> Json {
         let at = text.find(needle).unwrap();

@@ -62,6 +62,12 @@ bun x xzor init    # sets up package.json, tsconfig.json and .gitignore
 ```
 
 The extension is the `xzor-<version>.vsix` on the [releases page](../../releases): `code --install-extension xzor-<version>.vsix`.
+
+**Zed**: from a clone of this repo, run `zed: install dev extension` and pick `editors/zed` (Zed compiles it the first time). It starts `xzor lsp` from the project's `node_modules` (or `xzor` on the `PATH`, or `lsp.xzor.binary.path` with `"arguments": ["lsp"]`), reuses Zed's HTML grammar (keep the HTML extension installed), and colors the xzor and TypeScript parts through the server. Turn that on in the project's `.zed/settings.json`:
+
+```json
+{ "languages": { "XZor": { "semantic_tokens": "combined" } } }
+```
 </details>
 
 ---
@@ -513,7 +519,7 @@ Counter.xzor ──xzor──▶ .xzor/Counter.xzor.ts ──tsc──▶ type e
 | `src/build.rs` | Writes `.xzor/` (components, route table, DI), runs `tsc`, then bundles with Bun |
 | `src/di.ts` | Reads your services with TypeScript's API and generates the code that creates them |
 | `runtime/index.ts` | The render tree, the diff, components, the router and the DI types |
-| `src/lsp/` | The language server behind the VS Code extension |
+| `src/lsp/` | The language server behind the VS Code and Zed extensions |
 
 The rules the project follows:
 - **Work at build time, not at runtime.**

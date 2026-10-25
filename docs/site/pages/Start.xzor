@@ -18,6 +18,11 @@
     <li>runs <code>xzor init</code>: it creates <code>package.json</code>, <code>tsconfig.json</code> and <code>.gitignore</code>, or adds only what's missing to the ones you already have, plus a starter app if there is no <code>main.ts</code>;</li>
     <li>installs the VS Code extension if <code>code</code> is on your PATH.</li>
   </ol>
+  <p>
+    On <strong>Zed</strong>, install the extension in <code>editors/zed</code> of the xzor repo with <code>zed: install dev extension</code>, keep
+    Zed's HTML extension installed, and add <code>{"languages": {"XZor": {"semantic_tokens": "combined"}}}</code> to the project's
+    <code>.zed/settings.json</code>: the language server colors the xzor and TypeScript parts.
+  </p>
 
   <h2>Run it</h2>
   <Code name="run" />

@@ -1,0 +1,14 @@
+id = "xzor"
+name = "XZor"
+version = "0.1.0"
+schema_version = 1
+authors = ["Pedro Gil Mora"]
+description = "xzor components (Blazor-style templates compiled to TypeScript): the xzor language server, with syntax colors."
+repository = "https://github.com/pedro-gilmora/source-crafter-xzor"
+
+[language_servers.xzor]
+name = "xzor"
+languages = ["XZor"]
+
+[language_servers.xzor.language_ids]
+"XZor" = "xzor"

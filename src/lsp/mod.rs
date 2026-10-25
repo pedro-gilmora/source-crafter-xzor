@@ -3,6 +3,7 @@
 
 pub mod features;
 pub mod server;
+pub mod syntax;
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
