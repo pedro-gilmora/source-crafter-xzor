@@ -33,9 +33,9 @@ export class HttpError extends Error {
   }
 }
 
-/** `undefined` is 404, a `Response` passes through, anything else is JSON. */
+/** `undefined`/`null` is 404, a `Response` passes through, anything else is JSON. */
 export function reply(value: unknown): Response {
-  if (value === undefined) return new Response(null, { status: 404 });
+  if (value === undefined || value === null) return new Response(null, { status: 404 });
   if (value instanceof Response) return value;
   return Response.json(value);
 }

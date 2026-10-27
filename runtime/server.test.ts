@@ -20,6 +20,9 @@ describe("reply", () => {
   test("undefined is 404", () => {
     expect(reply(undefined).status).toBe(404);
   });
+  test("null is 404", () => {
+    expect(reply(null).status).toBe(404);
+  });
   test("a Response passes through", () => {
     const res = new Response("x", { status: 201 });
     expect(reply(res)).toBe(res);
@@ -35,6 +38,7 @@ describe("reply", () => {
   test("a resolved value goes through reply", async () => {
     expect((await replyAsync(Promise.resolve([1]))).status).toBe(200);
     expect((await replyAsync(Promise.resolve(undefined))).status).toBe(404);
+    expect((await replyAsync(Promise.resolve(null))).status).toBe(404);
   });
 });
 
