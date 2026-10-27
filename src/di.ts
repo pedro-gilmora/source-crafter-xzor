@@ -36,7 +36,7 @@ import {
   isPropertyAccessExpression,
   isStringLiteral,
 } from "typescript/unstable/ast/is";
-import type { Checker, Program, Signature, Snapshot, Symbol as Sym, Type } from "typescript/unstable/sync";
+import type { Checker, Program, Signature, Snapshot, StringLiteralType, Symbol as Sym, Type, UnionType } from "typescript/unstable/sync";
 
 // On Linux and macOS the sync API reads the child's pipe fds from Node internals (`stdout._handle.fd`) that Bun lacks.
 // It gets two FIFOs instead; Windows uses a named pipe and is left alone.
@@ -821,16 +821,16 @@ function joinPath(prefix: string, pattern: string) {
 // `number`, `boolean`, a string-literal union (its values), else `string`; `undefined` and `null` members are ignored.
 function conv(t: Type): Conv {
   if (t.flags & TypeFlags.Boolean) return "boolean";
-  if (t.flags & TypeFlags.StringLiteral) return [String(t.value)];
+  if (t.flags & TypeFlags.StringLiteral) return [(t as StringLiteralType).value];
   if (t.flags & TypeFlags.NumberLike) return "number";
   if (t.flags & TypeFlags.BooleanLike) return "boolean";
   if (!(t.flags & TypeFlags.Union)) return "string";
-  const parts = (t.getTypes() ?? []).filter((p) => !(p.flags & (TypeFlags.Undefined | TypeFlags.Null)));
+  const parts = (t as UnionType).getTypes().filter((p) => !(p.flags & (TypeFlags.Undefined | TypeFlags.Null)));
   if (parts.length === 1) return conv(parts[0]!);
   if (!parts.length) return "string";
   if (parts.every((p) => p.flags & TypeFlags.BooleanLiteral)) return "boolean";
   // Sorted: the checker orders union members by creation, which other files can change.
-  if (parts.every((p) => p.flags & TypeFlags.StringLiteral)) return parts.map((p) => String(p.value)).sort();
+  if (parts.every((p) => p.flags & TypeFlags.StringLiteral)) return parts.map((p) => (p as StringLiteralType).value).sort();
   if (parts.every((p) => p.flags & TypeFlags.NumberLike)) return "number";
   return "string";
 }

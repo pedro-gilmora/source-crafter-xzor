@@ -1,6 +1,6 @@
 ---
 name: xzor
-description: Use when writing, changing or explaining .xzor components or an xzor app (Blazor-style components for TypeScript, packages @source-crafter/xzor and @source-crafter/xzor-runtime), including pages, routes, layouts, slots, cascading values, dependency injection, main.ts or the xzor build.
+description: Use when writing, changing or explaining .xzor components or an xzor app (Blazor-style components for TypeScript, packages @source-crafter/xzor and @source-crafter/xzor-runtime), including pages, routes, layouts, slots, cascading values, dependency injection, server apps and endpoints, main.ts or the xzor build.
 ---
 
 # xzor
@@ -22,12 +22,12 @@ A `.xzor` file is one component: HTML with `@` expressions plus a `@code { }` bl
 ```sh
 bun add -d @source-crafter/xzor typescript@^7
 bun add @source-crafter/xzor-runtime
-bun x xzor init          # package.json scripts, tsconfig.json, .gitignore (adds only what is missing); --server starts a server app (client/, contracts/, server/, @types/bun)
+bun x xzor init          # package.json scripts, tsconfig.json, .gitignore (adds only what is missing); --server starts a server app (client/ and server/, @types/bun)
 bun run dev              # xzor dev: build, serve (SPA fallback), print the URL; saving a .xzor patches the open page keeping state, other changes reload
 bun x xzor build         # one-off production build into dist/
 ```
 
-`xzor build --minify` splits a chunk per `@page` and `@async` component and, with an `index.html`, also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes`: pattern to shell; `files`: what to serve); every `--minify` build, with or without `index.html`, also writes `.br`/`.gz` copies of every text output. Generated: never edit or commit `dist/`.
+`xzor build --minify` splits a chunk per `@page` and `@async` component and, with an `index.html`, also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes`: pattern to shell; `files`: what to serve); every `--minify` build, with or without `index.html`, also writes `.br`/`.gz` copies of every text output. A server app also gets `dist/server.js` (below). Generated: never edit or commit `dist/`.
 
 `xzor init` writes this `tsconfig.json` (or adds the missing parts to an existing one):
 
@@ -205,6 +205,44 @@ export class Application implements IApplication {}
 - Never call `mount()` yourself and don't give an `@inject` component a `constructor`.
 - Missing, ambiguous or cyclic services are build errors.
 
+## Server apps and endpoints
+
+A `@Run` class that implements `IServerApplication` (from `@source-crafter/xzor-runtime/server`, which needs `@types/bun`: `xzor init --server` adds it and a starter) is a Bun server instead of a browser app. What the class implements decides the form: `@Run(Shell, "app")` on an `IApplication`; `@Run(Shell)` (server plus views, rendered into `<body>`) or `@Run()` (API only) on an `IServerApplication`. A mismatched form is a build error.
+
+```ts
+// server/app.ts: members are Bun.serve options (port, tls, http2, routes, fetch, error); routes you set win over generated ones
+@Run(Shell)
+@Singleton(NoteStore)
+export class App implements IServerApplication {
+  port = 3000;
+}
+
+// server/api/notes.ts: every exported @Endpoints class under server/app.ts's folder is served, nothing to register
+@Endpoints("/api/notes")
+export class Notes {
+  constructor(private store: NoteStore) {}      // injected like any service
+
+  @Get                                          // GET /api/notes
+  list(query: { tag?: string }): Note[] { return this.store.list(query.tag); }
+
+  @Get(":id")                                   // GET /api/notes/:id
+  get(id: number): Note | undefined { return this.store.find(id); }
+
+  @Post
+  async add(body: { text: string }): Promise<Note> { return this.store.add(body.text); }
+}
+```
+
+- Decorators: `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, `@Query` (HTTP `QUERY`), bare or with a string-literal pattern joined to the prefix. The prefix is a string literal and the class must be exported.
+- Parameters, in this order only: every path `:param` (named as in the pattern; `number`, `boolean`, a string-literal union or `string`; a bad value answers 400), then `query` (an object type; only its declared keys are read; a key without `?` that is missing answers 400), then `body` (parsed JSON, not validated, only on `@Post`/`@Put`/`@Patch`/`@Query`). `query` and `body` can't be path param names. Anything else is a build error.
+- Results: a `Response` as is; `undefined`/`null` is 404; anything else is JSON; `throw new HttpError(status, message)` answers that status. Return `Promise<T>` only when the work is async (a sync method gets a sync handler, which is faster).
+- `Request` (the global type) can be a constructor parameter of a service or endpoint; such classes are built per request. A singleton that needs it is a build error naming the chain. Scoped services are per request in endpoints and are disposed after the response.
+- Views (`@inject`) reach only services the browser can load: the build registers in the browser what the views reach and on the server what the endpoints and the app reach. A view reaching `Request`, an `@Endpoints` class or a service importing `bun`, `bun:*` or `node:*` is a build error, as is importing an `@Endpoints` class as a value in browser code (use `import type`).
+- Two handlers for one method and path are a build error.
+- `index.html` is yours, with an empty `<body>`: the views render into it and the build adds the bundle's tags. No `main.ts` or `mount()`.
+- Run: `bun run dev` (the server runs behind the dev server; any `.ts` change restarts it, `.xzor` edits patch in place). Ship: `xzor build --minify`, then `bun dist/server.js`: it serves the shells, assets (ETag, brotli, gzip) and endpoints, and unknown paths get `index.html` with status 404 so `@notFound` renders.
+- Not supported: body validation, middleware, streaming or WebSocket endpoints (use the app's `routes`/`websocket` members), more than one `@Run` class per project.
+
 ## Models (state that tracks its changes)
 
 Use a model for data that is edited and then saved: a form, a row of a table, anything where you need "what changed", "undo" or "is it valid". For plain UI state, keep using `@code` fields.
@@ -263,6 +301,8 @@ Every component is compiled with no render pass: the DOM is built once and each 
 | Wrong (Blazor or guess) | Right |
 |---|---|
 | `createApp(App).mount(...)`, `app.services.add...` | `@Run(App, "app")` + `@Singleton(...)` on `Application` in `main.ts` |
+| An Express or Hono server beside the app | `@Run(Shell)` on an `IServerApplication` plus `@Endpoints` classes |
+| Registering endpoint routes by hand, `req.json()` in a method | `@Get`/`@Post` methods; take `body` and `query` parameters |
 | `<Router>`, `<RouteView>`, `<Found>` | `@Routes(route) { @default(page) { ... } }` in `Routes.xzor` |
 | `@inherits LayoutComponentBase`, `@Body` | a plain component with `@slot` |
 | `@foreach (var x in xs)` | `@for (const x of xs)` |

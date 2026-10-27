@@ -1,6 +1,6 @@
 # Page shells: preloaded shell rendering (PSR) (backlog)
 
-Status: built (shells, manifest, compressed copies); serving comes with the server plan. [spec](../superpowers/specs/2026-10-26-run-routes-psr-design.md). Measured with a proof of concept (`target/poc-delivery/poc.ts`, scratch, not committed).
+Status: built (shells, manifest, compressed copies, and the server that serves them: see design.md Server apps). [spec](../superpowers/specs/2026-10-26-run-routes-psr-design.md). Measured with a proof of concept (`target/poc-delivery/poc.ts`, scratch, not committed).
 
 ## The idea
 
@@ -62,6 +62,5 @@ The POC did not yet test the per-page entry (it still went through the router), 
 
 ## Open questions
 
-- Output only, or also a generated production server (`xzor serve`)?
 - Import maps (stable chunk names, so one change doesn't rename its importers) or hashed names only?
 - Pre-rendered markup as a per-page opt-in on top of PSR, for content pages where text before JS matters (it would need the runtime to adopt existing DOM instead of replacing it).

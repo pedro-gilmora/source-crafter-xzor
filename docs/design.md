@@ -228,6 +228,8 @@ The entry module declares one class with `@Run(App, "app")` plus registrations a
 export class Application implements IApplication {}
 ```
 
+What the class implements decides the form: `@Run(App, "app")` on an `IApplication`, `@Run(App)` or `@Run()` on an `IServerApplication` (see [Server apps](#server-apps)). A form that doesn't match is ZDI11.
+
 ### Scopes and disposal
 
 - Every provider instance is a scope. `createScope()` returns a new scope sharing the root's singletons with an empty scoped cache.
@@ -252,8 +254,17 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 | ZDI07 | `@Run` on more than one class, or outside the entry module. |
 | ZDI08 | A user constructor in a component with `@inject`. |
 | ZDI10 | Reserved. Captive dependencies are allowed: a singleton keeps the scoped instance of the scope that first resolved it. |
-| ZDI11 | Invalid registration found by the analyzer (unexported type, generic type, non-public factory, decorator misuse). |
+| ZDI11 | Invalid registration found by the analyzer (unexported type, generic type, non-public factory, decorator misuse, a `@Run` form that doesn't match what the class implements, a misplaced endpoint decorator, an unexported `@Endpoints` class). |
 | ZDI12 | A key matched by parameter name provides a type that is not assignable to the parameter. |
+| ZDI13 | Two endpoint methods handle one HTTP method and path (params compared unnamed); both are named. |
+| ZDI14 | A path parameter named `query` or `body`. |
+| ZDI15 | Endpoint parameters are not the path's `:params` in order, then `query`, then `body`. |
+| ZDI16 | `body` on a method that takes none (only `POST`, `PUT`, `PATCH` and `QUERY` do). |
+| ZDI17 | An endpoint parameter that is not a path parameter, `query` or `body`. |
+| ZDI18 | `query` is not an object type. |
+| ZDI19 | A singleton (built once) needs `Request`, directly or through its services; the chain is named (`AuthCache -> CurrentUser -> Request`). |
+| ZDI20 | A view reaches `Request`, an `@Endpoints` class or a service whose module imports `bun`, `bun:*` or `node:*`; the chain is named. |
+| ZDI21 | A view or a browser-reached service's module imports an `@Endpoints` class as a value (use `import type`). |
 
 ### Gotchas
 
@@ -264,6 +275,52 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - `@Run` must be in the entry module (`--entry`, default `main.ts`; without `main.ts`, the one project `.ts` declaring `@Run(`, and ZDI07 when several do).
 - `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.xzor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
 - Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
+
+## Server apps
+
+Full design: [the run/routes/PSR spec](superpowers/specs/2026-10-26-run-routes-psr-design.md). A server app is a project whose `@Run` class implements `IServerApplication` (`runtime/server.ts`, the `@source-crafter/xzor-runtime/server` export; it references Bun's types, so the project needs `@types/bun`, which `xzor init --server` adds). Roles come from markers, not folder names: `xzor init --server` and `examples/blog` put views in `client/` and the app in `server/` (`server/api/` for endpoints).
+
+| Form | Class implements | App |
+|---|---|---|
+| `@Run(Shell, "app")` | `IApplication` | Browser app, as above. |
+| `@Run(Shell)` | `IServerApplication` | Server plus views: `Shell` and what it imports are bundled for the browser and render into `<body>`. |
+| `@Run()` | `IServerApplication` | API-only server: no views, no browser bundle. |
+
+```ts
+// server/app.ts
+@Run(Shell)
+@Import(DataServices)
+@Singleton(Theme)    // reached by a view: registered in the browser too
+export class App implements IServerApplication {
+  port = 3000;
+  routes = { "/health": new Response("ok") };
+}
+
+// server/api/posts.ts
+@Endpoints("/api/posts")
+export class Posts {
+  constructor(private store: PostStore) {}
+
+  @Get(":slug")
+  get(slug: string): Post | undefined { return this.store.find(slug); }
+
+  @Post
+  async create(body: NewPost): Promise<Post> { return this.store.add(body); }
+}
+```
+
+- **The app class.** `IServerApplication` is `Bun.serve`'s options as optional members (`port`, `tls`, `http2`, `routes`, `fetch`, `error`, ...). The class is a DI application like any other: registrations, `@Import`, constructor injection. The generated server spreads its members into `Bun.serve`, so `routes` is merged after the generated routes (it wins), `fetch` gets what no route matched, and `error` gets errors that aren't an `HttpError`.
+- **Entries.** `.xzor/<app file>` is the server (the `App$` subclass, the endpoint instances, the handlers and `Bun.serve`). With `@Run(Shell)` the build also writes `.xzor/client.ts`: the services the views reach and `mount(Shell, document.body, ...)`, bundled as `dist/main.js` like a browser app's entry. It never imports the app file, so `Bun.serve` members and server-only registrations stay out of the browser. `index.html` is the project's own; the build adds the bundle's `<script>` and stylesheet when it lacks them. No `main.ts` is needed: without one, the entry is the project's one `.ts` declaring `@Run(`.
+- **Discovery.** Every exported `@Endpoints("/prefix")` class in a `.ts` file under the `@Run` file's folder (not `node_modules`, `.xzor`, `dist`) is served; nothing is registered by hand. The prefix and each method's decorator argument must be string literals.
+- **Paths.** The prefix and a method's pattern join on `/` (`"/api/posts"` + `":slug"` = `/api/posts/:slug`; a bare `@Get` is the prefix itself), in Bun's pattern syntax. `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete` and `@Query` (the HTTP `QUERY` method) take no argument or a pattern. Bun's route objects have no `QUERY` key, so a path with a `QUERY` handler gets one function that dispatches on `req.method` and answers other methods with 405.
+- **Parameters**, in this order: the path's `:params`, all of them and named as in the pattern, converted like `@page` params (`number`, `boolean`, a string-literal union, else `string`); then optionally `query`, an object type read from the search string (only its declared keys, each converted the same way; a key without `?` that is absent answers 400; a string index signature also takes every other search param); then optionally `body`, the parsed JSON (typed, not validated), only on `POST`, `PUT`, `PATCH` and `QUERY` (invalid JSON answers 400). A value that fails its conversion answers 400 before the method runs. `query` and `body` are reserved path param names.
+- **Results.** A `Response` passes through; `undefined` or `null` is 404; anything else is `Response.json(value)`; `throw new HttpError(status, message)` answers that status with the message as text. A handler is synchronous unless the method's return type is a `Promise`, it takes `body`, or its instance is built asynchronously, because an always-`async` handler costs about 70% more per request (319 ns against 187 ns, Bun 1.4.0). Generated code calls the method directly and costs what a hand-written handler does (187 against 188 ns).
+- **Instances and `Request`.** Endpoint instances are built once at server start with constructor injection. Any service or endpoint can take a `Request` constructor parameter (the global type); a class that reaches it, directly or through non-singleton services, or reaches a scoped service, is built per request in a scope (`<App>Scope`) holding that request, decided at build time; the others keep the direct call. The scope is disposed after the response, only when the endpoint reaches a disposable scoped service (an async disposal is awaited before the handler settles); transients aren't tracked and singletons stay with the app. A singleton that needs `Request` is ZDI19.
+- **Splitting registrations.** The one set of registrations is split by what each side reaches. The browser container starts from every view's `@inject` and follows constructor parameters; the server container starts from the endpoints' constructors and the app class. A registration both reach exists on both sides and is built separately on each. A view reaching `Request`, an `@Endpoints` class or a server-only module is ZDI20; a view or browser-reached module importing an `@Endpoints` class as a value is ZDI21.
+- **Serving** (`staticFiles` in `runtime/server.ts`). With views, the server reads `dist/pages.json` and serves exactly its `files` list, each at its path, plus each `@page` pattern as its shell; nothing else on disk is reachable. The files and their `.br`/`.gz` copies are read at start (compressing at start cost 218 ms and 14 MB for the blog; build-time copies about 10 ms and 9 MB); files over 1 MB are served from `Bun.file`. Each file has one handler holding prebuilt `Response`s (brotli, gzip, raw) and an ETag (`"<hash>"`, with `-br`/`-gz` for the copies): `If-None-Match` answers 304, otherwise a clone of the encoding `Accept-Encoding` allows, with `vary: accept-encoding`. `dist/chunks/*` and fonts get `cache-control: public, max-age=31536000, immutable`; everything else, `no-cache`. `dist/index.html` (the project's with the bundle's tags) answers `/index.html`, where the worker's offline fallback points. A path nothing matches gets that `index.html` with status 404, so the views' `@notFound` renders; an API-only server answers an empty 404. Without `dist/pages.json` the server logs that it serves no pages and answers endpoints only.
+- **Build.** `xzor build --minify` bundles the server entry with `target: "bun"` to `dist/server.js` (minified, no map), after the browser bundle, shells and `pages.json`; it is not in `pages.json`, so it is never served. Run it with `bun dist/server.js`: it finds `dist/pages.json` from its own location. Without `--minify` there is no `dist/server.js`.
+- **`xzor dev`.** With a server app, `xzor dev` runs the generated server behind its own file server, on a port of its own (`XZOR_DEV=1`, `PORT=0`; the app's `port` is ignored), without shells, assets or compression. Project files are answered as before (HTML with the hot client); what no file answers is proxied to the server, and a `404` to a page request (`accept: text/html`) is answered with `index.html` so client routes load. `.xzor`-only builds still patch in place and leave the server alone. Any other build that type-checks (a `.ts` changed, so nothing could be patched) restarts the server, which waits for the old one to exit; a build that fails its type check keeps the running one.
+- **Limits.** One `@Run` class per project and one tsconfig project for every role. No body validation, middleware, OpenAPI, or streaming and WebSocket endpoints (set `websocket` or `routes` on the app by hand). No static-host output, pre-rendered markup or `bun build --compile`.
 
 ## Models
 
@@ -342,7 +399,7 @@ Every `.xzor` compiles without a render pass. Its DOM is built once. Each dynami
 - **In the vdom.** The template is one `fine` vnode between two comments. Patches never rebuild it: `stateHasChanged()` re-runs every binding, for changes nothing tracks. Removing the component disposes its bindings.
 - **Lifecycle.** A whole-component pass (mount, `stateHasChanged()`, new props from the parent): `shouldRender()` can veto it, and `onAfterRender(first)` follows. It re-runs every binding and keeps the DOM, so focus, scroll and element identity survive. A tracked field's write updates only its bindings, with neither hook.
 - **Events.** A delegated handler runs when the event reaches the document, so a listener added directly on an ancestor runs first, and `stopPropagation()` in a fine handler cannot stop it. An element's `@key` is accepted and ignored: rows are keyed as above.
-- **`--minify`.** `xzor build --minify` minifies and splits the bundle: the route table loads each `@page` with `lazy(() => import(...))`, so each page and each `@async` component is a chunk under `dist/chunks` (cleared on each build), while `dist/main.js`/`main.css` keep their names. Bun also folds chunk CSS into `main.css`; the chunk copies are deleted. With an `index.html` it also writes page shells and a `pages.json`; every `--minify` build writes compressed copies (below). Each build first removes the previous `dist/pages/`, `dist/pages.json` and top-level `.br`/`.gz` copies.
+- **`--minify`.** `xzor build --minify` minifies and splits the bundle: the route table loads each `@page` with `lazy(() => import(...))`, so each page and each `@async` component is a chunk under `dist/chunks` (cleared on each build), while `dist/main.js`/`main.css` keep their names. Bun also folds chunk CSS into `main.css`; the chunk copies are deleted. With an `index.html` it also writes page shells and a `pages.json`; every `--minify` build writes compressed copies (below), and a server app also gets `dist/server.js` (see [Server apps](#server-apps)). Each build first removes the previous `dist/pages/`, `dist/pages.json` and top-level `.br`/`.gz` copies.
 - **Page shells (`--minify`).** Each `@page` gets `dist/pages/<Name>.html` (two pages from one file share it; equal stems get `-2`): `index.html` with a `<link rel="modulepreload">` in `<head>` for the page's chunk and every chunk its static imports and the entry's reach, hrefs relative to the project root so a `<base>` keeps them working. `dist/pages.json` is `{ routes, files }`: `routes` maps each `@page` pattern to its shell, `files` lists (relative to the project root) what a server serves: outputs, fonts, shells, `index.html`, the local files it references and, for a PWA, `sw.js`, the manifest and its icons; no source maps, no copies. Every text output (`.js`, `.css`, `.html`, `.json`, `.svg`, shells included) also gets a `.br` (quality 11) and a `.gz` (level 6) copy beside it, written last; fonts and images get none. The worker precaches the shells, never `pages.json` (the server's manifest, which the browser does not fetch) nor the copies.
 
 ## Components from another project (the xzor-ui kit)
@@ -364,8 +421,8 @@ Full design: [the design kit spec](superpowers/specs/2026-10-17-design-kit-desig
 - The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.xzor` sources.
 - `xzor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. xzor recompiles only the changed `.xzor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.xzor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer. `node_modules` is not watched, so an `@inherits` base in a package is only read again on such a full rebuild.
 - DI analysis runs in a persistent process (`di.ts --serve`). It keeps one TypeScript 7 session per project root, so warm requests take a few milliseconds. `--watch` and the language server reuse it. It is recycled after 500 requests.
-- `xzor init --server` (`npm/xzor/bin/init.ts`) sets up a server app: the usual `package.json`/`tsconfig.json`/`.gitignore` plus `@types/bun` (devDependency and `"types": ["bun"]`) and a starter `client/` (`Shell`, `Home`), `contracts/hello.ts`, `server/app.ts` (`@Run(Shell)` on an `IServerApplication`) and `server/api/hello.ts` (one `@Endpoints`), with an `index.html` whose body is empty. `examples/blog` is the reference server app: views in `client/`, `contracts/posts.ts`, `server/{app,posts-store}.ts` and `server/api/posts.ts`. A component imports the route table relative to the project root (`../../routes` from `client/pages`).
-- `xzor dev` (the npm launcher's `bin/dev.ts`, which `xzor init` puts behind `bun run dev`) runs `xzor build --watch --hot` and serves the project folder on port 3000 (or `PORT`, or a free port): `no-store` responses, unknown paths answered with `index.html` so client routes load, and nothing outside the folder is served. Served HTML gets a `<script src="/__xzor/hot.js">` right after `<head>`, the dev-only client (`bin/hot.ts`) the hot bundle registers its component classes into; it listens for build results over `EventSource`. When a build only changed `.xzor` files, the server sends the recompiled modules and the client patches those classes in place, so the open page shows the edit and every component keeps its state (field values, focus, scroll). A save that changes no generated code (whitespace, format on save) sends nothing. Anything else reloads the page, as does a `#private` member, a new import or a changed base class; arrow-function fields keep their old code until a reload. A patch constructs the new class once to read its fields, and again per instance missing a new field, so field initializers with side effects (timers, sockets) run again; edit such components with a reload. A failed build keeps the last working page.
+- `xzor init --server` (`npm/xzor/bin/init.ts`) sets up a server app: the usual `package.json`/`tsconfig.json`/`.gitignore` plus `@types/bun` (devDependency and `"types": ["bun"]`) and a starter `client/` (`Shell`, `Home`), `server/app.ts` (`@Run(Shell)` on an `IServerApplication`) and `server/api/hello.ts` (one `@Endpoints`), with an `index.html` whose body is empty. `examples/blog` is the reference server app: views in `client/`, `server/{app,posts-store}.ts` and `server/api/posts.ts`. A component imports the route table relative to the project root (`../../routes` from `client/pages`).
+- `xzor dev` (the npm launcher's `bin/dev.ts`, which `xzor init` puts behind `bun run dev`) runs `xzor build --watch --hot` and serves the project folder on port 3000 (or `PORT`, or a free port): `no-store` responses, unknown paths answered with `index.html` so client routes load, and nothing outside the folder is served. A server app's generated server runs behind it (see [Server apps](#server-apps)). Served HTML gets a `<script src="/__xzor/hot.js">` right after `<head>`, the dev-only client (`bin/hot.ts`) the hot bundle registers its component classes into; it listens for build results over `EventSource`. When a build only changed `.xzor` files, the server sends the recompiled modules and the client patches those classes in place, so the open page shows the edit and every component keeps its state (field values, focus, scroll). A save that changes no generated code (whitespace, format on save) sends nothing. Anything else reloads the page, as does a `#private` member, a new import or a changed base class; arrow-function fields keep their old code until a reload. A patch constructs the new class once to read its fields, and again per instance missing a new field, so field initializers with side effects (timers, sockets) run again; edit such components with a reload. A failed build keeps the last working page.
 - PWA: when `<project root>/manifest.webmanifest` sits next to `index.html`, `xzor build` (never `--watch`) writes a dependency-free `<project root>/sw.js` (first line `// Generated by xzor. Do not edit.`; `xzor init` gitignores it) and appends one registration line to the entry bundle, `navigator.serviceWorker.register(new URL("<rel>/sw.js", import.meta.url))`, so the scope is the app's folder, sub-paths included. The precache list is `./`, `index.html`, `manifest.webmanifest`, every icon in the manifest, every local `href`/`src` in `index.html` and every build output except `*.map`. The cache is named `xzor-<version>`, the version being a hash of the precached files' paths and contents, so a rebuild with no change writes the same `sw.js` and a changed file installs a new worker; activation deletes the other `xzor-` caches. The worker only handles same-origin GETs: navigations go network-first and fall back to the cached `index.html` (so deep links work offline), everything else is cache-first. After a deploy, the new worker installs in the background on the first load and serves the new files from the second. The manifest is checked and problems print as `xzor: manifest.webmanifest: ...` on stderr without failing the build (invalid JSON, no `name`/`short_name`, no 192x192 or 512x512 icon, a missing icon file, no `display`). Without a manifest nothing is written and a stale generated `sw.js` is deleted; a `sw.js` you wrote is never touched. `xzor dev` answers `/sw.js` with a worker that unregisters itself, so a production worker never serves stale code in development.
 - After stale generated files are pruned, empty folders under `.xzor/` are removed.
 
@@ -400,5 +457,6 @@ The documentation site's Roadmap page is the public view; this is the short list
 
 1. Publish xzor-ui to npm as `@source-crafter/xzor-ui`, keeping the import paths apps use today.
 2. HTML element and attribute completion in markup.
-3. Page shells (preloaded shell rendering, PSR): built (shells, `pages.json`, compressed copies); serving comes with the server plan. Proposal and measurements: [backlog-page-shells](plans/backlog-page-shells.md).
-4. Later: a native rendering target for the same components.
+3. Page shells (preloaded shell rendering, PSR) and server apps with endpoints: built. Proposal and measurements: [backlog-page-shells](plans/backlog-page-shells.md).
+4. Contracts and typed clients for endpoints: next.
+5. Later: a native rendering target for the same components.

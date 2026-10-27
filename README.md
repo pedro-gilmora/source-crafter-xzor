@@ -44,7 +44,7 @@ bun run dev        # builds, serves the app (open the printed URL); saving a .xz
 ```sh
 bun add -d @source-crafter/xzor typescript@^7
 bun add @source-crafter/xzor-runtime
-bun x xzor init    # sets up package.json, tsconfig.json and .gitignore (`--server`: a server app with client/, contracts/ and server/)
+bun x xzor init    # sets up package.json, tsconfig.json and .gitignore (`--server`: a server app with client/ and server/ folders)
 ```
 
 **`tsconfig.json`**: what `xzor init` makes sure of. The two `.xzor` entries let TypeScript see the generated code.
@@ -369,7 +369,7 @@ An element marked `@leave` stays in the page with `data-leaving` until the anima
 - **Cached getters.** A getter runs once per change, however many places read it. Mark one `@Volatile` when it reads what nothing tracks (`Date.now()`, the DOM) alongside fields: `@Volatile get age() { return Date.now() - born; }`.
 - **`@once(expr)` and `@once { … }`** are read once and never updated: nothing in them is bound.
 - **`@async`** at the top of a component loads it on first use. **`@cached`** keeps its instance and DOM when it leaves the tree, for when it comes back (matched by type and `@key`).
-- **`xzor build --minify`** minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`. With an `index.html` it also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes` from each `@page` pattern to its shell, `files` to serve); every `--minify` build, with or without `index.html`, also writes a `.br` and `.gz` copy of every text output.
+- **`xzor build --minify`** minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`. With an `index.html` it also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes` from each `@page` pattern to its shell, `files` to serve); every `--minify` build, with or without `index.html`, also writes a `.br` and `.gz` copy of every text output. A [server app](#a-server-app) also gets `dist/server.js`.
 
 ---
 
@@ -435,6 +435,53 @@ An app with a `manifest.webmanifest` next to its `index.html` becomes a PWA (an 
 ```
 
 The build warns (never fails) when the manifest is not valid JSON, has no `name` or `short_name`, no `display`, a missing icon file or no 192/512 icon. Nothing is cached in `xzor dev`. Without a manifest, the build is the same as before.
+
+---
+
+## A server app
+
+A `@Run` class that implements `IServerApplication` makes the app a Bun server. `@Run(Shell)` serves your views (a shell per `@page`, precompressed assets) and `@Run()` is an API only. Its members are `Bun.serve` options, and every `@Endpoints` class under the app's folder becomes routes: no registration, and the generated handlers call your methods directly. A server app needs `@types/bun`; `bun x xzor init --server` sets it up and writes a starter.
+
+**`server/app.ts`**
+
+```ts
+import { Run, Singleton } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+import Shell from "../client/Shell.xzor";
+import { NoteStore } from "./note-store";
+
+@Run(Shell)
+@Singleton(NoteStore)
+export class App implements IServerApplication {
+  port = 3000;
+}
+```
+
+**`server/api/notes.ts`**
+
+```ts
+import { Endpoints, Get, Post } from "@source-crafter/xzor-runtime/server";
+import { type Note, NoteStore } from "../note-store";
+
+@Endpoints("/api/notes")
+export class Notes {
+  constructor(private store: NoteStore) {}
+
+  @Get
+  list(query: { tag?: string }): Note[] { return this.store.list(query.tag); }
+
+  @Get(":id")
+  get(id: number): Note | undefined { return this.store.find(id); }   // undefined answers 404
+
+  @Post
+  async add(body: { text: string }): Promise<Note> { return this.store.add(body.text); }
+}
+```
+
+- Parameters come in a fixed order: the path's `:params` (converted to their type, or 400), then `query`, then `body` (parsed JSON, only on `@Post`, `@Put`, `@Patch` and `@Query`). A `Response` passes through, `undefined` is 404, anything else is JSON, and `throw new HttpError(status, message)` answers that status.
+- Constructor parameters are injected like any service. Take `Request` to read the current request: the class is then built per request, and a singleton that needs it is a build error.
+- The views reach services through `@inject`; the build gives the browser only those services and the server the rest, and errors if a view reaches the request, an endpoint or a server-only module.
+- `bun run dev` (`xzor dev`) runs the server behind the dev server with hot reload and restarts it when a `.ts` changes. To ship: `xzor build --minify`, then `bun dist/server.js`.
 
 ---
 

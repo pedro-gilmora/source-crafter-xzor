@@ -287,6 +287,34 @@ viewTransitions(true);
     @pause                         @* stops while hidden, catches up when shown *@
     <ol>@for (const o of orders) @key(o.id) { <li>@o.name</li> }</ol>
 }
+--- recipe-server-app | server/app.ts | typescript
+import { Run, Singleton } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+import Shell from "../client/Shell.xzor";
+import { NoteStore } from "./note-store";
+
+@Run(Shell)                 // @Run() alone is an API-only server
+@Singleton(NoteStore)
+export class App implements IServerApplication {
+  port = 3000;              // Bun.serve options are members
+}
+--- recipe-endpoints | server/api/notes.ts | typescript
+import { Endpoints, Get, Post } from "@source-crafter/xzor-runtime/server";
+import { type Note, NoteStore } from "../note-store";
+
+@Endpoints("/api/notes")
+export class Notes {
+  constructor(private store: NoteStore) {}
+
+  @Get
+  list(query: { tag?: string }): Note[] { return this.store.list(query.tag); }
+
+  @Get(":id")
+  get(id: number): Note | undefined { return this.store.find(id); }   // undefined answers 404
+
+  @Post
+  async add(body: { text: string }): Promise<Note> { return this.store.add(body.text); }
+}
 --- more-keys | Team.xzor | xzor
 @code {
   @Key("id") people: Person[] = [];
