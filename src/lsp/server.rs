@@ -4,7 +4,7 @@
 use super::features::{self, Context, Symbol};
 use super::{offset_at, path_key, path_to_uri, position_at, read_message, same_path, uri_to_path, write_message};
 use crate::build::{
-    self, Analyzer, DiFailure, LocatedDiag, compile_all, compile_one, declares_provider, di_run, find_sources, located_diags, output_path_in,
+    self, Analyzer, DiFailure, LocatedDiag, compile_all, compile_one_in, declares_provider, di_run, find_sources, located_diags, output_path_in,
     project_root, project_sources, tsconfig_root,
 };
 use crate::codegen::Generated;
@@ -1504,14 +1504,15 @@ impl DiWorker {
         write: bool,
     ) -> (Option<Vec<LocatedDiag>>, Vec<PathBuf>) {
         let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-        let compile = |path: &Path| -> Option<build::Compiled> {
+        let compile = |path: &Path, contracts: &HashSet<String>| -> Option<build::Compiled> {
             if write {
-                return compile_one(path).ok();
+                return compile_one_in(path, contracts).ok();
             }
             let text = std::fs::read_to_string(path).ok()?;
-            let generated = crate::compile_mapped(&text, path).ok()?;
+            let generated = crate::compile_mapped_in(&text, path, &|p| std::fs::read_to_string(p).ok(), contracts).ok()?;
             Some(build::Compiled { source: path.to_path_buf(), out: output_path_in(root, path), text, generated })
         };
+        let contracts = self.analyzer.contracts.clone();
         let skip: HashSet<String> = skip.iter().map(|p| path_key(p)).collect();
         let open_ts: HashMap<String, usize> = overlays.iter().enumerate().map(|(i, (p, _))| (path_key(p), i)).collect();
         let mut old_providers = std::mem::take(&mut self.providers);
@@ -1530,8 +1531,8 @@ impl DiWorker {
                 }
                 let m = mtime(&path);
                 let (unit, written) = match old_units.remove(&path) {
-                    Some((om, u, written)) if Some(om) == m && (written || !write) => (u, written),
-                    _ => match compile(&path) {
+                    Some((om, u, written)) if Some(om) == m && (written || !write) && u.generated.remotes == build::remote_injects(&u.generated.injects, &contracts) => (u, written),
+                    _ => match compile(&path, &contracts) {
                         Some(u) => (u, write),
                         None => {
                             failed = true;
@@ -1576,6 +1577,19 @@ impl DiWorker {
                 Err(DiFailure::Other(_)) => None,
             }
         };
+        // The analysis may have learned the contracts: retype the disk units that inject one (or did).
+        let known = &self.analyzer.contracts;
+        if *known != contracts {
+            for (unit, (_, written)) in units[open..].iter_mut().zip(disk.iter_mut()) {
+                if unit.generated.remotes == build::remote_injects(&unit.generated.injects, known) {
+                    continue;
+                }
+                if let Some(u) = compile(&unit.source, known) {
+                    *unit = u;
+                    *written = write;
+                }
+            }
+        }
         for (unit, (m, written)) in units.drain(open..).zip(disk) {
             if let Some(m) = m {
                 self.units.insert(unit.source.clone(), (m, unit, written));
