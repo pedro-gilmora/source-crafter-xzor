@@ -1385,6 +1385,25 @@ test("Remote<IPosts> in a view or a browser service resolves to the client, and 
   expect(server).not.toMatch(/IPostsClient/);
 });
 
+// `@inject IPosts posts` is typed `Remote<IPosts>` once DI knows the contract: the async view type-checks, the sync one doesn't.
+test.each([
+  ["awaited", "async load(slug: string) { this.title = (await this.posts.get(slug))?.slug ?? \"\"; }", false],
+  ["sync", "load(slug: string) { this.title = this.posts.get(slug).slug; }", true],
+])("a view's @inject of a contract is Remote<...>: %s use", (name, method, fails) => {
+  const header = `@import { type IPosts } from "./contract"\n@inject IPosts posts\n\n<header>@title</header>\n\n@code {\n  title = "";\n  ${method}\n}\n`;
+  const dir = serverProject(`client-typed-${name}`, { ...clientFiles, "Header.xzor": header });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const generated = readFileSync(join(dir, ".xzor", "Header.xzor.ts"), "utf8");
+  expect(generated).toContain("readonly posts: Remote<IPosts>;");
+  expect(generated).toContain('import { ComponentBase, type RenderTreeBuilder, type Remote } from "@source-crafter/xzor-runtime";');
+  const tsc = Bun.spawnSync(["bun", "x", "tsc", "-p", dir, "--noEmit"], { cwd: repo });
+  // The scratch project has no Bun/node types, so only the lines about the view are asserted.
+  const errors = (tsc.stdout.toString() + tsc.stderr.toString()).split("\n").filter((l) => /Header\.xzor/.test(l) && !/xzor-runtime\/model/.test(l));
+  if (fails) expect(errors.join("\n")).toMatch(/Property 'slug' does not exist on type 'Promise<Item \| undefined>'/);
+  else expect(errors.join("\n"), "tsc").toBe("");
+});
+
 test("on the server, Remote<IPosts> in a shared service is an in-process adapter returning real Promises", async () => {
   const dir = serverProject("client-local", {
     ...clientFiles,

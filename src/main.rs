@@ -47,14 +47,17 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut failed = false;
             for p in paths {
                 let path = PathBuf::from(p);
-                let units = build::compile_all(&path)?;
+                let mut units = build::compile_all(&path)?;
                 build::write_routes(&units, &mut HashSet::new(), false)?;
+                // `compile` has no entry option, so a @Run outside main.ts is not an error here.
+                let mut analyzer = build::Analyzer::new(&path);
+                let di = build::di(&path, "main.ts", &units, &mut analyzer);
+                build::retype_contracts(&mut units, &analyzer.contracts)?;
                 for unit in &units {
                     build::print_warnings(unit);
                     println!("{}", unit.out.display());
                 }
-                // `compile` has no entry option, so a @Run outside main.ts is not an error here.
-                if let Err(e) = build::di(&path, "main.ts", &units, &mut build::Analyzer::new(&path)) {
+                if let Err(e) = di {
                     let kept: Vec<&str> = e.lines().filter(|l| !l.contains("error ZDI07: @Run must be declared in the entry module")).collect();
                     if !kept.is_empty() {
                         eprintln!("{}", kept.join("\n"));
@@ -99,7 +102,7 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let mut t = Timings::default();
             let start = Instant::now();
-            let units = build::compile_all(&opts.dir)?;
+            let mut units = build::compile_all(&opts.dir)?;
             t.compile = start.elapsed();
             let start = Instant::now();
             build::write_routes(&units, &mut HashSet::new(), opts.minify)?;
@@ -107,8 +110,12 @@ fn run(args: &[String]) -> Result<(), String> {
             units.iter().for_each(build::print_warnings);
             println!("xzor: compiled {} component(s)", units.len());
             let start = Instant::now();
-            let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
+            let mut analyzer = build::Analyzer::new(&opts.dir);
+            let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut analyzer)?;
             t.di = start.elapsed();
+            let start = Instant::now();
+            build::retype_contracts(&mut units, &analyzer.contracts)?;
+            t.retype = start.elapsed();
             finish(&opts, &units, di_entry.as_ref(), &mut None, &mut t)?;
             t.print(&opts);
         }
@@ -146,13 +153,14 @@ struct Timings {
     compile: Duration,
     routes: Duration,
     di: Duration,
+    retype: Duration,
     check: Duration,
     bundle: Duration,
 }
 
 impl Default for Timings {
     fn default() -> Self {
-        Timings { started: Instant::now(), compile: Duration::ZERO, routes: Duration::ZERO, di: Duration::ZERO, check: Duration::ZERO, bundle: Duration::ZERO }
+        Timings { started: Instant::now(), compile: Duration::ZERO, routes: Duration::ZERO, di: Duration::ZERO, retype: Duration::ZERO, check: Duration::ZERO, bundle: Duration::ZERO }
     }
 }
 
@@ -163,8 +171,8 @@ impl Timings {
             // Check and bundle overlap, so the total is wall time, not the sum.
             let total = self.started.elapsed();
             println!(
-                "xzor: timings compile={}ms routes={}ms di={}ms check={}ms bundle={}ms total={}ms",
-                ms(self.compile), ms(self.routes), ms(self.di), ms(self.check), ms(self.bundle), ms(total)
+                "xzor: timings compile={}ms routes={}ms di={}ms retype={}ms check={}ms bundle={}ms total={}ms",
+                ms(self.compile), ms(self.routes), ms(self.di), ms(self.retype), ms(self.check), ms(self.bundle), ms(total)
             );
         }
     }
@@ -284,7 +292,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
         let dependents = build::dependents(&units, &changed);
         recompile.extend(dependents);
         routes_due |= plan.config || !recompile.is_empty() || !plan.remove.is_empty();
-        let results = build::compile_many(&recompile);
+        let results = build::compile_many_in(&recompile, &analyzer.contracts);
         for (src, result) in recompile.iter().zip(results) {
             match result {
                 Ok(unit) => {
@@ -325,7 +333,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
                 println!("xzor: compiled {} component(s), {} with errors", recompile.len(), errors.len());
             }
             let routes = (&mut routes_due, &mut routes_written);
-            if let Err(e) = rebuild(o, &units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes, &mut hot, timings) {
+            if let Err(e) = rebuild(o, &mut units, &errors, &providers, &mut analyzer, &mut di_due, &mut di_entry, routes, &mut hot, timings) {
                 eprintln!("{e}");
             }
             println!("xzor: watching {} for changes (Ctrl+C to stop)", dir.display());
@@ -347,7 +355,7 @@ fn watch_loop(o: &Options) -> Result<(), String> {
 
 fn rebuild(
     o: &Options,
-    units: &[build::Compiled],
+    units: &mut [build::Compiled],
     errors: &BTreeMap<PathBuf, String>,
     providers: &HashSet<PathBuf>,
     analyzer: &mut build::Analyzer,
@@ -377,6 +385,9 @@ fn rebuild(
         let start = Instant::now();
         *di_entry = build::di_with(&o.dir, &o.entry, units, &files, analyzer)?;
         t.di = start.elapsed();
+        let start = Instant::now();
+        build::retype_contracts(units, &analyzer.contracts)?;
+        t.retype = start.elapsed();
         *di_due = false;
     }
     finish(o, units, di_entry.as_ref(), hot, &mut t)?;

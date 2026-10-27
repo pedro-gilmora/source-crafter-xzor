@@ -98,6 +98,8 @@ struct DiRoot {
     worker: Option<Box<DiWorker>>,
     /// Whether the next run writes the generated providers (a save or file event, not a live edit).
     write: bool,
+    /// Contract names of the last analysis: an `@inject` of one is typed `Remote<...>`.
+    contracts: HashSet<String>,
 }
 
 /// What DI runs of one root keep: the analyzer process, and per-file results keyed by modification time.
@@ -655,7 +657,9 @@ impl Server {
             Some(d) => Some(d.text.clone()),
             None => std::fs::read_to_string(p).ok(),
         };
-        let compiled = crate::compile_mapped_with(&doc.text, &doc.path, &read);
+        let none = HashSet::new();
+        let contracts = doc.root.as_deref().and_then(|r| self.di_roots.iter().find(|s| same_path(&s.root, r))).map_or(&none, |s| &s.contracts);
+        let compiled = crate::compile_mapped_in(&doc.text, &doc.path, &read, contracts);
         let root = doc.root.clone();
         let doc = self.docs.get_mut(uri).expect("checked above");
         match compiled {
@@ -900,6 +904,7 @@ impl Server {
         self.di_marks.retain(|(r, _, _)| !same_path(r, root));
         if let Some(state) = self.di_roots.iter_mut().find(|r| same_path(&r.root, root)) {
             state.generation += 1;
+            state.contracts.clear();
             if let Some(worker) = state.worker.take() {
                 // Stopping the analyzer can take a moment.
                 std::thread::spawn(move || drop(worker));
@@ -911,7 +916,7 @@ impl Server {
         let i = match self.di_roots.iter().position(|r| same_path(&r.root, root)) {
             Some(i) => i,
             None => {
-                self.di_roots.push(DiRoot { root: root.to_path_buf(), generation: 0, providers: Vec::new(), worker: None, write: false });
+                self.di_roots.push(DiRoot { root: root.to_path_buf(), generation: 0, providers: Vec::new(), worker: None, write: false, contracts: HashSet::new() });
                 self.di_roots.len() - 1
             }
         };
@@ -994,12 +999,30 @@ impl Server {
         if let Some(providers) = providers {
             state.providers = providers;
         }
+        let contracts = std::mem::replace(&mut state.contracts, worker.analyzer.contracts.clone());
+        let contracts_changed = contracts != state.contracts;
+        let now = if contracts_changed { state.contracts.clone() } else { HashSet::new() };
         if open {
             state.worker = Some(worker);
         } else {
             std::thread::spawn(move || drop(worker));
         }
         let current = state.generation == generation;
+        if contracts_changed {
+            // Open components injecting a contract (or that did) are typed from the new set.
+            let stale: Vec<String> = self
+                .docs
+                .iter()
+                .filter(|(_, d)| {
+                    d.root.as_deref().is_some_and(|r| same_path(r, &root))
+                        && d.compiled.as_ref().is_some_and(|c| c.g.remotes != build::remote_injects(&c.g.injects, &now))
+                })
+                .map(|(u, _)| u.clone())
+                .collect();
+            for uri in stale {
+                self.refresh(&uri)?;
+            }
+        }
         if !self.di_queue.is_empty() {
             let next = self.di_queue.remove(0);
             self.di_start(next);

@@ -64,7 +64,7 @@ fn build_prints_timings() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
     let line = stdout.lines().find_map(|l| l.strip_prefix("xzor: timings ")).unwrap_or_else(|| panic!("no timings line in {stdout}"));
-    let keys = ["compile", "routes", "di", "check", "bundle", "total"];
+    let keys = ["compile", "routes", "di", "retype", "check", "bundle", "total"];
     let fields: Vec<&str> = line.split(' ').collect();
     assert_eq!(fields.len(), keys.len(), "{line}");
     for (field, key) in fields.iter().zip(keys) {

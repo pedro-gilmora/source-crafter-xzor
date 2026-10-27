@@ -20,6 +20,8 @@ pub struct Generated {
     pub mappings: Vec<Mapping>,
     /// `@inject` types and names, with their offsets in the `.xzor`.
     pub injects: Vec<Inject>,
+    /// The injects (by name) typed `Remote<...>` because their type is a contract.
+    pub remotes: Vec<String>,
     /// `@page` routes, with their params typed from the props.
     pub routes: Vec<RouteInfo>,
     /// The `@Routes` block, if any.
@@ -251,6 +253,19 @@ pub fn generate_with(
     inherited: &HashSet<String>,
     table: &str,
 ) -> Result<Generated, String> {
+    generate_in(doc, class_name, source_name, components, inherited, table, &HashSet::new())
+}
+
+/// `generate_with`, typing an `@inject` of a name in `contracts` as `Remote<name>`.
+pub fn generate_in(
+    doc: &Document,
+    class_name: &str,
+    source_name: &str,
+    components: &HashMap<String, ComponentInfo>,
+    inherited: &HashSet<String>,
+    table: &str,
+    contracts: &HashSet<String>,
+) -> Result<Generated, String> {
     let decls: Vec<Vec<MemberDecl>> = doc.code.iter().map(|c| member_decls(c)).collect();
     let mut members: HashSet<String> =
         doc.injects.iter().map(|i| i.name.text.clone()).chain(inherited.iter().cloned()).collect();
@@ -403,13 +418,20 @@ pub fn generate_with(
             .collect();
         g.line(&format!("declare slots: {{ {} }};", fields.join("; ")));
     }
+    let remote = |i: &Inject| contracts.contains(i.ty.trim());
+    let remotes: Vec<String> = doc.injects.iter().filter(|i| remote(i)).map(|i| i.name.text.clone()).collect();
     if !doc.injects.is_empty() {
         let names: Vec<String> = doc.injects.iter().map(|i| js_string(&i.name)).collect();
         g.line(&format!("static readonly inject = [{}];", names.join(", ")));
         for i in &doc.injects {
-            g.emit(M::lit("readonly ").add(M::src(&i.name, i.name.at)).lit_then(": ").add(M::src(&i.ty, i.ty.at)).lit_then(";"));
+            let field = M::lit("readonly ").add(M::src(&i.name, i.name.at)).lit_then(": ");
+            g.emit(if remote(i) {
+                field.lit_then("Remote<").add(M::src(&i.ty, i.ty.at)).lit_then(">;")
+            } else {
+                field.add(M::src(&i.ty, i.ty.at)).lit_then(";")
+            });
         }
-        let params: Vec<String> = doc.injects.iter().map(|i| format!("{}: {}", i.name, i.ty)).collect();
+        let params: Vec<String> = doc.injects.iter().map(|i| if remote(i) { format!("{}: Remote<{}>", i.name, i.ty) } else { format!("{}: {}", i.name, i.ty) }).collect();
         let assigns: String = doc.injects.iter().map(|i| format!(" this.{0} = {0};", i.name)).collect();
         g.line(&format!("constructor({}) {{ super();{assigns} }}", params.join(", ")));
     }
@@ -462,6 +484,9 @@ pub fn generate_with(
         head.push_str("lazy, ");
     }
     head.push_str("type RenderTreeBuilder");
+    if !remotes.is_empty() {
+        head.push_str(", type Remote");
+    }
     if !slots.is_empty() || types & ROUTE_FRAGMENT != 0 {
         head.push_str(", type RenderFragment");
     }
@@ -485,7 +510,7 @@ pub fn generate_with(
     let injects = doc.injects.clone();
     let routes = page_routes(doc, &decls, inherited);
     let routes_block = block.and_then(block_info);
-    Ok(Generated { code: g.out, mappings: g.mappings, injects, routes, routes_block, deps: Vec::new(), warnings: Vec::new(), css: None })
+    Ok(Generated { code: g.out, mappings: g.mappings, injects, remotes, routes, routes_block, deps: Vec::new(), warnings: Vec::new(), css: None })
 }
 
 /// The document's routes block, wherever in the markup it sits (there is at most one per project).
@@ -3844,6 +3869,25 @@ mod tests {
         assert!(g.code.contains(r#"__b.addContent(this.slots.header?.() ?? ComponentBase.fragment((__b) => { __b.openElement("h3"); __b.addContent(this.title); __b.closeElement(); }));"#), "{}", g.code);
         assert!(g.code.contains(r#"__b.addContent(this.slots.item?.(x, this.n, "s", this.title.length, ComponentBase.fragment((__b) => { __b.openElement("b"); __b.closeElement(); })) ?? null);"#), "{}", g.code);
         assert!(g.code.contains("__b.addContent(this.slots.default?.() ?? null);"), "{}", g.code);
+    }
+
+    #[test]
+    fn inject_of_a_contract_is_typed_remote() {
+        let src = "@inject IPosts posts\n@inject IDatabase db\n<p>@db.name</p>";
+        let doc = parse(src).unwrap().0;
+        let run = |names: &[&str]| {
+            let contracts = names.iter().map(|n| n.to_string()).collect();
+            generate_in(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes", &contracts).unwrap()
+        };
+        let g = run(&["IPosts"]);
+        assert!(g.code.contains("  readonly posts: Remote<IPosts>;\n"), "{}", g.code);
+        assert!(g.code.contains("  readonly db: IDatabase;\n"), "{}", g.code);
+        assert!(g.code.contains("constructor(posts: Remote<IPosts>, db: IDatabase)"), "{}", g.code);
+        assert!(g.code.contains("import { ComponentBase, type RenderTreeBuilder, type Remote }"), "{}", g.code);
+        assert_eq!(g.remotes, ["posts"]);
+        let plain = run(&[]);
+        assert!(plain.code.contains("  readonly posts: IPosts;\n") && !plain.code.contains("Remote"), "{}", plain.code);
+        assert!(plain.remotes.is_empty());
     }
 
     #[test]

@@ -503,6 +503,44 @@ test("a link built with href is typed from the route table of the open documents
   rmSync(dir, { recursive: true, force: true });
 }, 90000);
 
+test("hover on an @inject of a contract shows Remote<...> once the analysis knows the contract", async () => {
+  const dir = project("contract");
+  const runtime = join(repo, "runtime").replaceAll("\\", "/");
+  const compilerOptions = {
+    target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ESNext", "DOM", "ESNext.Disposable"], strict: true, noEmit: true, skipLibCheck: true,
+    rootDirs: [".", ".xzor"],
+    paths: { "@source-crafter/xzor-runtime": [`${runtime}/index.ts`], "@source-crafter/xzor-runtime/server": [`${runtime}/server.ts`] },
+  };
+  const view = `@import { type IPosts } from "./contract"\n@inject IPosts posts\n\n<p>x</p>\n`;
+  const files: Record<string, string> = {
+    "tsconfig.json": JSON.stringify({ compilerOptions, include: ["**/*.ts", ".xzor/**/*.ts"] }),
+    "contract.ts": "export interface IPosts {\n  get(slug: string): string | undefined;\n}\n",
+    "api/posts.ts": `import { Endpoints, Get } from "@source-crafter/xzor-runtime/server";\nimport type { IPosts } from "../contract";\n\n@Endpoints("/api/posts")\nexport class Posts implements IPosts {\n  @Get(":slug")\n  get(slug: string) { return slug; }\n}\n`,
+    "app.ts": `import { Run } from "@source-crafter/xzor-runtime";\nimport type { IServerApplication } from "@source-crafter/xzor-runtime/server";\nimport Shell from "./Shell.xzor";\n\n@Run(Shell)\nexport class App implements IServerApplication {\n  port = 0;\n}\n`,
+    "Shell.xzor": view,
+  };
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(join(dir, file, ".."), { recursive: true });
+    await Bun.write(join(dir, file), text);
+  }
+  const uri = uriOf(join(dir, "Shell.xzor"));
+  notify("textDocument/didOpen", { textDocument: { uri, languageId: "xzor", version: 1, text: view } });
+  const hovered = async () => {
+    const hover = await request("textDocument/hover", { textDocument: { uri }, position: pos(view, "posts\n", 1) });
+    return hover ? JSON.stringify(hover.contents) : "";
+  };
+  let text = "";
+  // The first compile has no contracts; polling lets the analysis land and the document refresh.
+  const end = Date.now() + 60000;
+  while (!text.includes("Remote<IPosts>") && Date.now() < end) {
+    text = await hovered();
+    if (!text.includes("Remote<IPosts>")) await Bun.sleep(300);
+  }
+  expect(text).toContain("Remote<IPosts>");
+  notify("textDocument/didClose", { textDocument: { uri } });
+  rmSync(dir, { recursive: true, force: true });
+}, 120000);
+
 test("a route pattern duplicated by another open document is reported on the pattern", async () => {
   const dir = project("dup");
   const a = `@page "/dup"\n<p>a</p>\n`;

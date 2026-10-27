@@ -12,7 +12,7 @@ pub mod parser;
 pub mod routes;
 pub mod style;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -43,6 +43,11 @@ pub fn compile_mapped(source: &str, path: &Path) -> Result<codegen::Generated, D
 
 /// Like [`compile_mapped`], reading `@inherits` base sources through `read`.
 pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Option<String>) -> Result<codegen::Generated, Diagnostic> {
+    compile_mapped_in(source, path, read, &HashSet::new())
+}
+
+/// Like [`compile_mapped_with`], typing an `@inject` of a contract name as `Remote<...>`.
+pub fn compile_mapped_in(source: &str, path: &Path, read: &dyn Fn(&Path) -> Option<String>, contracts: &HashSet<String>) -> Result<codegen::Generated, Diagnostic> {
     let (mut doc, _) = parser::parse(source).map_err(|e| {
         let (line, column) = line_col(source, e.offset);
         Diagnostic { message: e.message, line, column, offset: e.offset }
@@ -66,7 +71,7 @@ pub fn compile_mapped_with(source: &str, path: &Path, read: &dyn Fn(&Path) -> Op
     let base = inherit::base_members(&doc, path, read);
     let table = routes::table_spec(&build::project_root(path), path);
     let mut generated =
-        codegen::generate_with(&doc, &codegen::class_name(stem), &file_name, &components, &base.members, &table)
+        codegen::generate_in(&doc, &codegen::class_name(stem), &file_name, &components, &base.members, &table, contracts)
             .map_err(|message| Diagnostic { message, line: 1, column: 1, offset: 0 })?;
     generated.deps = base.deps;
     generated.deps.extend(imported);

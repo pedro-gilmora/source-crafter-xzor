@@ -98,9 +98,14 @@ pub fn compile_all(root: &Path) -> Result<Vec<Compiled>, String> {
 
 /// `compile_one` over `sources` on all cores; one result per source, in the same order.
 pub fn compile_many(sources: &[PathBuf]) -> Vec<Result<Compiled, String>> {
+    compile_many_in(sources, &HashSet::new())
+}
+
+/// `compile_many` typing `@inject`s of `contracts` as `Remote<...>`.
+pub fn compile_many_in(sources: &[PathBuf], contracts: &HashSet<String>) -> Vec<Result<Compiled, String>> {
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8).min(sources.len());
     if workers <= 1 {
-        return sources.iter().map(|s| compile_one(s)).collect();
+        return sources.iter().map(|s| compile_one_in(s, contracts)).collect();
     }
     let next = AtomicUsize::new(0);
     let mut slots: Vec<Option<Result<Compiled, String>>> = sources.iter().map(|_| None).collect();
@@ -112,7 +117,7 @@ pub fn compile_many(sources: &[PathBuf]) -> Vec<Result<Compiled, String>> {
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(src) = sources.get(i) else { break };
-                        done.push((i, compile_one(src)));
+                        done.push((i, compile_one_in(src, contracts)));
                     }
                     done
                 })
@@ -136,8 +141,13 @@ pub fn print_warnings(unit: &Compiled) {
 
 /// Compiles one `.xzor` into its project's `.xzor/`, with its source map.
 pub fn compile_one(src: &Path) -> Result<Compiled, String> {
+    compile_one_in(src, &HashSet::new())
+}
+
+/// `compile_one` typing `@inject`s of `contracts` as `Remote<...>`.
+pub fn compile_one_in(src: &Path, contracts: &HashSet<String>) -> Result<Compiled, String> {
     let text = fs::read_to_string(src).map_err(|e| format!("{}: {e}", src.display()))?;
-    let generated = crate::compile_mapped(&text, src).map_err(|d| format!("{}:{d}", src.display()))?;
+    let generated = crate::compile_mapped_in(&text, src, &|p| fs::read_to_string(p).ok(), contracts).map_err(|d| format!("{}:{d}", src.display()))?;
     let out = output_path(src);
     let name = src.file_name().unwrap_or_default().to_string_lossy();
     let map = generated.source_map(&text, &relative_from(out.parent().unwrap_or(Path::new(".")), src, &name));
@@ -232,6 +242,26 @@ pub fn remove_outputs(src: &Path) {
     let _ = fs::remove_file(map_path(&out));
     let _ = fs::remove_file(css_path(&out));
     let _ = fs::remove_file(out);
+}
+
+/// The injects of `injects` that are contracts, by name.
+pub(crate) fn remote_injects(injects: &[crate::ast::Inject], contracts: &HashSet<String>) -> Vec<String> {
+    injects.iter().filter(|i| contracts.contains(i.ty.trim())).map(|i| i.name.text.clone()).collect()
+}
+
+/// After DI knows the contracts: recompiles the components whose `@inject`s typed as `Remote<...>` no longer match
+/// them (only those that inject a contract, or did). Returns how many were recompiled.
+pub fn retype_contracts(units: &mut [Compiled], contracts: &HashSet<String>) -> Result<usize, String> {
+    let stale: Vec<usize> = (0..units.len()).filter(|&i| units[i].generated.remotes != remote_injects(&units[i].generated.injects, contracts)).collect();
+    let sources: Vec<PathBuf> = stale.iter().map(|&i| units[i].source.clone()).collect();
+    let mut errors = Vec::new();
+    for (i, result) in stale.into_iter().zip(compile_many_in(&sources, contracts)) {
+        match result {
+            Ok(unit) => units[i] = unit,
+            Err(e) => errors.push(e),
+        }
+    }
+    if errors.is_empty() { Ok(sources.len()) } else { Err(errors.join("\n")) }
 }
 
 /// `"<type> <name>"` per `@inject`, to tell whether a component's DI inputs changed.

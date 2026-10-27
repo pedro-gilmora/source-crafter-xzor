@@ -2,6 +2,7 @@
 
 use crate::di::model::Facts;
 use crate::json::Json;
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -21,6 +22,8 @@ const COLD_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct Analyzer {
     root: PathBuf,
+    /// Names of the contracts (interfaces `@Endpoints` classes implement) in the last analysis.
+    pub contracts: HashSet<String>,
     proc: Option<Proc>,
     served: u32,
     limit: u32,
@@ -41,7 +44,7 @@ impl Analyzer {
     }
 
     pub(crate) fn with_limit(root: &Path, limit: u32) -> Self {
-        Analyzer { root: root.to_path_buf(), proc: None, served: 0, limit, timeout: TIMEOUT, cold_timeout: COLD_TIMEOUT }
+        Analyzer { root: root.to_path_buf(), contracts: HashSet::new(), proc: None, served: 0, limit, timeout: TIMEOUT, cold_timeout: COLD_TIMEOUT }
     }
 
     /// Facts for provider `files` and generated `components` (paths relative to the root or absolute);
@@ -70,7 +73,9 @@ impl Analyzer {
             let error = match answer {
                 Ok(line) => {
                     self.served += 1;
-                    return facts(&line);
+                    let facts = facts(&line)?;
+                    self.contracts = facts.endpoints.iter().flat_map(|e| &e.contracts).map(|c| c.text.clone()).collect();
+                    return Ok(facts);
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     self.kill_now();
