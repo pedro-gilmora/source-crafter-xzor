@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -701,4 +701,84 @@ test.each([
   expect(exit).not.toBe(0);
   expect(out).toContain(code);
   for (const part of parts) expect(out).toContain(part);
+});
+
+test("the generated server: sync and async handlers, query keys, shells and assets", () => {
+  const dir = join(repo, "target", "tmp-serve", `fixture-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  cpSync(serverRoot, dir, { recursive: true, filter: (src) => !/[\\/](\.xzor|node_modules)$/.test(src) });
+  temps.push(dir);
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const text = readFileSync(join(dir, ".xzor", "server", "app.ts"), "utf8");
+  expect(text).toContain('import { HttpError, type IServerApplication, reply, replyAsync, staticFiles } from "@source-crafter/xzor-runtime/server";');
+  expect(text).toContain("class App$ extends App {");
+  expect(text).toContain("const app = new App$();");
+  expect(text).toContain("const posts = new Posts(app.postStore);");
+  expect(text).toContain('const posts$get = (req: Bun.BunRequest<"/api/posts/:slug">) => reply(posts.get(req.params.slug));');
+  expect(text).toMatch(/const posts\$create = async \(req: Bun\.BunRequest<"\/api\/posts">\) => \{[^]*?return replyAsync\(posts\.create\(body\$\)\);/);
+  expect([...text.matchAll(/search\$\.get\("(\w+)"\)/g)].map((m) => m[1])).toEqual(["tag", "page"]);
+  expect(text).not.toContain("Object.fromEntries");
+  expect(text).toContain('const root = join(import.meta.dir, "../..");');
+  expect(text).toContain("assets = staticFiles(root, pages.files);");
+  expect(text).toContain('"/api/posts": { GET: posts$list, POST: posts$create },');
+  expect(text).toContain("...options.routes,");
+  // Only the server entry: no browser mount, and the app's file is no longer a plain provider.
+  expect(text).not.toContain("mount(");
+  expect(existsSync(join(dir, ".xzor", "server", "app.provider.ts"))).toBe(false);
+});
+
+test("the generated server answers endpoints in-process", async () => {
+  const api = endpoints(
+    `import { HttpError } from "@source-crafter/xzor-runtime/server";
+
+@Endpoints("/api/items")
+export class Items {
+  @Get(":id")
+  get(id: number) { return { id }; }
+
+  @Get
+  list(query: { tag?: string; on?: boolean }) { return query; }
+
+  @Query
+  find(body: { q: string }) { return { found: body.q }; }
+
+  @Delete(":id")
+  remove(id: number): void { throw new HttpError(409, "busy " + id); }
+
+  @Post
+  async add(body: { name: string }): Promise<{ name: string }> { return body; }
+}
+`,
+    "Delete, Get, Post, Query",
+  );
+  const dir = serverProject("in-process", { "api.ts": api });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const text = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(text).toContain("const p$0 = Number(req.params.id);");
+  expect(text).toContain("if (Number.isNaN(p$0)) return bad();");
+  expect(text).not.toContain("staticFiles");
+  // The test preload installs happy-dom's Response and fetch, which Bun.serve can't take.
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+  await GlobalRegistrator.unregister();
+  const { server } = await import(join(dir, ".xzor", "app.ts"));
+  const call = async (method: string, path: string, body?: unknown) => {
+    const r = await fetch(new URL(path, server.url), { method, body: body === undefined ? undefined : JSON.stringify(body) });
+    return [r.status, await r.text()];
+  };
+  try {
+    expect(await call("GET", "/api/items/7")).toEqual([200, '{"id":7}']);
+    expect(await call("GET", "/api/items/seven")).toEqual([400, ""]);
+    expect(await call("GET", "/api/items?tag=a&on=true&other=1")).toEqual([200, '{"tag":"a","on":true}']);
+    expect(await call("GET", "/api/items?on=maybe")).toEqual([400, ""]);
+    expect(await call("QUERY", "/api/items", { q: "x" })).toEqual([200, '{"found":"x"}']);
+    expect(await call("POST", "/api/items", { name: "n" })).toEqual([200, '{"name":"n"}']);
+    expect(await call("PUT", "/api/items")).toEqual([405, ""]);
+    expect(await call("DELETE", "/api/items/3")).toEqual([409, "busy 3"]);
+    expect(await call("GET", "/nope")).toEqual([404, ""]);
+  } finally {
+    server.stop(true);
+    GlobalRegistrator.register();
+  }
 });

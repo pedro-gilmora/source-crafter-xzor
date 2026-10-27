@@ -585,13 +585,15 @@ pub fn di_run(
     }
     let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
     let mut written = Vec::with_capacity(resolved.len());
+    // A server app's file becomes its server entry, `.xzor/<app file>`.
+    let server = resolved.iter().find(|r| r.server.is_some()).map(|r| r.provider.file.as_str());
     for r in &resolved {
         let file = r.provider.file.as_str();
         if done.contains(&file) {
             continue;
         }
         done.push(file);
-        let is_entry = mount.is_some() && file == entry;
+        let is_entry = (mount.is_some() && file == entry) || server == Some(file);
         let out = xzor.join(crate::di::emit::output_name(file, is_entry));
         let text = format!("{}\n{}", crate::di::emit::HEADER, crate::di::emit::emit_file(file, &resolved, is_entry));
         write_if_changed(&out, &text)?;
