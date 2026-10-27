@@ -118,6 +118,15 @@ test("no index.html writes no shells", () => {
   expect(existsSync(join(dir, "dist", "pages.json"))).toBe(false);
 }, 120_000);
 
+test("a plain build after --minify leaves no shells, pages.json or copies", () => {
+  const { dir, exitCode, out } = build("stale", index());
+  expect(exitCode, out).toBe(0);
+  expect(existsSync(join(dir, "dist", "main.js.br"))).toBe(true);
+  const plain = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
+  expect(plain.exitCode, plain.stdout.toString() + plain.stderr.toString()).toBe(0);
+  for (const gone of ["pages.json", "pages", "main.js.br", "main.js.gz"]) expect(existsSync(join(dir, "dist", gone)), gone).toBe(false);
+}, 120_000);
+
 test("pageShells: closure of static imports, deduped, dynamic imports left out", () => {
   const outdir = join(root, "x", "dist");
   const meta = {
@@ -206,8 +215,8 @@ test("a PWA project lists its worker, manifest and icons", () => {
   const manifest = JSON.parse(readFileSync(join(dir, "dist", "pages.json"), "utf8")) as { files: string[] };
   for (const f of ["sw.js", "manifest.webmanifest", "icon.png", "icon512.png"]) expect(manifest.files, f).toContain(f);
   expect(manifest.files).toEqual([...manifest.files].sort());
-  // The worker's own list holds the shells and pages.json, not the copies.
+  // The worker's own list holds the shells, not pages.json or the copies.
   const worker = readFileSync(join(dir, "sw.js"), "utf8");
   expect(worker).toContain("dist/pages/Post.html");
-  expect(worker).toContain("dist/pages.json");
+  expect(worker).not.toContain("dist/pages.json");
 }, 120_000);

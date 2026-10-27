@@ -1,7 +1,7 @@
 // Bundles a xzor app with Bun. `./X.xzor` imports resolve to the generated `<project>/.xzor/<rel>/X.xzor.ts`,
 // and the bundle's source map is composed with each generated file's map so it points at the `.xzor` sources.
 // Usage: bun bundle.ts <entry> <outdir> [--hot] [--watch]
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 
@@ -1099,6 +1099,10 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
   const fonts = new Map<string, string>();
   // Chunk names carry a hash: the last build's would pile up.
   rmSync(join(outdir, "chunks"), { recursive: true, force: true });
+  // So are the shells, pages.json and compressed copies of a --minify build.
+  rmSync(join(outdir, "pages"), { recursive: true, force: true });
+  rmSync(join(outdir, "pages.json"), { force: true });
+  if (existsSync(outdir)) for (const f of readdirSync(outdir)) if (/\.(br|gz)$/.test(f)) rmSync(join(outdir, f), { force: true });
   const result = await Bun.build({
     entrypoints: [entry],
     outdir,

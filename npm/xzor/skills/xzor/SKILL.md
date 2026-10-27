@@ -27,7 +27,7 @@ bun run dev              # xzor dev: build, serve (SPA fallback), print the URL;
 bun x xzor build         # one-off production build into dist/
 ```
 
-`xzor build --minify` splits a chunk per `@page` and `@async` component and, with an `index.html`, also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes`: pattern to shell; `files`: what to serve) and `.br`/`.gz` copies of every text output. Generated: never edit or commit `dist/`.
+`xzor build --minify` splits a chunk per `@page` and `@async` component and, with an `index.html`, also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes`: pattern to shell; `files`: what to serve); every `--minify` build, with or without `index.html`, also writes `.br`/`.gz` copies of every text output. Generated: never edit or commit `dist/`.
 
 `xzor init` writes this `tsconfig.json` (or adds the missing parts to an existing one):
 
