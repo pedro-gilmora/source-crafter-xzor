@@ -172,8 +172,10 @@ pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>, lazy: bo
     let mut errors = Vec::new();
     for (root, group) in groups {
         let path = root.join(".xzor").join("routes.ts");
+        let pages_path = root.join(".xzor").join("pages.json");
         if !group.iter().any(|u| !u.generated.routes.is_empty() || u.generated.routes_block.is_some()) {
             changed |= fs::remove_file(&path).is_ok();
+            let _ = fs::remove_file(&pages_path);
             written.remove(&root);
             continue;
         }
@@ -199,6 +201,12 @@ pub fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>, lazy: bo
         let (table, diags) = crate::routes::table(&root, &views, lazy);
         if diags.is_empty() {
             changed |= write_if_changed(&path, &table)?;
+            // Only a minified build splits pages into chunks that shells can preload.
+            if lazy && views.iter().any(|v| !v.routes.is_empty()) {
+                write_if_changed(&pages_path, &crate::routes::pages(&root, &views))?;
+            } else {
+                let _ = fs::remove_file(&pages_path);
+            }
             written.insert(root);
         } else {
             errors.extend(diags.iter().map(|(file, d)| format!("{}:{d}", file.display())));
@@ -770,6 +778,10 @@ pub fn bundle(dir: &Path, entry: &str, hot: bool, watch: bool, minify: bool) -> 
     }
     if minify {
         cmd.arg("--minify");
+        let pages = dir.join(".xzor").join("pages.json");
+        if pages.is_file() {
+            cmd.arg("--pages").arg(std::path::absolute(&pages).unwrap_or(pages));
+        }
     }
     cmd.stderr(Stdio::inherit());
     let output = cmd.output().map_err(|e| format!("bundle: failed to run {:?}: {e}", cmd.get_program()))?;
@@ -1072,6 +1084,20 @@ mod tests {
         write_routes(&units, &mut HashSet::new()).unwrap();
         assert!(!root.join(".xzor/routes.ts").exists());
         write_routes(&units, &mut HashSet::new()).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn minified_builds_write_the_page_list_and_others_drop_it() {
+        let root = temp("pages-json");
+        fs::write(root.join("tsconfig.json"), "{}").unwrap();
+        fs::write(root.join("A.xzor"), "@page \"/a\"\n<p/>").unwrap();
+        let units = compile_all(&root).unwrap();
+        super::write_routes(&units, &mut HashSet::new(), true).unwrap();
+        let json = fs::read_to_string(root.join(".xzor/pages.json")).unwrap();
+        assert_eq!(json, r#"[{"pattern":"/a","file":"A.xzor","name":"A"}]"#);
+        super::write_routes(&units, &mut HashSet::new(), false).unwrap();
+        assert!(!root.join(".xzor/pages.json").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 

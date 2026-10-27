@@ -257,6 +257,19 @@ pub fn table(root: &Path, units: &[Unit], lazy: bool) -> (String, Vec<(PathBuf, 
     (emit(root, units, &entries, lazy), diags)
 }
 
+/// The `@page` list for the bundler's page shells: one `{pattern, file, name}` per route, `file` relative
+/// to the project root and `name` the component's file stem.
+pub fn pages(root: &Path, units: &[Unit]) -> String {
+    let entries = units.iter().flat_map(|u| {
+        let file = rel_display(root, u.source);
+        let name = u.source.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+        u.routes.iter().map(move |r| {
+            crate::json::Json::obj([("pattern", r.pattern.as_str().into()), ("file", file.clone().into()), ("name", name.clone().into())])
+        })
+    });
+    crate::json::Json::Arr(entries.collect()).to_string()
+}
+
 fn diag(unit: &Unit, offset: usize, message: String) -> (PathBuf, crate::Diagnostic) {
     let (line, column) = crate::line_col(unit.text, offset);
     (unit.source.to_path_buf(), crate::Diagnostic { message, line, column, offset })
@@ -680,6 +693,19 @@ mod table_tests {
 
     fn generate(pages: &[Page]) -> (String, Vec<(PathBuf, crate::Diagnostic)>) {
         table(Path::new(ROOT), &units(pages), false)
+    }
+
+    #[test]
+    fn pages_lists_every_pattern_with_its_file() {
+        let pages = [
+            page("pages/Home.xzor", "Home", vec![route(None, "/", &[])]),
+            page("pages/Post.xzor", "Post", vec![route(None, "/a", &[]), route(None, "/a/:id", &[])]),
+            page("Nav.xzor", "Nav", vec![]),
+        ];
+        assert_eq!(
+            super::pages(Path::new(ROOT), &units(&pages)),
+            r#"[{"pattern":"/","file":"pages/Home.xzor","name":"Home"},{"pattern":"/a","file":"pages/Post.xzor","name":"Post"},{"pattern":"/a/:id","file":"pages/Post.xzor","name":"Post"}]"#
+        );
     }
 
     #[test]
