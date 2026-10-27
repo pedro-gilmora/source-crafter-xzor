@@ -142,7 +142,6 @@ test("decorators are no-ops", () => {
   class Impl {}
   @ServiceProvider()
   @Run(Hello, "app")
-  @Run(Hello, "app", { navigation: "server" })
   @Import(Impl)
   @Singleton(Impl)
   @Scoped("scoped", () => 1)

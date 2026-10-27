@@ -7,6 +7,7 @@ import {
   type RouteSection,
   type RouteTable,
   mount,
+  setNavigationForTests,
 } from "./index";
 import { EntitySet, Model, ModelChangeEvent, Persist, State, StateKey } from "./model";
 
@@ -261,6 +262,8 @@ const caught: RouteSection[] = [
 ];
 
 function routed(table: RouteTable, app?: IApplication): void {
+  // The test never unmounts, so it must not leave a document listener behind.
+  setNavigationForTests({ current: () => new URL("http://localhost/"), navigate() {}, subscribe: () => () => {} });
   class Block extends ComponentBase {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addRoutes(table, caught);
@@ -268,7 +271,7 @@ function routed(table: RouteTable, app?: IApplication): void {
   }
   host = document.createElement("main");
   document.body.replaceChildren(host);
-  mount(Block, host, app, "server");
+  mount(Block, host, app);
 }
 
 // Queued after the flush that a change schedules.
@@ -281,6 +284,7 @@ function show<C extends ComponentBase>(type: new () => C): C {
 }
 
 beforeEach(() => {
+  setNavigationForTests(undefined);
   document.body.replaceChildren();
   row = new Row({ label: "a", hours: 2, tax: 3 });
   sheet = new Sheet();

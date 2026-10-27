@@ -157,7 +157,7 @@ export type RouteTable = readonly RouteEntry[];
  * `Tags` maps each route tag to its params; the generated table fixes it (`AppRoute`) so `is` checks tags.
  */
 export class Route<P = Record<string, unknown>, Tags extends object = Record<string, Record<string, unknown>>> {
-  readonly #nav: Navigation | undefined;
+  readonly #nav: Navigation;
 
   constructor(
     readonly path: string,
@@ -165,7 +165,7 @@ export class Route<P = Record<string, unknown>, Tags extends object = Record<str
     readonly params: P,
     readonly query: URLSearchParams,
     readonly match: Record<string, string>,
-    nav?: Navigation,
+    nav: Navigation,
   ) {
     this.#nav = nav;
   }
@@ -175,10 +175,9 @@ export class Route<P = Record<string, unknown>, Tags extends object = Record<str
     return this.tag === tag;
   }
 
-  /** History navigation with client navigation; server navigation loads the url. */
+  /** Navigates through the browser's history. */
   navigate(url: string, opts?: { replace?: boolean }): void {
-    if (this.#nav) this.#nav.navigate(url, opts?.replace === true);
-    else location.href = url;
+    this.#nav.navigate(url, opts?.replace === true);
   }
 }
 
@@ -196,7 +195,7 @@ export type RouteSection =
   | { kind: "catch"; render: (route: Route, error: unknown) => RenderFragment }
   | { kind: "default"; render: (route: Route, page: RenderFragment) => RenderFragment };
 
-/** How client navigation reaches the browser's history; `setNavigationForTests` swaps it. */
+/** How navigation reaches the browser's history; `setNavigationForTests` swaps it. */
 export type Navigation = {
   current(): URL;
   navigate(url: string, replace: boolean): void;
@@ -295,8 +294,8 @@ const navigationOf = (): Navigation => testNavigation ?? browserNavigation;
 
 /** What one mounted routes block keeps between renders. */
 type Router = {
-  // Set with client navigation only: it is also what `route.navigate` uses.
-  nav: Navigation | undefined;
+  // Also what `route.navigate` uses.
+  nav: Navigation;
   off: (() => void) | undefined;
   onError: ((err: unknown, nav: number) => void) | undefined;
   caught: Extract<RouteSection, { kind: "catch" }> | undefined;
@@ -460,7 +459,7 @@ type ServiceDecorator = {
 };
 
 export const ServiceProvider = (): ClassDecorator => noop;
-export const Run = (_component: Function, _target: string, _options?: { navigation?: "client" | "server" }): ClassDecorator => noop;
+export const Run = (_component: Function, _target: string): ClassDecorator => noop;
 export const Import = (..._providers: Function[]): ClassDecorator => noop;
 export const Singleton: ServiceDecorator = () => noop;
 export const Scoped: ServiceDecorator = () => noop;
@@ -675,7 +674,7 @@ export class RenderTreeBuilder {
     let router = owner[ROUTER];
     if (!router) {
       router = owner[ROUTER] = {
-        nav: serverNavigation ? undefined : nav,
+        nav,
         off: undefined,
         onError: undefined,
         caught: sections.find((s): s is Extract<RouteSection, { kind: "catch" }> => s.kind === "catch"),
@@ -698,8 +697,7 @@ export class RenderTreeBuilder {
           queueMicrotask(() => update(owner));
         };
       }
-      // Server navigation matches once on load: no listeners, no re-render.
-      if (router.nav) router.off = router.nav.subscribe(() => renavigate(owner));
+      router.off = nav.subscribe(() => renavigate(owner));
     }
     const state = router;
     const url = nav.current();
@@ -1513,17 +1511,8 @@ function resolveTarget(target: string | Element): Element {
   return found;
 }
 
-// Set by `mount` before the tree builds; a routes block reads it once, when it creates its router.
-let serverNavigation = false;
-
-/** `target` is an element, an element id, or a selector (anything containing `#`, `.` or `[`). `navigation: "server"` makes routes load the url instead of using history. */
-export function mount<C extends ComponentBase>(
-  type: Ctor<C>,
-  target: string | Element,
-  app?: IApplication,
-  navigation?: "server",
-): C {
-  serverNavigation = navigation === "server";
+/** `target` is an element, an element id, or a selector (anything containing `#`, `.` or `[`). */
+export function mount<C extends ComponentBase>(type: Ctor<C>, target: string | Element, app?: IApplication): C {
   const host = resolveTarget(target);
   const root = construct(type, app);
   if (root instanceof Promise) throw new Error(`xzor: root component ${type.name} cannot be asynchronous`);

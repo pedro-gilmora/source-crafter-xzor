@@ -182,7 +182,7 @@ const event = (init: MouseEventInit): MouseEvent =>
 
 function routed(
   sections: RouteSection[],
-  opts: { navigation?: "server"; table?: RouteTable; app?: IApplication } = {},
+  opts: { table?: RouteTable; app?: IApplication } = {},
 ) {
   const table = opts.table ?? pages;
   class Block extends ComponentBase {
@@ -200,7 +200,7 @@ function routed(
   }
   const host = document.createElement("div");
   document.body.append(host);
-  const shell = mount(Shell, host, opts.app, opts.navigation);
+  const shell = mount(Shell, host, opts.app);
   // Runs after the router's own listener: it reports what the router did and keeps happy-dom from
   // really loading the links the router left alone.
   let prevented = false;
@@ -809,49 +809,16 @@ test("a navigation started during the first render is applied once it finishes",
   expect(r.html()).toBe("<aside><u>1</u></aside>");
 });
 
-test("server navigation never listens and navigates by loading the url", () => {
-  const memory = nav("/users/4");
-  let captured: Route | undefined;
-  const r = routed(
-    [
-      {
-        kind: "default",
-        render: (route: Route, page: RenderFragment) => {
-          captured = route;
-          return wrap("aside")(route, page);
-        },
-      },
-    ],
-    { navigation: "server" },
-  );
-  expect(r.html()).toBe("<aside><u>4</u></aside>");
-  expect(memory.subscriptions).toBe(0);
+test("a regex section matches in the browser", () => {
+  const memory = nav("/users/1");
+  const r = routed([
+    { kind: "regex", re: /^\/docs\/(?<area>\w+)/, page: true, render: label("b", (route) => route.match.area) },
+    { kind: "default", render: wrap("aside") },
+  ]);
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
 
-  captured!.navigate("/users/5");
-  expect(memory.calls).toEqual([]);
-  expect(location.pathname).toBe("/users/5");
-});
-
-test("server navigation matches once and links load the page", () => {
-  history.replaceState(null, "", "/users/1");
-  let captured: Route | undefined;
-  const r = routed(
-    [
-      {
-        kind: "default",
-        render: (route: Route, page: RenderFragment) => {
-          captured = route;
-          return links(route, page);
-        },
-      },
-    ],
-    { navigation: "server" },
-  );
-  expect(r.click(r.host.querySelectorAll("a")[0]!)).toBe(false);
-  expect(location.pathname).toBe("/users/1");
-
-  captured!.navigate("/x");
-  expect(location.pathname).toBe("/x");
+  memory.go("/docs/api");
+  expect(r.html()).toBe("<b>api</b>");
 });
 
 test("client navigation is the default and intercepts link clicks", () => {

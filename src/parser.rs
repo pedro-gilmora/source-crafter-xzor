@@ -617,7 +617,7 @@ impl<'a> Parser<'a> {
             "cascade" if cascade => self.cascade_block().map(Transition::Node),
             "Routes" if routes => self.routes_block().map(Transition::Node),
             "ClientRoutes" | "ServerRoutes" if old_routes => {
-                Err(ParseError { message: format!("@{word} was renamed to @Routes; navigation is set on @Run"), offset: at })
+                Err(ParseError { message: format!("@{word} was renamed to @Routes"), offset: at })
             }
             _ => self.implicit_expression(word_start),
         }
@@ -2236,7 +2236,7 @@ after"#;
     fn old_routes_keywords_name_the_replacement() {
         for old in ["ClientRoutes", "ServerRoutes"] {
             let e = parse(&format!("@{old}(route) {{ }}")).unwrap_err();
-            assert_eq!(e.message, format!("@{old} was renamed to @Routes; navigation is set on @Run"));
+            assert_eq!(e.message, format!("@{old} was renamed to @Routes"));
         }
     }
 

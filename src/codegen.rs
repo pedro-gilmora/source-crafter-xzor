@@ -514,13 +514,9 @@ fn find_routes(nodes: &[Node]) -> Option<&Node> {
     })
 }
 
-/// What the route table needs to know about a block: the tags its sections claim and its first regex.
+/// What the route table needs to know about a block: the tags its sections claim.
 fn block_info(node: &Node) -> Option<crate::routes::RoutesBlockInfo> {
     let Node::Routes { var, sections } = node else { return None };
-    let regex = sections.iter().find_map(|s| match &s.kind {
-        RouteSectionKind::Regex { re, .. } => Some(re.at),
-        _ => None,
-    });
     let sections = sections
         .iter()
         .filter_map(|s| match &s.kind {
@@ -528,7 +524,7 @@ fn block_info(node: &Node) -> Option<crate::routes::RoutesBlockInfo> {
             _ => None,
         })
         .collect();
-    Some(crate::routes::RoutesBlockInfo { at: var.at, sections, regex })
+    Some(crate::routes::RoutesBlockInfo { at: var.at, sections })
 }
 
 /// Whether a block's pattern matchers need the `__d` decode guard.
@@ -3820,14 +3816,11 @@ mod tests {
     }
 
     #[test]
-    fn routes_block_reports_its_tag_sections_and_first_regex() {
+    fn routes_block_reports_its_tag_sections() {
         let g = gen_with(ROUTES_BLOCK, &[]);
         let block = g.routes_block.unwrap();
         assert_eq!(block.at, ROUTES_BLOCK.find("route)").unwrap());
         assert_eq!(block.sections, [("admin".to_string(), ROUTES_BLOCK.find("admin(page)").unwrap())]);
-        assert_eq!(block.regex, Some(ROUTES_BLOCK.find("/^").unwrap()));
-        let none = gen_with("@Routes(r) { @notFound { <p/> } }", &[]);
-        assert_eq!(none.routes_block.unwrap().regex, None);
     }
 
     #[test]
