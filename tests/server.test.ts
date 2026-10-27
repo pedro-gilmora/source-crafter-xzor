@@ -1,12 +1,14 @@
 import { afterAll, expect, test } from "bun:test";
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The server fixture built like an app ships: `xzor build --minify` with the type check, then `bun dist/server.js`.
 const repo = join(import.meta.dir, "..");
 const exe = join(repo, "target", "debug", process.platform === "win32" ? "xzor.exe" : "xzor");
 const dir = join(repo, "target", "tmp-serve", `e2e-${process.pid}`);
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  for (const d of [dir, `${dir}-pwa`, `${dir}-nopages`]) rmSync(d, { recursive: true, force: true });
+});
 
 /** The first URL the process prints. */
 async function printedUrl(out: ReadableStream<Uint8Array>): Promise<URL> {
@@ -75,4 +77,74 @@ test("a server app builds its browser views and dist/server.js, and the server s
     await server.exited;
     GlobalRegistrator.register();
   }
+}, 180_000);
+
+/** Copies the fixture to `name`, applies `edit`, builds it with `--minify`, and returns the folder. */
+function buildFixture(name: string, edit: (to: string) => void): string {
+  const to = `${dir}-${name}`;
+  rmSync(to, { recursive: true, force: true });
+  cpSync(join(import.meta.dir, "fixtures", "server"), to, { recursive: true, filter: (src) => !/[\\/](\.xzor|node_modules|dist)$/.test(src) });
+  edit(to);
+  const built = Bun.spawnSync([exe, "build", to, "--minify"], { cwd: repo });
+  expect(built.exitCode, built.stdout.toString() + built.stderr.toString()).toBe(0);
+  return to;
+}
+
+/** Runs `bun dist/server.js` in `app` on a free port while `fn` runs against its URL. */
+async function serving(app: string, fn: (url: URL) => Promise<void>): Promise<void> {
+  const server = Bun.spawn(["bun", "dist/server.js"], { cwd: app, env: { ...process.env, PORT: "0" }, stdout: "pipe", stderr: "inherit" });
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+  await GlobalRegistrator.unregister();
+  try {
+    await fn(await printedUrl(server.stdout));
+  } finally {
+    server.kill();
+    await server.exited;
+    GlobalRegistrator.register();
+  }
+}
+
+const noPort = (to: string) => {
+  const app = join(to, "server", "app.ts");
+  const text = readFileSync(app, "utf8");
+  const stripped = text.replace(/\r?\n\s*port = 3000;/, "");
+  expect(stripped).not.toBe(text);
+  writeFileSync(app, stripped);
+};
+
+test("a server PWA serves every URL its worker precaches", async () => {
+  const app = buildFixture("pwa", (to) => {
+    noPort(to);
+    mkdirSync(join(to, "icons"), { recursive: true });
+    writeFileSync(join(to, "icons", "192.png"), Buffer.from([1]));
+    writeFileSync(join(to, "icons", "512.png"), Buffer.from([2]));
+    writeFileSync(join(to, "manifest.webmanifest"), JSON.stringify({ name: "T", short_name: "T", display: "standalone", icons: [{ src: "icons/192.png", sizes: "192x192" }, { src: "icons/512.png", sizes: "512x512" }] }));
+  });
+  const precached: string[] = JSON.parse(readFileSync(join(app, "sw.js"), "utf8").match(/const FILES = (\[.*\]);/)![1]!);
+  expect(precached).toContain("index.html");
+  expect(precached).toContain("./");
+  await serving(app, async (url) => {
+    for (const file of precached) {
+      const r = await fetch(new URL(file, url));
+      expect([file, r.status]).toEqual([file, 200]);
+    }
+    // The worker's navigate fallback is the built copy, with the bundle's script.
+    expect(await (await fetch(new URL("/index.html", url))).text()).toContain('<script type="module" src="dist/main.js"></script>');
+  });
+}, 180_000);
+
+test("a server app with views and no @page still writes dist/index.html for its 404 body", async () => {
+  const app = buildFixture("nopages", (to) => {
+    noPort(to);
+    rmSync(join(to, "client", "Home.xzor"));
+    rmSync(join(to, "client", "Post.xzor"));
+  });
+  const index = readFileSync(join(app, "dist", "index.html"), "utf8");
+  expect(index).toContain('<script type="module" src="dist/main.js"></script>');
+  expect(existsSync(join(app, "dist", "main.js"))).toBe(true);
+  await serving(app, async (url) => {
+    const r = await fetch(new URL("/nope", url));
+    expect([r.status, await r.text()]).toEqual([404, index]);
+    expect((await fetch(new URL("/dist/main.js", url))).status).toBe(200);
+  });
 }, 180_000);

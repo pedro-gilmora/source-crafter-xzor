@@ -1227,10 +1227,10 @@ async function main(entry: string | undefined, outdir: string, hot = false, watc
   const listed = new Set(server ? [] : ["index.html"]);
   const pagesJson = join(outdir, "pages.json");
   let routes: Record<string, string> | undefined;
-  if (minify && pagesFile && result) {
+  // A server app with views gets it with or without `@page`s (its 404 body and `/index.html`).
+  if (minify && result && (pagesFile || server)) {
     const index = join(dirname(resolve(outdir)), "index.html");
     if (existsSync(index)) {
-      const pages: PageEntry[] = JSON.parse(readFileSync(pagesFile, "utf8"));
       let template = readFileSync(index, "utf8");
       if (server) {
         const css = outputs.some((o) => basename(o.path) === "main.css");
@@ -1240,7 +1240,9 @@ async function main(entry: string | undefined, outdir: string, hot = false, watc
         extra.push(served);
         listed.add(rel(served));
       }
-      const built = pageShells(template, result.metafile!, resolve(outdir), root, pages);
+      const built = pagesFile
+        ? pageShells(template, result.metafile!, resolve(outdir), root, JSON.parse(readFileSync(pagesFile, "utf8")) as PageEntry[])
+        : { routes: {}, shells: new Map<string, string>() };
       routes = built.routes;
       rmSync(join(outdir, "pages"), { recursive: true, force: true });
       mkdirSync(join(outdir, "pages"), { recursive: true });

@@ -732,6 +732,9 @@ impl<'a> Emitter<'a> {
             w!(out, "  const pages: {{ routes: Record<string, string>; files: string[] }} = JSON.parse({read}(pagesJson, \"utf8\"));");
             w!(out, "  assets = {files}(root, pages.files);");
             w!(out, "  for (const pattern in pages.routes) shells[pattern] = assets[`/dist/${{pages.routes[pattern]}}`]!;");
+            // The worker precaches and falls back to `/index.html`: the build's copy, with the bundle's tags, answers it.
+            w!(out, "  const home = assets[\"/dist/index.html\"];");
+            w!(out, "  if (home) assets[\"/index.html\"] = home;");
             w!(out, "}} else {{");
             w!(out, "  console.log(\"xzor: no dist/pages.json, so no pages or assets are served: run xzor build --minify\");");
             w!(out, "}}");
