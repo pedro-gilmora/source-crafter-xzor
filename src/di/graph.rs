@@ -47,6 +47,10 @@ pub struct Service {
     pub is_async: bool,
     /// Takes a `Request`, directly or through its args: built only in a per-request scope.
     pub needs_request: bool,
+    /// A contract (or its client) an imported provider takes but only the server app can provide; replaced by the app's own.
+    pub deferred: bool,
+    /// Reaches a `deferred` service: built by the app, never read through the import's shared instance.
+    pub deferred_dep: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -214,14 +218,24 @@ impl<'a> Cx<'a> {
             if reg.impl_.is_none() && reg.factory.is_none() {
                 self.error(&p.file, reg.at, "ZDI06", format!("{} is registered without an implementation or factory", reg.service.text));
             }
-            services.push(Service { reg: reg.clone(), getter: String::new(), source: Source::Own, args: Vec::new(), is_async: reg.is_async, needs_request: false });
+            services.push(Service { reg: reg.clone(), getter: String::new(), source: Source::Own, args: Vec::new(), is_async: reg.is_async, needs_request: false, deferred: false, deferred_dep: false });
             origins.push((pi, ri));
         }
+        // Synthetic contract services have one origin across providers, so an import's placeholder meets the app's own.
+        let is_server = facts.servers.iter().any(|s| s.class.id == p.class.id);
+        let contracts = if facts.endpoints.is_empty() { Vec::new() } else { contract_endpoints(facts) };
+        let n = contracts.len();
+        let mut seen: HashMap<Origin, usize> = HashMap::new();
+        let imported = |o: Origin| imports.iter().any(|&j| matches!(&self.states[j], State::Done(_, os) if os.contains(&o)));
         // A server app registers the `@Endpoints` instance under each contract that its registrations or endpoints inject.
-        if facts.servers.iter().any(|s| s.class.id == p.class.id) {
-            for (k, (contract, e)) in contract_endpoints(facts).into_iter().enumerate() {
+        if is_server {
+            for (k, &(contract, e)) in contracts.iter().enumerate() {
                 let wanted = |prm: &Param| prm.ty.id == contract.id || remote_of(&prm.ty).is_some_and(|(i, _)| i == contract.id);
-                if !p.registrations.iter().any(|r| r.params.iter().any(wanted)) && !facts.endpoints.iter().any(|x| x.ctor.iter().any(wanted)) {
+                if !p.registrations.iter().any(|r| r.params.iter().any(wanted))
+                    && !facts.endpoints.iter().any(|x| x.ctor.iter().any(wanted))
+                    && !imported((usize::MAX, k))
+                    && !imported((usize::MAX, n + k))
+                {
                     continue;
                 }
                 let reg = Registration {
@@ -236,14 +250,14 @@ impl<'a> Cx<'a> {
                     dispose_optional: false,
                     at: e.at,
                 };
-                services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false });
-                origins.push((pi, p.registrations.len() + k));
+                services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false, deferred: false, deferred_dep: false });
+                origins.push((usize::MAX, k));
+                seen.insert((usize::MAX, k), services.len() - 1);
             }
             // With views, each contract they (or the services they reach) use as `Remote<X>` gets its generated client.
             if facts.servers.iter().any(|s| s.class.id == p.class.id && s.root.is_some()) {
-                let contracts = contract_endpoints(facts);
-                for (k, (contract, _)) in contracts.iter().enumerate() {
-                    if !wants_client(facts, p, &contract.id) {
+                for (k, &(contract, _)) in contracts.iter().enumerate() {
+                    if !wants_client(facts, p, &contract.id) && !imported((usize::MAX, n + k)) {
                         continue;
                     }
                     let reg = Registration {
@@ -258,8 +272,34 @@ impl<'a> Cx<'a> {
                         dispose_optional: false,
                         at: p.at,
                     };
-                    services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false });
-                    origins.push((pi, p.registrations.len() + contracts.len() + k));
+                    services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false, deferred: false, deferred_dep: false });
+                    origins.push((usize::MAX, n + k));
+                    seen.insert((usize::MAX, n + k), services.len() - 1);
+                }
+            }
+        } else {
+            // Another provider that takes a contract: a placeholder the server app that imports it replaces.
+            for (k, &(contract, e)) in contracts.iter().enumerate() {
+                for (remote, o) in [(false, k), (true, n + k)] {
+                    let wanted = |prm: &Param| if remote { remote_of(&prm.ty).is_some_and(|(i, _)| i == contract.id) } else { prm.ty.id == contract.id };
+                    if !p.registrations.iter().any(|r| r.params.iter().any(wanted)) {
+                        continue;
+                    }
+                    let reg = Registration {
+                        lifetime: Lifetime::Singleton,
+                        service: if remote { remote_ref(contract) } else { contract.clone() },
+                        impl_: Some(e.class.clone()),
+                        key: None,
+                        factory: None,
+                        is_async: false,
+                        params: vec![],
+                        dispose: None,
+                        dispose_optional: false,
+                        at: p.at,
+                    };
+                    services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false, deferred: true, deferred_dep: false });
+                    origins.push((usize::MAX, o));
+                    seen.insert((usize::MAX, o), services.len() - 1);
                 }
             }
         }
@@ -267,7 +307,6 @@ impl<'a> Cx<'a> {
 
         // Imported services (transitively), deduplicated by origin so a diamond import is not a duplicate.
         if !imports.is_empty() {
-            let mut seen: HashMap<Origin, usize> = HashMap::new();
             for (ii, &j) in imports.iter().enumerate() {
                 let State::Done(r, o) = &self.states[j] else { unreachable!() };
                 let first = services.len();
@@ -285,6 +324,8 @@ impl<'a> Cx<'a> {
                                 args: s.args.clone(),
                                 is_async: s.is_async,
                                 needs_request: s.needs_request,
+                                deferred: s.deferred,
+                                deferred_dep: s.deferred_dep,
                             });
                             origins.push(origin);
                             services.len() - 1
@@ -298,6 +339,13 @@ impl<'a> Cx<'a> {
                         }
                     }
                 }
+            }
+        }
+
+        if is_server {
+            for s in services.iter().filter(|s| s.deferred) {
+                let m = format!("{} (needed by a service in an imported provider) is not available in {}: a generated client needs views", s.reg.service.text, p.class.text);
+                self.error(&p.file, p.at, "ZDI02", m);
             }
         }
 
@@ -898,8 +946,10 @@ fn visit(i: usize, services: &mut [Service], color: &mut [Color], path: &mut Vec
     let s = &services[i];
     let is_async = s.reg.is_async || s.args.iter().any(|a| matches!(a, Arg::Service(j) if services[*j].is_async));
     let needs_request = s.args.iter().any(|a| matches!(*a, Arg::Request) || matches!(*a, Arg::Service(j) | Arg::Promise(j) if services[j].needs_request));
+    let deferred_dep = s.args.iter().any(|a| matches!(*a, Arg::Service(j) | Arg::Promise(j) if services[j].deferred || services[j].deferred_dep));
     services[i].is_async = is_async;
     services[i].needs_request = needs_request;
+    services[i].deferred_dep = services[i].deferred_dep || deferred_dep;
     Ok(())
 }
 
@@ -1649,6 +1699,43 @@ mod tests {
         // Registered only when something injects the contract.
         let f = served(vec![provider("App", &[], vec![])], vec![contract_endpoint("Posts", "IPosts")]);
         assert!(ok(&f)[0].services.is_empty());
+    }
+
+    #[test]
+    fn a_contract_reaches_a_service_in_an_imported_provider() {
+        // Server side: `IPosts` in an imported provider gets the app's endpoint instance, and the app builds the service.
+        let f = served(
+            vec![
+                provider("App", &["Data"], vec![]),
+                provider("Data", &[], vec![single("Digest", "Digest", vec![param("posts", "IPosts")])]),
+            ],
+            vec![contract_endpoint("Posts", "IPosts")],
+        );
+        let r = ok(&f);
+        let s = &r[0].services;
+        assert_eq!(getters(&r[0]), ["posts", "digest"]);
+        assert!(!s[0].deferred && !s[1].deferred && s[1].deferred_dep);
+        assert_eq!((s[1].source, &s[1].args), (Source::Imported(0, 0), &vec![Arg::Service(0)]));
+        // On its own the import holds a placeholder.
+        assert!(r[1].services.iter().any(|s| s.deferred));
+
+        // Browser side: `Remote<IPosts>` in an imported provider gets the generated client.
+        let remote = Param { ty: TypeRef { id: "Remote<m.ts#IPosts>".into(), text: "Remote<IPosts>".into(), module: None, export: None }, ..param("posts", "IPosts") };
+        let mut f = served(
+            vec![
+                provider("App", &["Data"], vec![]),
+                provider("Data", &[], vec![single("Feed", "Feed", vec![remote])]),
+            ],
+            vec![contract_endpoint("Posts", "IPosts")],
+        );
+        f.servers[0].root = Some(ty("Shell"));
+        f.components = vec![component("Home", vec![param("feed", "Feed")])];
+        let r = ok(&f);
+        let s = &r[0].services;
+        let client = s.iter().position(|s| s.reg.service.text == "Remote<IPosts>").expect("the app registers the client");
+        assert!(is_client(&s[client]) && !s[client].deferred);
+        let feed = s.iter().find(|s| s.reg.service.text == "Feed").unwrap();
+        assert_eq!(feed.args, [Arg::Service(client)]);
     }
 
     #[test]

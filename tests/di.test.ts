@@ -1446,6 +1446,61 @@ export class FeedApi {
   });
 });
 
+test("a contract used by services in an @Import-ed provider: client in the browser, endpoint on the server", async () => {
+  const dir = serverProject("client-imported", {
+    ...clientFiles,
+    "data.ts": `import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
+import { Store } from "./store";
+import { Feed } from "./feed";
+import { Digest } from "./digest";
+
+@ServiceProvider()
+@Singleton(Store)
+@Singleton(Feed)
+@Singleton(Digest)
+export class DataServices {}
+`,
+    "feed.ts": 'import type { Remote } from "@source-crafter/xzor-runtime";\nimport type { IPosts } from "./contract";\n\nexport class Feed {\n  constructor(readonly posts: Remote<IPosts>) {}\n}\n',
+    "digest.ts": 'import type { IPosts } from "./contract";\n\nexport class Digest {\n  constructor(readonly posts: IPosts) {}\n  first() { return this.posts.get("a")?.slug; }\n}\n',
+    "Header.xzor": '@import { type Feed } from "./feed"\n@inject Feed feed\n\n<header>h</header>\n',
+    "api/posts.ts": endpoints(
+      `import type { IPosts, Item } from "../contract";
+import { Digest } from "../digest";
+
+@Endpoints("/api/posts")
+export class Posts implements IPosts {
+  @Get(":slug")
+  get(slug: string): Item | undefined { return { slug }; }
+  @Get
+  list(query: { tag?: string; page?: number }): Item[] { return []; }
+  @Post
+  async create(body: { slug: string }): Promise<Item> { return body; }
+  @Put(":id/tag/:label")
+  tag(id: number, label: string, body: { x: string }): void {}
+}
+
+@Endpoints("/api/digest")
+export class DigestApi {
+  constructor(private digest: Digest) {}
+  @Get
+  first() { return { first: this.digest.first() }; }
+}
+`,
+      "Get, Post, Put",
+    ),
+  });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const client = readFileSync(join(dir, ".xzor", "client.ts"), "utf8");
+  expect(client).toMatch(/new Feed\(this\.remoteIPosts\)/);
+  expect(client).toContain("new IPostsClient()");
+  const server = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(server).not.toMatch(/IPostsClient/);
+  await served(join(dir, ".xzor", "app.ts"), async (call) => {
+    expect(await call("GET", "/api/digest")).toEqual([200, '{"first":"a"}']);
+  });
+});
+
 test("no client is written when no view reaches a contract", () => {
   const dir = serverProject("client-none", { ...clientFiles, "Header.xzor": "<header>h</header>\n" });
   const { code, out } = xzorBuild(dir);

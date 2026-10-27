@@ -394,7 +394,7 @@ impl<'a> Emitter<'a> {
     /// `X$[SharedInstance]` and the import's service, for an imported singleton (read through the shared instance).
     fn delegate(&mut self, r: &Resolved, s: &Service) -> Option<(String, &'a Service)> {
         let Source::Imported(ii, k) = s.source else { return None };
-        if s.reg.lifetime != Lifetime::Singleton || self.local {
+        if s.reg.lifetime != Lifetime::Singleton || s.deferred_dep || self.local {
             return None;
         }
         let class = &r.provider.imports[ii];
@@ -617,13 +617,18 @@ impl<'a> Emitter<'a> {
     }
 
     fn is_delegated(&self, s: &Service) -> bool {
-        matches!(s.source, Source::Imported(..)) && s.reg.lifetime == Lifetime::Singleton
+        matches!(s.source, Source::Imported(..)) && s.reg.lifetime == Lifetime::Singleton && !s.deferred_dep
     }
 
     fn service(&mut self, out: &mut String, r: &Resolved, cls: &str, s: &Service) {
         let g = &s.getter;
         let p = pascal(g);
         let st = self.ty(&s.reg.service);
+        if s.deferred {
+            // Provided by the app that imports this provider; never read from here.
+            w!(out, "  get {g}(): {st} {{ throw new Error({:?}); }}", format!("{} is provided by the application", s.reg.service.text));
+            return;
+        }
         if let Some((owner, d)) = self.delegate(r, s) {
             let dp = pascal(&d.getter);
             if s.is_async {
