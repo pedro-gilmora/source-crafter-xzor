@@ -39,7 +39,7 @@ pub fn emit_file(source_file: &str, all: &[Resolved], mount_entry: bool) -> Stri
     let mut mine: Vec<&Resolved> = all.iter().filter(|r| r.provider.file == source_file).collect();
     mine.sort_by_key(|r| is_app(r));
 
-    let mut e = Emitter { all, source_file, imports: Imports { from, refs: BTreeMap::new(), locals: BTreeSet::new() } };
+    let mut e = Emitter { all, source_file, imports: Imports { from, refs: BTreeMap::new(), locals: BTreeSet::new() }, local: false };
     // Globals the generated code names.
     e.imports.locals.extend(["Promise", "Disposable", "AsyncDisposable", "Symbol", "Function"].map(String::from));
     if mine.iter().any(|r| is_app(r) && r.server.is_some()) {
@@ -56,6 +56,41 @@ pub fn emit_file(source_file: &str, all: &[Resolved], mount_entry: bool) -> Stri
     let mut text = e.imports.render();
     text.push_str(&body);
     text
+}
+
+/// The browser entry of a server app with views, `.xzor/client.ts`: a container of only the services the views reach,
+/// all built here (no provider file, so nothing server-only is imported), then `mount(Root, document.body, ...)`.
+/// It never imports the app file.
+pub fn emit_client(all: &[Resolved]) -> Option<String> {
+    let r = all.iter().find(|r| r.server.as_ref().is_some_and(|s| s.root.is_some()))?;
+    let root = r.server.as_ref()?.root.as_ref()?;
+    let mut e = Emitter { all, source_file: "", imports: Imports { from: vec![".xzor".into()], refs: BTreeMap::new(), locals: BTreeSet::new() }, local: true };
+    e.imports.locals.extend(["Promise", "Function", "document"].map(String::from));
+    let mut body = String::new();
+    let shell = e.value(root);
+    let mount = e.runtime("mount");
+    if r.components.is_empty() {
+        w!(body, "\n{mount}({shell}, document.body);");
+    } else {
+        let cls = e.imports.local("Client$");
+        w!(body, "\nclass {cls} {{");
+        let mut creates = BTreeSet::new();
+        for &i in &r.browser {
+            let s = &r.services[i];
+            if !is_inline(s) {
+                e.service(&mut body, r, &cls, s);
+                if s.is_async {
+                    creates.insert(format!("#{}$create", s.getter));
+                }
+            }
+        }
+        e.components(&mut body, r, &cls, &mut creates);
+        w!(body, "}}");
+        w!(body, "\n{mount}({shell}, document.body, new {cls}());");
+    }
+    let mut text = e.imports.render();
+    text.push_str(&body);
+    Some(text)
 }
 
 /// Names the server entry declares or reads as globals; imports named like them are aliased.
@@ -219,6 +254,8 @@ struct Emitter<'a> {
     all: &'a [Resolved],
     source_file: &'a str,
     imports: Imports,
+    /// Builds every service in place, imported singletons too (the browser entry imports no provider file).
+    local: bool,
 }
 
 impl<'a> Emitter<'a> {
@@ -256,7 +293,7 @@ impl<'a> Emitter<'a> {
     /// `X$[SharedInstance]` and the import's service, for an imported singleton (read through the shared instance).
     fn delegate(&mut self, r: &Resolved, s: &Service) -> Option<(String, &'a Service)> {
         let Source::Imported(ii, k) = s.source else { return None };
-        if s.reg.lifetime != Lifetime::Singleton {
+        if s.reg.lifetime != Lifetime::Singleton || self.local {
             return None;
         }
         let class = &r.provider.imports[ii];
@@ -636,7 +673,8 @@ impl<'a> Emitter<'a> {
         w!(out, "\nexport const server = Bun.serve({{");
         w!(out, "  ...options,");
         w!(out, "  fetch: options.fetch?.bind(app) ?? (() => {fallback}),");
-        w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app, e)),");
+        // Bun types the handler's `this` as the Server; the app's own handler runs on the app.
+        w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app as never, e)),");
         w!(out, "  routes: {{");
         if views {
             w!(out, "    ...shells,");

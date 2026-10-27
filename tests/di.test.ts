@@ -839,6 +839,62 @@ export class E {
   });
 });
 
+// A server app with views: `@Singleton(Theme)` reached by a view, `@Import(DataServices)` only by the server.
+const viewsApp = `import { Import, Run, Singleton } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+import Shell from "./Shell.xzor";
+import { DataServices } from "./data";
+import { Theme } from "./theme";
+
+@Run(Shell)
+@Singleton(Theme)
+@Import(DataServices)
+export class App implements IServerApplication {
+  port = 0;
+}
+`;
+const viewsFiles: Record<string, string> = {
+  "app.ts": viewsApp,
+  "theme.ts": "export class Theme {\n  dark = false;\n}\n",
+  "store.ts": "export class Store {}\n",
+  "data.ts": `import { ServiceProvider, Singleton } from "@source-crafter/xzor-runtime";
+import { Store } from "./store";
+
+@ServiceProvider()
+@Singleton(Store)
+export class DataServices {}
+`,
+  "Shell.xzor": '@import Header from "./Header.xzor"\n\n<Header />\n',
+  "Header.xzor": '@import { type Theme } from "./theme"\n@inject Theme theme\n\n<header>@theme.dark</header>\n',
+};
+
+test("a server app with views: the browser entry registers only what the views reach", () => {
+  const dir = serverProject("split", viewsFiles);
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const client = readFileSync(join(dir, ".xzor", "client.ts"), "utf8");
+  expect(client).toContain("class Client$ {");
+  expect(client).toContain("get theme(): Theme { return (Client$.#theme ??= new Theme()); }");
+  expect(client).toContain("if (type === Header) return new Header(this.theme);");
+  expect(client).toContain("mount(Shell, document.body, new Client$());");
+  expect(client).toContain('import { Theme } from "../theme";');
+  expect(client).not.toMatch(/Store|DataServices/);
+  expect(client).not.toMatch(/from "\.\.\/app"/);
+  const server = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(server).toContain("get theme(): Theme");
+  expect(server).toContain("get store(): Store");
+  expect(server).not.toContain("mount(");
+});
+
+test("a server app whose views inject nothing mounts without a container", () => {
+  const dir = serverProject("split-plain", { ...viewsFiles, "Header.xzor": "<header>h</header>\n" });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const client = readFileSync(join(dir, ".xzor", "client.ts"), "utf8");
+  expect(client).toContain("mount(Shell, document.body);");
+  expect(client).not.toMatch(/Theme|Client\$/);
+});
+
 test("the generated server serves shells and files from a page-shells pages.json", async () => {
   const dir = join(repo, "target", "tmp-serve", `shells-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });

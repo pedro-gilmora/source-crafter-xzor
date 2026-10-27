@@ -55,6 +55,8 @@ pub struct Resolved {
     pub server: Option<Server>,
     /// Filled only for the server application: each `@Endpoints` class with its constructor args.
     pub endpoints: Vec<(Endpoint, Vec<Arg>)>,
+    /// For a server app with views: the services the views reach (`@inject`, then constructor args), ascending.
+    pub browser: Vec<usize>,
 }
 
 /// Where a registration was declared: (provider index, registration index).
@@ -103,11 +105,14 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
 
     if let Some(&m) = mounts.first() {
         if let State::Done(r, o) = &mut cx.states[m] {
-            // A server app's views resolve here too until its registrations are split by reachability.
             r.components = components(facts, r, o, &mut cx.diags);
             if let Some(s) = server_of(&r.provider) {
                 r.server = Some(s.clone());
                 r.endpoints = endpoints(facts, r, o, &mut cx.diags);
+                // The server keeps every registration; the browser gets what the views reach.
+                if s.root.is_some() {
+                    r.browser = reached(&r.services, r.components.iter().flat_map(|(_, args, _)| args));
+                }
             }
         }
     } else {
@@ -308,7 +313,7 @@ impl<'a> Cx<'a> {
             return None;
         }
 
-        Some((Resolved { provider: p.clone(), services, components: Vec::new(), server: None, endpoints: Vec::new() }, origins))
+        Some((Resolved { provider: p.clone(), services, components: Vec::new(), server: None, endpoints: Vec::new(), browser: Vec::new() }, origins))
     }
 }
 
@@ -374,6 +379,26 @@ fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Di
         out.push((e.clone(), classify(&r.services, &sets, &args)));
     }
     out
+}
+
+/// The service index an arg reads, if any.
+pub fn arg_service(a: &Arg) -> Option<usize> {
+    match *a {
+        Arg::Service(j) | Arg::Awaited(j) | Arg::Promise(j) | Arg::Inline(j) | Arg::Covered(j) => Some(j),
+        Arg::Undefined => None,
+    }
+}
+
+/// The services `roots` read, directly or through constructor args, ascending.
+fn reached<'a>(services: &[Service], roots: impl Iterator<Item = &'a Arg>) -> Vec<usize> {
+    let mut seen = vec![false; services.len()];
+    let mut stack: Vec<usize> = roots.filter_map(arg_service).collect();
+    while let Some(i) = stack.pop() {
+        if !std::mem::replace(&mut seen[i], true) {
+            stack.extend(services[i].args.iter().filter_map(arg_service));
+        }
+    }
+    (0..services.len()).filter(|&i| seen[i]).collect()
 }
 
 /// The `:name` segments of a route path.

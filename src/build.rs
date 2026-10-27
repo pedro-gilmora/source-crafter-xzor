@@ -599,6 +599,12 @@ pub fn di_run(
         write_if_changed(&out, &text)?;
         written.push(out);
     }
+    // A server app with views also gets its browser entry, which never imports the app file.
+    if let Some(client) = crate::di::emit::emit_client(&resolved) {
+        let out = xzor.join("client.ts");
+        write_if_changed(&out, &format!("{}\n{client}", crate::di::emit::HEADER))?;
+        written.push(out);
+    }
     prune(&xzor, &written)?;
     Ok(mount.map(|_| xzor.join(entry)))
 }
