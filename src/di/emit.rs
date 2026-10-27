@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use super::graph::{arg_service, is_client, is_inline, Arg, Resolved, Service, Source};
-use super::model::{Conv, Dispose, EndpointMethod, Lifetime, ParamKind, TypeRef, Verb};
+use super::model::{Conv, Dispose, Endpoint, EndpointMethod, Lifetime, ParamKind, TypeRef, Verb};
 
 const RUNTIME: &str = "@source-crafter/xzor-runtime";
 const SERVER: &str = "@source-crafter/xzor-runtime/server";
@@ -44,6 +44,14 @@ pub fn emit_file(source_file: &str, all: &[Resolved], mount_entry: bool) -> Stri
     e.imports.locals.extend(["Promise", "Disposable", "AsyncDisposable", "Symbol", "Function"].map(String::from));
     if mine.iter().any(|r| is_app(r) && r.server.is_some()) {
         e.imports.locals.extend(SERVER_LOCALS.map(String::from));
+        for r in mine.iter().filter(|r| is_app(r)) {
+            for s in r.services.iter().filter(|s| is_client(s)) {
+                if let Some((ep, _)) = local_target(r, s) {
+                    e.imports.locals.insert("Parameters".into());
+                    e.imports.locals.extend(ep.methods.iter().flat_map(|m| m.params.iter().map(|p| p.name.clone())));
+                }
+            }
+        }
     }
     for r in &mine {
         e.imports.locals.insert(generated(&r.provider.class));
@@ -135,6 +143,24 @@ pub fn emit_clients(all: &[Resolved]) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// For a generated client `Remote<X>` that a registration takes on the server: the `@Endpoints` class implementing
+/// `X` and the service holding its instance. `None` when no registration takes it (nothing needs an adapter).
+fn local_target<'r>(r: &'r Resolved, s: &Service) -> Option<(&'r Endpoint, &'r Service)> {
+    let id = s.reg.service.id.strip_prefix("Remote<")?.strip_suffix('>')?;
+    if !r.services.iter().any(|x| !is_client(x) && x.reg.params.iter().any(|p| p.ty.id == s.reg.service.id)) {
+        return None;
+    }
+    let target = r.services.iter().find(|c| c.reg.service.id == id)?;
+    let (ep, ..) = r.endpoints.iter().find(|(ep, ..)| ep.contracts.iter().any(|c| c.id == id))?;
+    Some((ep, target))
+}
+
+/// `IPostsLocal$` for the client `Remote<IPosts>`.
+fn adapter_name(s: &Service) -> String {
+    let text = &s.reg.service.text;
+    format!("{}Local$", text.strip_prefix("Remote<").and_then(|t| t.strip_suffix('>')).unwrap_or(text))
 }
 
 /// A route path as a TypeScript expression: `"/api/posts/" + encodeURIComponent(slug)`.
@@ -501,6 +527,11 @@ impl<'a> Emitter<'a> {
         let is_async_dispose = |&i: &usize| r.services[i].is_async || r.services[i].reg.dispose == Some(Dispose::AsyncSymbol);
         let async_dispose = tracked.iter().any(is_async_dispose);
 
+        for s in r.services.iter().filter(|s| is_client(s)) {
+            if let Some((ep, _)) = local_target(r, s) {
+                self.adapter(out, ep, &adapter_name(s));
+            }
+        }
         if mount {
             w!(out, "class {cls} extends {base} {{");
         } else {
@@ -525,11 +556,13 @@ impl<'a> Emitter<'a> {
         for s in &r.services {
             // Built only in the server's per-request scope.
             if is_client(s) {
-                // The server has no client: `Remote<X>` is the endpoint instance (its results awaited by the caller).
-                let contract = s.reg.service.id.strip_prefix("Remote<").and_then(|i| i.strip_suffix('>'));
-                if let Some(c) = r.services.iter().find(|c| contract == Some(c.reg.service.id.as_str())) {
+                // The server has no HTTP client: `Remote<X>` is an in-process adapter over the endpoint instance.
+                if let Some((_, target)) = local_target(r, s) {
                     let st = self.ty(&s.reg.service);
-                    w!(members, "  get {}(): {st} {{ return this.{} as unknown as {st}; }}", s.getter, c.getter);
+                    let adapter = adapter_name(s);
+                    let g = &s.getter;
+                    w!(members, "  static #{g}?: {adapter};");
+                    w!(members, "  get {g}(): {st} {{ return ({cls}.#{g} ??= new {adapter}(this.{})); }}", target.getter);
                 }
             } else if !is_inline(s) && !s.needs_request {
                 self.service(&mut members, r, &cls, s);
@@ -563,6 +596,24 @@ impl<'a> Emitter<'a> {
         if mount && r.server.is_some() {
             self.server(out, r, &cls);
         }
+    }
+
+    /// The in-process `Remote<X>` for the server: sync endpoint methods are wrapped in `Promise.resolve`, async ones pass through.
+    fn adapter(&mut self, out: &mut String, ep: &Endpoint, name: &str) {
+        let class = self.ty(&ep.class);
+        w!(out, "class {name} {{");
+        w!(out, "  #target: {class};");
+        w!(out, "  constructor(target: {class}) {{ this.#target = target; }}");
+        for m in &ep.methods {
+            let member = format!("{class}[{:?}]", m.name);
+            let params: Vec<String> =
+                m.params.iter().enumerate().map(|(n, p)| format!("{}{}: Parameters<{member}>[{n}]", p.name, if p.optional { "?" } else { "" })).collect();
+            let args: Vec<&str> = m.params.iter().map(|p| p.name.as_str()).collect();
+            let call = format!("this.#target.{}({})", m.name, args.join(", "));
+            let body = if m.returns_promise { call } else { format!("Promise.resolve({call})") };
+            w!(out, "  {}({}) {{ return {body}; }}", m.name, params.join(", "));
+        }
+        w!(out, "}}\n");
     }
 
     fn is_delegated(&self, s: &Service) -> bool {

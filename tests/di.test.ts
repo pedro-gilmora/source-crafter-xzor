@@ -1374,11 +1374,57 @@ test("Remote<IPosts> in a view or a browser service resolves to the client, and 
   expect(client).toMatch(/new Feed\(this\.remoteIPosts\)/);
   // The scratch project has no Bun/node types, so only the lines about the client files are asserted.
   const tsc = Bun.spawnSync(["bun", "x", "tsc", "-p", dir, "--noEmit"], { cwd: repo });
-  const errors = (tsc.stdout.toString() + tsc.stderr.toString()).split("\n").filter((l) => /\.xzor\/clients?[./]|\/feed\.ts|remoteIPosts/.test(l));
+  const errors = (tsc.stdout.toString() + tsc.stderr.toString()).split("\n").filter((l) => /\.xzor\/clients?[./]|\/feed\.ts|remoteIPosts|IPostsLocal/.test(l));
   expect(errors.join("\n"), "tsc").toBe("");
   const server = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
-  expect(server).toContain("get remoteIPosts(): Remote<IPosts> { return this.posts as unknown as Remote<IPosts>; }");
+  expect(server).toContain("class IPostsLocal$ {");
+  expect(server).toContain("get remoteIPosts(): Remote<IPosts> { return (App$.#remoteIPosts ??= new IPostsLocal$(this.posts)); }");
+  expect(server).toContain('get(slug: Parameters<Posts["get"]>[0]) { return Promise.resolve(this.#target.get(slug)); }');
+  expect(server).toContain('create(body: Parameters<Posts["create"]>[0]) { return this.#target.create(body); }');
+  expect(server).not.toContain("as unknown");
   expect(server).not.toMatch(/IPostsClient/);
+});
+
+test("on the server, Remote<IPosts> in a shared service is an in-process adapter returning real Promises", async () => {
+  const dir = serverProject("client-local", {
+    ...clientFiles,
+    "app.ts": viewsApp.replace("@Singleton(Theme)", "@Singleton(Theme)\n@Singleton(Feed)").replace('import { Theme } from "./theme";', 'import { Theme } from "./theme";\nimport { Feed } from "./feed";'),
+    "feed.ts": 'import type { Remote } from "@source-crafter/xzor-runtime";\nimport type { IPosts } from "./contract";\n\nexport class Feed {\n  constructor(readonly posts: Remote<IPosts>) {}\n}\n',
+    "api/posts.ts": endpoints(
+      `import type { IPosts, Item } from "../contract";
+import { Feed } from "../feed";
+
+@Endpoints("/api/posts")
+export class Posts implements IPosts {
+  @Get(":slug")
+  get(slug: string): Item | undefined { return { slug }; }
+  @Get
+  list(query: { tag?: string; page?: number }): Item[] { return []; }
+  @Post
+  async create(body: { slug: string }): Promise<Item> { return body; }
+  @Put(":id/tag/:label")
+  tag(id: number, label: string, body: { x: string }): void {}
+}
+
+@Endpoints("/api/feed")
+export class FeedApi {
+  constructor(private feed: Feed) {}
+  @Get
+  async check() {
+    const sync = this.feed.posts.get("a");
+    const later = this.feed.posts.create({ slug: "b" });
+    return { syncPromise: sync instanceof Promise, asyncPromise: later instanceof Promise, sync: await sync.then((i) => i?.slug), async: (await later.then((i) => i)).slug };
+  }
+}
+`,
+      "Get, Post, Put",
+    ),
+  });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  await served(join(dir, ".xzor", "app.ts"), async (call) => {
+    expect(await call("GET", "/api/feed")).toEqual([200, '{"syncPromise":true,"asyncPromise":true,"sync":"a","async":"b"}']);
+  });
 });
 
 test("no client is written when no view reaches a contract", () => {
