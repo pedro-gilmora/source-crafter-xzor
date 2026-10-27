@@ -622,6 +622,11 @@ pub fn di_run(
         write_if_changed(&out, &format!("{}\n{client}", crate::di::emit::HEADER))?;
         written.push(out);
     }
+    for (name, text) in crate::di::emit::emit_clients(&resolved) {
+        let out = xzor.join(&name);
+        write_if_changed(&out, &format!("{}\n{text}", crate::di::emit::HEADER))?;
+        written.push(out);
+    }
     prune(&xzor, &written)?;
     Ok(entries)
 }

@@ -118,7 +118,10 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
                 // The server keeps every registration; the browser gets what the views reach.
                 if s.root.is_some() {
                     r.browser = reached(&r.services, r.components.iter().flat_map(|(_, args, _)| args));
-                    view_leaks(facts, r, &mut cx.diags);
+                    // A contract in a browser service would otherwise be reported as reaching the endpoint (ZDI20).
+                    if !browser_contracts(facts, r, &mut cx.diags) {
+                        view_leaks(facts, r, &mut cx.diags);
+                    }
                     endpoint_imports(facts, r, &mut cx.diags);
                 }
             }
@@ -217,7 +220,7 @@ impl<'a> Cx<'a> {
         // A server app registers the `@Endpoints` instance under each contract that its registrations or endpoints inject.
         if facts.servers.iter().any(|s| s.class.id == p.class.id) {
             for (k, (contract, e)) in contract_endpoints(facts).into_iter().enumerate() {
-                let wanted = |prm: &Param| prm.ty.id == contract.id;
+                let wanted = |prm: &Param| prm.ty.id == contract.id || remote_of(&prm.ty).is_some_and(|(i, _)| i == contract.id);
                 if !p.registrations.iter().any(|r| r.params.iter().any(wanted)) && !facts.endpoints.iter().any(|x| x.ctor.iter().any(wanted)) {
                     continue;
                 }
@@ -235,6 +238,29 @@ impl<'a> Cx<'a> {
                 };
                 services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false });
                 origins.push((pi, p.registrations.len() + k));
+            }
+            // With views, each contract they (or the services they reach) use as `Remote<X>` gets its generated client.
+            if facts.servers.iter().any(|s| s.class.id == p.class.id && s.root.is_some()) {
+                let contracts = contract_endpoints(facts);
+                for (k, (contract, _)) in contracts.iter().enumerate() {
+                    if !wants_client(facts, p, &contract.id) {
+                        continue;
+                    }
+                    let reg = Registration {
+                        lifetime: Lifetime::Singleton,
+                        service: remote_ref(contract),
+                        impl_: Some(client_class(contract)),
+                        key: None,
+                        factory: None,
+                        is_async: false,
+                        params: vec![],
+                        dispose: None,
+                        dispose_optional: false,
+                        at: p.at,
+                    };
+                    services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false });
+                    origins.push((pi, p.registrations.len() + contracts.len() + k));
+                }
             }
         }
         let own = services.len();
@@ -370,6 +396,7 @@ fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<D
     let sets = Sets::new(&r.services);
     let app = &r.provider.class.text;
     let mut out = Vec::with_capacity(facts.components.len());
+    let contracts = if has_views(facts) { contract_endpoints(facts) } else { Vec::new() };
     for c in &facts.components {
         let mut args = Vec::with_capacity(c.injects.len());
         for prm in &c.injects {
@@ -377,6 +404,15 @@ fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<D
                 args.push(Arg::Request);
                 continue;
             }
+            // A view injecting a contract by its own name gets the client.
+            let swapped;
+            let prm = match contracts.iter().find(|(c, _)| prm.interface && c.id == prm.ty.id) {
+                Some((contract, _)) => {
+                    swapped = Param { ty: remote_ref(contract), ..prm.clone() };
+                    &swapped
+                }
+                None => prm,
+            };
             let (code, message) = match table.find(prm) {
                 Found::One(i) if mismatched(facts, prm, &r.services[i], origins[i]) => ("ZDI12", zdi12(prm, &r.services[i])),
                 Found::One(i) => {
@@ -468,6 +504,50 @@ fn check_contracts(facts: &Facts, diags: &mut Vec<Diag>) {
 /// `Remote<X>` as the analyzer names it: the id and text of `X`.
 fn remote_of(t: &TypeRef) -> Option<(&str, &str)> {
     Some((t.id.strip_prefix("Remote<")?.strip_suffix('>')?, t.text.strip_prefix("Remote<")?.strip_suffix('>')?))
+}
+
+fn has_views(facts: &Facts) -> bool {
+    facts.servers.iter().any(|s| s.root.is_some())
+}
+
+/// The service type of a contract's client: `Remote<X>` as the analyzer names it.
+fn remote_ref(contract: &TypeRef) -> TypeRef {
+    TypeRef { id: format!("Remote<{}>", contract.id), text: format!("Remote<{}>", contract.text), module: None, export: None }
+}
+
+/// Where the build writes a contract's client (`.xzor/clients/<IContract>.ts`) and the class it exports.
+pub const CLIENTS: &str = ".xzor/clients/";
+
+fn client_class(contract: &TypeRef) -> TypeRef {
+    let class = format!("{}Client", contract.text);
+    TypeRef { id: format!("{CLIENTS}{}.ts#{class}", contract.text), module: Some(format!("{CLIENTS}{}", contract.text)), export: Some(class.clone()), text: class }
+}
+
+/// Whether `s` is a generated client: built in the browser only.
+pub fn is_client(s: &Service) -> bool {
+    s.reg.impl_.as_ref().and_then(|i| i.module.as_deref()).is_some_and(|m| m.starts_with(CLIENTS))
+}
+
+/// Whether a view injects contract `id` (as itself or `Remote<id>`), or a registration takes `Remote<id>`.
+fn wants_client(facts: &Facts, p: &Provider, id: &str) -> bool {
+    let remote = |prm: &Param| remote_of(&prm.ty).is_some_and(|(i, _)| i == id);
+    facts.components.iter().any(|c| c.injects.iter().any(|prm| remote(prm) || (prm.interface && prm.ty.id == id)))
+        || p.registrations.iter().any(|r| r.params.iter().any(remote))
+}
+
+/// ZDI25: a service the views reach takes a contract by its own name; browser code takes `Remote<X>`.
+fn browser_contracts(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) -> bool {
+    let contracts = contract_endpoints(facts);
+    let before = diags.len();
+    for &i in &r.browser {
+        for prm in &r.services[i].reg.params {
+            if prm.interface && contracts.iter().any(|(c, _)| c.id == prm.ty.id) {
+                let message = format!("{0} is a contract: use Remote<{0}> in browser code", prm.ty.text);
+                diags.push(Diag { file: prm.file.clone(), at: prm.at, code: "ZDI25", message, inject: None, param_at: None });
+            }
+        }
+    }
+    diags.len() > before
 }
 
 /// The diagnostic for a view's inject that nothing provides. In a server app, a `Remote<X>` or an interface that no

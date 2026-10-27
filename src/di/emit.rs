@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use super::graph::{arg_service, is_inline, Arg, Resolved, Service, Source};
+use super::graph::{arg_service, is_client, is_inline, Arg, Resolved, Service, Source};
 use super::model::{Conv, Dispose, EndpointMethod, Lifetime, ParamKind, TypeRef, Verb};
 
 const RUNTIME: &str = "@source-crafter/xzor-runtime";
@@ -91,6 +91,72 @@ pub fn emit_client(all: &[Resolved]) -> Option<String> {
     let mut text = e.imports.render();
     text.push_str(&body);
     Some(text)
+}
+
+/// The HTTP clients the views reach, one per contract: (path relative to `.xzor`, text). Each method keeps its
+/// endpoint method's parameters and fetches the route through the runtime's `call`.
+pub fn emit_clients(all: &[Resolved]) -> Vec<(String, String)> {
+    let Some(r) = all.iter().find(|r| r.server.as_ref().is_some_and(|s| s.root.is_some())) else { return Vec::new() };
+    let mut out = Vec::new();
+    for (ep, ..) in &r.endpoints {
+        for contract in &ep.contracts {
+            let remote = format!("Remote<{}>", contract.id);
+            if !r.browser.iter().any(|&i| r.services[i].reg.service.id == remote) {
+                continue;
+            }
+            let mut em = Emitter { all, source_file: "", imports: Imports { from: vec![".xzor".into(), "clients".into()], refs: BTreeMap::new(), locals: BTreeSet::new() }, local: true, scope: false };
+            em.imports.locals.extend(["Parameters", "ReturnType", "Awaited", "Promise", "encodeURIComponent"].map(String::from));
+            em.imports.locals.extend(ep.methods.iter().flat_map(|m| m.params.iter().map(|p| p.name.clone())));
+            let call = em.runtime("call");
+            let class = em.ty(&ep.class);
+            let mut body = String::new();
+            w!(body, "\nexport class {}Client {{", contract.text);
+            for m in &ep.methods {
+                let member = format!("{class}[{:?}]", m.name);
+                let (mut params, mut query, mut data) = (Vec::with_capacity(m.params.len()), "undefined", "undefined");
+                for (n, p) in m.params.iter().enumerate() {
+                    let optional = if p.optional { "?" } else { "" };
+                    params.push(format!("{}{optional}: Parameters<{member}>[{n}]", p.name));
+                    match p.kind {
+                        ParamKind::Query => query = &p.name,
+                        ParamKind::Body => data = &p.name,
+                        _ => {}
+                    }
+                }
+                let path = path_expr(&m.path);
+                w!(body, "  {}({}) {{", m.name, params.join(", "));
+                w!(body, "    return {call}({:?}, {path}, {query}, {data}) as Promise<Awaited<ReturnType<{member}>>>;", m.verb.as_str());
+                w!(body, "  }}");
+            }
+            w!(body, "}}");
+            let mut text = em.imports.render();
+            text.push_str(&body);
+            out.push((format!("clients/{}.ts", contract.text), text));
+        }
+    }
+    out
+}
+
+/// A route path as a TypeScript expression: `"/api/posts/" + encodeURIComponent(slug)`.
+fn path_expr(path: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut lit = String::new();
+    for (i, seg) in path.split('/').enumerate() {
+        if i > 0 {
+            lit.push('/');
+        }
+        if let Some(name) = seg.strip_prefix(':') {
+            parts.push(format!("{lit:?}"));
+            lit.clear();
+            parts.push(format!("encodeURIComponent({name})"));
+        } else {
+            lit.push_str(seg);
+        }
+    }
+    if !lit.is_empty() || parts.is_empty() {
+        parts.push(format!("{lit:?}"));
+    }
+    parts.join(" + ")
 }
 
 /// Names the server entry declares or reads as globals; imports named like them are aliased.
@@ -262,6 +328,13 @@ struct Emitter<'a> {
 
 impl<'a> Emitter<'a> {
     fn type_ref(&mut self, t: &TypeRef, value: bool) -> String {
+        if let Some(inner) = t.id.strip_prefix("Remote<").and_then(|s| s.strip_suffix('>')) {
+            let all = self.all;
+            if let Some(contract) = all.iter().flat_map(|r| &r.endpoints).flat_map(|(e, ..)| &e.contracts).find(|c| c.id == inner) {
+                let remote = self.imports.name(RUNTIME, "Remote", "Remote", false);
+                return format!("{remote}<{}>", self.type_ref(contract, false));
+            }
+        }
         let Some(module) = &t.module else { return t.text.clone() };
         let path = if module.ends_with(".xzor") {
             relative(&self.imports.from, &format!(".xzor/{module}"))
@@ -451,7 +524,14 @@ impl<'a> Emitter<'a> {
         let mut creates = BTreeSet::new();
         for s in &r.services {
             // Built only in the server's per-request scope.
-            if !is_inline(s) && !s.needs_request {
+            if is_client(s) {
+                // The server has no client: `Remote<X>` is the endpoint instance (its results awaited by the caller).
+                let contract = s.reg.service.id.strip_prefix("Remote<").and_then(|i| i.strip_suffix('>'));
+                if let Some(c) = r.services.iter().find(|c| contract == Some(c.reg.service.id.as_str())) {
+                    let st = self.ty(&s.reg.service);
+                    w!(members, "  get {}(): {st} {{ return this.{} as unknown as {st}; }}", s.getter, c.getter);
+                }
+            } else if !is_inline(s) && !s.needs_request {
                 self.service(&mut members, r, &cls, s);
                 if s.is_async {
                     creates.insert(format!("#{}$create", s.getter));

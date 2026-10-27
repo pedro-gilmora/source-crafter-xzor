@@ -1305,6 +1305,104 @@ test.each([
   expect(out).toContain("injected as posts in Header");
 });
 
+const clientContract = `export interface Item {
+  slug: string;
+}
+
+export interface IPosts {
+  get(slug: string): Item | undefined;
+  list(query: { tag?: string; page?: number }): Item[];
+  create(body: { slug: string }): Promise<Item>;
+  tag(id: number, label: string, body: { x: string }): void;
+}
+`;
+const clientFiles: Record<string, string> = {
+  ...viewsFiles,
+  "contract.ts": clientContract,
+  "api/posts.ts": endpoints(`import type { IPosts, Item } from "../contract";
+
+@Endpoints("/api/posts")
+export class Posts implements IPosts {
+  @Get(":slug")
+  get(slug: string): Item | undefined { return undefined; }
+  @Get
+  list(query: { tag?: string; page?: number }): Item[] { return []; }
+  @Post
+  async create(body: { slug: string }): Promise<Item> { return body; }
+  @Put(":id/tag/:label")
+  tag(id: number, label: string, body: { x: string }): void {}
+}
+`, "Get, Post, Put"),
+  "Header.xzor": '@import { type IPosts } from "./contract"\n@inject IPosts posts\n\n<header>h</header>\n',
+};
+
+test("a view injecting a contract gets its generated client in the browser container", () => {
+  const dir = serverProject("client-plain", clientFiles);
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const client = readFileSync(join(dir, ".xzor", "client.ts"), "utf8");
+  expect(client).toContain('import { IPostsClient } from "./clients/IPosts";');
+  expect(client).toContain("import type { IPosts } from \"../contract\";");
+  expect(client).toContain("get remoteIPosts(): Remote<IPosts> { return (Client$.#remoteIPosts ??= new IPostsClient()); }");
+  expect(client).toContain("if (type === Header) return new Header(this.remoteIPosts);");
+  expect(client).not.toMatch(/from "\.\.\/(app|api)/);
+  const text = readFileSync(join(dir, ".xzor", "clients", "IPosts.ts"), "utf8");
+  expect(text).toContain('import { call } from "@source-crafter/xzor-runtime";');
+  expect(text).toContain('import type { Posts } from "../../api/posts";');
+  expect(text).toContain("export class IPostsClient {");
+  expect(text).toContain(
+    '  get(slug: Parameters<Posts["get"]>[0]) {\n    return call("GET", "/api/posts/" + encodeURIComponent(slug), undefined, undefined) as Promise<Awaited<ReturnType<Posts["get"]>>>;\n  }',
+  );
+  expect(text).toContain('list(query: Parameters<Posts["list"]>[0]) {\n    return call("GET", "/api/posts", query, undefined)');
+  expect(text).toContain('create(body: Parameters<Posts["create"]>[0]) {\n    return call("POST", "/api/posts", undefined, body)');
+  expect(text).toContain('call("PUT", "/api/posts/" + encodeURIComponent(id) + "/tag/" + encodeURIComponent(label), undefined, body)');
+  const server = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(server).not.toMatch(/IPostsClient|clients\//);
+});
+
+test("Remote<IPosts> in a view or a browser service resolves to the client, and the project type-checks", () => {
+  const dir = serverProject("client-remote", {
+    ...clientFiles,
+    "app.ts": viewsApp.replace("@Singleton(Theme)", "@Singleton(Theme)\n@Singleton(Feed)").replace('import { Theme } from "./theme";', 'import { Theme } from "./theme";\nimport { Feed } from "./feed";'),
+    "feed.ts": 'import type { Remote } from "@source-crafter/xzor-runtime";\nimport type { IPosts } from "./contract";\n\nexport class Feed {\n  constructor(readonly posts: Remote<IPosts>) {}\n  async first() { return (await this.posts.list({ tag: "a" }))[0]; }\n}\n',
+    "Header.xzor": '@import { type Feed } from "./feed"\n@import { type IPosts } from "./contract"\n@import { type Remote } from "@source-crafter/xzor-runtime"\n@inject Feed feed\n@inject Remote<IPosts> posts\n\n<header>h</header>\n',
+  });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const client = readFileSync(join(dir, ".xzor", "client.ts"), "utf8");
+  expect(client.match(/new IPostsClient\(\)/g)).toHaveLength(1);
+  expect(client).toMatch(/new Feed\(this\.remoteIPosts\)/);
+  // The scratch project has no Bun/node types, so only the lines about the client files are asserted.
+  const tsc = Bun.spawnSync(["bun", "x", "tsc", "-p", dir, "--noEmit"], { cwd: repo });
+  const errors = (tsc.stdout.toString() + tsc.stderr.toString()).split("\n").filter((l) => /\.xzor\/clients?[./]|\/feed\.ts|remoteIPosts/.test(l));
+  expect(errors.join("\n"), "tsc").toBe("");
+  const server = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(server).toContain("get remoteIPosts(): Remote<IPosts> { return this.posts as unknown as Remote<IPosts>; }");
+  expect(server).not.toMatch(/IPostsClient/);
+});
+
+test("no client is written when no view reaches a contract", () => {
+  const dir = serverProject("client-none", { ...clientFiles, "Header.xzor": "<header>h</header>\n" });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  expect(existsSync(join(dir, ".xzor", "clients"))).toBe(false);
+});
+
+test("a browser-reached service taking a contract by its own name is ZDI25", () => {
+  const dir = serverProject("client-contract-service", {
+    ...clientFiles,
+    "app.ts": viewsApp.replace("@Singleton(Theme)", "@Singleton(Theme)\n@Singleton(Feed)").replace('import { Theme } from "./theme";', 'import { Theme } from "./theme";\nimport { Feed } from "./feed";'),
+    "feed.ts": 'import type { IPosts } from "./contract";\n\nexport class Feed {\n  constructor(readonly posts: IPosts) {}\n}\n',
+    "Header.xzor": '@import { type Feed } from "./feed"\n@inject Feed feed\n\n<header>h</header>\n',
+  });
+  const { code, out } = xzorBuild(dir);
+  expect(code).not.toBe(0);
+  expect(out).toContain("ZDI25");
+  expect(out).toContain("IPosts is a contract: use Remote<IPosts> in browser code");
+  expect(out).toContain("feed.ts");
+  expect(out).not.toContain("ZDI20");
+});
+
 test("the generated server serves shells and files from a page-shells pages.json", async () => {
   const dir = join(repo, "target", "tmp-serve", `shells-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
