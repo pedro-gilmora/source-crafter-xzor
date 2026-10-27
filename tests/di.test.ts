@@ -983,6 +983,44 @@ test.each([
   });
 });
 
+test("a per-request scope disposes only its scoped services, never a singleton it reaches", async () => {
+  const files = connFiles("[Symbol.dispose]() { g.disposed++; }");
+  const dir = serverProject("scope-singleton-dispose", {
+    ...files,
+    "app.ts": requestApp("@Scoped(Conn)\n@Singleton(Pool)\n@Singleton(Store)")
+      .replace('import { CurrentUser } from "./user";', 'import { Conn } from "./conn";\nimport { Pool } from "./pool";'),
+    "pool.ts": `const g = globalThis as any;\ng.poolDisposed = 0;\n\nexport class Pool {\n  [Symbol.dispose]() { g.poolDisposed++; }\n}\n`,
+    "api/job.ts": endpoints(`import { Conn } from "../conn";
+import { Pool } from "../pool";
+import { Store } from "../store";
+
+@Endpoints("/api/job")
+export class Job {
+  constructor(private conn: Conn, private pool: Pool) {}
+  @Get
+  now() { return { ok: true }; }
+}
+
+@Endpoints("/api/stat")
+export class Stat {
+  constructor(private store: Store) {}
+  @Get
+  get() { return { disposed: (globalThis as any).disposed, pool: (globalThis as any).poolDisposed }; }
+}
+`),
+  });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const text = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(text).not.toContain("App$Scope.#pool");
+  expect(text.slice(text.indexOf("class App$Scope"))).toMatch(/dispose\(\): void \{[^}]*#conn/);
+  await served(join(dir, ".xzor", "app.ts"), async (call) => {
+    expect(await call("GET", "/api/job")).toEqual([200, '{"ok":true}']);
+    expect(await call("GET", "/api/job")).toEqual([200, '{"ok":true}']);
+    expect(await call("GET", "/api/stat")).toEqual([200, '{"disposed":2,"pool":0}']);
+  });
+});
+
 // A server app with views: `@Singleton(Theme)` reached by a view, `@Import(DataServices)` only by the server.
 const viewsApp = `import { Import, Run, Singleton } from "@source-crafter/xzor-runtime";
 import type { IServerApplication } from "@source-crafter/xzor-runtime/server";

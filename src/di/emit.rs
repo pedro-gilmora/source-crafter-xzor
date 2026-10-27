@@ -650,7 +650,7 @@ impl<'a> Emitter<'a> {
             }
         }
         self.scope = false;
-        let tracked: Vec<usize> = (0..r.services.len()).filter(|&i| seen[i] && cached(&r.services[i]) && r.services[i].reg.dispose.is_some()).collect();
+        let tracked: Vec<usize> = (0..r.services.len()).filter(|&i| seen[i] && r.services[i].reg.lifetime == Lifetime::Scoped && r.services[i].reg.dispose.is_some()).collect();
         let tracked = dependents_first(&r.services, &tracked);
         let is_async = tracked.iter().any(|&i| r.services[i].is_async || r.services[i].reg.dispose == Some(Dispose::AsyncSymbol));
         if !tracked.is_empty() {
