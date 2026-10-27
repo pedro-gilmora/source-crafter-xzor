@@ -60,8 +60,22 @@ export async function findServerEntry(root: string): Promise<string | undefined>
   }
 }
 
+/** `--host [name]` opts the dev server into an interface other than localhost (bare: every one); the rest goes to `xzor build`. */
+export function parseHost(args: string[]): { hostname: string; rest: string[] } {
+  const rest: string[] = [];
+  let hostname = "localhost";
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--host") hostname = args[i + 1] && !args[i + 1]!.startsWith("-") ? args[++i]! : "0.0.0.0";
+    else if (a.startsWith("--host=")) hostname = a.slice(7) || "0.0.0.0";
+    else rest.push(a);
+  }
+  return { hostname, rest };
+}
+
 if (import.meta.main) {
-  const [exe, ...args] = process.argv.slice(2);
+  const [exe, ...argv] = process.argv.slice(2);
+  const { hostname, rest: args } = parseHost(argv);
   const root = process.cwd();
   const watch = Bun.spawn([exe!, "build", "--watch", "--hot", ...args], { stdio: ["inherit", "pipe", "inherit"] });
 
@@ -235,14 +249,15 @@ if (import.meta.main) {
     return html(resolve(root, "index.html"));
   };
   // No idle timeout: the reload stream stays open for as long as the page does.
-  const listen = (port: number) => Bun.serve({ port, fetch: handle, idleTimeout: 0 });
+  // The project root is served as files (`.env`, keys, server code): localhost unless `--host` says otherwise.
+  const listen = (port: number) => Bun.serve({ hostname, port, fetch: handle, idleTimeout: 0 });
   let server;
   try {
     server = listen(Number(process.env.PORT) || 3000);
   } catch {
     server = listen(0);
   }
-  console.log(`xzor: serving http://localhost:${server.port}/ with live reload (Ctrl+C to stop)`);
+  console.log(`xzor: serving http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${server.port}/ with live reload (Ctrl+C to stop)`);
 
   const stop = () => {
     watch.kill();

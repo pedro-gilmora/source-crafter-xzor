@@ -710,6 +710,18 @@ test.each([
     "ZDI18",
     ["A.get: query must be an object type, not string"],
   ],
+  [
+    "a prefix without a leading slash",
+    { "api.ts": endpoints(`@Endpoints("api/x")\nexport class A {\n  @Get(":id")\n  get(id: string) {}\n}\n`) },
+    "ZDI22",
+    ['A.get: "api/x/:id" is not a valid route path', "it must start with /"],
+  ],
+  [
+    "a repeated path parameter",
+    { "api.ts": endpoints(`@Endpoints("/api/:id")\nexport class A {\n  @Get(":id")\n  get(id: string, id2: string) {}\n}\n`) },
+    "ZDI22",
+    ['A.get: "/api/:id/:id" is not a valid route path', "a path parameter name is repeated"],
+  ],
 ])("endpoint error: %s", (name, files, code, parts) => {
   const dir = serverProject(name.replace(/\W+/g, "-"), files);
   const { code: exit, out } = xzorBuild(dir);
@@ -782,7 +794,7 @@ export class Items {
   await GlobalRegistrator.unregister();
   const { server } = await import(join(dir, ".xzor", "app.ts"));
   const call = async (method: string, path: string, body?: unknown) => {
-    const r = await fetch(new URL(path, server.url), { method, body: body === undefined ? undefined : JSON.stringify(body) });
+    const r = await fetch(new URL(path, server.url), { method, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     return [r.status, await r.text()];
   };
   try {
@@ -792,6 +804,16 @@ export class Items {
     expect(await call("GET", "/api/items?on=maybe")).toEqual([400, ""]);
     expect(await call("QUERY", "/api/items", { q: "x" })).toEqual([200, '{"found":"x"}']);
     expect(await call("POST", "/api/items", { name: "n" })).toEqual([200, '{"name":"n"}']);
+    // A body is read only from a JSON request: a cross-site form post is a "simple" request with another type.
+    const post = async (type: string): Promise<[number, string]> => {
+      const r = await fetch(new URL("/api/items", server.url), { method: "POST", headers: { "content-type": type }, body: '{"name":"n"}' });
+      return [r.status, await r.text()];
+    };
+    expect(await post("text/plain")).toEqual([415, ""]);
+    expect(await post("application/x-www-form-urlencoded")).toEqual([415, ""]);
+    expect(await post("application/jsonx")).toEqual([415, ""]);
+    expect(await post("application/json; charset=utf-8")).toEqual([200, '{"name":"n"}']);
+    expect(await post("Application/JSON")).toEqual([200, '{"name":"n"}']);
     expect(await call("PUT", "/api/items")).toEqual([405, ""]);
     expect(await call("DELETE", "/api/items/3")).toEqual([409, "busy 3"]);
     expect(await call("GET", "/nope")).toEqual([404, ""]);
@@ -809,7 +831,7 @@ async function served(entry: string, run: (call: (method: string, path: string, 
     const { server } = await import(entry);
     try {
       await run(async (method, path, body) => {
-        const r = await fetch(new URL(path, server.url), { method, body: body === undefined ? undefined : JSON.stringify(body) });
+        const r = await fetch(new URL(path, server.url), { method, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
         return [r.status, await r.text()];
       });
     } finally {
@@ -852,8 +874,8 @@ export class E {
     expect(await call("GET", "/api/e/sync")).toEqual([409, "sync busy"]);
     expect(await call("GET", "/api/e/async")).toEqual([410, "async gone"]);
     expect(await call("POST", "/api/e", { a: "x" })).toEqual([422, "bad body"]);
-    // Any other error goes to the app's own handler (Bun's default one would only log it).
-    if (other) expect(await call("GET", "/api/e/plain")).toEqual([500, other]);
+    // Any other error goes to the app's own handler; without one it is a plain 500 with nothing of the error in it.
+    expect(await call("GET", "/api/e/plain")).toEqual([500, other ?? "Internal Server Error"]);
   });
 });
 
@@ -928,6 +950,44 @@ test("a singleton that needs the Request is an error naming the chain", () => {
   expect(code).not.toBe(0);
   expect(out).toContain("ZDI19");
   expect(out).toContain("AuthCache -> CurrentUser -> Request is built once but needs the request");
+});
+
+// Only a server app has a `Request` to inject: in a browser app it is a type like any other.
+const browserFiles = (regs: string, view = "<p>hi</p>"): Record<string, string> => ({
+  "app.ts": `import { Run, Singleton, type IApplication } from "@source-crafter/xzor-runtime";
+import Shell from "./Shell.xzor";
+import { Clock } from "./clock";
+import { makeRequest } from "./make";
+
+@Run(Shell, "app")
+${regs}
+export class App implements IApplication {}
+`,
+  "Shell.xzor": view,
+  "clock.ts": "export class Clock {\n  constructor(readonly req: Request) {}\n}\n",
+  "make.ts": 'export const makeRequest = (): Request => new Request("http://localhost/");\n',
+});
+
+test("a browser app resolves a Request parameter like any type", () => {
+  const dir = serverProject("browser-request", browserFiles('@Singleton(Clock)\n@Singleton("req", makeRequest)'));
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const text = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(text).toContain("new Clock(");
+  expect(text).toContain("makeRequest");
+  expect(text).not.toContain("#request");
+});
+
+test("a browser app without a registered Request reports the usual DI errors", () => {
+  const service = xzorBuild(serverProject("browser-no-request", browserFiles("@Singleton(Clock)")));
+  expect(service.code).not.toBe(0);
+  expect(service.out).toContain("ZDI02");
+  expect(service.out).toContain("Request (needed by Clock in provider App) is not registered or imported");
+  expect(service.out).not.toContain("#request");
+  const view = xzorBuild(serverProject("browser-no-request-view", browserFiles("", "@inject Request req\n<p>hi</p>")));
+  expect(view.code).not.toBe(0);
+  expect(view.out).toContain("ZDI04");
+  expect(view.out).toContain("Request (injected as req in Shell) is not provided by App");
 });
 
 test("an endpoint without a disposable scoped service emits no dispose call", () => {

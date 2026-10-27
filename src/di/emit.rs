@@ -748,12 +748,14 @@ impl<'a> Emitter<'a> {
 
         let http = self.imports.name(SERVER, "HttpError", "HttpError", true);
         w!(out, "\nexport const server = Bun.serve({{");
+        // Bun's development error page shows the stack: only `xzor dev` (or the app's own `development`) gets it.
+        w!(out, "  development: !!process.env.XZOR_DEV,");
         w!(out, "  ...options,");
-        // `xzor dev` runs the server on a port of its own, whatever the app sets.
-        w!(out, "  ...(process.env.XZOR_DEV ? {{ port: Number(process.env.PORT) }} : null),");
+        // `xzor dev` runs the server on a port of its own, on localhost, whatever the app sets.
+        w!(out, "  ...(process.env.XZOR_DEV ? {{ port: Number(process.env.PORT), hostname: \"localhost\" }} : null),");
         w!(out, "  fetch: options.fetch?.bind(app) ?? (() => notFound.clone()),");
         // Bun types the handler's `this` as the Server; the app's own handler runs on the app.
-        w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app as never, e)),");
+        w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app as never, e) ?? (process.env.XZOR_DEV ? undefined : (console.error(e), new Response(\"Internal Server Error\", {{ status: 500 }})))),");
         w!(out, "  routes: {{");
         if views {
             w!(out, "    ...shells,");
@@ -831,6 +833,8 @@ impl<'a> Emitter<'a> {
                     bad = true;
                     is_async = true;
                     w!(body, "  let body$;");
+                    // Anything but JSON is a simple cross-site request (a form post): refused before it is read.
+                    w!(body, "  if (!/^application\\/json\\s*(;|$)/i.test(req.headers.get(\"content-type\") ?? \"\")) return new Response(null, {{ status: 415 }});");
                     w!(body, "  try {{ body$ = await req.json(); }} catch {{ return bad(); }}");
                     args.push("body$".into());
                 }

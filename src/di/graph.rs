@@ -272,7 +272,7 @@ impl<'a> Cx<'a> {
             let needer = needer(&s.reg);
             let mut args = Vec::with_capacity(s.reg.params.len());
             for prm in &s.reg.params {
-                if is_request(prm) {
+                if is_request(facts, prm) {
                     args.push(Arg::Request);
                     continue;
                 }
@@ -349,7 +349,7 @@ fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<D
     for c in &facts.components {
         let mut args = Vec::with_capacity(c.injects.len());
         for prm in &c.injects {
-            if is_request(prm) {
+            if is_request(facts, prm) {
                 args.push(Arg::Request);
                 continue;
             }
@@ -386,7 +386,7 @@ fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Di
     for e in &facts.endpoints {
         let mut args = Vec::with_capacity(e.ctor.len());
         for prm in &e.ctor {
-            if is_request(prm) {
+            if is_request(facts, prm) {
                 args.push(Arg::Request);
                 continue;
             }
@@ -413,9 +413,9 @@ fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Di
     out
 }
 
-/// A parameter typed with the global `Request`.
-fn is_request(p: &Param) -> bool {
-    p.ty.module.is_none() && p.ty.id == "Request"
+/// A parameter typed with the global `Request`, in a server app: a browser app resolves it like any type.
+fn is_request(facts: &Facts, p: &Param) -> bool {
+    !facts.servers.is_empty() && p.ty.module.is_none() && p.ty.id == "Request"
 }
 
 /// Whether `a` needs a per-request scope: it is the `Request`, or reaches it or a scoped service through non-singletons.
@@ -559,6 +559,20 @@ fn check_endpoints(facts: &Facts, diags: &mut Vec<Diag>) {
                 }
             }
             let names: Vec<&str> = path_params(&m.path).collect();
+            // Bun throws at server start on these.
+            let invalid = if !m.path.starts_with('/') {
+                Some("it must start with /: give @Endpoints a prefix starting with /")
+            } else if names.iter().any(|n| n.starts_with(|c: char| c.is_ascii_digit())) {
+                Some("a path parameter name can't start with a digit")
+            } else if names.iter().enumerate().any(|(i, n)| names[..i].contains(n)) {
+                Some("a path parameter name is repeated")
+            } else {
+                None
+            };
+            if let Some(why) = invalid {
+                error(m.at, "ZDI22", format!("{name}: {:?} is not a valid route path: {why}", m.path));
+                continue;
+            }
             if let Some(r) = names.iter().find(|n| matches!(**n, "query" | "body")) {
                 error(m.at, "ZDI14", format!("{name}: :{r} in {} is reserved: a path parameter can't be named query or body", m.path));
                 continue;
@@ -1452,5 +1466,11 @@ mod tests {
         assert_eq!(check(vec![method("a", Verb::Delete, "/x", vec![eparam("body", Body)])])[0].0, "ZDI16");
         assert_eq!(check(vec![method("a", Verb::Get, "/x", vec![eparam("x", Other)])])[0].0, "ZDI17");
         assert_eq!(check(vec![method("a", Verb::Get, "/x", vec![EndpointParam { keys: None, ..eparam("query", Query) }])])[0].0, "ZDI18");
+        let invalid = |p: &str| check(vec![method("a", Verb::Get, p, vec![])]).iter().map(|d| d.0).collect::<Vec<_>>();
+        assert_eq!(invalid("x/y"), ["ZDI22"]);
+        assert_eq!(invalid(""), ["ZDI22"]);
+        assert_eq!(invalid("/x/:1a"), ["ZDI22"]);
+        assert_eq!(invalid("/:a/:a"), ["ZDI22"]);
+        assert_eq!(check(vec![method("a", Verb::Get, "x/y", vec![])])[0].1, "A.a: \"x/y\" is not a valid route path: it must start with /: give @Endpoints a prefix starting with /");
     }
 }

@@ -182,7 +182,7 @@
       <div class="specimen">
         <p class="xz-muted">A <code>@@Run</code> class that implements <code>IServerApplication</code> is a Bun server: its members are <code>Bun.serve</code> options, and <code>@@Endpoints</code> classes under its folder become routes. <code>xzor build --minify</code> then <code>bun dist/server.js</code> serves the views, their precompressed assets and the endpoints; <code>xzor dev</code> runs it with hot reload. <code>xzor init --server</code> writes a starter.</p>
         <Code name="recipe-server-app" />
-        <p class="xz-muted">Path params come first, then <code>query</code>, then <code>body</code>. A <code>Response</code> passes through, <code>undefined</code> answers 404, anything else is JSON, and <code>HttpError</code> answers its status. Take <code>Request</code> in a constructor to read the current request.</p>
+        <p class="xz-muted">Path params come first, then <code>query</code>, then <code>body</code>. A <code>Response</code> passes through, <code>undefined</code> answers 404, anything else is JSON, and <code>HttpError</code> answers its status. Take <code>Request</code> in a constructor to read the current request. A <code>body</code> parameter needs a <code>Content-Type: application/json</code> request (415 otherwise), and an unhandled error is a plain 500.</p>
         <Code name="recipe-endpoints" />
       </div>
     </Panel>

@@ -207,3 +207,7 @@ Body validation, middleware, OpenAPI, streaming or WebSocket endpoints in contra
 
 ### Docs
 - `README.md`, `docs/design.md` (Routing, Dependency injection, Build, new Server section), docs site pages that show routes or `@Mount` (Start, Learn, HowItWorks, Recipes), `npm/xzor/skills/xzor/SKILL.md`, `docs/plans/backlog-page-shells.md` (status: being built), and `.github/skills/spec-rehydration/features.md` (new rows: Server entry, Endpoints; Page shells code paths).
+
+## Later changes
+
+- 2026-10-27: final-review fixes for the server plan. The generated `Bun.serve` sets `development: !!process.env.XZOR_DEV` and an unhandled error answers a plain 500; a body endpoint answers 415 unless `Content-Type` is `application/json`; `xzor dev` listens on `localhost` unless `--host` is given (the generated dev server too); a route path Bun would reject is ZDI22; `Request` is special only in a server app.

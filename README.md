@@ -478,10 +478,10 @@ export class Notes {
 }
 ```
 
-- Parameters come in a fixed order: the path's `:params` (converted to their type, or 400), then `query`, then `body` (parsed JSON, only on `@Post`, `@Put`, `@Patch` and `@Query`). A `Response` passes through, `undefined` is 404, anything else is JSON, and `throw new HttpError(status, message)` answers that status.
+- Parameters come in a fixed order: the path's `:params` (converted to their type, or 400), then `query`, then `body` (parsed JSON, only on `@Post`, `@Put`, `@Patch` and `@Query`; any `Content-Type` but `application/json` answers 415, so a cross-site form post can't reach the method). A `Response` passes through, `undefined` is 404, anything else is JSON, and `throw new HttpError(status, message)` answers that status. Any other error is logged and answers a plain 500 with no details. A route path must start with `/` (`@Endpoints("api/x")` is a build error, ZDI22).
 - Constructor parameters are injected like any service. Take `Request` to read the current request: the class is then built per request, and a singleton that needs it is a build error.
 - The views reach services through `@inject`; the build gives the browser only those services and the server the rest, and errors if a view reaches the request, an endpoint or a server-only module.
-- `bun run dev` (`xzor dev`) runs the server behind the dev server with hot reload and restarts it when a `.ts` changes. To ship: `xzor build --minify`, then `bun dist/server.js`.
+- `bun run dev` (`xzor dev`) runs the server behind the dev server with hot reload and restarts it when a `.ts` changes. The dev server answers the project's files (`.env`, server code) and so listens on `localhost` only; `xzor dev --host <name>` (bare `--host` is every interface) opens it to others. To ship: `xzor build --minify`, then `bun dist/server.js`.
 
 ---
 

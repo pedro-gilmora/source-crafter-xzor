@@ -63,7 +63,7 @@ test("a server app builds its browser views and dist/server.js, and the server s
   try {
     const url = await printedUrl(server.stdout);
     const call = async (method: string, path: string, body?: unknown): Promise<[number, string]> => {
-      const r = await fetch(new URL(path, url), { method, body: body === undefined ? undefined : JSON.stringify(body) });
+      const r = await fetch(new URL(path, url), { method, headers: body === undefined ? undefined : { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
       return [r.status, await r.text()];
     };
     expect(await call("GET", "/")).toEqual([200, home]);
@@ -148,5 +148,54 @@ test("a server app with views and no @page still writes dist/index.html for its 
     const r = await fetch(new URL("/nope", url));
     expect([r.status, await r.text()]).toEqual([404, index]);
     expect((await fetch(new URL("/dist/main.js", url))).status).toBe(200);
+  });
+}, 180_000);
+
+test("an API-only @Run() app builds only dist/server.js, answers its endpoints, hides errors and 404s plainly", async () => {
+  const app = buildFixture("api", (to) => {
+    for (const d of ["client", "contracts", "other", "index.html", join("server", "api"), join("server", "store.ts")]) rmSync(join(to, d), { recursive: true, force: true });
+    writeFileSync(
+      join(to, "server", "app.ts"),
+      `import { Run } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+
+@Run()
+export class App implements IServerApplication {}
+`,
+    );
+    mkdirSync(join(to, "server", "api"));
+    writeFileSync(
+      join(to, "server", "api", "items.ts"),
+      `import { Endpoints, Get, Post } from "@source-crafter/xzor-runtime/server";
+
+@Endpoints("/api")
+export class Items {
+  @Get("items/:id")
+  get(id: number) { return { id }; }
+
+  @Get("boom")
+  boom(): void { throw new Error("db password hunter2"); }
+
+  @Post("echo")
+  echo(body: { a: string }) { return body; }
+}
+`,
+    );
+  });
+  expect(existsSync(join(app, "dist", "server.js"))).toBe(true);
+  expect(existsSync(join(app, "dist", "main.js"))).toBe(false);
+  await serving(app, async (url) => {
+    const call = async (method: string, path: string, init?: RequestInit): Promise<[number, string]> => {
+      const r = await fetch(new URL(path, url), { method, ...init });
+      return [r.status, await r.text()];
+    };
+    expect(await call("GET", "/api/items/3")).toEqual([200, '{"id":3}']);
+    expect(await call("GET", "/nope")).toEqual([404, ""]);
+    expect(await call("GET", "/")).toEqual([404, ""]);
+    // An error is a plain 500: Bun's development page would show the message and the stack.
+    expect(await call("GET", "/api/boom")).toEqual([500, "Internal Server Error"]);
+    // A body is read from JSON requests only.
+    expect(await call("POST", "/api/echo", { body: '{"a":"x"}', headers: { "content-type": "text/plain" } })).toEqual([415, ""]);
+    expect(await call("POST", "/api/echo", { body: '{"a":"x"}', headers: { "content-type": "application/json" } })).toEqual([200, '{"a":"x"}']);
   });
 }, 180_000);
