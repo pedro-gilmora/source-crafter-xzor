@@ -1,5 +1,32 @@
 import { beforeEach, expect, test } from "bun:test";
-import { $leave, ComponentBase, type RenderTreeBuilder, lazy, mount } from "./index";
+import { $leave, ComponentBase, type Remote, type RenderTreeBuilder, lazy, mount } from "./index";
+
+// Checked by `bun x tsc -p jsconfig.json --noEmit`.
+test("Remote<T> makes every method async and the rest never", () => {
+  interface IApi {
+    a(x: number, label?: string): string;
+    b(): Promise<number>;
+    c(): void;
+    name: string;
+  }
+  type Same<A, B> = (<X>() => X extends A ? 1 : 2) extends <X>() => X extends B ? 1 : 2 ? true : false;
+  const ok: [
+    Same<Remote<IApi>["a"], (x: number, label?: string) => Promise<string>>,
+    Same<Remote<IApi>["b"], () => Promise<number>>,
+    Same<Remote<IApi>["c"], () => Promise<void>>,
+    Same<Remote<IApi>["name"], never>,
+  ] = [true, true, true, true];
+  expect(ok).toEqual([true, true, true, true]);
+  // Type-checked only.
+  const misuse = (api: Remote<IApi>) => {
+    // @ts-expect-error `a` takes a number
+    api.a("1");
+    // @ts-expect-error a result is always a promise
+    const n: number = api.b();
+    return n;
+  };
+  expect(misuse).toBeFunction();
+});
 
 // Components below are written the way xzor's codegen emits them.
 

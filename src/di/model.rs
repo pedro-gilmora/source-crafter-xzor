@@ -18,6 +18,8 @@ pub struct Param {
     pub optional: bool,
     /// Typed `Promise<T>`: receives the unawaited promise.
     pub promise: bool,
+    /// The (awaited) type is an interface: a contract candidate.
+    pub interface: bool,
     pub ty: TypeRef,
     /// Project-relative file declaring the parameter (keeps `.xzor/`).
     pub file: String,
@@ -195,6 +197,8 @@ pub struct Endpoint {
     /// UTF-16 code-unit offset of the class name.
     pub at: usize,
     pub prefix: String,
+    /// The exported interfaces the class `implements`, in order.
+    pub contracts: Vec<TypeRef>,
     pub ctor: Vec<Param>,
     pub methods: Vec<EndpointMethod>,
 }
@@ -299,6 +303,7 @@ fn param(j: &Json, path: &str) -> Result<Param, String> {
         name: string(j, "name", path)?,
         optional: boolean(j, "optional", path)?,
         promise: boolean(j, "promise", path)?,
+        interface: boolean(j, "interface", path)?,
         ty: sub_type_ref(j, "type", path)?,
         file: string(j, "file", path)?,
         at: number(j, "at", path)?,
@@ -439,6 +444,7 @@ fn endpoint(j: &Json, path: &str) -> Result<Endpoint, String> {
         file: string(j, "file", path)?,
         at: number(j, "at", path)?,
         prefix: string(j, "prefix", path)?,
+        contracts: list(j, "contracts", path, type_ref)?,
         ctor: list(j, "ctor", path, param)?,
         methods: list(j, "methods", path, endpoint_method)?,
     })
@@ -448,7 +454,7 @@ fn endpoint(j: &Json, path: &str) -> Result<Endpoint, String> {
 mod tests {
     use super::*;
 
-    const FACTS: &str = r##"{"servers":[],"endpoints":[],"serverImports":[],"endpointImports":[],"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.xzor.ts#default","text":"App","module":"App.xzor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.xzor.ts#default","text":"Counter","module":"Counter.xzor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".xzor/Counter.xzor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
+    const FACTS: &str = r##"{"servers":[],"endpoints":[],"serverImports":[],"endpointImports":[],"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"interface":false,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"interface":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.xzor.ts#default","text":"App","module":"App.xzor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.xzor.ts#default","text":"Counter","module":"Counter.xzor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"interface":true,"file":".xzor/Counter.xzor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
 
     fn t(module: &str, name: &str) -> TypeRef {
         TypeRef { id: format!("{module}.ts#{name}"), text: name.into(), module: Some(module.into()), export: Some(name.into()) }
@@ -489,6 +495,7 @@ mod tests {
                     name: "cache".into(),
                     optional: false,
                     promise: true,
+                    interface: false,
                     ty: t("main", "Cache"),
                     file: "main.ts".into(),
                     at: 300,
@@ -498,6 +505,7 @@ mod tests {
                     name: "requestId".into(),
                     optional: true,
                     promise: false,
+                    interface: false,
                     ty: TypeRef { id: "string".into(), text: "string".into(), module: None, export: None },
                     file: "main.ts".into(),
                     at: 330,
@@ -508,13 +516,13 @@ mod tests {
 
         let c = &facts.components[0];
         assert_eq!(c.class.text, "Counter");
-        let db = Param { name: "db".into(), optional: false, promise: false, ty: t("services/data", "IDatabase"), file: ".xzor/Counter.xzor.ts".into(), at: 250, bad_keys: vec![] };
+        let db = Param { name: "db".into(), optional: false, promise: false, interface: true, ty: t("services/data", "IDatabase"), file: ".xzor/Counter.xzor.ts".into(), at: 250, bad_keys: vec![] };
         assert_eq!(c.injects, vec![db]);
 
         assert_eq!(facts.errors, vec![FactError { file: "services/hidden.ts".into(), at: 112, message: "Hidden must be exported to be injected".into() }]);
     }
 
-    const SERVER_FACTS: &str = r##"{"providers":[],"components":[],"errors":[],"serverImports":[{"module":"server/db","import":"bun:sqlite"}],"endpointImports":[{"file":".xzor/client/Home.xzor.ts","module":"client/Home.xzor","at":9,"class":"Posts"}],"servers":[{"class":{"id":"server/app.ts#App","text":"App","module":"server/app","export":"App"},"file":"server/app.ts","at":180,"root":{"id":"client/Shell.xzor.ts#default","text":"Shell","module":"client/Shell.xzor","export":"default"}}],"endpoints":[{"class":{"id":"server/api/posts.ts#Posts","text":"Posts","module":"server/api/posts","export":"Posts"},"file":"server/api/posts.ts","at":210,"prefix":"/api/posts","ctor":[],"methods":[{"name":"get","verb":"GET","pattern":":slug","path":"/api/posts/:slug","returnsPromise":false,"at":300,"params":[{"name":"slug","kind":"path","type":"string","optional":false,"conv":"string","keys":null,"anyKey":false,"at":304},{"name":"query","kind":"query","type":"{ tag?: string; }","optional":true,"conv":null,"keys":[{"name":"tag","optional":true,"conv":["a","b"]}],"anyKey":true,"at":320},{"name":"x","kind":"other","type":"boolean","optional":false,"conv":null,"keys":null,"anyKey":false,"at":340}]},{"name":"create","verb":"QUERY","pattern":"","path":"/api/posts","returnsPromise":true,"at":400,"params":[{"name":"body","kind":"body","type":"NewPost","optional":false,"conv":null,"keys":null,"anyKey":false,"at":410}]}]}]}"##;
+    const SERVER_FACTS: &str = r##"{"providers":[],"components":[],"errors":[],"serverImports":[{"module":"server/db","import":"bun:sqlite"}],"endpointImports":[{"file":".xzor/client/Home.xzor.ts","module":"client/Home.xzor","at":9,"class":"Posts"}],"servers":[{"class":{"id":"server/app.ts#App","text":"App","module":"server/app","export":"App"},"file":"server/app.ts","at":180,"root":{"id":"client/Shell.xzor.ts#default","text":"Shell","module":"client/Shell.xzor","export":"default"}}],"endpoints":[{"class":{"id":"server/api/posts.ts#Posts","text":"Posts","module":"server/api/posts","export":"Posts"},"file":"server/api/posts.ts","at":210,"prefix":"/api/posts","contracts":[{"id":"contracts/posts.ts#IPosts","text":"IPosts","module":"contracts/posts","export":"IPosts"}],"ctor":[],"methods":[{"name":"get","verb":"GET","pattern":":slug","path":"/api/posts/:slug","returnsPromise":false,"at":300,"params":[{"name":"slug","kind":"path","type":"string","optional":false,"conv":"string","keys":null,"anyKey":false,"at":304},{"name":"query","kind":"query","type":"{ tag?: string; }","optional":true,"conv":null,"keys":[{"name":"tag","optional":true,"conv":["a","b"]}],"anyKey":true,"at":320},{"name":"x","kind":"other","type":"boolean","optional":false,"conv":null,"keys":null,"anyKey":false,"at":340}]},{"name":"create","verb":"QUERY","pattern":"","path":"/api/posts","returnsPromise":true,"at":400,"params":[{"name":"body","kind":"body","type":"NewPost","optional":false,"conv":null,"keys":null,"anyKey":false,"at":410}]}]}]}"##;
 
     #[test]
     fn parses_servers_and_endpoints() {
@@ -524,6 +532,7 @@ mod tests {
         assert_eq!(s.root.as_ref().map(|r| r.id.as_str()), Some("client/Shell.xzor.ts#default"));
         let e = &f.endpoints[0];
         assert_eq!((e.class.clone(), e.file.as_str(), e.at, e.prefix.as_str(), e.ctor.len()), (t("server/api/posts", "Posts"), "server/api/posts.ts", 210, "/api/posts", 0));
+        assert_eq!(e.contracts, vec![t("contracts/posts", "IPosts")]);
         let [get, create] = &e.methods[..] else { panic!("{:?}", e.methods) };
         assert_eq!((get.name.as_str(), get.verb, get.pattern.as_str(), get.path.as_str(), get.returns_promise, get.at), ("get", Verb::Get, ":slug", "/api/posts/:slug", false, 300));
         assert_eq!((create.verb, create.pattern.as_str(), create.returns_promise), (Verb::Query, "", true));

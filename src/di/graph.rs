@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::model::{Component, Endpoint, Facts, Lifetime, Param, ParamKind, Provider, Registration, Server, Verb};
+use super::model::{Component, Endpoint, Facts, Lifetime, Param, ParamKind, Provider, Registration, Server, TypeRef, Verb};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diag {
@@ -103,6 +103,7 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
         }
     }
     check_endpoints(facts, &mut cx.diags);
+    check_contracts(facts, &mut cx.diags);
 
     for i in 0..providers.len() {
         cx.provider(i);
@@ -212,6 +213,29 @@ impl<'a> Cx<'a> {
             }
             services.push(Service { reg: reg.clone(), getter: String::new(), source: Source::Own, args: Vec::new(), is_async: reg.is_async, needs_request: false });
             origins.push((pi, ri));
+        }
+        // A server app registers the `@Endpoints` instance under each contract that its registrations or endpoints inject.
+        if facts.servers.iter().any(|s| s.class.id == p.class.id) {
+            for (k, (contract, e)) in contract_endpoints(facts).into_iter().enumerate() {
+                let wanted = |prm: &Param| prm.ty.id == contract.id;
+                if !p.registrations.iter().any(|r| r.params.iter().any(wanted)) && !facts.endpoints.iter().any(|x| x.ctor.iter().any(wanted)) {
+                    continue;
+                }
+                let reg = Registration {
+                    lifetime: Lifetime::Singleton,
+                    service: contract.clone(),
+                    impl_: Some(e.class.clone()),
+                    key: None,
+                    factory: None,
+                    is_async: false,
+                    params: e.ctor.clone(),
+                    dispose: None,
+                    dispose_optional: false,
+                    at: e.at,
+                };
+                services.push(Service { reg, getter: String::new(), source: Source::Own, args: Vec::new(), is_async: false, needs_request: false });
+                origins.push((pi, p.registrations.len() + k));
+            }
         }
         let own = services.len();
 
@@ -363,7 +387,7 @@ fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<D
                     args.push(Arg::Undefined);
                     continue;
                 }
-                Found::None => ("ZDI04", format!("{} (injected as {} in {}) is not provided by {app}", prm.ty.text, prm.name, c.class.text)),
+                Found::None => unprovided(facts, prm, &c.class.text, app),
                 Found::Many(m) => ("ZDI05", format!("{} (injected as {} in {}) is ambiguous: {}", prm.ty.text, prm.name, c.class.text, table.names(&m))),
             };
             let file = c.class.module.as_deref().unwrap_or(&c.class.text).to_string();
@@ -411,6 +435,59 @@ fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Di
         out.push((e.clone(), classify(&r.services, &sets, &args), per_request));
     }
     out
+}
+
+/// Each contract (an interface an `@Endpoints` class implements) with its endpoint, in declaration order; the first
+/// implementer wins (a second one is ZDI23).
+fn contract_endpoints(facts: &Facts) -> Vec<(&TypeRef, &Endpoint)> {
+    let mut out: Vec<(&TypeRef, &Endpoint)> = Vec::new();
+    for e in &facts.endpoints {
+        for c in &e.contracts {
+            if !out.iter().any(|(x, _)| x.id == c.id) {
+                out.push((c, e));
+            }
+        }
+    }
+    out
+}
+
+/// ZDI23: two `@Endpoints` classes implementing one contract.
+fn check_contracts(facts: &Facts, diags: &mut Vec<Diag>) {
+    let first = contract_endpoints(facts);
+    for e in &facts.endpoints {
+        for c in &e.contracts {
+            let Some((_, f)) = first.iter().find(|(x, _)| x.id == c.id) else { continue };
+            if f.class.id != e.class.id {
+                let message = format!("{} is implemented by two @Endpoints classes: {} ({}) and {} ({})", c.text, f.class.text, f.file, e.class.text, e.file);
+                diags.push(Diag { file: e.file.clone(), at: e.at, code: "ZDI23", message, inject: None, param_at: None });
+            }
+        }
+    }
+}
+
+/// `Remote<X>` as the analyzer names it: the id and text of `X`.
+fn remote_of(t: &TypeRef) -> Option<(&str, &str)> {
+    Some((t.id.strip_prefix("Remote<")?.strip_suffix('>')?, t.text.strip_prefix("Remote<")?.strip_suffix('>')?))
+}
+
+/// The diagnostic for a view's inject that nothing provides. In a server app, a `Remote<X>` or an interface that no
+/// `@Endpoints` class implements gets ZDI24; a contract with an implementation is the client's job (not provided yet).
+fn unprovided(facts: &Facts, prm: &Param, view: &str, app: &str) -> (&'static str, String) {
+    let contract = if facts.servers.is_empty() {
+        None
+    } else if let Some(inner) = remote_of(&prm.ty) {
+        Some(inner)
+    } else if prm.interface && prm.ty.module.is_some() {
+        Some((prm.ty.id.as_str(), prm.ty.text.as_str()))
+    } else {
+        None
+    };
+    match contract {
+        Some((id, name)) if !facts.endpoints.iter().any(|e| e.contracts.iter().any(|c| c.id == id)) => {
+            ("ZDI24", format!("no @Endpoints class implements {name} (injected as {} in {view}, and {app} does not provide it)", prm.name))
+        }
+        _ => ("ZDI04", format!("{} (injected as {} in {view}) is not provided by {app}", prm.ty.text, prm.name)),
+    }
 }
 
 /// A parameter typed with the global `Request`, in a server app: a browser app resolves it like any type.
@@ -854,7 +931,7 @@ mod tests {
     }
 
     fn param(name: &str, t: &str) -> Param {
-        Param { name: name.into(), optional: false, promise: false, ty: ty(t), file: "params.ts".into(), at: 11, bad_keys: vec![] }
+        Param { name: name.into(), optional: false, promise: false, interface: false, ty: ty(t), file: "params.ts".into(), at: 11, bad_keys: vec![] }
     }
 
     fn promise(name: &str, t: &str) -> Param {
@@ -1419,7 +1496,7 @@ mod tests {
     }
 
     fn endpoint(name: &str, ctor: Vec<Param>, methods: Vec<EndpointMethod>) -> Endpoint {
-        Endpoint { class: ty(name), file: format!("{name}.ts"), at: 30, prefix: String::new(), ctor, methods }
+        Endpoint { class: ty(name), file: format!("{name}.ts"), at: 30, prefix: String::new(), contracts: vec![], ctor, methods }
     }
 
     fn served(providers: Vec<Provider>, endpoints: Vec<Endpoint>) -> Facts {
@@ -1472,5 +1549,52 @@ mod tests {
         assert_eq!(invalid("/x/:1a"), ["ZDI22"]);
         assert_eq!(invalid("/:a/:a"), ["ZDI22"]);
         assert_eq!(check(vec![method("a", Verb::Get, "x/y", vec![])])[0].1, "A.a: \"x/y\" is not a valid route path: it must start with /: give @Endpoints a prefix starting with /");
+    }
+
+    fn contract_endpoint(name: &str, contract: &str) -> Endpoint {
+        Endpoint { contracts: vec![ty(contract)], ..endpoint(name, vec![], vec![]) }
+    }
+
+    #[test]
+    fn a_service_injecting_a_contract_gets_the_endpoint() {
+        let f = served(
+            vec![provider("App", &[], vec![single("Digest", "Digest", vec![param("posts", "IPosts")])])],
+            vec![contract_endpoint("Posts", "IPosts")],
+        );
+        let r = ok(&f);
+        let s = &r[0].services;
+        assert_eq!(s.len(), 2);
+        assert_eq!((s[1].reg.service.text.as_str(), s[1].reg.impl_.as_ref().map(|t| t.text.as_str()), s[1].reg.lifetime), ("IPosts", Some("Posts"), Lifetime::Singleton));
+        assert_eq!(s[0].args, [Arg::Service(1)]);
+        // Registered only when something injects the contract.
+        let f = served(vec![provider("App", &[], vec![])], vec![contract_endpoint("Posts", "IPosts")]);
+        assert!(ok(&f)[0].services.is_empty());
+    }
+
+    #[test]
+    fn two_endpoints_implementing_one_contract_is_zdi23() {
+        let f = served(vec![provider("App", &[], vec![])], vec![contract_endpoint("Posts", "IPosts"), contract_endpoint("Other", "IPosts")]);
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI23"]);
+        assert_eq!(d[0].message, "IPosts is implemented by two @Endpoints classes: Posts (Posts.ts) and Other (Other.ts)");
+        assert_eq!((d[0].file.as_str(), d[0].at), ("Other.ts", 30));
+    }
+
+    #[test]
+    fn a_view_injecting_a_contract_nothing_implements_is_zdi24() {
+        let view = |p: Param| {
+            let f = served(vec![provider("App", &[], vec![])], vec![contract_endpoint("Posts", "IPosts")]);
+            Facts { components: vec![component("Home", vec![p])], ..f }
+        };
+        let interface = |name: &str, t: &str| Param { interface: true, ..param(name, t) };
+        let remote = |t: &str| Param { ty: TypeRef { id: format!("Remote<m.ts#{t}>"), text: format!("Remote<{t}>"), module: None, export: None }, ..param("posts", t) };
+        let d = err(&view(interface("other", "IOther")));
+        assert_eq!((d[0].code, d[0].inject.as_deref()), ("ZDI24", Some("other")));
+        assert!(d[0].message.starts_with("no @Endpoints class implements IOther"), "{}", d[0].message);
+        let d = err(&view(remote("IOther")));
+        assert!(d[0].code == "ZDI24" && d[0].message.starts_with("no @Endpoints class implements IOther"), "{d:?}");
+        // A contract that has an implementation is not this error, and a class is never a contract.
+        assert_eq!(codes(&err(&view(remote("IPosts")))), ["ZDI04"]);
+        assert_eq!(codes(&err(&view(param("logger", "Logger")))), ["ZDI04"]);
     }
 }

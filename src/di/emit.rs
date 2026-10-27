@@ -691,8 +691,20 @@ impl<'a> Emitter<'a> {
                 Instance { expr: format!("new {class}({a})"), pre: format!("  const s$ = new {scope}(app, req);\n"), is_async, dispose }
             } else {
                 let inst = self.imports.local(&base);
-                let a = self.endpoint_args(r, args, "app");
-                w!(out, "const {inst} = new {class}({a});");
+                // An endpoint injected under its contract is the app's instance, so services and handlers share it.
+                let shared = r.services.iter().find(|s| {
+                    s.source == Source::Own
+                        && s.reg.key.is_none()
+                        && s.reg.impl_.as_ref().is_some_and(|i| i.id == e.class.id)
+                        && e.contracts.iter().any(|c| c.id == s.reg.service.id)
+                });
+                if let Some(s) = shared {
+                    let read = if s.is_async { format!("await app.get{}Async()", pascal(&s.getter)) } else { format!("app.{}", s.getter) };
+                    w!(out, "const {inst} = {read} as {class};");
+                } else {
+                    let a = self.endpoint_args(r, args, "app");
+                    w!(out, "const {inst} = new {class}({a});");
+                }
                 Instance { expr: inst, pre: String::new(), is_async: false, dispose: None }
             };
             for m in &e.methods {
@@ -1025,7 +1037,7 @@ mod tests {
     }
 
     fn param(name: &str, ty: TypeRef) -> Param {
-        Param { name: name.into(), optional: false, promise: false, ty, file: String::new(), at: 0, bad_keys: vec![] }
+        Param { name: name.into(), optional: false, promise: false, interface: false, ty, file: String::new(), at: 0, bad_keys: vec![] }
     }
 
     fn promise(name: &str, ty: TypeRef) -> Param {

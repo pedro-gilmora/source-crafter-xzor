@@ -430,6 +430,9 @@ export interface IApplication {
   createComponent?(type: Function): ComponentBase | Promise<ComponentBase> | undefined;
 }
 
+/** A contract as browser code sees it: every method's result `R` becomes `Promise<Awaited<R>>`, other members `never`. */
+export type Remote<T> = { [K in keyof T]: T[K] extends (...args: infer A) => infer R ? (...args: A) => Promise<Awaited<R>> : never };
+
 const noop = () => {};
 const SELECTOR = /[#.[]/;
 

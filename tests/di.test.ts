@@ -512,6 +512,7 @@ test("reads endpoints under the app's folder only", () => {
   expect(posts.class).toEqual({ id: "server/api/posts.ts#Posts", text: "Posts", module: "server/api/posts", export: "Posts" });
   expect([posts.file, posts.at, posts.prefix]).toEqual(["server/api/posts.ts", text.indexOf("Posts implements"), "/api/posts"]);
   expect(posts.ctor.map((p: any) => [p.name, p.type.id])).toEqual([["store", "server/store.ts#PostStore"]]);
+  expect(posts.contracts).toEqual([{ id: "contracts/posts.ts#IPosts", text: "IPosts", module: "contracts/posts", export: "IPosts" }]);
   const methods = posts.methods.map((m: any) => [m.name, m.verb, m.pattern, m.path, m.returnsPromise, m.at]);
   expect(methods).toEqual([
     ["get", "GET", ":slug", "/api/posts/:slug", false, text.indexOf("get(slug")],
@@ -536,6 +537,31 @@ test("reads endpoints under the app's folder only", () => {
     },
   ]);
   expect(create.params).toEqual([{ name: "body", kind: "body", type: "NewPost", optional: false, conv: null, keys: null, anyKey: false, at: text.indexOf("body: NewPost") }]);
+});
+
+test("@Endpoints contracts are the exported interfaces the class implements", () => {
+  const app = `import { Run } from "@source-crafter/xzor-runtime";\nimport type { IServerApplication } from "@source-crafter/xzor-runtime/server";\n\n@Run()\nexport class App implements IServerApplication {}\n`;
+  const api = `import { Endpoints, Get } from "@source-crafter/xzor-runtime/server";
+
+export interface IA { a(): void }
+export interface IB { b(): void }
+interface Local { c(): void }
+export class Base {}
+export type Alias = { d(): void };
+
+@Endpoints("/api")
+export class Items extends Base implements IB, Local, Disposable, Alias, IA {
+  @Get
+  a() {}
+  b() {}
+  c() {}
+  d() {}
+  [Symbol.dispose]() {}
+}
+`;
+  const out = analyzeTemp({ "app.ts": app, "api.ts": api }, true, { lib: ["ESNext", "DOM", "ESNext.Disposable"] });
+  expect(out.errors).toEqual([]);
+  expect(out.endpoints[0].contracts.map((c: any) => c.id)).toEqual(["api.ts#IB", "api.ts#IA"]);
 });
 
 test("endpoint parameter kinds and conversions", () => {
@@ -940,6 +966,48 @@ test("an endpoint that needs the Request is built per request in a scope; others
     expect(await call("GET", "/api/me?u=bob")).toEqual([200, '{"name":"bob","n":1}']);
     expect(await call("GET", "/api/me")).toEqual([200, '{"name":"anon","n":2}']);
     expect(await call("GET", "/api/count")).toEqual([200, '{"n":2}']);
+  });
+});
+
+test("a service injecting an @Endpoints contract gets the endpoint's own instance", async () => {
+  const dir = serverProject("contract-instance", {
+    "app.ts": `import { Run, Singleton } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+import { Digest } from "./digest";
+
+@Run()
+@Singleton(Digest)
+export class App implements IServerApplication {
+  port = 0;
+}
+`,
+    "contract.ts": "export interface IPosts {\n  hit(): number;\n}\n",
+    "digest.ts": 'import type { IPosts } from "./contract";\n\nexport class Digest {\n  constructor(readonly posts: IPosts) {}\n}\n',
+    "api/posts.ts": endpoints(`import type { IPosts } from "../contract";
+import { Digest } from "../digest";
+
+@Endpoints("/api/posts")
+export class Posts implements IPosts {
+  n = 0;
+  hit() { return ++this.n; }
+  @Get
+  list() { return { n: this.hit() }; }
+}
+
+@Endpoints("/api/digest")
+export class Summary {
+  constructor(private digest: Digest) {}
+  @Get
+  get() { return { n: this.digest.posts.hit() }; }
+}
+`),
+  });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  await served(join(dir, ".xzor", "app.ts"), async (call) => {
+    expect(await call("GET", "/api/posts")).toEqual([200, '{"n":1}']);
+    expect(await call("GET", "/api/digest")).toEqual([200, '{"n":2}']);
+    expect(await call("GET", "/api/posts")).toEqual([200, '{"n":3}']);
   });
 });
 

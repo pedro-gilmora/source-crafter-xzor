@@ -83,7 +83,7 @@ if (process.platform !== "win32") {
 const { API, ModifierFlags, SignatureKind, SymbolFlags, TypeFlags } = await import("typescript/unstable/sync");
 
 type TypeRef = { id: string; text: string; module: string | null; export: string | null };
-type Param = { name: string; optional: boolean; promise: boolean; type: TypeRef; file: string; at: number; badKeys: string[] };
+type Param = { name: string; optional: boolean; promise: boolean; interface: boolean; type: TypeRef; file: string; at: number; badKeys: string[] };
 type Dispose = null | "dispose" | "Symbol.dispose" | "Symbol.asyncDispose";
 type Registration = {
   lifetime: "singleton" | "scoped" | "transient";
@@ -125,7 +125,8 @@ type EndpointParam = {
 };
 type Verb = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "QUERY";
 type EndpointMethod = { name: string; verb: Verb; pattern: string; path: string; params: EndpointParam[]; returnsPromise: boolean; at: number };
-type Endpoint = { class: TypeRef; file: string; at: number; prefix: string; ctor: Param[]; methods: EndpointMethod[] };
+// `contracts` are the exported interfaces the class `implements`, in order; other heritage is ignored.
+type Endpoint = { class: TypeRef; file: string; at: number; prefix: string; contracts: TypeRef[]; ctor: Param[]; methods: EndpointMethod[] };
 type Facts = {
   providers: Provider[];
   components: Component[];
@@ -192,6 +193,8 @@ function analyze(root: string, program: Program, checker: Checker, files: string
   const kinds = new Map<number, Kind>();
   let appId: number | undefined;
   let serverAppId: number | undefined;
+  // The runtime's `Remote<T>` type alias: `Remote<IPosts>` is the ref `Remote<contracts/posts.ts#IPosts>`.
+  let remoteId: number | undefined;
   let seenRuntime = false;
   let seenServer = false;
   for (const sf of [...sources, ...componentSources]) {
@@ -210,6 +213,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         seenServer = true;
       } else {
         appId = exports.get("IApplication" as never)?.id;
+        remoteId = exports.get("Remote" as never)?.id;
         seenRuntime = true;
       }
     }
@@ -277,7 +281,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     regs: RegPlan[];
   };
   type MethodPlan = { method: MethodDeclaration; verb: Verb; pattern: string };
-  type EndpointPlan = { sf: SourceFile; cls: ClassDeclaration; self: Lookup<Sym | undefined>; prefix: string; methods: MethodPlan[] };
+  type EndpointPlan = { sf: SourceFile; cls: ClassDeclaration; self: Lookup<Sym | undefined>; prefix: string; implements: { lookup: Lookup<Sym | undefined>; node: Node }[]; methods: MethodPlan[] };
   const symLookups: Lookup<Sym | undefined>[] = [];
   const typeLookups: Lookup<Type | undefined>[] = [];
   const sym = (node: Node) => {
@@ -320,7 +324,11 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       const [prefix] = endpoints.call.arguments;
       if (!prefix || !isStringLiteral(prefix) || endpoints.call.arguments.length > 1) error({ sf, node: endpoints.call }, "@Endpoints expects a string literal prefix");
       else if (!(cls.modifierFlags & ModifierFlags.Export)) errorAt(sf, endpoints.at, `${cls.name?.text ?? "an @Endpoints class"} must be exported`);
-      else endpointPlans.push({ sf, cls, self: sym(cls.name ?? cls), prefix: prefix.text, methods });
+      else {
+        const implemented: EndpointPlan["implements"] = [];
+        for (const h of cls.heritageClauses ?? []) if (h.token === SyntaxKind.ImplementsKeyword) for (const t of h.types) implemented.push({ lookup: sym(t.expression), node: t });
+        endpointPlans.push({ sf, cls, self: sym(cls.name ?? cls), prefix: prefix.text, implements: implemented, methods });
+      }
     }
     if (!decos.length) continue;
     const plan: ProviderPlan = { sf, cls, self: sym(cls.name ?? cls), imports: [], regs: [] };
@@ -499,7 +507,11 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     if (!ref) {
       const text = checker.typeToString(t);
       const s = t.getSymbol();
-      typeRefs.set(t.id, (ref = s && !(t.flags & PRIMITIVE) ? symbolRef(s, t, text, loc) : nonImportable(t, text, loc)));
+      const arg = remoteId !== undefined && t.getAliasSymbol()?.id === remoteId ? t.getAliasTypeArguments()[0] : undefined;
+      if (arg) {
+        const inner = typeRef(arg, loc);
+        typeRefs.set(t.id, (ref = { id: `Remote<${inner.id}>`, text: `Remote<${inner.text}>`, module: null, export: null }));
+      } else typeRefs.set(t.id, (ref = s && !(t.flags & PRIMITIVE) ? symbolRef(s, t, text, loc) : nonImportable(t, text, loc)));
     }
     return ref;
   };
@@ -699,6 +711,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
           name: param.name,
           optional,
           promise: awaited !== undefined,
+          interface: (((awaited ?? t).getSymbol()?.flags ?? 0) & SymbolFlags.Interface) !== 0,
           type: typeRef(awaited ?? t, { sf, node: decl }),
           file: rel(sf.fileName),
           at: name.getStart(sf),
@@ -772,7 +785,15 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         nodes.push(m.method.name, ...m.method.parameters.map((p) => p.name));
       }
       const ctor = paramsOf(ctors.get(self.id));
-      facts.endpoints.push({ class: classRef(self, { sf: e.sf, node: name }), file: rel(e.sf.fileName), at: name.getStart(e.sf), prefix: e.prefix, ctor, methods });
+      const contracts: TypeRef[] = [];
+      for (const { lookup, node } of e.implements) {
+        const s = lookup.value;
+        const decl = s && s.flags & SymbolFlags.Interface && s.declarations?.[0];
+        const fileName = decl && fileOf(decl.path);
+        // Lib and ambient interfaces (`Disposable`) and unexported ones are not contracts.
+        if (s && fileName && exportName(s, fileName) !== undefined) contracts.push(classRef(s, { sf: e.sf, node }));
+      }
+      facts.endpoints.push({ class: classRef(self, { sf: e.sf, node: name }), file: rel(e.sf.fileName), at: name.getStart(e.sf), prefix: e.prefix, contracts, ctor, methods });
     }
     if (!nodes.length) return;
     const types = checker.getTypeAtLocation(nodes);
