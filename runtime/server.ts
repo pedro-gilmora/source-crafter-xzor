@@ -1,6 +1,7 @@
 // Server-side helpers for xzor apps. Needs Bun's types (`@types/bun`).
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { HttpError } from "./index";
 
 /** A server app: `Bun.serve` options as members, all optional. (`Bun.Serve.Options` is a union, which an interface can't extend.) */
 export interface IServerApplication extends Partial<Bun.Serve.HostnamePortServeOptions<undefined>> {
@@ -26,12 +27,7 @@ export const Patch: MethodDecorator = method;
 export const Delete: MethodDecorator = method;
 export const Query: MethodDecorator = method;
 
-/** Thrown from an endpoint to answer with `status`. */
-export class HttpError extends Error {
-  constructor(readonly status: number, message?: string) {
-    super(message);
-  }
-}
+export { HttpError };
 
 /** `undefined`/`null` is 404, a `Response` passes through, anything else is JSON. */
 export function reply(value: unknown): Response {

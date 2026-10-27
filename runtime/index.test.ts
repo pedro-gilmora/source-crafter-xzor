@@ -1,5 +1,51 @@
 import { beforeEach, expect, test } from "bun:test";
-import { $leave, ComponentBase, type Remote, type RenderTreeBuilder, lazy, mount } from "./index";
+import { $leave, ComponentBase, HttpError, type Remote, type RenderTreeBuilder, call, lazy, mount } from "./index";
+import { HttpError as ServerHttpError } from "./server";
+
+const realFetch = globalThis.fetch;
+function stub(res: Response) {
+  const seen: { url: string; init: RequestInit }[] = [];
+  globalThis.fetch = (async (url: string, init: RequestInit) => (seen.push({ url, init }), res)) as unknown as typeof fetch;
+  return seen;
+}
+
+test("call sends the query without undefined keys and the body as JSON", async () => {
+  const seen = stub(Response.json({ ok: 1 }));
+  try {
+    expect(await call("POST", "/api/posts", { tag: "a b", page: 2, none: undefined }, { title: "t" })).toEqual({ ok: 1 });
+    expect(seen[0].url).toBe("/api/posts?tag=a+b&page=2");
+    expect(seen[0].init.method).toBe("POST");
+    expect(seen[0].init.headers).toEqual({ "content-type": "application/json" });
+    expect(seen[0].init.body).toBe('{"title":"t"}');
+    const bare = stub(Response.json(1));
+    await call("GET", "/api/posts", undefined, undefined);
+    expect(bare[0].url).toBe("/api/posts");
+    expect(bare[0].init.body).toBeUndefined();
+    expect(bare[0].init.headers).toBeUndefined();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("call resolves undefined for 404 and 204 and rejects other failures with HttpError", async () => {
+  try {
+    stub(new Response("nope", { status: 404 }));
+    expect(await call("GET", "/x", undefined, undefined)).toBeUndefined();
+    stub(new Response(null, { status: 204 }));
+    expect(await call("DELETE", "/x", undefined, undefined)).toBeUndefined();
+    stub(new Response("boom", { status: 500 }));
+    const err = (await call("GET", "/x", undefined, undefined).catch((e) => e)) as HttpError;
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.status).toBe(500);
+    expect(err.message).toBe("boom");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("the server's HttpError is the main export's class", () => {
+  expect(ServerHttpError).toBe(HttpError);
+});
 
 // Checked by `bun x tsc -p jsconfig.json --noEmit`.
 test("Remote<T> makes every method async and the rest never", () => {

@@ -433,6 +433,37 @@ export interface IApplication {
 /** A contract as browser code sees it: every method's result `R` becomes `Promise<Awaited<R>>`, other members `never`. */
 export type Remote<T> = { [K in keyof T]: T[K] extends (...args: infer A) => infer R ? (...args: A) => Promise<Awaited<R>> : never };
 
+/** Thrown from an endpoint to answer with `status`; a generated client throws it for a non-2xx answer. */
+export class HttpError extends Error {
+  constructor(readonly status: number, message?: string) {
+    super(message);
+  }
+}
+
+/** One request of a generated contract client: 404 and an empty body resolve `undefined`, other non-2xx statuses reject with `HttpError`. */
+export async function call(method: string, path: string, query: Record<string, unknown> | undefined, body: unknown): Promise<unknown> {
+  let url = path;
+  if (query) {
+    const params = new URLSearchParams();
+    for (const key in query) {
+      const value = query[key];
+      if (value !== undefined) params.append(key, String(value));
+    }
+    const search = params.toString();
+    if (search) url += "?" + search;
+  }
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.headers = { "content-type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(url, init);
+  if (res.status === 404 || res.status === 204) return undefined;
+  if (!res.ok) throw new HttpError(res.status, await res.text());
+  const text = await res.text();
+  return text ? JSON.parse(text) : undefined;
+}
+
 const noop = () => {};
 const SELECTOR = /[#.[]/;
 

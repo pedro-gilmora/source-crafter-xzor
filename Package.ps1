@@ -87,7 +87,8 @@ function Stage-Package([string]$name, [string]$from, $manifest) {
 # Runtime: JavaScript plus declarations, so tsc in user projects doesn't check its source under their settings.
 $runtimeOut = Join-Path $stage "runtime-build"
 Invoke-Step "Building the runtime" { bun build runtime/index.ts runtime/model.ts --outdir $runtimeOut --splitting --target browser --format esm --sourcemap=linked }
-Invoke-Step "Building the runtime server" { bun build runtime/server.ts --outdir $runtimeOut --target bun --format esm --sourcemap=linked }
+# index stays external so HttpError is the one class of the main export.
+Invoke-Step "Building the runtime server" { bun build runtime/server.ts --outdir $runtimeOut --target bun --format esm --external "*/index" --sourcemap=linked }
 Invoke-Step "Emitting the runtime declarations" {
     bun x tsc runtime/index.ts runtime/model.ts runtime/server.ts --declaration --emitDeclarationOnly --outDir $runtimeOut --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM,ESNext.Disposable,ESNext.Decorators --types bun --strict --skipLibCheck
 }
