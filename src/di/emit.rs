@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use super::graph::{is_inline, Arg, Resolved, Service, Source};
+use super::graph::{arg_service, is_inline, Arg, Resolved, Service, Source};
 use super::model::{Conv, Dispose, EndpointMethod, Lifetime, ParamKind, TypeRef, Verb};
 
 const RUNTIME: &str = "@source-crafter/xzor-runtime";
@@ -39,7 +39,7 @@ pub fn emit_file(source_file: &str, all: &[Resolved], mount_entry: bool) -> Stri
     let mut mine: Vec<&Resolved> = all.iter().filter(|r| r.provider.file == source_file).collect();
     mine.sort_by_key(|r| is_app(r));
 
-    let mut e = Emitter { all, source_file, imports: Imports { from, refs: BTreeMap::new(), locals: BTreeSet::new() }, local: false };
+    let mut e = Emitter { all, source_file, imports: Imports { from, refs: BTreeMap::new(), locals: BTreeSet::new() }, local: false, scope: false };
     // Globals the generated code names.
     e.imports.locals.extend(["Promise", "Disposable", "AsyncDisposable", "Symbol", "Function"].map(String::from));
     if mine.iter().any(|r| is_app(r) && r.server.is_some()) {
@@ -64,7 +64,7 @@ pub fn emit_file(source_file: &str, all: &[Resolved], mount_entry: bool) -> Stri
 pub fn emit_client(all: &[Resolved]) -> Option<String> {
     let r = all.iter().find(|r| r.server.as_ref().is_some_and(|s| s.root.is_some()))?;
     let root = r.server.as_ref()?.root.as_ref()?;
-    let mut e = Emitter { all, source_file: "", imports: Imports { from: vec![".xzor".into()], refs: BTreeMap::new(), locals: BTreeSet::new() }, local: true };
+    let mut e = Emitter { all, source_file: "", imports: Imports { from: vec![".xzor".into()], refs: BTreeMap::new(), locals: BTreeSet::new() }, local: true, scope: false };
     e.imports.locals.extend(["Promise", "Function", "document"].map(String::from));
     let mut body = String::new();
     let shell = e.value(root);
@@ -77,7 +77,7 @@ pub fn emit_client(all: &[Resolved]) -> Option<String> {
         let mut creates = BTreeSet::new();
         for &i in &r.browser {
             let s = &r.services[i];
-            if !is_inline(s) {
+            if !is_inline(s) && !s.needs_request {
                 e.service(&mut body, r, &cls, s);
                 if s.is_async {
                     creates.insert(format!("#{}$create", s.getter));
@@ -256,6 +256,8 @@ struct Emitter<'a> {
     imports: Imports,
     /// Builds every service in place, imported singletons too (the browser entry imports no provider file).
     local: bool,
+    /// Emitting the per-request scope class: singletons are read through its forwarders to the app.
+    scope: bool,
 }
 
 impl<'a> Emitter<'a> {
@@ -330,6 +332,9 @@ impl<'a> Emitter<'a> {
     /// The value of a cached service, or `undefined` while it is pending: its field, or the import's `tryGetX()`.
     fn settled(&mut self, r: &Resolved, cls: &str, j: usize) -> String {
         let s = &r.services[j];
+        if self.scope && s.reg.lifetime == Lifetime::Singleton {
+            return format!("this.tryGet{}()", pascal(&s.getter));
+        }
         match self.delegate(r, s) {
             Some((owner, d)) => format!("{owner}.tryGet{}()", pascal(&d.getter)),
             None => Self::field(cls, s),
@@ -354,6 +359,7 @@ impl<'a> Emitter<'a> {
                 Arg::Covered(j) => self.covered(r, cls, j),
                 Arg::Promise(j) if r.services[j].is_async => format!("this.get{}Async()", pascal(&r.services[j].getter)),
                 Arg::Promise(j) => format!("Promise.resolve({})", self.sync_expr(r, j)),
+                Arg::Request => "this.#request".into(),
                 Arg::Undefined => "undefined".into(),
             });
         }
@@ -414,7 +420,7 @@ impl<'a> Emitter<'a> {
             let t: Vec<usize> = (0..r.services.len())
                 .filter(|&i| {
                     let s = &r.services[i];
-                    cached(s) && s.reg.dispose.is_some() && !self.is_delegated(s)
+                    cached(s) && s.reg.dispose.is_some() && !self.is_delegated(s) && !s.needs_request
                 })
                 .collect();
             dependents_first(&r.services, &t)
@@ -444,7 +450,8 @@ impl<'a> Emitter<'a> {
         let mut members = String::new();
         let mut creates = BTreeSet::new();
         for s in &r.services {
-            if !is_inline(s) {
+            // Built only in the server's per-request scope.
+            if !is_inline(s) && !s.needs_request {
                 self.service(&mut members, r, &cls, s);
                 if s.is_async {
                     creates.insert(format!("#{}$create", s.getter));
@@ -598,37 +605,86 @@ impl<'a> Emitter<'a> {
         out.push_str(&methods);
     }
 
-    /// An endpoint's constructor arguments, read from `app`; endpoints are built once, at module evaluation.
-    fn endpoint_args(&mut self, r: &Resolved, args: &[Arg]) -> String {
+    /// An endpoint's constructor arguments, read from `owner` (`app` at module evaluation, or the request scope `s$`).
+    fn endpoint_args(&mut self, r: &Resolved, args: &[Arg], owner: &str) -> String {
         let mut out = Vec::with_capacity(args.len());
         for a in args {
             out.push(match *a {
-                Arg::Service(j) => format!("app.{}", r.services[j].getter),
+                Arg::Service(j) => format!("{owner}.{}", r.services[j].getter),
                 Arg::Inline(j) => format!("new {}()", self.value(r.services[j].reg.impl_.as_ref().expect("inline transient has an impl"))),
-                Arg::Awaited(j) | Arg::Covered(j) => format!("await app.get{}Async()", pascal(&r.services[j].getter)),
-                Arg::Promise(j) if r.services[j].is_async => format!("app.get{}Async()", pascal(&r.services[j].getter)),
-                Arg::Promise(j) => format!("Promise.resolve(app.{})", r.services[j].getter),
+                Arg::Awaited(j) | Arg::Covered(j) => format!("await {owner}.get{}Async()", pascal(&r.services[j].getter)),
+                Arg::Promise(j) if r.services[j].is_async => format!("{owner}.get{}Async()", pascal(&r.services[j].getter)),
+                Arg::Promise(j) => format!("Promise.resolve({owner}.{})", r.services[j].getter),
+                Arg::Request => "req".into(),
                 Arg::Undefined => "undefined".into(),
             });
         }
         out.join(", ")
     }
 
+    /// The per-request scope: the request, the scoped and transient services per-request endpoints reach (built
+    /// here, once per scope or per read), and forwarders to the app's singletons.
+    fn scope_class(&mut self, out: &mut String, r: &Resolved, app_cls: &str) -> String {
+        let cls = self.imports.local(&format!("{app_cls}Scope"));
+        let mut seen = vec![false; r.services.len()];
+        let mut stack: Vec<usize> = r.endpoints.iter().filter(|e| e.2).flat_map(|e| e.1.iter().filter_map(arg_service)).collect();
+        while let Some(i) = stack.pop() {
+            if !std::mem::replace(&mut seen[i], true) && r.services[i].reg.lifetime != Lifetime::Singleton {
+                stack.extend(r.services[i].args.iter().filter_map(arg_service));
+            }
+        }
+        w!(out, "\nclass {cls} {{");
+        w!(out, "  #app: {app_cls};");
+        w!(out, "  #request: Request;");
+        w!(out, "  constructor(app: {app_cls}, request: Request) {{ this.#app = app; this.#request = request; }}");
+        self.scope = true;
+        for i in (0..r.services.len()).filter(|&i| seen[i]) {
+            let s = &r.services[i];
+            if is_inline(s) {
+                continue;
+            }
+            if s.reg.lifetime != Lifetime::Singleton {
+                self.service(out, r, &cls, s);
+                continue;
+            }
+            let (g, p, st) = (&s.getter, pascal(&s.getter), self.ty(&s.reg.service));
+            if s.is_async {
+                w!(out, "  get{p}Async(): Promise<{st}> {{ return this.#app.get{p}Async(); }}");
+                w!(out, "  tryGet{p}(): {st} | undefined {{ return this.#app.tryGet{p}(); }}");
+            } else {
+                w!(out, "  get {g}(): {st} {{ return this.#app.{g}; }}");
+            }
+        }
+        self.scope = false;
+        w!(out, "}}");
+        cls
+    }
+
     /// The server entry's tail: the app, the endpoint instances and their handlers, then `Bun.serve`.
     fn server(&mut self, out: &mut String, r: &Resolved, cls: &str) {
+        let scope = if r.endpoints.iter().any(|e| e.2) { Some(self.scope_class(out, r, cls)) } else { None };
         let options_ty = self.imports.name(SERVER, "IServerApplication", "IServerApplication", false);
         w!(out, "\nconst app = new {cls}();");
         w!(out, "const options: {options_ty} = app;");
         let mut handlers = String::new();
         let mut routes: Vec<(&str, Vec<(Verb, String)>)> = Vec::new();
         let mut bad = false;
-        for (e, args) in &r.endpoints {
+        for (e, args, per_request) in &r.endpoints {
             let class = self.value(&e.class);
-            let inst = self.imports.local(&camel(&class));
-            let a = self.endpoint_args(r, args);
-            w!(out, "const {inst} = new {class}({a});");
+            let base = camel(&class);
+            // Built once at module evaluation, or per request in a scope holding the request.
+            let inst = if let (true, Some(scope)) = (per_request, &scope) {
+                let a = self.endpoint_args(r, args, "s$");
+                let is_async = args.iter().any(|a| matches!(a, Arg::Awaited(_) | Arg::Covered(_)));
+                Instance { expr: format!("new {class}({a})"), pre: format!("  const s$ = new {scope}(app, req);\n"), is_async }
+            } else {
+                let inst = self.imports.local(&base);
+                let a = self.endpoint_args(r, args, "app");
+                w!(out, "const {inst} = new {class}({a});");
+                Instance { expr: inst, pre: String::new(), is_async: false }
+            };
             for m in &e.methods {
-                let name = self.imports.local(&format!("{inst}${}", m.name));
+                let name = self.imports.local(&format!("{base}${}", m.name));
                 bad |= self.handler(&mut handlers, &name, &inst, m);
                 match routes.iter_mut().find(|(p, _)| *p == m.path) {
                     Some((_, v)) => v.push((m.verb, name)),
@@ -697,13 +753,13 @@ impl<'a> Emitter<'a> {
 
     /// `const name = (req: Bun.BunRequest<"path">) => reply(inst.method(...));`, with the conversions first; returns
     /// whether it can answer 400.
-    fn handler(&mut self, out: &mut String, name: &str, inst: &str, m: &EndpointMethod) -> bool {
+    fn handler(&mut self, out: &mut String, name: &str, inst: &Instance, m: &EndpointMethod) -> bool {
         let reply_fn = if m.returns_promise { "replyAsync" } else { "reply" };
         let reply = self.imports.name(SERVER, reply_fn, reply_fn, true);
         let mut body = String::new();
         let mut args = Vec::with_capacity(m.params.len());
         let mut bad = false;
-        let mut is_async = m.returns_promise;
+        let mut is_async = m.returns_promise || inst.is_async;
         for (i, p) in m.params.iter().enumerate() {
             match p.kind {
                 ParamKind::Path => {
@@ -755,14 +811,15 @@ impl<'a> Emitter<'a> {
                 ParamKind::Other => unreachable!("ZDI17 rejects it"),
             }
         }
-        let req = if m.params.is_empty() { "_req" } else { "req" };
+        let req = if m.params.is_empty() && inst.pre.is_empty() { "_req" } else { "req" };
         let head = format!("const {name} = {}({req}: Bun.BunRequest<{:?}>) =>", if is_async { "async " } else { "" }, m.path);
-        let call = format!("{reply}({inst}.{}({}))", m.name, args.join(", "));
-        if body.is_empty() {
+        let call = format!("{reply}({}.{}({}))", inst.expr, m.name, args.join(", "));
+        if body.is_empty() && inst.pre.is_empty() {
             w!(out, "{head} {call};");
         } else {
             w!(out, "{head} {{");
             out.push_str(&body);
+            out.push_str(&inst.pre);
             w!(out, "  return {call};");
             w!(out, "}};");
         }
@@ -810,6 +867,13 @@ impl<'a> Emitter<'a> {
         }
         w!(out, "  }}");
     }
+}
+
+/// The receiver of an endpoint's handlers: a module-level instance, or one built per request after `pre`.
+struct Instance {
+    expr: String,
+    pre: String,
+    is_async: bool,
 }
 
 /// `const v = <raw converted>;` and its 400 check, like `@page` params; `raw` may be `null` (an absent optional key) when `nullable`.

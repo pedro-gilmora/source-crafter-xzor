@@ -33,6 +33,8 @@ pub enum Arg {
     Inline(usize),
     /// A cached async dependency already resolved inside another `Awaited` arg's subtree; read from its value field.
     Covered(usize),
+    /// A parameter typed `Request`: the request of the per-request scope.
+    Request,
     Undefined,
 }
 
@@ -43,6 +45,8 @@ pub struct Service {
     pub source: Source,
     pub args: Vec<Arg>,
     pub is_async: bool,
+    /// Takes a `Request`, directly or through its args: built only in a per-request scope.
+    pub needs_request: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,8 +57,9 @@ pub struct Resolved {
     pub components: Vec<(Component, Vec<Arg>, bool)>,
     /// Set on the `@Run` server application's provider.
     pub server: Option<Server>,
-    /// Filled only for the server application: each `@Endpoints` class with its constructor args.
-    pub endpoints: Vec<(Endpoint, Vec<Arg>)>,
+    /// Filled only for the server application: each `@Endpoints` class with its constructor args, and whether it
+    /// is built per request (it reaches `Request` or a scoped service) rather than once.
+    pub endpoints: Vec<(Endpoint, Vec<Arg>, bool)>,
     /// For a server app with views: the services the views reach (`@inject`, then constructor args), ascending.
     pub browser: Vec<usize>,
 }
@@ -203,7 +208,7 @@ impl<'a> Cx<'a> {
             if reg.impl_.is_none() && reg.factory.is_none() {
                 self.error(&p.file, reg.at, "ZDI06", format!("{} is registered without an implementation or factory", reg.service.text));
             }
-            services.push(Service { reg: reg.clone(), getter: String::new(), source: Source::Own, args: Vec::new(), is_async: reg.is_async });
+            services.push(Service { reg: reg.clone(), getter: String::new(), source: Source::Own, args: Vec::new(), is_async: reg.is_async, needs_request: false });
             origins.push((pi, ri));
         }
         let own = services.len();
@@ -227,6 +232,7 @@ impl<'a> Cx<'a> {
                                 source: Source::Imported(ii, si),
                                 args: s.args.clone(),
                                 is_async: s.is_async,
+                                needs_request: s.needs_request,
                             });
                             origins.push(origin);
                             services.len() - 1
@@ -264,6 +270,10 @@ impl<'a> Cx<'a> {
             let needer = needer(&s.reg);
             let mut args = Vec::with_capacity(s.reg.params.len());
             for prm in &s.reg.params {
+                if is_request(prm) {
+                    args.push(Arg::Request);
+                    continue;
+                }
                 args.push(match table.find(prm) {
                     Found::One(i) if mismatched(facts, prm, &services[i], origins[i]) => {
                         self.param_error(&p.file, s.reg.at, "ZDI12", zdi12(prm, &services[i]), prm);
@@ -305,6 +315,17 @@ impl<'a> Cx<'a> {
             }
         }
 
+        for i in 0..own {
+            let s = &services[i];
+            if s.reg.lifetime == Lifetime::Singleton && s.needs_request {
+                let chain = request_chain(&services, i).join(" -> ");
+                self.error(&p.file, s.reg.at, "ZDI19", format!("{chain} is built once but needs the request"));
+            }
+        }
+        if self.diags.len() > start {
+            return None;
+        }
+
         let sets = Sets::new(&services);
         for i in 0..own {
             services[i].args = classify(&services, &sets, &services[i].args);
@@ -326,6 +347,10 @@ fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<D
     for c in &facts.components {
         let mut args = Vec::with_capacity(c.injects.len());
         for prm in &c.injects {
+            if is_request(prm) {
+                args.push(Arg::Request);
+                continue;
+            }
             let (code, message) = match table.find(prm) {
                 Found::One(i) if mismatched(facts, prm, &r.services[i], origins[i]) => ("ZDI12", zdi12(prm, &r.services[i])),
                 Found::One(i) => {
@@ -351,7 +376,7 @@ fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<D
 }
 
 /// Resolves each `@Endpoints` class's constructor against the server application's registrations.
-fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Diag>) -> Vec<(Endpoint, Vec<Arg>)> {
+fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Diag>) -> Vec<(Endpoint, Vec<Arg>, bool)> {
     let table = Table::new(&r.services);
     let sets = Sets::new(&r.services);
     let app = &r.provider.class.text;
@@ -359,6 +384,10 @@ fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Di
     for e in &facts.endpoints {
         let mut args = Vec::with_capacity(e.ctor.len());
         for prm in &e.ctor {
+            if is_request(prm) {
+                args.push(Arg::Request);
+                continue;
+            }
             let needer = &e.class.text;
             let (code, message) = match table.find(prm) {
                 Found::One(i) if mismatched(facts, prm, &r.services[i], origins[i]) => ("ZDI12", zdi12(prm, &r.services[i])),
@@ -376,16 +405,47 @@ fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Di
             diags.push(Diag { file: e.file.clone(), at: e.at, code, message, inject: None, param_at: Some((prm.file.clone(), prm.at)) });
             args.push(Arg::Undefined);
         }
-        out.push((e.clone(), classify(&r.services, &sets, &args)));
+        let per_request = args.iter().any(|a| scoped(&r.services, a));
+        out.push((e.clone(), classify(&r.services, &sets, &args), per_request));
     }
     out
+}
+
+/// A parameter typed with the global `Request`.
+fn is_request(p: &Param) -> bool {
+    p.ty.module.is_none() && p.ty.id == "Request"
+}
+
+/// Whether `a` needs a per-request scope: it is the `Request`, or reaches it or a scoped service through non-singletons.
+fn scoped(services: &[Service], a: &Arg) -> bool {
+    if *a == Arg::Request {
+        return true;
+    }
+    let Some(j) = arg_service(a) else { return false };
+    let s = &services[j];
+    s.reg.lifetime != Lifetime::Singleton && (s.needs_request || s.reg.lifetime == Lifetime::Scoped || s.args.iter().any(|b| scoped(services, b)))
+}
+
+/// `A -> B -> Request`: the needers from service `i` down to the `Request` it needs.
+fn request_chain(services: &[Service], mut i: usize) -> Vec<&str> {
+    let mut chain = vec![needer(&services[i].reg)];
+    loop {
+        let args = &services[i].args;
+        if args.contains(&Arg::Request) {
+            chain.push("Request");
+            return chain;
+        }
+        let Some(j) = args.iter().filter_map(arg_service).find(|&j| services[j].needs_request) else { return chain };
+        chain.push(needer(&services[j].reg));
+        i = j;
+    }
 }
 
 /// The service index an arg reads, if any.
 pub fn arg_service(a: &Arg) -> Option<usize> {
     match *a {
         Arg::Service(j) | Arg::Awaited(j) | Arg::Promise(j) | Arg::Inline(j) | Arg::Covered(j) => Some(j),
-        Arg::Undefined => None,
+        Arg::Request | Arg::Undefined => None,
     }
 }
 
@@ -595,7 +655,9 @@ fn visit(i: usize, services: &mut [Service], color: &mut [Color], path: &mut Vec
     color[i] = Black;
     let s = &services[i];
     let is_async = s.reg.is_async || s.args.iter().any(|a| matches!(a, Arg::Service(j) if services[*j].is_async));
+    let needs_request = s.args.iter().any(|a| matches!(*a, Arg::Request) || matches!(*a, Arg::Service(j) | Arg::Promise(j) if services[j].needs_request));
     services[i].is_async = is_async;
+    services[i].needs_request = needs_request;
     Ok(())
 }
 

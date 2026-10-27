@@ -469,8 +469,11 @@ function analyze(root: string, program: Program, checker: Checker, files: string
   };
   const symbolRef = (s: Sym, t: Type, text: string, loc: Loc): TypeRef => {
     const decl = s.declarations?.[0];
-    // Default-lib types (Date, Map, HTMLElement, ...) are global: nothing to import.
+    // Default-lib types (Date, Map, HTMLElement, ...) and ambient globals (Bun's Request) are global: nothing to import.
     if (decl && program.getSourceFileMetadataByPath(decl.path)?.isDefaultLibrary) return { id: text, text, module: null, export: null };
+    if (decl && /\.d\.[cm]?ts$/.test(decl.path) && checker.resolveName(s.name, SymbolFlags.Type, undefined, false)?.id === s.id) {
+      return { id: text, text, module: null, export: null };
+    }
     const fileName = decl && s.flags & NAMED ? fileOf(decl.path) : undefined;
     if (!fileName) return nonImportable(t, text, loc);
     const file = rel(fileName).replace(/^\.xzor\//, "");

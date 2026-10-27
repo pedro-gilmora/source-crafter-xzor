@@ -261,11 +261,11 @@ test("--serve picks up a disk edit between requests", async () => {
 // Temp project copies; `paths: false` leaves @source-crafter/xzor-runtime unresolvable.
 const temps: string[] = [];
 afterAll(() => temps.forEach((d) => rmSync(d, { recursive: true, force: true })));
-function analyzeTemp(files: Record<string, string>, paths = true) {
+function analyzeTemp(files: Record<string, string>, paths = true, options: object = {}) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "xzor-di-")));
   temps.push(dir);
   const runtime = join(import.meta.dir, "..", "runtime", "index.ts").replaceAll("\\", "/");
-  const compilerOptions: any = { target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ESNext", "DOM"], strict: true, noEmit: true, skipLibCheck: true };
+  const compilerOptions: any = { target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ESNext", "DOM"], strict: true, noEmit: true, skipLibCheck: true, ...options };
   if (paths) compilerOptions.paths = { "@source-crafter/xzor-runtime": [runtime], "@source-crafter/xzor-runtime/server": [runtime.replace(/index\.ts$/, "server.ts")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["**/*.ts"] }));
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
@@ -320,6 +320,21 @@ export class P {}
   const params = out.providers[0].registrations[0].params;
   const prims = params.slice(4).map((p: any) => [p.type.text, p.type.module]);
   expect(prims).toEqual([["Date", null], ["Map<string, number>", null], ["HTMLElement", null], ["Svc", "main"], ["string", null], ["number", null], ["boolean", null], ["bigint", null], ["symbol", null]]);
+});
+
+test("Bun's ambient Request is a global type without the DOM lib", () => {
+  const main = `import { ServiceProvider, Scoped } from "@source-crafter/xzor-runtime";
+export class User {
+  constructor(readonly req: Request) {}
+}
+@ServiceProvider()
+@Scoped(User)
+export class P {}
+`;
+  const typeRoots = [join(import.meta.dir, "..", "node_modules", "@types").replaceAll("\\", "/")];
+  const out = analyzeTemp({ "main.ts": main }, true, { lib: ["ESNext"], types: ["bun"], typeRoots });
+  expect(out.errors).toEqual([]);
+  expect(out.providers[0].registrations[0].params[0].type).toEqual({ id: "Request", text: "Request", module: null, export: null });
 });
 
 test("decorator misuse", () => {
@@ -837,6 +852,79 @@ export class E {
     // Any other error goes to the app's own handler (Bun's default one would only log it).
     if (other) expect(await call("GET", "/api/e/plain")).toEqual([500, other]);
   });
+});
+
+// `CurrentUser(req: Request)` is scoped: `Me` reaches it and is built per request; `Count` is built once.
+const requestApp = (regs: string) => `import { Run, Scoped, Singleton } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+import { CurrentUser } from "./user";
+import { Store } from "./store";
+import { AuthCache } from "./auth";
+
+@Run()
+${regs}
+export class App implements IServerApplication {
+  port = 0;
+}
+`;
+const requestFiles: Record<string, string> = {
+  "app.ts": requestApp("@Scoped(CurrentUser)\n@Singleton(Store)"),
+  "user.ts": `export class CurrentUser {
+  name: string;
+  constructor(req: Request) { this.name = new URL(req.url).searchParams.get("u") ?? "anon"; }
+}
+`,
+  "store.ts": "export class Store {\n  n = 0;\n}\n",
+  "auth.ts": `import { CurrentUser } from "./user";\n\nexport class AuthCache {\n  constructor(readonly user: CurrentUser) {}\n}\n`,
+  "api/me.ts": endpoints(`import { CurrentUser } from "../user";
+import { Store } from "../store";
+
+@Endpoints("/api/me")
+export class Me {
+  constructor(private user: CurrentUser, private store: Store) {}
+  @Get
+  get() { return { name: this.user.name, n: ++this.store.n }; }
+}
+`),
+  "api/count.ts": endpoints(`import { Store } from "../store";
+
+@Endpoints("/api/count")
+export class Count {
+  constructor(private store: Store) {}
+  @Get
+  get() { return { n: this.store.n }; }
+}
+`),
+};
+
+test("an endpoint that needs the Request is built per request in a scope; others once", async () => {
+  const dir = serverProject("request-scope", requestFiles);
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const text = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(text).toContain("class App$Scope {");
+  expect(text).toContain("get currentUser(): CurrentUser { return (this.#currentUser ??= new CurrentUser(this.#request)); }");
+  expect(text).toContain("get store(): Store { return this.#app.store; }");
+  expect(text).toContain("const count = new Count(app.store);");
+  expect(text).toContain('const count$get = (_req: Bun.BunRequest<"/api/count">) => reply(count.get());');
+  expect(text).toContain("const s$ = new App$Scope(app, req);");
+  expect(text).toContain("return reply(new Me(s$.currentUser, s$.store).get());");
+  // The app itself never builds a service that needs the request.
+  expect(text.slice(0, text.indexOf("class App$Scope"))).not.toContain("CurrentUser(");
+  await served(join(dir, ".xzor", "app.ts"), async (call) => {
+    expect(await call("GET", "/api/me?u=bob")).toEqual([200, '{"name":"bob","n":1}']);
+    expect(await call("GET", "/api/me")).toEqual([200, '{"name":"anon","n":2}']);
+    expect(await call("GET", "/api/count")).toEqual([200, '{"n":2}']);
+  });
+});
+
+test("a singleton that needs the Request is an error naming the chain", () => {
+  const app = requestApp("@Scoped(CurrentUser)\n@Singleton(Store)\n@Singleton(AuthCache)");
+  const dir = serverProject("request-captive", { ...requestFiles, "app.ts": app });
+  const { code, out } = xzorBuild(dir);
+  expect(code).not.toBe(0);
+  expect(out).toContain("ZDI19");
+  expect(out).toContain("AuthCache -> CurrentUser -> Request is built once but needs the request");
 });
 
 // A server app with views: `@Singleton(Theme)` reached by a view, `@Import(DataServices)` only by the server.
