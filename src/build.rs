@@ -651,9 +651,32 @@ fn remove_empty_dirs(dir: &Path) -> Result<bool, String> {
     Ok(empty)
 }
 
-/// Whether a `.ts` source declares `@ServiceProvider`, `@Run` or the renamed `@Mount` (kept so the analyzer reports the rename).
+/// Whether a `.ts` source declares `@ServiceProvider`, `@Run`, `@Endpoints` or the renamed `@Mount` (kept so the analyzer reports the rename).
 pub fn declares_provider(text: &str) -> bool {
-    text.lines().map(str::trim_start).any(|l| l.starts_with("@ServiceProvider(") || l.starts_with("@Run(") || l.starts_with("@Mount("))
+    text.lines()
+        .map(str::trim_start)
+        .any(|l| l.starts_with("@ServiceProvider(") || l.starts_with("@Run(") || l.starts_with("@Endpoints(") || l.starts_with("@Mount("))
+}
+
+/// The entry without `--entry`: `main.ts` when it exists, else the one project `.ts` declaring `@Run(` (ZDI07 when several do).
+pub fn default_entry(root: &Path) -> Result<String, String> {
+    const MAIN: &str = "main.ts";
+    if root.join(MAIN).is_file() || !root.is_dir() {
+        return Ok(MAIN.to_string());
+    }
+    let mut files = Vec::new();
+    walk(root, &|n| n.ends_with(".ts") && !n.ends_with(".d.ts"), &mut files).map_err(|e| format!("{}: {e}", root.display()))?;
+    let mut runs: Vec<String> = files
+        .iter()
+        .filter(|p| fs::read_to_string(p).is_ok_and(|t| t.lines().any(|l| l.trim_start().starts_with("@Run("))))
+        .map(|p| p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/"))
+        .collect();
+    runs.sort();
+    match runs.len() {
+        0 => Ok(MAIN.to_string()),
+        1 => Ok(runs.remove(0)),
+        _ => Err(format!("error ZDI07: more than one @Run application ({}); pass --entry", runs.join(", "))),
+    }
 }
 
 /// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Run`; `@Mount(` still matches so its rename error is reported.
@@ -817,6 +840,31 @@ mod tests {
 
     fn write_routes(units: &[Compiled], written: &mut HashSet<PathBuf>) -> Result<bool, String> {
         super::write_routes(units, written, false)
+    }
+
+    #[test]
+    fn endpoints_are_analyzed() {
+        assert!(declares_provider("import x;\n@Endpoints(\"/api\")\nexport class A {}\n"));
+        assert!(!declares_provider("// @Endpoints(\"/api\")\n"));
+    }
+
+    #[test]
+    fn default_entry_scans_for_run() {
+        let root = temp("default-entry");
+        let run = "@Run(Shell)\nexport class App {}\n";
+        assert_eq!(default_entry(&root), Ok("main.ts".to_string()));
+        fs::create_dir_all(root.join("server")).unwrap();
+        fs::create_dir_all(root.join("node_modules/x")).unwrap();
+        fs::write(root.join("node_modules/x/a.ts"), run).unwrap();
+        fs::write(root.join("server/app.ts"), run).unwrap();
+        fs::write(root.join("server/api.ts"), "@Endpoints(\"/api\")\nexport class Api {}\n").unwrap();
+        assert_eq!(default_entry(&root), Ok("server/app.ts".to_string()));
+        fs::write(root.join("other.ts"), run).unwrap();
+        let err = default_entry(&root).unwrap_err();
+        assert!(err.contains("error ZDI07: more than one @Run application") && err.contains("other.ts") && err.contains("server/app.ts"), "{err}");
+        fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
+        assert_eq!(default_entry(&root), Ok("main.ts".to_string()));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

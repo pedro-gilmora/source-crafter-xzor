@@ -23,13 +23,14 @@ import { spawnSync, type ChildProcess } from "node:child_process";
 import { closeSync, mkdtempSync, openSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import type { CallExpression, ClassDeclaration, Node, SourceFile } from "typescript/unstable/ast";
+import { SyntaxKind, type CallExpression, type ClassDeclaration, type MethodDeclaration, type Node, type SourceFile } from "typescript/unstable/ast";
 import {
   isCallExpression,
   isClassDeclaration,
   isDecorator,
   isIdentifier,
   isImportDeclaration,
+  isMethodDeclaration,
   isParameterDeclaration,
   isPropertyAccessExpression,
   isStringLiteral,
@@ -104,14 +105,42 @@ type Provider = {
   mount: null | { component: TypeRef; target: string; at: number };
 };
 type Component = { class: TypeRef; injects: Param[] };
-type Facts = { providers: Provider[]; components: Component[]; errors: { file: string; at: number; message: string }[] };
+// `@Run(Shell)` / `@Run()` on an IServerApplication; `root` is the views' root component.
+type Server = { class: TypeRef; file: string; at: number; root: TypeRef | null };
+// How a path or query value is read: a string-literal union lists its values.
+type Conv = "string" | "number" | "boolean" | string[];
+// `kind` comes from the name: a `:param` of `path`, `query`, `body`, else "other" (an error for Task 3's checks).
+type EndpointParam = {
+  name: string;
+  kind: "path" | "query" | "body" | "other";
+  type: string;
+  optional: boolean;
+  conv: Conv | null;
+  keys: { name: string; optional: boolean; conv: Conv }[] | null;
+  at: number;
+};
+type Verb = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "QUERY";
+type EndpointMethod = { name: string; verb: Verb; pattern: string; path: string; params: EndpointParam[]; returnsPromise: boolean; at: number };
+type Endpoint = { class: TypeRef; file: string; at: number; prefix: string; ctor: Param[]; methods: EndpointMethod[] };
+type Facts = {
+  providers: Provider[];
+  components: Component[];
+  servers: Server[];
+  endpoints: Endpoint[];
+  errors: { file: string; at: number; message: string }[];
+};
 
-type Kind = "ServiceProvider" | "Run" | "Import" | "Singleton" | "Scoped" | "Transient";
-const KINDS: Kind[] = ["ServiceProvider", "Run", "Import", "Singleton", "Scoped", "Transient"];
+type ProviderKind = "ServiceProvider" | "Run" | "Import" | "Singleton" | "Scoped" | "Transient";
+type MethodKind = "Get" | "Post" | "Put" | "Patch" | "Delete" | "Query";
+type Kind = ProviderKind | "Endpoints" | MethodKind;
+const KINDS: ProviderKind[] = ["ServiceProvider", "Run", "Import", "Singleton", "Scoped", "Transient"];
+const VERBS: Record<MethodKind, Verb> = { Get: "GET", Post: "POST", Put: "PUT", Patch: "PATCH", Delete: "DELETE", Query: "QUERY" };
+const SERVER_KINDS: Kind[] = ["Endpoints", ...(Object.keys(VERBS) as MethodKind[])];
 const LIFETIMES = { Singleton: "singleton", Scoped: "scoped", Transient: "transient" } as const;
 const NAMED = SymbolFlags.Class | SymbolFlags.Interface | SymbolFlags.Enum;
 const PRIMITIVE = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.BigInt | TypeFlags.ESSymbol;
 const RUNTIME = "@source-crafter/xzor-runtime";
+const SERVER = `${RUNTIME}/server`;
 
 type Loc = { sf: SourceFile; node: Node };
 type Disposal = { dispose: Dispose; optional: boolean };
@@ -124,7 +153,7 @@ type Lookup<T> = { node: Node; value?: T };
 const slash = (p: string) => p.replaceAll("\\", "/");
 
 function analyze(root: string, program: Program, checker: Checker, files: string[], componentFiles: string[]): Facts {
-  const facts: Facts = { providers: [], components: [], errors: [] };
+  const facts: Facts = { providers: [], components: [], servers: [], endpoints: [], errors: [] };
   const rel = (fileName: string) => slash(relative(root, fileName));
   const errorAt = (sf: SourceFile, at: number, message: string) => facts.errors.push({ file: rel(sf.fileName), at, message });
   const error = (loc: Loc, message: string) => errorAt(loc.sf, loc.node.getStart(loc.sf), message);
@@ -151,38 +180,66 @@ function analyze(root: string, program: Program, checker: Checker, files: string
   };
 
   // --- runtime decorators, by symbol identity with @source-crafter/xzor-runtime's exports ---
+  // `@source-crafter/xzor-runtime/server` adds the endpoint decorators and IServerApplication.
   const kinds = new Map<number, Kind>();
+  let appId: number | undefined;
+  let serverAppId: number | undefined;
+  let seenRuntime = false;
+  let seenServer = false;
   for (const sf of [...sources, ...componentSources]) {
-    const decl = sf.statements.find((s) => isImportDeclaration(s) && isStringLiteral(s.moduleSpecifier) && s.moduleSpecifier.text === RUNTIME);
-    if (!decl || !isImportDeclaration(decl)) continue;
-    const exports = checker.getSymbolAtLocation(decl.moduleSpecifier)?.getExports();
-    for (const kind of KINDS) {
-      const sym = exports?.get(kind as never);
-      if (sym) kinds.set(sym.id, kind);
+    for (const decl of sf.statements) {
+      if (!isImportDeclaration(decl) || !isStringLiteral(decl.moduleSpecifier)) continue;
+      const server = decl.moduleSpecifier.text === SERVER;
+      if (server ? seenServer : seenRuntime || decl.moduleSpecifier.text !== RUNTIME) continue;
+      const exports = checker.getSymbolAtLocation(decl.moduleSpecifier)?.getExports();
+      if (!exports) continue;
+      for (const kind of server ? SERVER_KINDS : KINDS) {
+        const sym = exports.get(kind as never);
+        if (sym) kinds.set(sym.id, kind);
+      }
+      if (server) {
+        serverAppId = exports.get("IServerApplication" as never)?.id;
+        seenServer = true;
+      } else {
+        appId = exports.get("IApplication" as never)?.id;
+        seenRuntime = true;
+      }
     }
-    if (kinds.size) break;
+    if (seenRuntime && seenServer) break;
   }
 
   type Deco = { kind: Kind; call: CallExpression; at: number };
-  type Candidate = { sf: SourceFile; cls: ClassDeclaration; calls: { call: CallExpression | undefined; at: number; callee: Lookup<Sym | undefined> }[] };
+  type Call = { call: CallExpression | undefined; at: number; callee: Lookup<Sym | undefined> };
+  type Candidate = { sf: SourceFile; cls: ClassDeclaration; calls: Call[]; members: { method: MethodDeclaration; calls: Call[] }[] };
   const candidates: Candidate[] = [];
   const callees: Lookup<Sym | undefined>[] = [];
   let firstDecorator: { sf: SourceFile; at: number } | undefined;
+  const decorators = (sf: SourceFile, node: { modifiers?: readonly Node[] }, out: Call[]) => {
+    for (const m of node.modifiers ?? []) {
+      if (!isDecorator(m)) continue;
+      const at = m.getStart(sf);
+      firstDecorator ??= { sf, at };
+      if (!kinds.size) continue;
+      const call = isCallExpression(m.expression) ? m.expression : undefined;
+      const callee = { node: (call ? call.expression : m.expression) as Node };
+      callees.push(callee);
+      out.push({ call, at, callee });
+    }
+    return out;
+  };
   for (const sf of sources) {
     for (const cls of sf.statements) {
       if (!isClassDeclaration(cls) || !cls.modifiers) continue;
-      const calls: Candidate["calls"] = [];
-      for (const m of cls.modifiers) {
-        if (!isDecorator(m)) continue;
-        const at = m.getStart(sf);
-        firstDecorator ??= { sf, at };
-        if (!kinds.size) continue;
-        const call = isCallExpression(m.expression) ? m.expression : undefined;
-        const callee = { node: (call ? call.expression : m.expression) as Node };
-        callees.push(callee);
-        calls.push({ call, at, callee });
+      const calls = decorators(sf, cls, []);
+      if (!calls.length) continue;
+      // Method decorators matter only on `@Endpoints` classes, known once the callees resolve.
+      const members: Candidate["members"] = [];
+      for (const m of cls.members) {
+        if (!isMethodDeclaration(m) || !m.modifiers) continue;
+        const mc = decorators(sf, m, []);
+        if (mc.length) members.push({ method: m, calls: mc });
       }
-      if (calls.length) candidates.push({ sf, cls, calls });
+      candidates.push({ sf, cls, calls, members });
     }
   }
   if (!kinds.size && firstDecorator) errorAt(firstDecorator.sf, firstDecorator.at, `cannot resolve ${RUNTIME}`);
@@ -205,9 +262,14 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     cls: ClassDeclaration;
     self: Lookup<Sym | undefined>;
     imports: { lookup: Lookup<Sym | undefined>; loc: Loc }[];
+    // `@Run` as written; the class's `implements` decide whether it is `mount` (browser) or `server`.
+    run?: { args: readonly Node[]; at: number; loc: Loc; component: Lookup<Sym | undefined> | undefined; implements: Lookup<Sym | undefined>[] };
     mount?: { component: Lookup<Sym | undefined>; target: string; at: number; loc: Loc };
+    server?: { component: Lookup<Sym | undefined> | undefined; at: number; loc: Loc };
     regs: RegPlan[];
   };
+  type MethodPlan = { method: MethodDeclaration; verb: Verb; pattern: string };
+  type EndpointPlan = { sf: SourceFile; cls: ClassDeclaration; self: Lookup<Sym | undefined>; prefix: string; methods: MethodPlan[] };
   const symLookups: Lookup<Sym | undefined>[] = [];
   const typeLookups: Lookup<Type | undefined>[] = [];
   const sym = (node: Node) => {
@@ -216,16 +278,41 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     return l;
   };
   const plans: ProviderPlan[] = [];
-  for (const { sf, cls, calls } of candidates) {
+  const endpointPlans: EndpointPlan[] = [];
+  for (const { sf, cls, calls, members } of candidates) {
     const decos: Deco[] = [];
+    let endpoints: Deco | undefined;
     for (const c of calls) {
       const kind = c.callee.value && kinds.get(c.callee.value.id);
       if (!kind) {
         if (!c.callee.value && isIdentifier(c.callee.node) && c.callee.node.text === "Mount") errorAt(sf, c.at, "@Mount was renamed to @Run");
         continue;
       }
-      if (c.call) decos.push({ kind, call: c.call, at: c.at });
-      else errorAt(sf, c.at, `@${kind} must be called`);
+      if (kind in VERBS) errorAt(sf, c.at, `@${kind} decorates a method of an @Endpoints class`);
+      else if (!c.call) errorAt(sf, c.at, `@${kind} must be called`);
+      else if (kind === "Endpoints") endpoints = { kind, call: c.call, at: c.at };
+      else decos.push({ kind, call: c.call, at: c.at });
+    }
+    const methods: MethodPlan[] = [];
+    for (const m of members) {
+      for (const c of m.calls) {
+        const kind = c.callee.value && kinds.get(c.callee.value.id);
+        if (!kind || !(kind in VERBS)) continue;
+        if (!endpoints) {
+          errorAt(sf, c.at, `@${kind} needs an @Endpoints class`);
+          continue;
+        }
+        const args = c.call?.arguments ?? [];
+        const [pattern] = args;
+        if (args.length > 1 || (pattern && !isStringLiteral(pattern))) errorAt(sf, c.at, `@${kind} expects a string literal pattern`);
+        else methods.push({ method: m.method, verb: VERBS[kind as MethodKind], pattern: pattern && isStringLiteral(pattern) ? pattern.text : "" });
+      }
+    }
+    if (endpoints) {
+      const [prefix] = endpoints.call.arguments;
+      if (!prefix || !isStringLiteral(prefix) || endpoints.call.arguments.length > 1) error({ sf, node: endpoints.call }, "@Endpoints expects a string literal prefix");
+      else if (!(cls.modifierFlags & ModifierFlags.Export)) errorAt(sf, endpoints.at, `${cls.name?.text ?? "an @Endpoints class"} must be exported`);
+      else endpointPlans.push({ sf, cls, self: sym(cls.name ?? cls), prefix: prefix.text, methods });
     }
     if (!decos.length) continue;
     const plan: ProviderPlan = { sf, cls, self: sym(cls.name ?? cls), imports: [], regs: [] };
@@ -235,10 +322,12 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       if (deco.kind === "Import") {
         for (const a of args) plan.imports.push({ lookup: sym(a), loc: { sf, node: a } });
       } else if (deco.kind === "Run") {
-        const [component, target] = args;
-        if (plan.mount) errorAt(sf, deco.at, "duplicate @Run");
-        else if (!component || !target || !isStringLiteral(target) || args.length > 2) error(loc, "@Run expects a component and a string literal target");
-        else plan.mount = { component: sym(component), target: target.text, at: deco.at, loc: { sf, node: component } };
+        if (plan.run) errorAt(sf, deco.at, "duplicate @Run");
+        else {
+          const implemented: Lookup<Sym | undefined>[] = [];
+          for (const h of cls.heritageClauses ?? []) if (h.token === SyntaxKind.ImplementsKeyword) for (const t of h.types) implemented.push(sym(t.expression));
+          plan.run = { args, at: deco.at, loc, component: args[0] && sym(args[0]), implements: implemented };
+        }
       } else if (deco.kind !== "ServiceProvider") {
         const [first, second] = args;
         const typeArg = deco.call.typeArguments?.[0];
@@ -282,11 +371,38 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     typeLookups.forEach((l, i) => (l.value = types[i]));
   }
 
+  // --- `@Run`: the form must match what the class implements ---
+  const serverDirs: string[] = [];
+  for (const p of plans) {
+    const run = p.run;
+    if (!run) continue;
+    const implemented = run.implements.map((l) => l.value?.id);
+    const [component, target] = run.args;
+    if (serverAppId !== undefined && implemented.includes(serverAppId)) {
+      if (run.args.length > 1) error(run.loc, '@Run(component, "target") is for an IApplication; an IServerApplication takes @Run(component) or @Run()');
+      else {
+        p.server = { component: run.component, at: run.at, loc: { sf: p.sf, node: component ?? run.loc.node } };
+        const file = rel(p.sf.fileName);
+        serverDirs.push(file.slice(0, Math.max(0, file.lastIndexOf("/"))));
+      }
+    } else if (component && target && isStringLiteral(target) && run.args.length === 2) {
+      p.mount = { component: run.component!, target: target.text, at: run.at, loc: { sf: p.sf, node: component } };
+    } else if (appId !== undefined && implemented.includes(appId) && run.args.length < 2) {
+      error(run.loc, '@Run(component) and @Run() are for an IServerApplication; an IApplication takes @Run(component, "target")');
+    } else error(run.loc, "@Run expects a component and a string literal target");
+  }
+  // Endpoints are the `@Endpoints` classes under a server app's folder.
+  const served = endpointPlans.filter((e) => {
+    const file = rel(e.sf.fileName);
+    return !/(^|\/)(node_modules|\.xzor|dist)\//.test(file) && serverDirs.some((d) => d === "" || file.startsWith(`${d}/`));
+  });
+
   // --- constructor signatures, one batched type request for every class ---
   const classes = new Map<number, Sym>();
   const isClass = (s: Sym | undefined): s is Sym => !!s && !!(s.flags & SymbolFlags.Class);
   for (const p of plans) for (const r of p.regs) if (isClass(r.impl?.value)) classes.set(r.impl.value.id, r.impl.value);
   for (const c of componentPlans) if (isClass(c.self.value)) classes.set(c.self.value.id, c.self.value);
+  for (const e of served) if (isClass(e.self.value)) classes.set(e.self.value.id, e.self.value);
   const ctors = new Map<number, Signature | undefined>();
   const classList = [...classes.values()];
   if (classList.length) {
@@ -449,6 +565,11 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       if (isClass(c)) provider.mount = { component: classRef(c, p.mount.loc), target: p.mount.target, at: p.mount.at };
       else error(p.mount.loc, "@Run expects a component class");
     }
+    if (p.server) {
+      const c = p.server.component?.value;
+      if (p.server.component && !isClass(c)) error(p.server.loc, "@Run expects a component class");
+      else facts.servers.push({ class: provider.class, file: provider.file, at: p.server.at, root: c ? classRef(c, p.server.loc) : null });
+    }
     for (const r of p.regs) {
       const lifetime = LIFETIMES[r.deco.kind as keyof typeof LIFETIMES];
       let type: Type | undefined;
@@ -533,6 +654,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     if (!isClass(self)) continue;
     facts.components.push({ class: classRef(self, { sf: c.sf, node: c.cls.name ?? c.cls }), injects: paramsOf(ctors.get(self.id)) });
   }
+  endpoints(served);
 
   const allParams = paramPlans.flatMap((p) => p.params);
   if (allParams.length) {
@@ -574,6 +696,88 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     }
   }
   return facts;
+
+  // Endpoint classes: the constructor joins the batched parameters; methods and their parameters take one batched type request.
+  function endpoints(plans: EndpointPlan[]) {
+    type Work = { method: EndpointMethod; decl: MethodDeclaration; sf: SourceFile };
+    const work: Work[] = [];
+    const nodes: Node[] = [];
+    for (const e of plans) {
+      const self = e.self.value;
+      if (!isClass(self)) continue;
+      const name = e.cls.name ?? e.cls;
+      const methods: EndpointMethod[] = [];
+      for (const m of e.methods) {
+        const path = joinPath(e.prefix, m.pattern);
+        const pathParams = new Set([...path.matchAll(/:([A-Za-z_$][\w$]*)/g)].map((x) => x[1]!));
+        const params: EndpointParam[] = m.method.parameters.map((p) => {
+          const text = isIdentifier(p.name) ? p.name.text : p.name.getText(e.sf);
+          const kind = text === "query" ? "query" : text === "body" ? "body" : pathParams.has(text) ? "path" : "other";
+          return { name: text, kind, type: "", optional: !!p.questionToken || !!p.initializer, conv: null, keys: null, at: p.name.getStart(e.sf) };
+        });
+        const method = { name: m.method.name.getText(e.sf), verb: m.verb, pattern: m.pattern, path, params, returnsPromise: false, at: m.method.name.getStart(e.sf) };
+        methods.push(method);
+        work.push({ method, decl: m.method, sf: e.sf });
+        nodes.push(m.method.name, ...m.method.parameters.map((p) => p.name));
+      }
+      const ctor = paramsOf(ctors.get(self.id));
+      facts.endpoints.push({ class: classRef(self, { sf: e.sf, node: name }), file: rel(e.sf.fileName), at: name.getStart(e.sf), prefix: e.prefix, ctor, methods });
+    }
+    if (!nodes.length) return;
+    const types = checker.getTypeAtLocation(nodes);
+    let i = 0;
+    const queries: { param: EndpointParam; type: Type; props: readonly Sym[] }[] = [];
+    for (const { method, decl, sf } of work) {
+      const fn = types[i++];
+      const sig = fn && checker.getSignaturesOfType(fn, SignatureKind.Call)[0];
+      const ret = sig && checker.getReturnTypeOfSignature(sig);
+      method.returnsPromise = !!ret && unwrapPromise(ret) !== undefined;
+      method.params.forEach((param, j) => {
+        let t = types[i++];
+        if (!t) {
+          error({ sf, node: decl.parameters[j]!.name }, `cannot resolve the type of parameter ${param.name}`);
+          return;
+        }
+        if (param.optional) t = checker.getNonNullableType(t) ?? t;
+        param.type = checker.typeToString(t);
+        if (param.kind === "path") param.conv = conv(t);
+        else if (param.kind === "query" && t.flags & TypeFlags.Object) queries.push({ param, type: t, props: checker.getPropertiesOfType(t) });
+      });
+    }
+    const props = queries.flatMap((q) => q.props);
+    if (!props.length) return;
+    const propTypes = checker.getTypeOfSymbol(props);
+    let k = 0;
+    for (const q of queries) {
+      q.param.keys = q.props.map((p) => {
+        const t = propTypes[k++];
+        return { name: p.name, optional: !!(p.flags & SymbolFlags.Optional), conv: t ? conv(t) : "string" };
+      });
+    }
+  }
+}
+
+// Prefix and pattern join on `/`, without a trailing slash (`"/api/posts"` + `":slug"`).
+function joinPath(prefix: string, pattern: string) {
+  const path = pattern ? `${prefix.replace(/\/+$/, "")}/${pattern.replace(/^\/+/, "")}` : prefix;
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
+// `number`, `boolean`, a string-literal union (its values), else `string`; `undefined` and `null` members are ignored.
+function conv(t: Type): Conv {
+  if (t.flags & TypeFlags.Boolean) return "boolean";
+  if (t.flags & TypeFlags.StringLiteral) return [String(t.value)];
+  if (t.flags & TypeFlags.NumberLike) return "number";
+  if (t.flags & TypeFlags.BooleanLike) return "boolean";
+  if (!(t.flags & TypeFlags.Union)) return "string";
+  const parts = (t.getTypes() ?? []).filter((p) => !(p.flags & (TypeFlags.Undefined | TypeFlags.Null)));
+  if (parts.length === 1) return conv(parts[0]!);
+  if (!parts.length) return "string";
+  if (parts.every((p) => p.flags & TypeFlags.BooleanLiteral)) return "boolean";
+  // Sorted: the checker orders union members by creation, which other files can change.
+  if (parts.every((p) => p.flags & TypeFlags.StringLiteral)) return parts.map((p) => String(p.value)).sort();
+  if (parts.every((p) => p.flags & TypeFlags.NumberLike)) return "number";
+  return "string";
 }
 
 const args = process.argv.slice(2);

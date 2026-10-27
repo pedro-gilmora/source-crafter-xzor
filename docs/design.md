@@ -261,7 +261,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - A class cannot reference itself in its own decorators, so a keyed factory is either a public static method of another class or an exported function. It must be exported because the generated code imports it.
 - A `.xzor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.xzor/main.ts`.
 - Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
-- `@Run` must be in the entry module (`--entry`, default `main.ts`).
+- `@Run` must be in the entry module (`--entry`, default `main.ts`; without `main.ts`, the one project `.ts` declaring `@Run(`, and ZDI07 when several do).
 - `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.xzor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
 - Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
 

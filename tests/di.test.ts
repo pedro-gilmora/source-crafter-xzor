@@ -266,7 +266,7 @@ function analyzeTemp(files: Record<string, string>, paths = true) {
   temps.push(dir);
   const runtime = join(import.meta.dir, "..", "runtime", "index.ts").replaceAll("\\", "/");
   const compilerOptions: any = { target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ESNext", "DOM"], strict: true, noEmit: true, skipLibCheck: true };
-  if (paths) compilerOptions.paths = { "@source-crafter/xzor-runtime": [runtime] };
+  if (paths) compilerOptions.paths = { "@source-crafter/xzor-runtime": [runtime], "@source-crafter/xzor-runtime/server": [runtime.replace(/index\.ts$/, "server.ts")] };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["**/*.ts"] }));
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
   const run = Bun.spawnSync(["bun", script, dir, ...Object.keys(files)]);
@@ -455,4 +455,141 @@ export class P {}
   expect(counts.service).toMatchObject({ text: "Map<string, number>", module: null, export: null });
   expect(names.service).toMatchObject({ module: null, export: null });
   expect(env.service).toMatchObject({ module: null, export: null });
+});
+
+// The server fixture: `server/app.ts` (`@Run(Shell)` on an IServerApplication), `server/api/posts.ts`, and an
+// `@Endpoints` class outside the app's folder (`other/stray.ts`).
+const serverRoot = join(import.meta.dir, "fixtures", "server");
+let serverFacts: any;
+function server() {
+  if (serverFacts) return serverFacts;
+  mkdirSync(join(serverRoot, ".xzor", "client"), { recursive: true });
+  writeFileSync(join(serverRoot, ".xzor", "client", "Shell.xzor.ts"), generated["App.xzor.ts"]!.replace("class App", "class Shell"));
+  const run = Bun.spawnSync(["bun", script, serverRoot, "server/app.ts", "server/api/posts.ts", "other/stray.ts"]);
+  expect(run.stderr.toString()).toBe("");
+  expect(run.exitCode).toBe(0);
+  return (serverFacts = JSON.parse(run.stdout.toString()));
+}
+
+test("reads the server application", () => {
+  const f = server();
+  expect(f.errors).toEqual([]);
+  const app = readFileSync(join(serverRoot, "server", "app.ts"), "utf8");
+  expect(f.servers).toEqual([
+    {
+      class: { id: "server/app.ts#App", text: "App", module: "server/app", export: "App" },
+      file: "server/app.ts",
+      at: app.indexOf("@Run(Shell)"),
+      root: { id: "client/Shell.xzor.ts#default", text: "Shell", module: "client/Shell.xzor", export: "default" },
+    },
+  ]);
+  // Still a DI application (registrations), but not a browser mount.
+  const p = f.providers.find((p: any) => p.class.text === "App");
+  expect(p.mount).toBeNull();
+  expect(p.registrations.map((r: any) => r.impl.text)).toEqual(["PostStore"]);
+});
+
+test("reads endpoints under the app's folder only", () => {
+  const f = server();
+  expect(f.endpoints.map((e: any) => e.class.text)).toEqual(["Posts"]);
+  const posts = f.endpoints[0];
+  const text = readFileSync(join(serverRoot, "server", "api", "posts.ts"), "utf8");
+  expect(posts.class).toEqual({ id: "server/api/posts.ts#Posts", text: "Posts", module: "server/api/posts", export: "Posts" });
+  expect([posts.file, posts.at, posts.prefix]).toEqual(["server/api/posts.ts", text.indexOf("Posts implements"), "/api/posts"]);
+  expect(posts.ctor.map((p: any) => [p.name, p.type.id])).toEqual([["store", "server/store.ts#PostStore"]]);
+  const methods = posts.methods.map((m: any) => [m.name, m.verb, m.pattern, m.path, m.returnsPromise, m.at]);
+  expect(methods).toEqual([
+    ["get", "GET", ":slug", "/api/posts/:slug", false, text.indexOf("get(slug")],
+    ["list", "GET", "", "/api/posts", false, text.indexOf("list(query")],
+    ["create", "POST", "", "/api/posts", true, text.indexOf("create(body")],
+  ]);
+  const [get, list, create] = posts.methods;
+  expect(get.params).toEqual([{ name: "slug", kind: "path", type: "string", optional: false, conv: "string", keys: null, at: text.indexOf("slug: string") }]);
+  expect(list.params).toEqual([
+    {
+      name: "query",
+      kind: "query",
+      type: "{ tag?: string | undefined; page?: number | undefined; }",
+      optional: false,
+      conv: null,
+      keys: [
+        { name: "tag", optional: true, conv: "string" },
+        { name: "page", optional: true, conv: "number" },
+      ],
+      at: text.indexOf("query: {"),
+    },
+  ]);
+  expect(create.params).toEqual([{ name: "body", kind: "body", type: "NewPost", optional: false, conv: null, keys: null, at: text.indexOf("body: NewPost") }]);
+});
+
+test("endpoint parameter kinds and conversions", () => {
+  const app = `import { Run } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+
+@Run()
+export class App implements IServerApplication {}
+`;
+  const api = `import { Endpoints, Delete, Patch, Put, Query } from "@source-crafter/xzor-runtime/server";
+
+@Endpoints("/api/:org/items/")
+export class Items {
+  @Put(":id")
+  put(org: string, id: number, flag: boolean, body: { a: 1 }): void {}
+
+  @Patch("/:mode")
+  patch(org: string, mode: "on" | "off", query?: { on?: boolean; kind?: "a" | "b"; n: number }): void {}
+
+  @Delete()
+  remove(org: string, extra: string): Promise<void> { return Promise.resolve(); }
+
+  @Query
+  find(org: string, query: string, body: unknown) {}
+}
+`;
+  const out = analyzeTemp({ "app.ts": app, "api.ts": api });
+  expect(out.errors).toEqual([]);
+  expect(out.servers[0].root).toBeNull();
+  const [put, patch, remove, find] = out.endpoints[0].methods;
+  expect([put.verb, put.path, patch.verb, patch.path, remove.verb, remove.pattern, remove.path, find.verb, find.path]).toEqual([
+    "PUT", "/api/:org/items/:id", "PATCH", "/api/:org/items/:mode", "DELETE", "", "/api/:org/items", "QUERY", "/api/:org/items",
+  ]);
+  const kinds = (m: any) => m.params.map((p: any) => [p.name, p.kind, p.conv]);
+  expect(kinds(put)).toEqual([["org", "path", "string"], ["id", "path", "number"], ["flag", "other", null], ["body", "body", null]]);
+  expect(kinds(patch)).toEqual([["org", "path", "string"], ["mode", "path", ["off", "on"]], ["query", "query", null]]);
+  expect(patch.params[2].optional).toBe(true);
+  expect(patch.params[2].keys).toEqual([
+    { name: "on", optional: true, conv: "boolean" },
+    { name: "kind", optional: true, conv: ["a", "b"] },
+    { name: "n", optional: false, conv: "number" },
+  ]);
+  expect(kinds(remove)).toEqual([["org", "path", "string"], ["extra", "other", null]]);
+  expect(remove.returnsPromise).toBe(true);
+  // A `query` that is not an object type has no keys (Task 3 reports it).
+  expect(find.params[1]).toMatchObject({ kind: "query", keys: null });
+  expect(find.returnsPromise).toBe(false);
+});
+
+test("@Run form must match what the class implements", () => {
+  const head = `import { Run, type IApplication } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+export class Shell {}
+
+`;
+  const analyze = (deco: string, iface: string) => analyzeTemp({ "main.ts": `${head}${deco}\nexport class A implements ${iface} {}\n` });
+  const messages = (deco: string, iface: string) => analyze(deco, iface).errors.map((e: any) => e.message);
+  const serverForm = '@Run(component, "target") is for an IApplication; an IServerApplication takes @Run(component) or @Run()';
+  const browserForm = '@Run(component) and @Run() are for an IServerApplication; an IApplication takes @Run(component, "target")';
+  expect(messages('@Run(Shell, "app")', "IServerApplication")).toEqual([serverForm]);
+  expect(messages("@Run(Shell)", "IApplication")).toEqual([browserForm]);
+  expect(messages("@Run()", "IApplication")).toEqual([browserForm]);
+  const browser = analyze('@Run(Shell, "app")', "IApplication");
+  expect([browser.errors, browser.servers, browser.providers[0].mount.target]).toEqual([[], [], "app"]);
+  const api = analyze("@Run()", "IServerApplication");
+  expect([api.errors, api.providers[0].mount, api.servers[0].root]).toEqual([[], null, null]);
+  // Implementing neither keeps the browser form (as before).
+  expect(analyzeTemp({ "main.ts": `${head}@Run(Shell)\nexport class A {}\n` }).errors.map((e: any) => e.message)).toEqual(["@Run expects a component and a string literal target"]);
+});
+
+test("a browser app has no servers or endpoints", () => {
+  expect([facts.servers, facts.endpoints]).toEqual([[], []]);
 });

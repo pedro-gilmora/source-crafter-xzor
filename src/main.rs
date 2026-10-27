@@ -10,7 +10,7 @@ xzor - Blazor-like component compiler for TypeScript
 USAGE:
   xzor compile [PATH...]      Generate .xzor/X.xzor.ts (and .map) for each .xzor in a TypeScript project (default: .)
   xzor build [DIR] [OPTIONS]  Compile, type-check and bundle DIR to JavaScript (default: .)
-      --entry <FILE>         Entry module relative to DIR (default: main.ts)
+      --entry <FILE>         Entry module relative to DIR (default: main.ts, else the one .ts with @Run)
       --checker <CMD>        Type checker command; {dir} is replaced with DIR
                              (default: bun x tsc --noEmit -p {dir})
       --no-check             Skip type checking
@@ -68,13 +68,13 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         "build" => {
             let mut dir = PathBuf::from(".");
-            let mut entry = "main.ts".to_string();
+            let mut entry = None;
             let mut checker = None;
             let (mut check, mut bundle, mut watch, mut timings, mut hot, mut minify) = (true, true, false, false, false, false);
             let mut it = rest.iter();
             while let Some(arg) = it.next() {
                 match arg.as_str() {
-                    "--entry" => entry = it.next().ok_or("--entry needs a value")?.clone(),
+                    "--entry" => entry = Some(it.next().ok_or("--entry needs a value")?.clone()),
                     "--checker" => checker = Some(it.next().ok_or("--checker needs a value")?.clone()),
                     "--no-check" => check = false,
                     "--no-bundle" => bundle = false,
@@ -89,6 +89,10 @@ fn run(args: &[String]) -> Result<(), String> {
             if hot && !watch {
                 return Err("--hot needs --watch".to_string());
             }
+            let entry = match entry {
+                Some(e) => e,
+                None => build::default_entry(&dir)?,
+            };
             let opts = Options { dir, entry, checker, check, bundle, timings, hot, watch, minify };
             if watch {
                 return watch_loop(&opts);

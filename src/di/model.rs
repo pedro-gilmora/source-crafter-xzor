@@ -98,10 +98,98 @@ pub struct FactError {
     pub message: String,
 }
 
+/// `@Run(Shell)` / `@Run()` on an `IServerApplication`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Server {
+    pub class: TypeRef,
+    pub file: String,
+    /// UTF-16 code-unit offset of the `@` of `@Run`.
+    pub at: usize,
+    /// The views' root component.
+    pub root: Option<TypeRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verb {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+    Query,
+}
+
+/// From the parameter's name: a `:param` of the path, `query`, `body`, else `Other` (not bindable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    Path,
+    Query,
+    Body,
+    Other,
+}
+
+/// How a path or query string is converted.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Conv {
+    String,
+    Number,
+    Boolean,
+    /// A string-literal union (sorted values).
+    Literals(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueryKey {
+    pub name: String,
+    pub optional: bool,
+    pub conv: Conv,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EndpointParam {
+    pub name: String,
+    pub kind: ParamKind,
+    /// The checker's text for the type (without `undefined` when optional).
+    pub ty: String,
+    pub optional: bool,
+    /// Set for `Path` parameters.
+    pub conv: Option<Conv>,
+    /// Set for a `Query` parameter of object type.
+    pub keys: Option<Vec<QueryKey>>,
+    pub at: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EndpointMethod {
+    pub name: String,
+    pub verb: Verb,
+    /// As written; `""` for a bare decorator.
+    pub pattern: String,
+    /// Prefix and pattern joined.
+    pub path: String,
+    pub params: Vec<EndpointParam>,
+    pub returns_promise: bool,
+    /// UTF-16 code-unit offset of the method name.
+    pub at: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Endpoint {
+    pub class: TypeRef,
+    pub file: String,
+    /// UTF-16 code-unit offset of the class name.
+    pub at: usize,
+    pub prefix: String,
+    pub ctor: Vec<Param>,
+    pub methods: Vec<EndpointMethod>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Facts {
     pub providers: Vec<Provider>,
     pub components: Vec<Component>,
+    pub servers: Vec<Server>,
+    pub endpoints: Vec<Endpoint>,
     pub errors: Vec<FactError>,
 }
 
@@ -111,6 +199,8 @@ impl Facts {
         Ok(Facts {
             providers: list(&root, "providers", "", provider)?,
             components: list(&root, "components", "", component)?,
+            servers: list(&root, "servers", "", server)?,
+            endpoints: list(&root, "endpoints", "", endpoint)?,
             errors: list(&root, "errors", "", |j, p| {
                 Ok(FactError { file: string(j, "file", p)?, at: number(j, "at", p)?, message: string(j, "message", p)? })
             })?,
@@ -240,11 +330,90 @@ fn component(j: &Json, path: &str) -> Result<Component, String> {
     Ok(Component { class: sub_type_ref(j, "class", path)?, injects: list(j, "injects", path, param)? })
 }
 
+fn server(j: &Json, path: &str) -> Result<Server, String> {
+    let root = field(j, "root", path)?;
+    Ok(Server {
+        class: sub_type_ref(j, "class", path)?,
+        file: string(j, "file", path)?,
+        at: number(j, "at", path)?,
+        root: if root.is_null() { None } else { Some(type_ref(root, &join(path, "root"))?) },
+    })
+}
+
+fn conv(j: &Json, path: &str) -> Result<Conv, String> {
+    if let Some(items) = j.as_array() {
+        return items.iter().map(|v| v.as_str().map(str::to_string).ok_or_else(|| format!("di facts: missing {path}"))).collect::<Result<_, _>>().map(Conv::Literals);
+    }
+    match j.as_str() {
+        Some("string") => Ok(Conv::String),
+        Some("number") => Ok(Conv::Number),
+        Some("boolean") => Ok(Conv::Boolean),
+        _ => Err(format!("di facts: unknown {path}")),
+    }
+}
+
+fn endpoint_param(j: &Json, path: &str) -> Result<EndpointParam, String> {
+    let kind = match string(j, "kind", path)?.as_str() {
+        "path" => ParamKind::Path,
+        "query" => ParamKind::Query,
+        "body" => ParamKind::Body,
+        "other" => ParamKind::Other,
+        other => return Err(format!("di facts: unknown {path}.kind '{other}'")),
+    };
+    let c = field(j, "conv", path)?;
+    let keys = field(j, "keys", path)?;
+    Ok(EndpointParam {
+        name: string(j, "name", path)?,
+        kind,
+        ty: string(j, "type", path)?,
+        optional: boolean(j, "optional", path)?,
+        conv: if c.is_null() { None } else { Some(conv(c, &join(path, "conv"))?) },
+        keys: if keys.is_null() {
+            None
+        } else {
+            Some(list(j, "keys", path, |k, p| Ok(QueryKey { name: string(k, "name", p)?, optional: boolean(k, "optional", p)?, conv: conv(field(k, "conv", p)?, &join(p, "conv"))? }))?)
+        },
+        at: number(j, "at", path)?,
+    })
+}
+
+fn endpoint_method(j: &Json, path: &str) -> Result<EndpointMethod, String> {
+    let verb = match string(j, "verb", path)?.as_str() {
+        "GET" => Verb::Get,
+        "POST" => Verb::Post,
+        "PUT" => Verb::Put,
+        "PATCH" => Verb::Patch,
+        "DELETE" => Verb::Delete,
+        "QUERY" => Verb::Query,
+        other => return Err(format!("di facts: unknown {path}.verb '{other}'")),
+    };
+    Ok(EndpointMethod {
+        name: string(j, "name", path)?,
+        verb,
+        pattern: string(j, "pattern", path)?,
+        path: string(j, "path", path)?,
+        params: list(j, "params", path, endpoint_param)?,
+        returns_promise: boolean(j, "returnsPromise", path)?,
+        at: number(j, "at", path)?,
+    })
+}
+
+fn endpoint(j: &Json, path: &str) -> Result<Endpoint, String> {
+    Ok(Endpoint {
+        class: sub_type_ref(j, "class", path)?,
+        file: string(j, "file", path)?,
+        at: number(j, "at", path)?,
+        prefix: string(j, "prefix", path)?,
+        ctor: list(j, "ctor", path, param)?,
+        methods: list(j, "methods", path, endpoint_method)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const FACTS: &str = r##"{"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.xzor.ts#default","text":"App","module":"App.xzor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.xzor.ts#default","text":"Counter","module":"Counter.xzor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".xzor/Counter.xzor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
+    const FACTS: &str = r##"{"servers":[],"endpoints":[],"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.xzor.ts#default","text":"App","module":"App.xzor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.xzor.ts#default","text":"Counter","module":"Counter.xzor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".xzor/Counter.xzor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
 
     fn t(module: &str, name: &str) -> TypeRef {
         TypeRef { id: format!("{module}.ts#{name}"), text: name.into(), module: Some(module.into()), export: Some(name.into()) }
@@ -308,6 +477,39 @@ mod tests {
         assert_eq!(c.injects, vec![db]);
 
         assert_eq!(facts.errors, vec![FactError { file: "services/hidden.ts".into(), at: 112, message: "Hidden must be exported to be injected".into() }]);
+    }
+
+    const SERVER_FACTS: &str = r##"{"providers":[],"components":[],"errors":[],"servers":[{"class":{"id":"server/app.ts#App","text":"App","module":"server/app","export":"App"},"file":"server/app.ts","at":180,"root":{"id":"client/Shell.xzor.ts#default","text":"Shell","module":"client/Shell.xzor","export":"default"}}],"endpoints":[{"class":{"id":"server/api/posts.ts#Posts","text":"Posts","module":"server/api/posts","export":"Posts"},"file":"server/api/posts.ts","at":210,"prefix":"/api/posts","ctor":[],"methods":[{"name":"get","verb":"GET","pattern":":slug","path":"/api/posts/:slug","returnsPromise":false,"at":300,"params":[{"name":"slug","kind":"path","type":"string","optional":false,"conv":"string","keys":null,"at":304},{"name":"query","kind":"query","type":"{ tag?: string; }","optional":true,"conv":null,"keys":[{"name":"tag","optional":true,"conv":["a","b"]}],"at":320},{"name":"x","kind":"other","type":"boolean","optional":false,"conv":null,"keys":null,"at":340}]},{"name":"create","verb":"QUERY","pattern":"","path":"/api/posts","returnsPromise":true,"at":400,"params":[{"name":"body","kind":"body","type":"NewPost","optional":false,"conv":null,"keys":null,"at":410}]}]}]}"##;
+
+    #[test]
+    fn parses_servers_and_endpoints() {
+        let f = Facts::from_json(SERVER_FACTS).unwrap();
+        let s = &f.servers[0];
+        assert_eq!((s.class.clone(), s.file.as_str(), s.at), (t("server/app", "App"), "server/app.ts", 180));
+        assert_eq!(s.root.as_ref().map(|r| r.id.as_str()), Some("client/Shell.xzor.ts#default"));
+        let e = &f.endpoints[0];
+        assert_eq!((e.class.clone(), e.file.as_str(), e.at, e.prefix.as_str(), e.ctor.len()), (t("server/api/posts", "Posts"), "server/api/posts.ts", 210, "/api/posts", 0));
+        let [get, create] = &e.methods[..] else { panic!("{:?}", e.methods) };
+        assert_eq!((get.name.as_str(), get.verb, get.pattern.as_str(), get.path.as_str(), get.returns_promise, get.at), ("get", Verb::Get, ":slug", "/api/posts/:slug", false, 300));
+        assert_eq!((create.verb, create.pattern.as_str(), create.returns_promise), (Verb::Query, "", true));
+        assert_eq!(
+            get.params,
+            vec![
+                EndpointParam { name: "slug".into(), kind: ParamKind::Path, ty: "string".into(), optional: false, conv: Some(Conv::String), keys: None, at: 304 },
+                EndpointParam {
+                    name: "query".into(),
+                    kind: ParamKind::Query,
+                    ty: "{ tag?: string; }".into(),
+                    optional: true,
+                    conv: None,
+                    keys: Some(vec![QueryKey { name: "tag".into(), optional: true, conv: Conv::Literals(vec!["a".into(), "b".into()]) }]),
+                    at: 320,
+                },
+                EndpointParam { name: "x".into(), kind: ParamKind::Other, ty: "boolean".into(), optional: false, conv: None, keys: None, at: 340 },
+            ]
+        );
+        assert_eq!(create.params[0].kind, ParamKind::Body);
+        assert_eq!(Facts::from_json(&SERVER_FACTS.replace(r#""verb":"QUERY""#, r#""verb":"HEAD""#)), Err("di facts: unknown endpoints[0].methods[1].verb 'HEAD'".into()));
     }
 
     #[test]
