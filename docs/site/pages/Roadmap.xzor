@@ -37,6 +37,7 @@
       tone: "warning",
       items: [
         ["HTML completion", "Element and attribute names in markup, next to the component ones."],
+        ["Page shells (PSR)", "Preloaded shell rendering: one index.html per @page that preloads exactly that page's chunks, served by Bun.serve with no server rendering. In a first test it painted pages 20-39% sooner than a single shell."],
       ],
     },
     {

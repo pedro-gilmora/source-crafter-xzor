@@ -105,3 +105,7 @@
 - [ ] **Step 2: Run** — expect FAIL. **Step 3: Implement.** **Step 4: Run** `bun test` — expect PASS.
 - [ ] **Step 5: End to end** (browser, `examples/counter` under `xzor dev`): increment the counter, type in an input, edit a `.xzor`'s markup text → page shows the new text, the counter value and the typed text are kept, no navigation happened (`performance.navigation`/a window marker survives); edit a `.ts` → full reload. Record what was checked in the report.
 - [ ] **Step 6: Commit** `feat: xzor dev hot-patches edited components`.
+
+## Later changes
+
+- 2026-10-26: with a server entry, `xzor dev` runs the generated server in dev mode instead of the static file server, and restarts it on server-side `.ts` changes; `.xzor` edits keep patching in place. See [the @Run, @Routes, PSR and endpoints spec](../superpowers/specs/2026-10-26-run-routes-psr-design.md).

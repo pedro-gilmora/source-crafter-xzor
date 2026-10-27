@@ -137,3 +137,7 @@ Each part ships working and tested on its own.
 ## Left to the builder
 
 Internal runtime shapes (section descriptors, provider fields), exact generated code for matchers and `href`, the per-entry bundling mechanism, error message texts other than the one fixed above, test file layout.
+
+## Later changes
+
+- 2026-10-26: `@ClientRoutes`/`@ServerRoutes` become one `@Routes(route) { ... }`; the engine moves to the application, `@Run(App, "app", { navigation: "client" | "server" })`. Sections, matching and the other rules hold. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).

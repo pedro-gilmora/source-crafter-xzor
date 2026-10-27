@@ -398,4 +398,5 @@ The documentation site's Roadmap page is the public view; this is the short list
 
 1. Publish xzor-ui to npm as `@source-crafter/xzor-ui`, keeping the import paths apps use today.
 2. HTML element and attribute completion in markup.
-3. Later: a native rendering target for the same components.
+3. Page shells (preloaded shell rendering, PSR): `xzor build --minify` writes one `index.html` per `@page` that preloads exactly that page's chunks, plus a route manifest for `Bun.serve`. Proposal and measurements: [backlog-page-shells](plans/backlog-page-shells.md).
+4. Later: a native rendering target for the same components.

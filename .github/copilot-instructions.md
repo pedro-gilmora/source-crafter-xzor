@@ -7,6 +7,7 @@ A Blazor/Razor-style component compiler written in Rust that targets TypeScript.
 Before any task, check whether a skill applies and follow it. Use superpowers, ponytail, and a performance and memory sub-agent (`.github/agents/perf.agent.md`) to address every phase: design, plan, implementation and review each get a perf pass with measured numbers, and its regressions are fixed before moving on. Skills by task:
 
 - New feature or behavior change: `brainstorming`, then `writing-plans` (plans go in `docs/plans/`), then `executing-plans` or `subagent-driven-development`.
+- Every spec or design, however small: `spec-rehydration`, before it is shown for approval (a `## Touches` section pulling the constraints of every feature it touches, from `.github/skills/spec-rehydration/features.md`) and after approval (a dated `## Later changes` line in each touched feature's spec).
 - All code: `test-driven-development` (write a failing test first, then make it pass).
 - Bugs: `systematic-debugging`.
 - Before claiming done: `verification-before-completion`, which means running the commands below and reading their output.

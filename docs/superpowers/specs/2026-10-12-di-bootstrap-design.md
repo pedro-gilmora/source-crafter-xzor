@@ -233,3 +233,7 @@ export default class Counter extends ComponentBase {
 - `GetRequiredService<T>()`-style runtime lookup.
 - JSON settings and environment names.
 - Locks.
+
+## Later changes
+
+- 2026-10-26: `@Mount(App, "app")` becomes `@Run(App, "app", options?)`; a second application kind, the server (`@Run()` / `@Run<Application>()` on an `IServerApplication`), with `@Endpoints` classes, a per-request scope holding `Request` for the classes that need it, and generated HTTP clients registered under `Remote<IContract>` in browser apps. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).

@@ -35,3 +35,7 @@ Codegen emits `Mapping { src, gen, len }` segments for every run of characters c
 ## Non-goals (v1)
 
 Rename, references across files, formatting, semantic tokens, and HTML element or attribute completion.
+
+## Later changes
+
+- 2026-10-26: directive completion offers `@Routes(route)` instead of `@ClientRoutes`/`@ServerRoutes`; hover on an `@inject` of a contract shows `Remote<IContract>`. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).
