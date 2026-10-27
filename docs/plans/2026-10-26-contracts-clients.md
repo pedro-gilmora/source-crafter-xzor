@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. After each task's review, dispatch `.github/skills/subagent-driven-development/perf-memory-reviewer-prompt.md`; its blocking findings enter the fix loop like the task reviewer's.
 
-**Goal:** Interfaces implemented by `@Endpoints` classes become contracts: the build generates an HTTP client per contract, registers it in browser apps under `Remote<IContract>`, and `@inject IContract` in a `.xzor` gets that type.
+**Goal:** Interfaces implemented by `@Endpoints` classes become contracts: the build generates an HTTP client per contract, registers it in the browser container under `Remote<IContract>`, and `@inject IContract` in a `.xzor` gets that type.
 
-**Architecture:** `Remote<T>` is a type in the runtime's main export. The DI analyzer records which interfaces endpoint classes implement, emits `.xzor/clients/<IContract>.ts`, and registers the client in each browser app that injects it. The compiler receives the contract names and types `@inject` fields of contracts as `Remote<...>`.
+**Architecture:** `Remote<T>` is a type in the runtime's main export. The DI analyzer records which interfaces endpoint classes implement, emits `.xzor/clients/<IContract>.ts`, and registers the client in the browser container (`.xzor/client.ts`) when a view reaches it. The compiler receives the contract names and types `@inject` fields of contracts as `Remote<...>`.
 
 **Tech Stack:** TypeScript 7 analyzer session, Rust codegen, Bun 1.4.
 
@@ -16,8 +16,8 @@
 
 - `Remote<T>`: each method's result `R` becomes `Promise<Awaited<R>>`; non-method members `never`; parameter names, optionality and doc comments carried over.
 - Client methods keep the contract's parameter order: path params into the path (`encodeURIComponent`), `query` into the search string (only defined keys), `body` as JSON with `content-type: application/json`; reads `Response.json()`; 404 resolves `undefined`; any other non-2xx throws `HttpError(status, text)`.
-- In `.xzor`: `@inject IContract name` generates `readonly name: Remote<IContract>`. In browser `.ts`: a parameter typed `IContract` is a build error suggesting `Remote<IContract>`. On the server, `IContract` resolves to the endpoint instance.
-- Only clients a browser app injects are bundled.
+- In `.xzor`: `@inject IContract name` generates `readonly name: Remote<IContract>`. In browser-reached `.ts` services: a parameter typed `IContract` is a build error suggesting `Remote<IContract>`. On the server, `IContract` resolves to the endpoint instance.
+- Only clients a view reaches are bundled.
 
 ## Review Focus
 
@@ -25,7 +25,7 @@
 - A `query` with an optional key left `undefined`: not sent as `"undefined"`: test in Task 2.
 - A path param containing `/` or spaces: encoded and decoded back to the same string on the server: test in Task 4.
 - Two endpoint classes implementing one contract: build error naming both: test in Task 1.
-- A contract injected in a browser app with no server in the project: build error "no @Endpoints class implements IPosts": test in Task 1.
+- A contract a view injects with no `@Endpoints` class implementing it: build error "no @Endpoints class implements IPosts": test in Task 1.
 
 ---
 
@@ -46,7 +46,7 @@
 **Files:**
 - Modify: `src/di/emit.rs` (write `.xzor/clients/<IContract>.ts`; browser entry registers it), `runtime/index.ts` (`export function call(method: string, path: string, query: Record<string, unknown> | undefined, body: unknown): Promise<unknown>`), `tests/di.test.ts`, `runtime/index.test.ts`
 
-- [ ] **Step 1: Write failing tests**: `call` against a stubbed `fetch`: query skips `undefined`, body JSON, 404 resolves `undefined`, 204 resolves `undefined`, 500 rejects with `HttpError` status 500; generated client for `IPosts` has `get(slug)` calling `call("GET", "/api/posts/" + encodeURIComponent(slug), undefined, undefined)`; a browser app injecting `Remote<IPosts>` gets it registered; a browser `.ts` service taking `IPosts` reports `IPosts is a contract: use Remote<IPosts> in browser code`.
+- [ ] **Step 1: Write failing tests**: `call` against a stubbed `fetch`: query skips `undefined`, body JSON, 404 resolves `undefined`, 204 resolves `undefined`, 500 rejects with `HttpError` status 500; generated client for `IPosts` has `get(slug)` calling `call("GET", "/api/posts/" + encodeURIComponent(slug), undefined, undefined)`; a view injecting `IPosts` gets the client registered in `.xzor/client.ts` under `Remote<IPosts>`; a browser-reached `.ts` service taking `IPosts` reports `IPosts is a contract: use Remote<IPosts> in browser code`.
 - [ ] **Step 2: Run**, expect FAIL. **Step 3: Implement.** **Step 4: Run**, expect PASS.
 - [ ] **Step 5: Commit** `feat(di): generated HTTP clients for contracts`.
 

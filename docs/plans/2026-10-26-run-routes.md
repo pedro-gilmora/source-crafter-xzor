@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. After each task's review, dispatch `.github/skills/subagent-driven-development/perf-memory-reviewer-prompt.md`; its blocking findings enter the fix loop like the task reviewer's.
 
-**Goal:** Rename `@Mount` to `@Run` and `@ClientRoutes`/`@ServerRoutes` to `@Routes`, moving the navigation engine from the routes block to `@Run(App, "app", { navigation })`.
+**Goal:** Rename `@Mount` to `@Run` (`@Run(Shell, "app")` on an `IApplication`) and `@ClientRoutes`/`@ServerRoutes` to `@Routes`, removing the full-page-load navigation engine.
 
-**Architecture:** The parser drops the engine from `Node::Routes`; codegen emits `addRoutes(table, sections)`; the runtime reads a module-level navigation mode set by `mount()`; the DI analyzer reads `@Run` and its literal options and passes the mode to the generated `mount()` call; the build rejects regex sections under server navigation.
+**Architecture:** The parser drops the engine from `Node::Routes`; codegen emits `addRoutes(table, sections)`; the runtime keeps only History API navigation; the DI analyzer reads `@Run` exactly as it read `@Mount`.
 
 **Tech Stack:** Rust (zero deps), TypeScript 7, Bun 1.4, happy-dom.
 
@@ -14,7 +14,7 @@
 
 - No aliases: `@Mount`, `@ClientRoutes`, `@ServerRoutes` are errors naming the replacement.
 - Zero Rust dependencies; generated code allocates no more than hand-written code.
-- `@Run` options must be an object literal; the only key this plan reads is `navigation: "client" | "server"` (default `"client"`).
+- This plan covers the browser form `@Run(Shell, "app")` on an `IApplication` only; the server forms come with the server plan.
 - Docs ship in the same commit as the surface change (README, `docs/design.md`, `docs/site/pages`, `npm/xzor/skills/xzor/SKILL.md`).
 - Commands: `cargo test`, `bun test ./runtime ./tests`, `bun run test:grammar`, `bun x tsc -p jsconfig.json --noEmit`, `bun run examples`, `bun run docs`.
 
@@ -22,8 +22,8 @@
 
 - `@Routes` used as an expression (`@Routes(x)` with no `{` after `)`) still renders as an expression: test in Task 1.
 - A component named `Routes` (`<Routes />`, `@import Routes from "./Routes.xzor"`) keeps working next to an `@Routes(route) { }` block: test in Task 1.
-- `@Run(App, "app", opts)` where `opts` is a variable: error "@Run options must be an object literal": test in Task 3.
-- Server navigation with a regex section: one error at the section, naming the `@Run` file: test in Task 3.
+- `@Run(App, "app")` with extra arguments, or a non-literal target: error "@Run expects a component and a string literal target" (as `@Mount` did): test in Task 3.
+- A routes block with a regex section still matches in the browser after the engine removal: test in Task 2b.
 - Old names in a `.ts` entry (`@Mount(`) and a `.xzor` (`@ClientRoutes(`): errors with the replacement, not a generic parse error: tests in Tasks 1 and 3.
 
 ---
@@ -63,34 +63,47 @@
 - [ ] **Step 4: Run** `bun test ./runtime`, expect PASS.
 - [ ] **Step 5: Commit** `feat(runtime): navigation mode comes from mount; Run decorator`.
 
-### Task 3: DI analyzer and build: `@Run`, options, regex check
+### Task 2b: Remove full-page-load navigation (added 2026-10-26 after the design revision)
+
+Task 2 shipped a `serverNavigation` flag that the revised spec drops: navigation is always the History API.
 
 **Files:**
-- Modify: `src/di.ts` (decorator kinds, `deco.kind === "Mount"` ~234), `src/di/model.rs` (`Mount`), `src/di/graph.rs` (ZDI07 ~89, ZDI04 wording), `src/di/emit.rs` (~405), `src/build.rs` (`declares_provider` ~647, after DI: regex check), `tests/di.test.ts`, `tests/fixtures/di/main.ts`, `tests/fixtures/lsp-di/main.ts`, `tests/bundle-strip.test.ts`, `tests/cli.rs`
+- Modify: `runtime/index.ts` (`serverNavigation`, `mount`, `addRoutes` router init, `Route.navigate`, `Run`, the router's `nav` field and the "matches once on load" branch), `runtime/router.test.ts`, `src/routes.rs` (`RoutesBlockInfo.regex`, `routes_differ`), `src/codegen.rs` (where `regex` is filled)
 
 **Interfaces:**
-- Consumes: `RoutesBlockInfo.regex` (Task 1), `mount(..., navigation?)` (Task 2).
-- Produces: model `Mount { component, target, at, navigation: Option<String> }`; generated `mount(App, "app", new Application$())` unchanged for client, `mount(App, "app", new Application$(), "server")` for server.
+- Produces: `mount<C>(type: Ctor<C>, target: string | Element, app?: IApplication): C` (as before this plan); `export const Run = (_component: Function, _target: string): ClassDecorator => noop;`; `addRoutes(table, sections)` always subscribes to navigation; `RoutesBlockInfo { at, sections }`.
+
+- [ ] **Step 1: Write failing test** in `runtime/router.test.ts`: `a regex section matches in the browser` (a `@/^\/docs\/(?<area>\w+)/(page)` section renders with `route.match.area` after a client navigation). Delete the server-navigation tests Task 2 added.
+- [ ] **Step 2: Run** `bun test ./runtime/router.test.ts`; the new test may already pass (the client path is unchanged); record the output.
+- [ ] **Step 3: Implement**: remove `serverNavigation`, the 4th `mount` parameter, the router's no-navigation branch (the router always has `nav`), and the `location.href` fallback in `Route.navigate` if nothing else sets a route without navigation (check `grep -n "nav" runtime/index.ts`); remove `RoutesBlockInfo.regex` and its `routes_differ` comparison; the parser's rename error (Task 1) becomes `"@ClientRoutes was renamed to @Routes"` (and `@ServerRoutes`), without the navigation hint, with its test.
+- [ ] **Step 4: Run** `bun test ./runtime`, `cargo test`, `bun x tsc -p jsconfig.json --noEmit`, expect PASS (except the example-reading test left for Task 5).
+- [ ] **Step 5: Commit** `refactor: navigation is always in the browser; drop the full-page-load engine`.
+
+### Task 3: DI analyzer: `@Run` replaces `@Mount`
+
+**Files:**
+- Modify: `src/di.ts` (decorator kinds, `deco.kind === "Mount"` ~234), `src/di/graph.rs` (ZDI07 ~89, ZDI04 wording), `src/build.rs` (`declares_provider` ~647), `tests/di.test.ts`, `tests/fixtures/di/main.ts`, `tests/fixtures/lsp-di/main.ts`, `tests/bundle-strip.test.ts`, `tests/cli.rs`
+
+**Interfaces:**
+- Consumes: `mount(type, target, app?)` (Task 2b).
+- Produces: the model's `Mount` and the generated `mount(App, "app", new Application$())` unchanged; only the decorator name changes.
 
 - [ ] **Step 1: Write failing tests** in `tests/di.test.ts`:
   - `@Run(App, "app")` generates the same entry `@Mount` did.
-  - `@Run(App, "app", { navigation: "server" })` generates `mount(App, "app", new Application$(), "server");`.
-  - `@Run(App, "app", opts)` reports `@Run options must be an object literal` at `opts`.
+  - `@Run(App, "app", 1)` and `@Run(App, target)` report `@Run expects a component and a string literal target`.
   - `@Mount(App, "app")` reports `@Mount was renamed to @Run`.
   - two `@Run` classes report ZDI07 `@Run is declared on more than one class: A, B`.
 - [ ] **Step 2: Run** `bun test ./tests/di.test.ts`, expect FAIL.
-- [ ] **Step 3: Implement** in `src/di.ts`, `model.rs`, `emit.rs`, `graph.rs`; `declares_provider` matches `@ServiceProvider(`, `@Run(` and `@Mount(` (so the rename error is reported).
-- [ ] **Step 4: Write failing test** in `tests/routing.test.ts`: a project with `@Run(App, "app", { navigation: "server" })` and `@Routes(r) { @/x/(page) { <p/> } }` fails `xzor build` with `Bun.serve routes don't support regex; use a pattern` at the regex section's line in the `.xzor`.
-- [ ] **Step 5: Implement** the check in `src/build.rs` after DI: when the entry's mount has `navigation == Some("server")` and a unit's `RoutesBlockInfo.regex` is `Some(at)`, report at that unit and offset.
-- [ ] **Step 6: Run** `cargo test` and `bun test ./runtime ./tests`, expect PASS except example/doc builds (Task 5).
-- [ ] **Step 7: Commit** `feat(di): @Run replaces @Mount; navigation option; server navigation rejects regex sections`.
+- [ ] **Step 3: Implement** in `src/di.ts` and `graph.rs`; `declares_provider` matches `@ServiceProvider(`, `@Run(` and `@Mount(` (so the rename error is reported).
+- [ ] **Step 4: Run** `cargo test` and `bun test ./runtime ./tests`, expect PASS except example/doc builds (Task 5).
+- [ ] **Step 5: Commit** `feat(di): @Run replaces @Mount`.
 
 ### Task 4: Editors
 
 **Files:**
 - Modify: `src/lsp/features.rs` (~463, test `routes_block_directives_complete` ~847), `editors/vscode/syntaxes/xzor.tmLanguage.json` (~203), `editors/vscode/test/gen.ts` (~118-133), then regenerate `editors/vscode/test/syntax.test.xzor` via `bun editors/vscode/test/gen.ts`
 
-- [ ] **Step 1: Write failing test**: `routes_block_directives_complete` expects one item, label `Routes`, insert `Routes(${1:route}) {\n\t$0\n}`, detail `Routes block (navigation is set on @Run)`.
+- [ ] **Step 1: Write failing test**: `routes_block_directives_complete` expects one item, label `Routes`, insert `Routes(${1:route}) {\n\t$0\n}`, detail `Routes block`.
 - [ ] **Step 2: Run** `cargo test routes_block_directives_complete`, expect FAIL.
 - [ ] **Step 3: Implement** the snippet; grammar `begin` becomes `(?<![[:alnum:]])(@)(Routes)[ \\t]*(?=\\()` and its comment `@Routes(route) { sections }`; `gen.ts` cases use `@Routes(route) {` and drop the `@ServerRoutes` case.
 - [ ] **Step 4: Run** `cargo test`, `bun editors/vscode/test/gen.ts`, `bun run test:grammar`, expect PASS.
@@ -102,6 +115,6 @@
 - Modify: `examples/{blog,counter,dashboard,sales}/main.ts` and `Routes.xzor`, `npm/xzor/bin/init.ts`, `tests/*` still using old names, `README.md`, `docs/design.md` (Routing, The application: `@Run`), `docs/site/pages/*.xzor` and snippets, `npm/xzor/skills/xzor/SKILL.md`
 
 - [ ] **Step 1:** `grep -rn "ClientRoutes\|ServerRoutes\|@Mount\|Mount," --include=*.{ts,xzor,md,rs}` outside `docs/plans` and `docs/superpowers` lists only historical docs.
-- [ ] **Step 2:** `design.md` Routing documents `@Routes` and `navigation` on `@Run`; the DI section's "The application" heading becomes `@Run`; compile every changed snippet (`bun run docs`).
+- [ ] **Step 2:** `design.md` Routing documents `@Routes` (History API navigation; the `@ServerRoutes` engine and its limits are gone); the DI section's "The application" heading becomes `@Run`; compile every changed snippet (`bun run docs`).
 - [ ] **Step 3: Run** all commands in Global Constraints; expect all PASS, `bun run examples` and `bun run docs` with no errors.
 - [ ] **Step 4: Commit** `refactor: @Run and @Routes across examples, templates and docs`.

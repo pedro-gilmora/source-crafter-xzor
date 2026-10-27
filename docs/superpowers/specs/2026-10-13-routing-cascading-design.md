@@ -140,4 +140,4 @@ Internal runtime shapes (section descriptors, provider fields), exact generated 
 
 ## Later changes
 
-- 2026-10-26: `@ClientRoutes`/`@ServerRoutes` become one `@Routes(route) { ... }`; the engine moves to the application, `@Run(App, "app", { navigation: "client" | "server" })`. Sections, matching and the other rules hold. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).
+- 2026-10-26: `@ClientRoutes`/`@ServerRoutes` become one `@Routes(route) { ... }` with History API navigation; the full-page-load engine and its regex restriction are removed (reverses ruling 5). Sections, matching and the other rules hold. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).

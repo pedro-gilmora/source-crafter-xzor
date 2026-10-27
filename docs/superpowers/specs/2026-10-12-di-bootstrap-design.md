@@ -236,4 +236,4 @@ export default class Counter extends ComponentBase {
 
 ## Later changes
 
-- 2026-10-26: `@Mount(App, "app")` becomes `@Run(App, "app", options?)`; a second application kind, the server (`@Run()` / `@Run<Application>()` on an `IServerApplication`), with `@Endpoints` classes, a per-request scope holding `Request` for the classes that need it, and generated HTTP clients registered under `Remote<IContract>` in browser apps. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).
+- 2026-10-26: `@Mount(App, "app")` becomes `@Run`; the app kind comes from what the class implements: `@Run(Shell, "app")` on an `IApplication` (browser app, as before), `@Run(Shell)` on an `IServerApplication` (server delivering the views; registrations split into browser and server containers by reachability), `@Run()` on an `IServerApplication` (API only). Adds `@Endpoints` classes, a per-request scope holding `Request` for the classes that need it, and generated HTTP clients registered under `Remote<IContract>` in the browser container. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).
