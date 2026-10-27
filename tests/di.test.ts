@@ -564,6 +564,29 @@ export class Items extends Base implements IB, Local, Disposable, Alias, IA {
   expect(out.endpoints[0].contracts.map((c: any) => c.id)).toEqual(["api.ts#IB", "api.ts#IA"]);
 });
 
+test("Remote<IPosts> is a Remote ref and a contract-typed parameter is an interface", () => {
+  const app = `import { Run, Singleton, type Remote } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+import type { IPosts } from "./posts";
+
+export class Digest {
+  constructor(readonly remote: Remote<IPosts>, readonly direct: IPosts) {}
+}
+
+@Run()
+@Singleton(Digest)
+export class App implements IServerApplication {}
+`;
+  const posts = "export interface IPosts {\n  hit(): number;\n}\n";
+  const out = analyzeTemp({ "app.ts": app, "posts.ts": posts });
+  expect(out.errors).toEqual([]);
+  const [remote, direct] = out.providers[0].registrations[0].params;
+  expect(remote.type).toMatchObject({ id: "Remote<posts.ts#IPosts>", text: "Remote<IPosts>", module: null });
+  expect(remote.interface).toBe(false);
+  expect(direct.type.id).toBe("posts.ts#IPosts");
+  expect(direct.interface).toBe(true);
+});
+
 test("endpoint parameter kinds and conversions", () => {
   const app = `import { Run } from "@source-crafter/xzor-runtime";
 import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
@@ -1259,6 +1282,27 @@ test("import type of an @Endpoints class in browser code is fine", () => {
   const dir = serverProject("value-type", { ...leakFiles, "app.ts": leakApp(""), "theme.ts": theme });
   const { code, out } = xzorBuild(dir);
   expect(code, out).toBe(0);
+});
+
+test("two @Endpoints classes implementing one contract is ZDI23 naming both files", () => {
+  const impl = (name: string) => endpoints(`import type { IPosts } from "../contract";\n\n@Endpoints("/api/${name}")\nexport class ${name} implements IPosts {\n  hit() { return 1; }\n  @Get\n  list() {}\n}\n`);
+  const dir = serverProject("contract-twice", { "contract.ts": "export interface IPosts {\n  hit(): number;\n}\n", "api/a.ts": impl("A"), "api/b.ts": impl("B") });
+  const { code, out } = xzorBuild(dir);
+  expect(code).not.toBe(0);
+  expect(out).toContain("ZDI23");
+  expect(out).toContain("IPosts is implemented by two @Endpoints classes: A (api/a.ts) and B (api/b.ts)");
+});
+
+test.each([
+  ["@inject IPosts", '@import { type IPosts } from "./contract"\n@inject IPosts posts\n\n<header>h</header>\n', "IPosts"],
+  ["@inject Remote<IPosts>", '@import { type IPosts } from "./contract"\n@import { type Remote } from "@source-crafter/xzor-runtime"\n@inject Remote<IPosts> posts\n\n<header>h</header>\n', "Remote<IPosts>"],
+])("a view with %s that no @Endpoints class implements is ZDI24", (_, header, name) => {
+  const dir = serverProject(`contract-none-${name.replace(/\W+/g, "")}`, { ...viewsFiles, "contract.ts": "export interface IPosts {\n  hit(): number;\n}\n", "Header.xzor": header });
+  const { code, out } = xzorBuild(dir);
+  expect(code).not.toBe(0);
+  expect(out).toContain("ZDI24");
+  expect(out).toContain("no @Endpoints class implements IPosts");
+  expect(out).toContain("injected as posts in Header");
 });
 
 test("the generated server serves shells and files from a page-shells pages.json", async () => {
