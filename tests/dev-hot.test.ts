@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { prepareModule, RETIRE_WORKER, retiresWorker } from "../npm/xzor/bin/dev";
 import { valueImportLocals } from "../src/bundle";
 
@@ -55,3 +57,71 @@ test("the dev server's /sw.js worker retires production workers", () => {
   expect(RETIRE_WORKER).toContain("skipWaiting()");
   expect(RETIRE_WORKER).toContain("navigate(");
 });
+
+// `xzor dev` on a server app: the generated server runs behind the dev server and restarts when a `.ts` changes.
+test("an endpoint edit restarts the server and the new JSON is served", async () => {
+  const repo = join(import.meta.dir, "..");
+  const b = Bun.spawnSync(["cargo", "build", "-q"], { cwd: repo });
+  expect(b.exitCode, b.stderr.toString()).toBe(0);
+  const exe = join(repo, "target", "debug", process.platform === "win32" ? "xzor.exe" : "xzor");
+  const dir = join(repo, "target", "tmp-serve", `dev-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  cpSync(join(import.meta.dir, "fixtures", "server"), dir, { recursive: true, filter: (src) => !/[\\/](\.xzor|node_modules|dist)$/.test(src) });
+  const free = Bun.serve({ port: 0, fetch: () => new Response() });
+  const port = free.port;
+  await free.stop(true);
+
+  let out = "";
+  const dev = Bun.spawn(["bun", join(repo, "npm", "xzor", "bin", "dev.ts"), exe], { cwd: dir, env: { ...process.env, PORT: String(port) }, stdout: "pipe", stderr: "pipe" });
+  for (const stream of [dev.stdout, dev.stderr] as ReadableStream<Uint8Array>[]) {
+    void (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of stream) out += decoder.decode(chunk);
+    })();
+  }
+  // The test preload's happy-dom fetch can't reach a real server.
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+  await GlobalRegistrator.unregister();
+  try {
+    const base = `http://localhost:${port}`;
+    const until = async (path: string, ok: (status: number, body: string) => boolean, init?: RequestInit) => {
+      const end = Date.now() + 90_000;
+      let last = "";
+      while (Date.now() < end) {
+        try {
+          const r = await fetch(base + path, init);
+          const body = await r.text();
+          last = `${r.status} ${body}`;
+          if (ok(r.status, body)) return body;
+        } catch (e) {
+          last = String(e);
+        }
+        await Bun.sleep(100);
+      }
+      throw new Error(`${path} never answered as expected (${last}):\n${out}`);
+    };
+    expect(await until("/api/posts", (s, body) => s === 200 && body.startsWith("["))).toBe("[]");
+
+    // A page path is the app's index.html with the hot client.
+    const page = await until("/posts/x", (s) => s === 200, { headers: { accept: "text/html" } });
+    expect(page).toContain(`<script src="/__xzor/hot.js"></script>`);
+    expect(page).toContain("Server fixture");
+    // The page loads the bundle even though the project's index.html names none.
+    expect(page).toContain(`src="dist/main.js"`);
+    const missing = await fetch(`${base}/api/posts/nope`);
+    expect([missing.status, await missing.text()]).toEqual([404, ""]);
+
+    const file = join(dir, "server", "api", "posts.ts");
+    const text = readFileSync(file, "utf8");
+    expect(text).toContain("return this.store.list(query);");
+    writeFileSync(file, text.replace("return this.store.list(query);", `return [{ slug: "e", title: "edited" }];`));
+    expect(await until("/api/posts", (_, body) => body.startsWith("[") && body !== "[]")).toBe('[{"slug":"e","title":"edited"}]');
+  } finally {
+    // The dev server's own children (the watcher, the app's server) die with its process tree.
+    if (process.platform === "win32") Bun.spawnSync(["taskkill", "/PID", String(dev.pid), "/T", "/F"]);
+    else dev.kill();
+    await dev.exited;
+    GlobalRegistrator.register();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
+}, 240_000);

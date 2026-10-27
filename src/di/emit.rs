@@ -728,14 +728,15 @@ impl<'a> Emitter<'a> {
             w!(out, "const pagesJson = {join}(root, \"dist\", \"pages.json\");");
             w!(out, "const shells: Record<string, (req: Request) => Response> = {{}};");
             w!(out, "let assets: Record<string, (req: Request) => Response> = {{}};");
-            w!(out, "if ({exists}(pagesJson)) {{");
+            // `xzor dev` sets XZOR_DEV: pages are the dev server's, so no shells or assets from an older build.
+            w!(out, "if (!process.env.XZOR_DEV && {exists}(pagesJson)) {{");
             w!(out, "  const pages: {{ routes: Record<string, string>; files: string[] }} = JSON.parse({read}(pagesJson, \"utf8\"));");
             w!(out, "  assets = {files}(root, pages.files);");
             w!(out, "  for (const pattern in pages.routes) shells[pattern] = assets[`/dist/${{pages.routes[pattern]}}`]!;");
             // The worker precaches and falls back to `/index.html`: the build's copy, with the bundle's tags, answers it.
             w!(out, "  const home = assets[\"/dist/index.html\"];");
             w!(out, "  if (home) assets[\"/index.html\"] = home;");
-            w!(out, "}} else {{");
+            w!(out, "}} else if (!process.env.XZOR_DEV) {{");
             w!(out, "  console.log(\"xzor: no dist/pages.json, so no pages or assets are served: run xzor build --minify\");");
             w!(out, "}}");
             // `xzor build --minify` writes `dist/index.html` with the bundle's script and stylesheet.
@@ -748,6 +749,8 @@ impl<'a> Emitter<'a> {
         let http = self.imports.name(SERVER, "HttpError", "HttpError", true);
         w!(out, "\nexport const server = Bun.serve({{");
         w!(out, "  ...options,");
+        // `xzor dev` runs the server on a port of its own, whatever the app sets.
+        w!(out, "  ...(process.env.XZOR_DEV ? {{ port: Number(process.env.PORT) }} : null),");
         w!(out, "  fetch: options.fetch?.bind(app) ?? (() => notFound.clone()),");
         // Bun types the handler's `this` as the Server; the app's own handler runs on the app.
         w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app as never, e)),");
