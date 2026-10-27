@@ -22,7 +22,7 @@ A `.xzor` file is one component: HTML with `@` expressions plus a `@code { }` bl
 ```sh
 bun add -d @source-crafter/xzor typescript@^7
 bun add @source-crafter/xzor-runtime
-bun x xzor init          # package.json scripts, tsconfig.json, .gitignore (adds only what is missing)
+bun x xzor init          # package.json scripts, tsconfig.json, .gitignore (adds only what is missing); --server starts a server app (client/, contracts/, server/, @types/bun)
 bun run dev              # xzor dev: build, serve (SPA fallback), print the URL; saving a .xzor patches the open page keeping state, other changes reload
 bun x xzor build         # one-off production build into dist/
 ```

@@ -2,7 +2,8 @@
 @import NavItem from "@source-crafter/xzor-ui/NavItem.xzor"
 @import Button from "@source-crafter/xzor-ui/Button.xzor"
 @import { currentTheme, toggleTheme } from "@source-crafter/xzor-ui"
-@import { href } from "../routes"
+@import { href } from "../../routes"
+@import { siteName } from "../site"
 
 @code {
   theme = currentTheme();
@@ -13,7 +14,7 @@
 }
 
 <NavBar kind="top" label="Site">
-  <a class="brand" href="@href.Home()">Field Notes</a>
+  <a class="brand" href="@href.Home()">@siteName</a>
   <span class="xz-spacer"></span>
   <NavItem href="@href.Home()" label="Writing" match="exact" />
   <NavItem href="@href.Tag({ tag: 'css' })" label="CSS" />

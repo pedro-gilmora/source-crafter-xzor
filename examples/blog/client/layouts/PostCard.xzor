@@ -1,5 +1,5 @@
 @import Badge from "@source-crafter/xzor-ui/Badge.xzor"
-@import { href } from "../routes"
+@import { href } from "../../routes"
 @import { day, type Post } from "../posts"
 
 @code {

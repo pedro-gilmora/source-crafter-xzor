@@ -1,14 +1,6 @@
-export type Block = { h: string } | { p: string } | { code: string } | { quote: string };
+import type { Post } from "../contracts/posts";
 
-export interface Post {
-  slug: string;
-  title: string;
-  summary: string;
-  date: string;
-  minutes: number;
-  tags: string[];
-  body: Block[];
-}
+export type { Block, Post } from "../contracts/posts";
 
 export const posts: Post[] = [
   {

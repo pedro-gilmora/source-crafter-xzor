@@ -15,7 +15,7 @@
   <ol class="checklist">
     <li>installs <a href="https://bun.sh" rel="external">Bun</a> if you don't have it;</li>
     <li>adds the compiler, the runtime and TypeScript 7;</li>
-    <li>runs <code>xzor init</code>: it creates <code>package.json</code>, <code>tsconfig.json</code> and <code>.gitignore</code>, or adds only what's missing to the ones you already have, plus a starter app if there is no <code>main.ts</code>;</li>
+    <li>runs <code>xzor init</code>: it creates <code>package.json</code>, <code>tsconfig.json</code> and <code>.gitignore</code>, or adds only what's missing to the ones you already have, plus a starter app if there is no <code>main.ts</code> (<code>xzor init --server</code> writes a server app instead: <code>client/</code>, <code>contracts/</code> and <code>server/</code> with one endpoint, and adds Bun's types);</li>
     <li>installs the VS Code extension if <code>code</code> is on your PATH.</li>
   </ol>
   <p>

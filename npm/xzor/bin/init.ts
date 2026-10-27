@@ -1,5 +1,6 @@
 // `xzor init`, run by the launcher under Bun.
 // Creates package.json, tsconfig.json and .gitignore, or adds only what xzor needs to the existing ones.
+// `--server` starts a server app (client/, contracts/, server/) instead of a browser one.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
@@ -13,6 +14,7 @@ function update(file: string, fresh: object, change: (json: any) => void) {
   writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
   console.log(`  ${file}: ${exists ? "updated" : "created"}${/\/[/*]/.test(text.replace(/"(?:[^"\\]|\\.)*"/g, "")) ? " (its comments were not kept)" : ""}`);
 }
+const server = process.argv.includes("--server");
 const add = (list: string[], ...items: string[]) => [...list, ...items.filter((i) => !list.some((l) => l.toLowerCase() === i.toLowerCase()))];
 
 update("package.json", {}, (p) => {
@@ -24,6 +26,7 @@ update("package.json", {}, (p) => {
   for (const [name, command] of [["build", "xzor build"], ["dev", "xzor dev"]]) {
     if (!Object.values(p.scripts).includes(command)) p.scripts[name in p.scripts ? `${name}:xzor` : name] = command;
   }
+  if (server) (p.devDependencies ??= {})["@types/bun"] ??= "latest";
 });
 
 update("tsconfig.json", { compilerOptions: { target: "ES2022", strict: true, noEmit: true, skipLibCheck: true }, exclude: ["dist", "node_modules"] }, (t) => {
@@ -33,6 +36,7 @@ update("tsconfig.json", { compilerOptions: { target: "ES2022", strict: true, noE
   o.lib = add(o.lib ?? [o.target ?? "ES2022"], "ESNext.Disposable", "ESNext.Decorators", "DOM");
   // `import X from "./X.xzor"` resolves to the generated .xzor/X.xzor.ts.
   o.rootDirs = add(o.rootDirs ?? [], ".", ".xzor");
+  if (server) o.types = add(o.types ?? [], "bun");
   t.include = add(t.include ?? ["**/*.ts"], ".xzor/**/*.ts");
 });
 
@@ -54,7 +58,56 @@ if (current !== skill) {
   console.log(`  ${skillPath}: ${current === undefined ? "created" : "updated"}`);
 }
 
-if (!existsSync("main.ts")) {
+if (server) {
+  if (!existsSync("server/app.ts")) {
+    const files: Record<string, string> = {
+      "client/Shell.xzor": `<main>
+  @Routes(route) {
+    @default(page) { @page }
+  }
+</main>
+`,
+      "client/Home.xzor": `@page "/"
+
+<h1>Hello from xzor</h1>
+<p>The server answers <a href="/api/hello?name=xzor">/api/hello</a>.</p>
+`,
+      "contracts/hello.ts": `export interface IHello {
+  greet(query: { name?: string }): { message: string };
+}
+`,
+      "server/app.ts": `import { Run } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+import Shell from "../client/Shell.xzor";
+
+@Run(Shell)
+export class App implements IServerApplication {}
+`,
+      "server/api/hello.ts": `import { Endpoints, Get } from "@source-crafter/xzor-runtime/server";
+import type { IHello } from "../../contracts/hello";
+
+@Endpoints("/api/hello")
+export class Hello implements IHello {
+  @Get
+  greet(query: { name?: string }) { return { message: "Hello, " + (query.name ?? "world") + "!" }; }
+}
+`,
+    };
+    if (!existsSync("index.html"))
+      files["index.html"] = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><base href="/" /><title>xzor server app</title></head>
+  <body></body>
+</html>
+`;
+    for (const [path, text] of Object.entries(files)) {
+      if (existsSync(path)) continue;
+      if (dirname(path) !== ".") mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+    }
+    console.log("  starter server app: client/Shell.xzor, client/Home.xzor, contracts/hello.ts, server/app.ts, server/api/hello.ts, index.html");
+  }
+} else if (!existsSync("main.ts")) {
   writeFileSync("main.ts", `import { type IApplication, Run } from "@source-crafter/xzor-runtime";
 import Counter from "./Counter.xzor";
 
