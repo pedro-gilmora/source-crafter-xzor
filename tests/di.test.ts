@@ -355,6 +355,7 @@ test("@Run needs a component and a string literal target", () => {
   const message = "@Run expects a component and a string literal target";
   expect(bad("@Run(App, 1)")).toEqual([message]);
   expect(bad("@Run(App, target)")).toEqual([message]);
+  expect(bad('@Run(App, "app", 1)')).toEqual([message]);
 });
 
 test("@Mount was renamed to @Run", () => {
