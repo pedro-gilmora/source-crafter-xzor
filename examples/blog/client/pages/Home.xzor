@@ -1,10 +1,10 @@
 @page "/"
 @import PostCard from "../layouts/PostCard.xzor"
-@import type { IPosts, Post } from "../../contracts/posts"
+@import type { IPosts, PostSummary } from "../../contracts/posts"
 @inject IPosts posts
 
 @code {
-  items: Post[] = [];
+  items: PostSummary[] = [];
   loading = true;
 
   protected override async onInitializedAsync() {

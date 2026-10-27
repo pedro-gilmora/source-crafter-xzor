@@ -41,11 +41,11 @@ test("the blog's pages read posts through IPosts from the running server, and th
   expect(b.exitCode, b.stderr.toString()).toBe(0);
   rmSync(dir, { recursive: true, force: true });
   cpSync(join(repo, "examples", "blog"), dir, { recursive: true, filter: (src) => !/[\\/](\.xzor|\.zed|node_modules|dist)$/.test(src) });
-  // A slug with a space must survive the client's encoding and the server's decoding.
+  // A slug with a space and a slash must survive the client's encoding and the server's decoding.
   const data = join(dir, "server", "posts-data.ts");
   const text = readFileSync(data, "utf8");
   expect(text).toContain('"page-transitions-for-free"');
-  writeFileSync(data, text.replace('"page-transitions-for-free"', '"page transitions for free"'));
+  writeFileSync(data, text.replace('"page-transitions-for-free"', '"page transitions/for free"'));
 
   const built = Bun.spawnSync([exe, "build", dir, "--minify"], { cwd: repo });
   const log = built.stdout.toString() + built.stderr.toString();
@@ -61,12 +61,23 @@ test("the blog's pages read posts through IPosts from the running server, and th
   try {
     const url = await printedUrl(server.stdout);
     // The client fetches relative paths: the page lives on the server's origin.
-    const slug = encodeURIComponent("page transitions for free");
+    const slug = encodeURIComponent("page transitions/for free");
+    expect(slug).toBe("page%20transitions%2Ffor%20free");
     happyDOM().setURL(new URL(`/posts/${slug}`, url).href);
     expect(location.pathname).toBe(`/posts/${slug}`);
     await import(join(dir, "dist", "main.js"));
     await until("the post title", () => document.querySelector("article h1")?.textContent === "Page transitions for free");
     expect(document.querySelector("article")?.textContent).toContain("Wrap the update in");
+    // "Read next" comes with the post: the one after it in the list, by summary.
+    await until("read next", () => document.querySelector(".next strong")?.textContent === "Components that measure their own box");
+
+    // The wire: a list carries no body, tags answer on their own path, and a post slugged `tags` is not shadowed.
+    const api = async (path: string) => (await fetch(new URL(path, url))).text();
+    const listed = await api("/api/posts");
+    expect(listed).toContain("Page transitions for free");
+    expect(listed).not.toContain('"body"');
+    expect(JSON.parse(await api("/api/tags"))).toEqual(["css", "design", "html", "layout", "motion"]);
+    expect((await fetch(new URL("/api/posts/tags", url))).status).toBe(404);
 
     // The home page lists every post through list(), and a link keeps the slug encoded.
     (document.querySelector("a.brand") as HTMLElement).click();

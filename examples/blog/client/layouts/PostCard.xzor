@@ -1,10 +1,10 @@
 @import Badge from "@source-crafter/xzor-ui/Badge.xzor"
 @import { href } from "../../routes"
 @import { day } from "../day"
-@import type { Post } from "../../contracts/posts"
+@import type { PostSummary } from "../../contracts/posts"
 
 @code {
-  post!: Post;
+  post!: PostSummary;
 }
 
 <article class="card">

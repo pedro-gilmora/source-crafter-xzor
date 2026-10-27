@@ -10,8 +10,20 @@ export interface Post {
   body: Block[];
 }
 
+/** What a list shows: a post without its body. */
+export type PostSummary = Omit<Post, "body">;
+
+/** A post and the one to read after it. */
+export interface PostPage {
+  post: Post;
+  next: PostSummary;
+}
+
 export interface IPosts {
-  get(slug: string): Post | undefined;
-  list(query: { tag?: string }): Post[];
-  tags(): string[];
+  get(slug: string): PostPage | undefined;
+  list(query: { tag?: string }): PostSummary[];
+}
+
+export interface ITags {
+  all(): string[];
 }

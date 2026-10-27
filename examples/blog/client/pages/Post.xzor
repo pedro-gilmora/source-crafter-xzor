@@ -3,23 +3,21 @@
 @import Empty from "@source-crafter/xzor-ui/Empty.xzor"
 @import { href } from "../../routes"
 @import { day } from "../day"
-@import type { IPosts, Post as Entry } from "../../contracts/posts"
+@import type { IPosts, PostPage } from "../../contracts/posts"
 @inject IPosts posts
 
 @code {
   slug = "";
-  post: Entry | undefined;
-  next!: Entry;
+  page: PostPage | undefined;
   loading = true;
 
   // Runs on every slug change of this kept instance; a slower answer for an earlier slug is dropped.
   protected override async onParametersSetAsync() {
     const slug = this.slug;
     this.loading = true;
-    const [post, all] = await Promise.all([this.posts.get(slug), this.posts.list({})]);
+    const page = await this.posts.get(slug);
     if (slug !== this.slug) return;
-    this.post = post;
-    this.next = all[(all.findIndex((p) => p.slug === slug) + 1) % all.length]!;
+    this.page = page;
     this.loading = false;
   }
 }
@@ -27,8 +25,8 @@
 <div class="progress" aria-hidden="true"></div>
 @if (loading) {
   <p class="xz-muted" role="status">Loading…</p>
-} else if (post) {
-  @{ const p = post; }
+} else if (page) {
+  @{ const { post: p, next } = page; }
   <article class="article">
     <p class="meta"><a href="@href.Home()">Field Notes</a><time datetime="@p.date">@day(p.date)</time><span>@p.minutes min read</span></p>
     <h1 style="view-transition-name: post-@p.slug">@p.title</h1>

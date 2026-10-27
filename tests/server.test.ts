@@ -176,6 +176,9 @@ export class Items {
   @Get("boom")
   boom(): void { throw new Error("db password hunter2"); }
 
+  @Get("names/:name")
+  name(name: string) { return { name }; }
+
   @Post("echo")
   echo(body: { a: string }) { return body; }
 }
@@ -190,6 +193,9 @@ export class Items {
       return [r.status, await r.text()];
     };
     expect(await call("GET", "/api/items/3")).toEqual([200, '{"id":3}']);
+    // A param is one segment: Bun matches an encoded `/` (and a space) inside it and hands the handler the decoded text, once.
+    for (const name of ["a/b", "a b", "a%2Fb", "café ?#"]) expect(await call("GET", `/api/names/${encodeURIComponent(name)}`)).toEqual([200, JSON.stringify({ name })]);
+    expect((await call("GET", "/api/names/a/b"))[0]).toBe(404);
     expect(await call("GET", "/nope")).toEqual([404, ""]);
     expect(await call("GET", "/")).toEqual([404, ""]);
     // An error is a plain 500: Bun's development page would show the message and the stack.

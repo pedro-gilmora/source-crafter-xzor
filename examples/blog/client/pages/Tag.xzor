@@ -2,17 +2,18 @@
 @import PostCard from "../layouts/PostCard.xzor"
 @import Empty from "@source-crafter/xzor-ui/Empty.xzor"
 @import { href } from "../../routes"
-@import type { IPosts, Post } from "../../contracts/posts"
+@import type { IPosts, ITags, PostSummary } from "../../contracts/posts"
 @inject IPosts posts
+@inject ITags allTags
 
 @code {
   tag = "";
   tags: string[] = [];
-  tagged: Post[] = [];
+  tagged: PostSummary[] = [];
   loading = true;
 
   protected override async onInitializedAsync() {
-    this.tags = await this.posts.tags();
+    this.tags = await this.allTags.all();
   }
 
   // Runs on every tag change of this kept instance; a slower answer for an earlier tag is dropped.
