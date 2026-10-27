@@ -16,7 +16,7 @@ import {
 // happy-dom starts on about:blank, where relative URLs and pushState are not allowed.
 (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL("http://localhost/");
 
-// Written the way xzor emits `@ClientRoutes`/`@ServerRoutes`: a hand-written table in the shape of
+// Written the way xzor emits `@Routes`: a hand-written table in the shape of
 // `.xzor/routes.ts` and sections in the shape of the generated descriptors.
 
 let lastUser: UserPage | undefined;
@@ -182,13 +182,12 @@ const event = (init: MouseEventInit): MouseEvent =>
 
 function routed(
   sections: RouteSection[],
-  opts: { engine?: "client" | "server"; table?: RouteTable; app?: IApplication } = {},
+  opts: { navigation?: "server"; table?: RouteTable; app?: IApplication } = {},
 ) {
-  const engine = opts.engine ?? "client";
   const table = opts.table ?? pages;
   class Block extends ComponentBase {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addRoutes(engine, table, sections);
+      b.addRoutes(table, sections);
     }
   }
   class Shell extends ComponentBase {
@@ -201,7 +200,7 @@ function routed(
   }
   const host = document.createElement("div");
   document.body.append(host);
-  const shell = mount(Shell, host, opts.app);
+  const shell = mount(Shell, host, opts.app, opts.navigation);
   // Runs after the router's own listener: it reports what the router did and keeps happy-dom from
   // really loading the links the router left alone.
   let prevented = false;
@@ -810,7 +809,7 @@ test("a navigation started during the first render is applied once it finishes",
   expect(r.html()).toBe("<aside><u>1</u></aside>");
 });
 
-test("the server engine never listens and navigates by loading the url", () => {
+test("server navigation never listens and navigates by loading the url", () => {
   const memory = nav("/users/4");
   let captured: Route | undefined;
   const r = routed(
@@ -823,7 +822,7 @@ test("the server engine never listens and navigates by loading the url", () => {
         },
       },
     ],
-    { engine: "server" },
+    { navigation: "server" },
   );
   expect(r.html()).toBe("<aside><u>4</u></aside>");
   expect(memory.subscriptions).toBe(0);
@@ -831,6 +830,35 @@ test("the server engine never listens and navigates by loading the url", () => {
   captured!.navigate("/users/5");
   expect(memory.calls).toEqual([]);
   expect(location.pathname).toBe("/users/5");
+});
+
+test("server navigation matches once and links load the page", () => {
+  history.replaceState(null, "", "/users/1");
+  let captured: Route | undefined;
+  const r = routed(
+    [
+      {
+        kind: "default",
+        render: (route: Route, page: RenderFragment) => {
+          captured = route;
+          return links(route, page);
+        },
+      },
+    ],
+    { navigation: "server" },
+  );
+  expect(r.click(r.host.querySelectorAll("a")[0]!)).toBe(false);
+  expect(location.pathname).toBe("/users/1");
+
+  captured!.navigate("/x");
+  expect(location.pathname).toBe("/x");
+});
+
+test("client navigation is the default and intercepts link clicks", () => {
+  history.replaceState(null, "", "/users/1");
+  const r = routed([{ kind: "default", render: links }]);
+  expect(r.click(r.host.querySelectorAll("a")[0]!)).toBe(true);
+  expect(location.pathname).toBe("/users/2");
 });
 
 const navLinks = (_route: Route, page: RenderFragment): RenderFragment =>

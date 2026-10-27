@@ -263,12 +263,12 @@ const caught: RouteSection[] = [
 function routed(table: RouteTable, app?: IApplication): void {
   class Block extends ComponentBase {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addRoutes("server", table, caught);
+      b.addRoutes(table, caught);
     }
   }
   host = document.createElement("main");
   document.body.replaceChildren(host);
-  mount(Block, host, app);
+  mount(Block, host, app, "server");
 }
 
 // Queued after the flush that a change schedules.

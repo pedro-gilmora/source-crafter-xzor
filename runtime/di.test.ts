@@ -5,7 +5,7 @@ import {
   type RenderFragment,
   type RenderTreeBuilder,
   Import,
-  Mount,
+  Run,
   Scoped,
   ServiceProvider,
   SharedInstance,
@@ -141,7 +141,8 @@ test("components without inject are built without asking the app", () => {
 test("decorators are no-ops", () => {
   class Impl {}
   @ServiceProvider()
-  @Mount(Hello, "app")
+  @Run(Hello, "app")
+  @Run(Hello, "app", { navigation: "server" })
   @Import(Impl)
   @Singleton(Impl)
   @Scoped("scoped", () => 1)
