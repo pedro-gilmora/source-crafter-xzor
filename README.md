@@ -369,7 +369,7 @@ An element marked `@leave` stays in the page with `data-leaving` until the anima
 - **Cached getters.** A getter runs once per change, however many places read it. Mark one `@Volatile` when it reads what nothing tracks (`Date.now()`, the DOM) alongside fields: `@Volatile get age() { return Date.now() - born; }`.
 - **`@once(expr)` and `@once { … }`** are read once and never updated: nothing in them is bound.
 - **`@async`** at the top of a component loads it on first use. **`@cached`** keeps its instance and DOM when it leaves the tree, for when it comes back (matched by type and `@key`).
-- **`xzor build --minify`** minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`.
+- **`xzor build --minify`** minifies and ships each `@page` and `@async` component in a chunk of its own under `dist/chunks`. With an `index.html` it also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes` from each `@page` pattern to its shell, `files` to serve) and a `.br` and `.gz` copy of every text output.
 
 ---
 

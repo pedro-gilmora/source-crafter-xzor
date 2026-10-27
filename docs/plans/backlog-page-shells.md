@@ -1,6 +1,6 @@
 # Page shells: preloaded shell rendering (PSR) (backlog)
 
-Status: approved and being built: [spec](../superpowers/specs/2026-10-26-run-routes-psr-design.md). Measured with a proof of concept (`target/poc-delivery/poc.ts`, scratch, not committed).
+Status: built (shells, manifest, compressed copies); serving comes with the server plan. [spec](../superpowers/specs/2026-10-26-run-routes-psr-design.md). Measured with a proof of concept (`target/poc-delivery/poc.ts`, scratch, not committed).
 
 ## The idea
 

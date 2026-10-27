@@ -3,6 +3,7 @@
 // Usage: bun bundle.ts <entry> <outdir> [--hot] [--watch]
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
+import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 
 type Segment = number[];
 type SourceMap = { version: number; sources: string[]; sourcesContent?: (string | null)[]; names: string[]; mappings: string };
@@ -880,23 +881,35 @@ function readManifest(root: string): Manifest | Error {
   return existsSync(path) ? parseManifest(readFileSync(path, "utf8")) : null;
 }
 
+/** The existing local files `index.html` references, relative to the root. */
+function indexAssets(root: string): string[] {
+  const index = join(root, "index.html");
+  if (!existsSync(index)) return [];
+  const found: string[] = [];
+  for (const m of readFileSync(index, "utf8").matchAll(PAGE_REF)) {
+    const asset = m[1]!.startsWith("/") ? undefined : localAsset(m[1]!, root);
+    if (asset) found.push(asset);
+  }
+  return found;
+}
+
+/** The manifest's icons that are files of the project, relative to the root. */
+function iconFiles(root: string, manifest: Manifest | Error): string[] {
+  const found: string[] = [];
+  for (const icon of manifestIcons(manifest)) {
+    const asset = typeof icon?.src === "string" ? iconAsset(icon.src, root) : undefined;
+    if (asset) found.push(asset);
+  }
+  return found;
+}
+
 /** The files the worker precaches: the app shell, the local assets `index.html` and the manifest point at, and the outputs. */
 export function precacheList(root: string, outputs: string[], manifest = readManifest(root)): string[] {
   const files = new Set(["./", MANIFEST]);
-  const index = join(root, "index.html");
-  if (existsSync(index)) {
-    files.add("index.html");
-    for (const m of readFileSync(index, "utf8").matchAll(PAGE_REF)) {
-      const asset = m[1]!.startsWith("/") ? undefined : localAsset(m[1]!, root);
-      if (asset) files.add(asset);
-    }
-  }
-  for (const icon of manifestIcons(manifest)) {
-    const asset = typeof icon?.src === "string" ? iconAsset(icon.src, root) : undefined;
-    if (asset) files.add(asset);
-  }
+  if (existsSync(join(root, "index.html"))) files.add("index.html");
+  for (const asset of [...indexAssets(root), ...iconFiles(root, manifest)]) files.add(asset);
   for (const output of outputs) {
-    if (output.endsWith(".map")) continue;
+    if (/\.(map|br|gz)$/.test(output)) continue;
     const rel = relative(root, output).replaceAll("\\", "/");
     if (rel && !rel.startsWith("..")) files.add(rel);
   }
@@ -976,6 +989,21 @@ function writeServiceWorker(root: string, outputs: string[], entryOutput: string
   }
   const files = precacheList(root, outputs, manifest);
   writeFileSync(worker, serviceWorker(precacheVersion(root, files, known), files));
+}
+
+const TEXT_OUTPUT = /\.(js|css|html|json|svg|txt)$/;
+
+/** Writes a `.br` and a `.gz` copy beside each text file (fonts and images are already compressed) and returns the paths written. */
+export function compressOutputs(paths: string[]): string[] {
+  const written: string[] = [];
+  for (const path of paths) {
+    if (!TEXT_OUTPUT.test(path)) continue;
+    const bytes = readFileSync(path);
+    writeFileSync(`${path}.br`, brotliCompressSync(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: 11, [constants.BROTLI_PARAM_SIZE_HINT]: bytes.length } }));
+    writeFileSync(`${path}.gz`, gzipSync(bytes, { level: 6 }));
+    written.push(`${path}.br`, `${path}.gz`);
+  }
+  return written;
 }
 
 /** One `@page` pattern as `build.rs` lists it: `file` is relative to the project root. */
@@ -1154,28 +1182,43 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
     }
     console.log(`  ${output.path}`);
   }
+  const paths = outputs.map((o) => o.path);
+  // Written outside Bun's outputs; the worker precaches them and the copies are made of them.
+  const extra: string[] = [];
+  const rel = (path: string) => relative(root, path).replaceAll("\\", "/");
+  const listed = new Set(["index.html"]);
+  const pagesJson = join(outdir, "pages.json");
+  let routes: Record<string, string> | undefined;
   if (minify && pagesFile) {
     const index = join(dirname(resolve(outdir)), "index.html");
+    // A pages.json of an earlier build must not reach the worker's version.
+    rmSync(pagesJson, { force: true });
     if (existsSync(index)) {
       const pages: PageEntry[] = JSON.parse(readFileSync(pagesFile, "utf8"));
-      const { shells, routes } = pageShells(readFileSync(index, "utf8"), result.metafile!, resolve(outdir), root, pages);
+      const built = pageShells(readFileSync(index, "utf8"), result.metafile!, resolve(outdir), root, pages);
+      routes = built.routes;
       rmSync(join(outdir, "pages"), { recursive: true, force: true });
       mkdirSync(join(outdir, "pages"), { recursive: true });
-      const rel = (path: string) => relative(root, path).replaceAll("\\", "/");
-      const list = new Set(["index.html"]);
-      for (const o of outputs) if (!o.path.endsWith(".map")) list.add(rel(o.path));
-      for (const spec of fonts.keys()) list.add(rel(join(outdir, spec)));
-      for (const [shell, html] of shells) {
+      for (const o of outputs) if (!o.path.endsWith(".map")) listed.add(rel(o.path));
+      for (const spec of fonts.keys()) listed.add(rel(join(outdir, spec)));
+      for (const [shell, html] of built.shells) {
         writeFileSync(join(outdir, shell), html);
-        list.add(rel(join(outdir, shell)));
+        extra.push(join(outdir, shell));
+        listed.add(rel(join(outdir, shell)));
       }
-      writeFileSync(join(outdir, "pages.json"), JSON.stringify({ routes, files: [...list].sort() }));
+      extra.push(pagesJson);
     }
   }
-  if (!watch) {
-    const paths = outputs.map((o) => o.path);
-    writeServiceWorker(root, paths, outputs.find((o) => o.kind === "entry-point")?.path);
+  if (!watch) writeServiceWorker(root, [...paths, ...extra], outputs.find((o) => o.kind === "entry-point")?.path);
+  if (routes) {
+    // The files a server serves: the build, what index.html references and, for a PWA, the worker, manifest and icons.
+    for (const asset of indexAssets(root)) listed.add(asset);
+    if (!watch && existsSync(join(root, MANIFEST))) {
+      for (const asset of ["sw.js", MANIFEST, ...iconFiles(root, readManifest(root))]) listed.add(asset);
+    }
+    writeFileSync(pagesJson, JSON.stringify({ routes, files: [...listed].sort() }));
   }
+  if (minify) compressOutputs([...paths, ...extra.filter((p) => p !== pagesJson)]);
 }
 
 if (import.meta.main) {

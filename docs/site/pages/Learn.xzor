@@ -146,7 +146,7 @@
           <li>Getters are cached: one run per change, however many places read them. <code>@@Volatile</code> opts one out.</li>
           <li><code>@@once(expr)</code> and <code>@@once { }</code> are read once and never updated.</li>
           <li><code>@@async</code> loads a component the first time it's used; <code>@@cached</code> keeps it, DOM and all, when it leaves the page.</li>
-          <li><code>xzor build --minify</code> ships each page and <code>@@async</code> component in a chunk of its own.</li>
+          <li><code>xzor build --minify</code> ships each page and <code>@@async</code> component in a chunk of its own, writes a shell per page that preloads its chunks (<code>dist/pages</code>, listed in <code>dist/pages.json</code>), and adds <code>.br</code> and <code>.gz</code> copies of the text outputs.</li>
         </ul>
         break;
     }

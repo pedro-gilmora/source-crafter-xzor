@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { pageShells } from "../src/bundle";
 
 const root = join(import.meta.dir, "..");
@@ -164,3 +165,49 @@ test("pageShells: closure of static imports, deduped, dynamic imports left out",
 test("pageShells: no </head> throws", () => {
   expect(() => pageShells("<body></body>", { inputs: {}, outputs: {} }, "/o/dist", "/o", [])).toThrow("index.html has no </head>");
 });
+
+test("text outputs get .br and .gz copies", () => {
+  const { dir, exitCode, out } = build("copies", index());
+  expect(exitCode, out).toBe(0);
+  const dist = join(dir, "dist");
+  const texts = [join(dist, "main.js"), join(dist, "pages", "Post.html"), ...readdirSync(join(dist, "chunks")).filter((c) => c.endsWith(".js")).map((c) => join(dist, "chunks", c))];
+  for (const file of texts) {
+    const bytes = readFileSync(file);
+    expect(brotliDecompressSync(readFileSync(`${file}.br`)).equals(bytes), `${file}.br`).toBe(true);
+    expect(gunzipSync(readFileSync(`${file}.gz`)).equals(bytes), `${file}.gz`).toBe(true);
+  }
+  // Copies are not listed: the server picks them by the request's Accept-Encoding.
+  const manifest = JSON.parse(readFileSync(join(dist, "pages.json"), "utf8")) as { files: string[] };
+  expect(manifest.files.some((f) => /\.(br|gz)$/.test(f))).toBe(false);
+}, 120_000);
+
+test("fonts are not compressed", () => {
+  const sources = { ...files, "styles.css": `@font-face { font-family: F; src: url(./a.woff2) format("woff2"); }\nbody { font-family: F }\n`, "a.woff2": "wOF2 not a real font", "css.d.ts": `declare module "*.css";\n`, "main.ts": `import "./styles.css";\n${files["main.ts"]}` };
+  const { dir, exitCode, out } = build("fonts", index(), sources);
+  expect(exitCode, out).toBe(0);
+  expect(existsSync(join(dir, "dist", "a.woff2")), "font copied").toBe(true);
+  expect(readdirSync(join(dir, "dist")).filter((f) => f.includes(".woff2.")), "font copies").toEqual([]);
+}, 120_000);
+
+test("pages.json lists the local files index.html references", () => {
+  const html = index(`\n  <link rel="icon" href="favicon.svg">\n  <link rel="icon" href="https://x/y.png">`);
+  const { dir, exitCode, out } = build("favicon", html, { ...files, "favicon.svg": "<svg xmlns='http://www.w3.org/2000/svg'/>" });
+  expect(exitCode, out).toBe(0);
+  const manifest = JSON.parse(readFileSync(join(dir, "dist", "pages.json"), "utf8")) as { files: string[] };
+  expect(manifest.files).toContain("favicon.svg");
+  expect(manifest.files.some((f) => f.includes("https:") || f.includes("y.png"))).toBe(false);
+  expect(manifest.files).not.toContain("sw.js");
+}, 120_000);
+
+test("a PWA project lists its worker, manifest and icons", () => {
+  const web = JSON.stringify({ name: "T", short_name: "T", display: "standalone", icons: [{ src: "icon.png", sizes: "192x192" }, { src: "/icon512.png", sizes: "512x512" }] });
+  const { dir, exitCode, out } = build("pwa", index(), { ...files, "manifest.webmanifest": web, "icon.png": "a", "icon512.png": "b" });
+  expect(exitCode, out).toBe(0);
+  const manifest = JSON.parse(readFileSync(join(dir, "dist", "pages.json"), "utf8")) as { files: string[] };
+  for (const f of ["sw.js", "manifest.webmanifest", "icon.png", "icon512.png"]) expect(manifest.files, f).toContain(f);
+  expect(manifest.files).toEqual([...manifest.files].sort());
+  // The worker's own list holds the shells and pages.json, not the copies.
+  const worker = readFileSync(join(dir, "sw.js"), "utf8");
+  expect(worker).toContain("dist/pages/Post.html");
+  expect(worker).toContain("dist/pages.json");
+}, 120_000);
