@@ -188,7 +188,7 @@ import { type IApplication, Run, Singleton, Scoped } from "@source-crafter/xzor-
 import Routes from "./Routes.xzor";
 import { TodoService } from "./services/todos";
 
-@Run(Routes, "app")                 // <div id="app">
+@Run(Routes, "app")                   // <div id="app">
 @Singleton(TodoService)               // or @Singleton<ITodos>(TodoService), @Scoped(...), @Transient(...)
 export class Application implements IApplication {}
 ```

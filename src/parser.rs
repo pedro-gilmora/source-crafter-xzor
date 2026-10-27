@@ -2233,6 +2233,16 @@ after"#;
     }
 
     #[test]
+    fn component_named_routes_coexists_with_routes_block() {
+        let doc = parse("@import Routes from \"./Routes.xzor\"\n<Routes />\n@Routes(route) { @notFound { <p/> } }").unwrap().0;
+        assert_eq!(doc.imports, vec!["Routes from \"./Routes.xzor\""]);
+        let components: Vec<_> = doc.nodes.iter().filter(|n| matches!(n, Node::Element(e) if &*e.name == "Routes")).collect();
+        assert_eq!(components.len(), 1, "{:?}", doc.nodes);
+        let routes: Vec<_> = doc.nodes.iter().filter(|n| matches!(n, Node::Routes { .. })).collect();
+        assert!(matches!(routes.as_slice(), [Node::Routes { sections, .. }] if sections.len() == 1), "{:?}", doc.nodes);
+    }
+
+    #[test]
     fn old_routes_keywords_name_the_replacement() {
         for old in ["ClientRoutes", "ServerRoutes"] {
             let e = parse(&format!("@{old}(route) {{ }}")).unwrap_err();

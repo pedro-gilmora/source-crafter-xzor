@@ -648,7 +648,7 @@ pub fn declares_provider(text: &str) -> bool {
     text.lines().map(str::trim_start).any(|l| l.starts_with("@ServiceProvider(") || l.starts_with("@Run(") || l.starts_with("@Mount("))
 }
 
-/// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Run`.
+/// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Run`; `@Mount(` still matches so its rename error is reported.
 pub fn provider_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if root.is_dir() {

@@ -821,7 +821,7 @@ test("a regex section matches in the browser", () => {
   expect(r.html()).toBe("<b>api</b>");
 });
 
-test("client navigation is the default and intercepts link clicks", () => {
+test("links navigate in the browser and intercept link clicks", () => {
   history.replaceState(null, "", "/users/1");
   const r = routed([{ kind: "default", render: links }]);
   expect(r.click(r.host.querySelectorAll("a")[0]!)).toBe(true);
