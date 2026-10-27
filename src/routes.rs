@@ -158,28 +158,22 @@ pub fn section_matcher(pattern: &str) -> String {
     matcher_body(&RouteInfo { tag: None, tag_at: 0, pattern: pattern.to_string(), pattern_at: 0, params, rest: true }, &[])
 }
 
-/// Which router a `@ClientRoutes`/`@ServerRoutes` block selects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Engine {
-    Client,
-    Server,
-}
-
 /// The routes block of a component, as the route table sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutesBlockInfo {
-    pub engine: Engine,
     /// Offset of the block in the `.xzor`.
     pub at: usize,
     /// Tag sections: the tag and its offset in the `.xzor`.
     pub sections: Vec<(String, usize)>,
+    /// Offset of the first regex section, if any.
+    pub regex: Option<usize>,
 }
 
 /// Whether two components' routes and blocks differ for the table, ignoring where they sit in the source.
 pub fn routes_differ(a: (&[RouteInfo], Option<&RoutesBlockInfo>), b: (&[RouteInfo], Option<&RoutesBlockInfo>)) -> bool {
     let route = |x: &RouteInfo, y: &RouteInfo| x.tag == y.tag && x.pattern == y.pattern && x.params == y.params && x.rest == y.rest;
     let block = |x: &RoutesBlockInfo, y: &RoutesBlockInfo| {
-        x.engine == y.engine && x.sections.len() == y.sections.len() && x.sections.iter().zip(&y.sections).all(|(s, t)| s.0 == t.0)
+        x.regex.is_some() == y.regex.is_some() && x.sections.len() == y.sections.len() && x.sections.iter().zip(&y.sections).all(|(s, t)| s.0 == t.0)
     };
     a.0.len() != b.0.len()
         || !a.0.iter().zip(b.0).all(|(x, y)| route(x, y))
@@ -616,7 +610,7 @@ mod table_tests {
     #[test]
     fn moving_route_lines_is_not_a_route_change() {
         let at = |o: usize| RouteInfo { tag: Some("a".into()), tag_at: o, pattern: "/x".into(), pattern_at: o, params: vec![], rest: false };
-        let block = |o: usize| RoutesBlockInfo { engine: Engine::Client, at: o, sections: vec![("a".into(), o + 5)] };
+        let block = |o: usize| RoutesBlockInfo { at: o, sections: vec![("a".into(), o + 5)], regex: None };
         assert!(!routes_differ((&[at(1)], Some(&block(1))), (&[at(9)], Some(&block(9)))));
         let other = RouteInfo { pattern: "/y".into(), ..at(1) };
         assert!(routes_differ((&[at(1)], None), (&[other], None)));
@@ -914,9 +908,9 @@ mod table_tests {
         let mut p = page("A.xzor", "A", Vec::new());
         p.text = "\n\n@x(page) {\n".into();
         p.block = Some(RoutesBlockInfo {
-            engine: Engine::Client,
             at: 2,
             sections: vec![("admin".into(), 3), ("x".into(), 3)],
+            regex: None,
         });
         let (_, diags) = generate(&[pages, p]);
         assert_eq!(diags.len(), 1, "{diags:?}");
@@ -927,10 +921,10 @@ mod table_tests {
     #[test]
     fn one_routes_block_per_project() {
         let mut a = page("A.xzor", "A", Vec::new());
-        a.block = Some(RoutesBlockInfo { engine: Engine::Client, at: 0, sections: Vec::new() });
+        a.block = Some(RoutesBlockInfo { at: 0, sections: Vec::new(), regex: None });
         let mut b = page("sub/B.xzor", "B", Vec::new());
-        b.text = "@ClientRoutes(route) {\n".into();
-        b.block = Some(RoutesBlockInfo { engine: Engine::Server, at: 0, sections: Vec::new() });
+        b.text = "@Routes(route) {\n".into();
+        b.block = Some(RoutesBlockInfo { at: 0, sections: Vec::new(), regex: None });
         let (_, diags) = generate(&[a, b]);
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].1.message, "only one routes block per project (also in A.xzor)");
@@ -940,7 +934,7 @@ mod table_tests {
     #[test]
     fn a_page_cannot_hold_the_routes_block() {
         let mut a = page("A.xzor", "A", vec![route(None, "/", &[])]);
-        a.block = Some(RoutesBlockInfo { engine: Engine::Client, at: 0, sections: Vec::new() });
+        a.block = Some(RoutesBlockInfo { at: 0, sections: Vec::new(), regex: None });
         let (_, diags) = generate(&[a]);
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].1.message, "a @page component can't hold the routes block (it would render itself); move the block to a component without @page");

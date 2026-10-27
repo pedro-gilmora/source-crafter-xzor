@@ -153,9 +153,8 @@ pub enum Node {
         fixed: bool,
         body: Vec<Node>,
     },
-    /// `@ClientRoutes(route) { ... }` or `@ServerRoutes(route) { ... }`: the project's routes block.
+    /// `@Routes(route) { ... }`: the project's routes block.
     Routes {
-        engine: crate::routes::Engine,
         /// The name the sections see the route state under.
         var: Src,
         sections: Vec<RouteSectionNode>,

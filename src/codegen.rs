@@ -22,7 +22,7 @@ pub struct Generated {
     pub injects: Vec<Inject>,
     /// `@page` routes, with their params typed from the props.
     pub routes: Vec<RouteInfo>,
-    /// The `@ClientRoutes`/`@ServerRoutes` block, if any.
+    /// The `@Routes` block, if any.
     pub routes_block: Option<crate::routes::RoutesBlockInfo>,
     /// Files probed while resolving the `@inherits` chain, found or not; a change to one invalidates this output.
     pub deps: Vec<std::path::PathBuf>,
@@ -514,9 +514,13 @@ fn find_routes(nodes: &[Node]) -> Option<&Node> {
     })
 }
 
-/// What the route table needs to know about a block: its engine and the tags its sections claim.
+/// What the route table needs to know about a block: the tags its sections claim and its first regex.
 fn block_info(node: &Node) -> Option<crate::routes::RoutesBlockInfo> {
-    let Node::Routes { engine, var, sections } = node else { return None };
+    let Node::Routes { var, sections } = node else { return None };
+    let regex = sections.iter().find_map(|s| match &s.kind {
+        RouteSectionKind::Regex { re, .. } => Some(re.at),
+        _ => None,
+    });
     let sections = sections
         .iter()
         .filter_map(|s| match &s.kind {
@@ -524,7 +528,7 @@ fn block_info(node: &Node) -> Option<crate::routes::RoutesBlockInfo> {
             _ => None,
         })
         .collect();
-    Some(crate::routes::RoutesBlockInfo { engine: *engine, at: var.at, sections })
+    Some(crate::routes::RoutesBlockInfo { at: var.at, sections, regex })
 }
 
 /// Whether a block's pattern matchers need the `__d` decode guard.
@@ -1279,12 +1283,8 @@ impl Gen<'_> {
                 self.line("}");
                 self.line("__b.closeRegion();");
             }
-            Node::Routes { engine, var, sections } => {
-                let engine = match engine {
-                    crate::routes::Engine::Client => "client",
-                    crate::routes::Engine::Server => "server",
-                };
-                self.line(&format!("__b.addRoutes({}, __routes, [", js_string(engine)));
+            Node::Routes { var, sections } => {
+                self.line("__b.addRoutes(__routes, [");
                 self.depth += 1;
                 for (i, section) in sections.iter().enumerate() {
                     let m = self.route_section(i, var, section)?;
@@ -3740,7 +3740,7 @@ mod tests {
 
     /// The routes block of the design spec, §4, with plain elements for the layouts.
     const ROUTES_BLOCK: &str = concat!(
-        "@ClientRoutes(route)\n{\n",
+        "@Routes(route)\n{\n",
         "  @admin(page) { <main>@page</main> }\n",
         "  @/^\\/admin\\/(?<area>\\w+)/i(page) { <b>@route.match.area</b> }\n",
         "  @\"/legal/:doc\" { <i>@route.params.doc</i> }\n",
@@ -3756,7 +3756,7 @@ mod tests {
         let has = |s: &str| assert!(g.code.contains(s), "{s}\nmissing in\n{}", g.code);
         has("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@source-crafter/xzor-runtime\";");
         has("import { routes as __routes, type AppRoute as __AppRoute } from \"./routes\";");
-        has("  __b.addRoutes(\"client\", __routes, [\n");
+        has("  __b.addRoutes(__routes, [\n");
         has("    { kind: \"tag\", tag: \"admin\", render: (_route: Route, page: RenderFragment) => ComponentBase.fragment((__b) => { __b.openElement(\"main\"); __b.addContent(page); __b.closeElement(); }) },\n");
         has("    { kind: \"regex\", re: C.__re1, page: true, render: (__route: Route<any, any>) => { const route = __route as __AppRoute & { match: { area: string } }; return ComponentBase.fragment((__b) => {");
         has("    { kind: \"pattern\", match: C.__m2, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return ComponentBase.fragment((__b) => {");
@@ -3773,7 +3773,7 @@ mod tests {
 
     #[test]
     fn route_bindings_are_declared_only_when_the_body_uses_them() {
-        let src = "@ClientRoutes(route) { @a(page) { <main>@page</main> } @notFound { <p/> } @catch(e) { <p>@e</p> } @\"/x/:id\" { <p/> } @default(page) { <p/> } }";
+        let src = "@Routes(route) { @a(page) { <main>@page</main> } @notFound { <p/> } @catch(e) { <p>@e</p> } @\"/x/:id\" { <p/> } @default(page) { <p/> } }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s}\nmissing in\n{}", g.code);
         has("render: (_route: Route, page: RenderFragment) => ComponentBase.fragment((__b) => { __b.openElement(\"main\")");
@@ -3785,24 +3785,24 @@ mod tests {
         // Imports the bindings no longer use are dropped too.
         assert!(g.code.contains("import { ComponentBase, type RenderTreeBuilder, type RenderFragment, type Route } from \"@source-crafter/xzor-runtime\";"), "{}", g.code);
         assert!(g.code.contains("import { routes as __routes } from \"./routes\";"), "{}", g.code);
-        let none = gen_with("@ClientRoutes(route) { @notFound { <p/> } }", &[]);
+        let none = gen_with("@Routes(route) { @notFound { <p/> } }", &[]);
         assert!(none.code.contains("import { ComponentBase, type RenderTreeBuilder } from \"@source-crafter/xzor-runtime\";"), "{}", none.code);
         // The names inside text are not uses.
-        let text = gen_with("@ClientRoutes(route) { @a(page) { <p>the page route</p> } @notFound { <p>route not found</p> } }", &[]);
+        let text = gen_with("@Routes(route) { @a(page) { <p>the page route</p> } @notFound { <p>route not found</p> } }", &[]);
         assert!(!text.code.contains("const route") && !text.code.contains(" page:"), "{}", text.code);
-        let paged = gen_with("@ClientRoutes(route) { @\"/x/:id\"(page) { <p>@route.match.id @page</p> } }", &[]);
+        let paged = gen_with("@Routes(route) { @\"/x/:id\"(page) { <p>@route.match.id @page</p> } }", &[]);
         assert!(paged.code.contains("const route = __route as __AppRoute & { match: { id: string } };"), "{}", paged.code);
-        let used = gen_with("@ClientRoutes(route) { @a(page) { <p>@route.params.x</p> } }", &[]);
+        let used = gen_with("@Routes(route) { @a(page) { <p>@route.params.x</p> } }", &[]);
         assert!(used.code.contains("render: (__route: Route<any, any>) => { const route = __route as __AppRoute<__RouteParams[\"a\"]>; return "), "{}", used.code);
         assert!(used.code.contains("import { routes as __routes, type AppRoute as __AppRoute, type RouteParams as __RouteParams } from \"./routes\";"), "{}", used.code);
-        let other = gen_with("@ClientRoutes(route) { @notFound { <p>@route.path</p> } }", &[]);
+        let other = gen_with("@Routes(route) { @notFound { <p>@route.path</p> } }", &[]);
         assert!(other.code.contains("render: (__route: Route<any, any>) => { const route = __route as __AppRoute; return "), "{}", other.code);
         assert!(other.code.contains("import { routes as __routes, type AppRoute as __AppRoute } from \"./routes\";"), "{}", other.code);
     }
 
     #[test]
     fn the_route_variable_is_mapped_where_it_is_declared() {
-        let src = "@ClientRoutes(route) { @a(page) { <p>@route.x</p> } @notFound { <i>@route.y</i> } }";
+        let src = "@Routes(route) { @a(page) { <p>@route.x</p> } @notFound { <i>@route.y</i> } }";
         let g = gen_with(src, &[]);
         let at = src.find("route)").unwrap();
         let decls: Vec<_> = g.mappings.iter().filter(|m| m.src == at && m.len == 5).collect();
@@ -3820,15 +3820,14 @@ mod tests {
     }
 
     #[test]
-    fn routes_block_reports_its_engine_and_tag_sections() {
+    fn routes_block_reports_its_tag_sections_and_first_regex() {
         let g = gen_with(ROUTES_BLOCK, &[]);
         let block = g.routes_block.unwrap();
-        assert_eq!(block.engine, crate::routes::Engine::Client);
         assert_eq!(block.at, ROUTES_BLOCK.find("route)").unwrap());
         assert_eq!(block.sections, [("admin".to_string(), ROUTES_BLOCK.find("admin(page)").unwrap())]);
-        let server = gen_with("@ServerRoutes(r) { @notFound { <p/> } }", &[]);
-        assert_eq!(server.routes_block.unwrap().engine, crate::routes::Engine::Server);
-        assert!(server.code.contains("__b.addRoutes(\"server\", __routes, ["), "{}", server.code);
+        assert_eq!(block.regex, Some(ROUTES_BLOCK.find("/^").unwrap()));
+        let none = gen_with("@Routes(r) { @notFound { <p/> } }", &[]);
+        assert_eq!(none.routes_block.unwrap().regex, None);
     }
 
     #[test]

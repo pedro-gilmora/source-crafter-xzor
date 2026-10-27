@@ -91,7 +91,7 @@ struct Parser<'a> {
     show: usize,
 }
 
-/// Words that follow `@` as directives; `@cascade`, `@ClientRoutes` and `@ServerRoutes` are
+/// Words that follow `@` as directives; `@cascade` and `@Routes` are
 /// directives only in certain shapes, so they are matched separately.
 const DIRECTIVES: &[&str] =
     &["code", "page", "import", "if", "for", "while", "switch", "typeparam", "slot", "inherits", "implements", "attribute", "inject", "fine", "render", "async", "cached"];
@@ -117,6 +117,22 @@ impl<'a> Parser<'a> {
     /// The next byte that is not a space or tab, without moving.
     fn next_non_blank(&self) -> Option<u8> {
         self.b[self.pos..].iter().copied().find(|c| !matches!(c, b' ' | b'\t'))
+    }
+
+    /// Whether `(name)` follows on this line and then a `{` (after any whitespace), without moving.
+    fn routes_ahead(&mut self) -> bool {
+        if self.next_non_blank() != Some(b'(') {
+            return false;
+        }
+        let save = self.pos;
+        while matches!(self.peek(), Some(b' ' | b'\t')) {
+            self.pos += 1;
+        }
+        let closed = self.balanced(b'(', b')').is_ok();
+        self.skip_ws();
+        let open = closed && self.peek() == Some(b'{');
+        self.pos = save;
+        open
     }
 
     fn prev_is_alnum(&self) -> bool {
@@ -415,8 +431,9 @@ impl<'a> Parser<'a> {
         let word = self.ident();
         // `@cascade` is only a block when `:` and a name follow; otherwise it is a member reference.
         let cascade = word == "cascade" && self.peek() == Some(b':') && matches!(self.peek_at(1), Some(c) if is_ident_start(c));
-        // Likewise `@ClientRoutes`/`@ServerRoutes` only open a routes block when `(` follows on the same line.
-        let routes = matches!(word, "ClientRoutes" | "ServerRoutes") && self.next_non_blank() == Some(b'(');
+        // Likewise `@Routes` only opens a routes block when `(name)` follows on the same line and then `{`.
+        let routes = word == "Routes" && self.routes_ahead();
+        let old_routes = matches!(word, "ClientRoutes" | "ServerRoutes") && self.next_non_blank() == Some(b'(');
         // `@module` opens the module block only when `{` follows; otherwise it is a member reference.
         let module = word == "module" && self.next_non_blank() == Some(b'{');
         // `@attr:name=value` sets an attribute of the enclosing element; bare `@attr` is a member reference.
@@ -598,8 +615,10 @@ impl<'a> Parser<'a> {
             "switch" => self.switch_block().map(Transition::Node),
             "slot" => self.slot().map(Transition::Node),
             "cascade" if cascade => self.cascade_block().map(Transition::Node),
-            "ClientRoutes" if routes => self.routes_block(crate::routes::Engine::Client, word).map(Transition::Node),
-            "ServerRoutes" if routes => self.routes_block(crate::routes::Engine::Server, word).map(Transition::Node),
+            "Routes" if routes => self.routes_block().map(Transition::Node),
+            "ClientRoutes" | "ServerRoutes" if old_routes => {
+                Err(ParseError { message: format!("@{word} was renamed to @Routes; navigation is set on @Run"), offset: at })
+            }
             _ => self.implicit_expression(word_start),
         }
     }
@@ -984,20 +1003,17 @@ impl<'a> Parser<'a> {
         Ok(Node::Cascade { name, value, fixed, body })
     }
 
-    /// `@ClientRoutes(route) { ... }`: only sections may appear inside, which is what keeps their
+    /// `@Routes(route) { ... }`: only sections may appear inside, which is what keeps their
     /// keywords (`notFound`, `catch`, `default`, route tags) from meaning anything elsewhere.
-    fn routes_block(&mut self, engine: crate::routes::Engine, keyword: &str) -> PResult<Node> {
+    fn routes_block(&mut self) -> PResult<Node> {
         self.skip_ws();
-        if self.peek() != Some(b'(') {
-            return self.err(format!("expected ( after @{keyword}"));
-        }
         let (s, e) = self.balanced(b'(', b')')?;
         self.mark(TokenKind::Code, s, e);
         let var = self.span(s + 1, e - 1);
         if !crate::routes::is_ident(&var) {
-            return Err(ParseError { message: format!("expected a name in @{keyword}(...)"), offset: s + 1 });
+            return Err(ParseError { message: "expected a name in @Routes(...)".into(), offset: s + 1 });
         }
-        if DIRECTIVES.contains(&&*var.text) || matches!(&*var.text, "cascade" | "ClientRoutes" | "ServerRoutes") {
+        if DIRECTIVES.contains(&&*var.text) || matches!(&*var.text, "cascade" | "Routes") {
             return Err(ParseError { message: format!("{:?} can't name the route variable", &*var.text), offset: var.at });
         }
         if self.routes_seen {
@@ -1005,9 +1021,6 @@ impl<'a> Parser<'a> {
         }
         self.routes_seen = true;
         self.skip_ws();
-        if self.peek() != Some(b'{') {
-            return self.err(format!("expected {{ after @{keyword}(...)"));
-        }
         self.mark(TokenKind::Transition, self.pos, self.pos + 1);
         self.pos += 1;
         self.bound.push(var.text.clone());
@@ -1020,7 +1033,7 @@ impl<'a> Parser<'a> {
                     self.mark(TokenKind::Transition, self.pos, self.pos + 1);
                     self.pos += 1;
                     self.bound.pop();
-                    return Ok(Node::Routes { engine, var, sections });
+                    return Ok(Node::Routes { var, sections });
                 }
                 Some(b'@') if self.peek_at(1) == Some(b'*') => {
                     self.transition()?;
@@ -1029,16 +1042,16 @@ impl<'a> Parser<'a> {
                     if sections.last().is_some_and(|s| matches!(s.kind, RouteSectionKind::Default { .. })) {
                         return self.err("@default must be the last section");
                     }
-                    sections.push(self.route_section(engine, keyword)?);
+                    sections.push(self.route_section()?);
                 }
-                Some(_) => return self.err(format!("only route sections are allowed in @{keyword}")),
+                Some(_) => return self.err("only route sections are allowed in @Routes"),
             }
         }
     }
 
     /// One `@<tag>(page)`, `@/re/(page?)`, `@"pattern"(page?)`, `@notFound`, `@catch(e)` or
     /// `@default(page)` section with its body. On entry `pos` is at the `@`.
-    fn route_section(&mut self, engine: crate::routes::Engine, keyword: &str) -> PResult<RouteSectionNode> {
+    fn route_section(&mut self) -> PResult<RouteSectionNode> {
         let at = self.pos;
         self.pos += 1;
         self.mark(TokenKind::Transition, at, at + 1);
@@ -1047,9 +1060,6 @@ impl<'a> Parser<'a> {
                 let start = self.pos;
                 self.regex_lit()?;
                 self.mark(TokenKind::AttrValue, start, self.pos);
-                if engine == crate::routes::Engine::Server {
-                    return Err(ParseError { message: "Bun.serve routes don't support regex; use a pattern".into(), offset: start });
-                }
                 let re = self.span(start, self.pos);
                 RouteSectionKind::Regex { re, page: self.optional_binding()? }
             }
@@ -1079,7 +1089,7 @@ impl<'a> Parser<'a> {
                     _ => RouteSectionKind::Tag { page: self.required_binding(word, "page")?, tag: Src::new(word, start) },
                 }
             }
-            _ => return self.err(format!("only route sections are allowed in @{keyword}")),
+            _ => return self.err("only route sections are allowed in @Routes"),
         };
         if let Some(name) = kind.binding() {
             self.bound.push(name.text.clone());
@@ -2171,7 +2181,7 @@ after"#;
 
     /// The routes block of the design spec, §4.
     const ROUTES_BLOCK: &str = concat!(
-        "@ClientRoutes(route)\n{\n",
+        "@Routes(route)\n{\n",
         "  @admin(page) { <AdminLayout>@page</AdminLayout> }\n",
         "  @/^\\/admin\\/(?<area>\\w+)/i(page) { <AdminLayout area=\"@route.match.area\">@page</AdminLayout> }\n",
         "  @\"/legal/:doc\" { <LegalText doc=\"@route.params.doc\" /> }\n",
@@ -2184,8 +2194,7 @@ after"#;
     #[test]
     fn parses_every_routes_section() {
         let n = nodes(ROUTES_BLOCK);
-        let [Node::Routes { engine, var, sections }] = n.as_slice() else { panic!("{n:?}") };
-        assert_eq!(*engine, crate::routes::Engine::Client);
+        let [Node::Routes { var, sections }] = n.as_slice() else { panic!("{n:?}") };
         assert_eq!(var, &Src::from("route"));
         assert_eq!(&ROUTES_BLOCK[var.at..var.at + var.len()], "route");
         let kinds: Vec<&RouteSectionKind> = sections.iter().map(|s| &s.kind).collect();
@@ -2217,33 +2226,50 @@ after"#;
     }
 
     #[test]
-    fn server_routes_block_rejects_regex_sections() {
-        let parsed = nodes("@ServerRoutes(r) { @\"/a\" { <p/> } }");
-        let [Node::Routes { engine, .. }] = parsed.as_slice() else { panic!("{parsed:?}") };
-        assert_eq!(*engine, crate::routes::Engine::Server);
-        let e = parse("@ServerRoutes(r) { @/x/(page) { <p/> } }").unwrap_err();
-        assert_eq!(e.message, "Bun.serve routes don't support regex; use a pattern");
+    fn routes_block_parses() {
+        let n = nodes("@Routes(route) { @notFound { <p/> } }");
+        let [Node::Routes { sections, .. }] = n.as_slice() else { panic!("{n:?}") };
+        assert_eq!(sections.len(), 1);
+    }
+
+    #[test]
+    fn old_routes_keywords_name_the_replacement() {
+        for old in ["ClientRoutes", "ServerRoutes"] {
+            let e = parse(&format!("@{old}(route) {{ }}")).unwrap_err();
+            assert_eq!(e.message, format!("@{old} was renamed to @Routes; navigation is set on @Run"));
+        }
+    }
+
+    #[test]
+    fn routes_without_a_block_is_an_expression() {
+        assert_eq!(nodes("<p>@Routes(x)</p>"), vec![el("p", vec![], vec![Node::Expr("Routes(x)".into())])]);
+    }
+
+    #[test]
+    fn regex_sections_parse_in_routes() {
+        let n = nodes("@Routes(r) { @/x/(page) { <p/> } }");
+        let [Node::Routes { sections, .. }] = n.as_slice() else { panic!("{n:?}") };
+        assert!(matches!(sections[0].kind, RouteSectionKind::Regex { .. }), "{sections:?}");
     }
 
     #[test]
     fn routes_block_errors() {
         let err = |src: &str| parse(src).unwrap_err().message;
-        assert_eq!(err("@ClientRoutes(route) { <p>x</p> }"), "only route sections are allowed in @ClientRoutes");
-        assert_eq!(err("@ServerRoutes(route) { hello }"), "only route sections are allowed in @ServerRoutes");
-        assert_eq!(err("@ClientRoutes(route) { @default(page) {} @notFound {} }"), "@default must be the last section");
-        assert_eq!(err("@ClientRoutes(route) { @admin { <p/> } }"), "expected (page) after @admin");
-        assert_eq!(err("@ClientRoutes(route) { @default { <p/> } }"), "expected (page) after @default");
-        assert_eq!(err("@ClientRoutes(route) { @catch { <p/> } }"), "expected (error) after @catch");
-        assert_eq!(err("@ClientRoutes(route) { @notFound(page) { <p/> } }"), "@notFound takes no (page)");
-        assert_eq!(err("@ClientRoutes(route) { @admin(1) { <p/> } }"), "expected a name in (...)");
-        assert_eq!(err("@ClientRoutes(route) { @\"a\" { <p/> } }"), "invalid route pattern \"a\": must start with '/'");
-        assert_eq!(err("@ClientRoutes() { }"), "expected a name in @ClientRoutes(...)");
-        assert_eq!(err("@ClientRoutes(route)"), "expected { after @ClientRoutes(...)");
+        assert_eq!(err("@Routes(route) { <p>x</p> }"), "only route sections are allowed in @Routes");
+        assert_eq!(err("@Routes(route) { hello }"), "only route sections are allowed in @Routes");
+        assert_eq!(err("@Routes(route) { @default(page) {} @notFound {} }"), "@default must be the last section");
+        assert_eq!(err("@Routes(route) { @admin { <p/> } }"), "expected (page) after @admin");
+        assert_eq!(err("@Routes(route) { @default { <p/> } }"), "expected (page) after @default");
+        assert_eq!(err("@Routes(route) { @catch { <p/> } }"), "expected (error) after @catch");
+        assert_eq!(err("@Routes(route) { @notFound(page) { <p/> } }"), "@notFound takes no (page)");
+        assert_eq!(err("@Routes(route) { @admin(1) { <p/> } }"), "expected a name in (...)");
+        assert_eq!(err("@Routes(route) { @\"a\" { <p/> } }"), "invalid route pattern \"a\": must start with '/'");
+        assert_eq!(err("@Routes() { }"), "expected a name in @Routes(...)");
     }
 
     #[test]
     fn a_second_routes_block_in_one_document_is_an_error() {
-        let src = "@ClientRoutes(r) { @notFound { <p/> } }\n<div>@ServerRoutes(s) { @notFound { <p/> } }</div>";
+        let src = "@Routes(r) { @notFound { <p/> } }\n<div>@Routes(s) { @notFound { <p/> } }</div>";
         let e = parse(src).unwrap_err();
         assert_eq!(e.message, "only one routes block per project (also in this file)");
         assert_eq!(e.offset, src.find("(s)").unwrap() + 1);
@@ -2251,36 +2277,36 @@ after"#;
 
     #[test]
     fn comments_are_allowed_between_sections_and_after_default() {
-        let src = "@ClientRoutes(route) {\n @* one *@\n @a(page) { <p/> }\n @* two *@\n @default(page) { <p/> }\n @* after *@\n}";
+        let src = "@Routes(route) {\n @* one *@\n @a(page) { <p/> }\n @* two *@\n @default(page) { <p/> }\n @* after *@\n}";
         let (doc, tokens) = parse(src).unwrap();
         let [Node::Routes { sections, .. }] = doc.nodes.as_slice() else { panic!("{:?}", doc.nodes) };
         assert_eq!(sections.len(), 2);
         assert_eq!(tokens.iter().filter(|t| t.kind == TokenKind::Comment).count(), 3, "{tokens:?}");
-        let e = parse("@ClientRoutes(route) { @default(page) { <p/> } @* c *@ @a(page) { <p/> } }").unwrap_err();
+        let e = parse("@Routes(route) { @default(page) { <p/> } @* c *@ @a(page) { <p/> } }").unwrap_err();
         assert_eq!(e.message, "@default must be the last section");
     }
 
     #[test]
     fn the_routes_header_needs_its_paren_on_the_same_line() {
-        let n = nodes("@ClientRoutes\n(route) { @notFound { <p/> } }");
-        assert_eq!(n[0], Node::Expr("ClientRoutes".into()), "{n:?}");
+        let n = nodes("@Routes\n(route) { @notFound { <p/> } }");
+        assert_eq!(n[0], Node::Expr("Routes".into()), "{n:?}");
         assert!(!n.iter().any(|n| matches!(n, Node::Routes { .. })), "{n:?}");
-        let n = nodes("@ClientRoutes (route)\n{\n  @notFound { <p/> }\n}");
+        let n = nodes("@Routes (route)\n{\n  @notFound { <p/> }\n}");
         assert!(matches!(n.as_slice(), [Node::Routes { .. }]), "{n:?}");
     }
 
     #[test]
     fn the_route_variable_cannot_be_a_directive_word() {
-        for word in ["if", "for", "while", "switch", "code", "slot", "cascade", "page", "ClientRoutes"] {
-            let e = parse(&format!("@ClientRoutes({word}) {{ @notFound {{ <p/> }} }}")).unwrap_err();
+        for word in ["if", "for", "while", "switch", "code", "slot", "cascade", "page", "Routes"] {
+            let e = parse(&format!("@Routes({word}) {{ @notFound {{ <p/> }} }}")).unwrap_err();
             assert_eq!(e.message, format!("\"{word}\" can't name the route variable"));
-            assert_eq!(e.offset, "@ClientRoutes(".len());
+            assert_eq!(e.offset, "@Routes(".len());
         }
     }
 
     /// The regex literal of a `@/…/flags(page)` section.
     fn regex_of(re: &str) -> String {
-        let n = nodes(&format!("@ClientRoutes(r) {{ @{re}(page) {{ <p/> }} }}"));
+        let n = nodes(&format!("@Routes(r) {{ @{re}(page) {{ <p/> }} }}"));
         let [Node::Routes { sections, .. }] = n.as_slice() else { panic!("{n:?}") };
         let RouteSectionKind::Regex { re, .. } = &sections[0].kind else { panic!("{sections:?}") };
         re.text.to_string()
@@ -2292,16 +2318,16 @@ after"#;
         assert_eq!(regex_of("/a\\/b/"), "/a\\/b/");
         assert_eq!(regex_of("/[^\\]/]+/"), "/[^\\]/]+/");
         assert_eq!(regex_of("/x/gimsuy"), "/x/gimsuy");
-        let e = parse("@ClientRoutes(r) { @/a[/b/(page) { <p/> } }").unwrap_err();
+        let e = parse("@Routes(r) { @/a[/b/(page) { <p/> } }").unwrap_err();
         assert_eq!(e.message, "unterminated regex");
-        assert!(parse("@ClientRoutes(r) { @/ab").is_err());
+        assert!(parse("@Routes(r) { @/ab").is_err());
     }
 
     #[test]
     fn section_keywords_are_plain_expressions_outside_a_routes_block() {
         assert_eq!(nodes("<p>@notFound</p>"), vec![el("p", vec![], vec![Node::Expr("notFound".into())])]);
         assert_eq!(nodes("@default(x)"), vec![Node::Expr("default(x)".into())]);
-        assert_eq!(nodes("<p>@ClientRoutes</p>"), vec![el("p", vec![], vec![Node::Expr("ClientRoutes".into())])]);
+        assert_eq!(nodes("<p>@Routes</p>"), vec![el("p", vec![], vec![Node::Expr("Routes".into())])]);
         let (_, tokens) = parse("<p>@notFound @default</p>").unwrap();
         assert!(!tokens.iter().any(|t| t.kind == TokenKind::Keyword), "{tokens:?}");
     }
