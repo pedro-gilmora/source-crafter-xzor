@@ -11,9 +11,14 @@
   tags: string[] = [];
   tagged: PostSummary[] = [];
   loading = true;
+  failed = false;
 
   protected override async onInitializedAsync() {
-    this.tags = await this.allTags.all();
+    try {
+      this.tags = await this.allTags.all();
+    } catch {
+      this.failed = true;
+    }
   }
 
   // Runs on every tag change of this kept instance; a slower answer for an earlier tag is dropped.
@@ -21,7 +26,13 @@
     const tag = this.tag;
     this.tagged = [];
     this.loading = true;
-    const tagged = await this.posts.list({ tag });
+    this.failed = false;
+    let tagged: PostSummary[] = [];
+    try {
+      tagged = await this.posts.list({ tag });
+    } catch {
+      this.failed = true;
+    }
     if (tag !== this.tag) return;
     this.tagged = tagged;
     this.loading = false;
@@ -38,6 +49,8 @@
 </header>
 @if (loading) {
   <p class="xz-muted" role="status">Loading…</p>
+} else if (failed) {
+  <p class="xz-muted" role="alert">Could not load the posts. Reload to try again.</p>
 } else if (tagged.length === 0) {
   <Empty title="No posts with this tag" icon="tag"><p><a href="@href.Home()">See every post</a></p></Empty>
 } else {

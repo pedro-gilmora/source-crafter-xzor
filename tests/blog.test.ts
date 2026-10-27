@@ -92,6 +92,12 @@ test("the blog's pages read posts through IPosts from the running server, and th
     (document.querySelector('.tag-list a[href="/tags/layout"]') as HTMLElement).click();
     await until("#layout", () => document.querySelector("h1")?.textContent === "#layout" && document.querySelectorAll(".posts article").length === 1);
     expect(document.querySelector(".posts article h2")?.textContent).toBe("Components that measure their own box");
+
+    // A failed request shows an error, not "Loading…" forever.
+    server.kill();
+    await server.exited;
+    (document.querySelector("a.brand") as HTMLElement).click();
+    await until("the error state", () => document.querySelector("[role=alert]")?.textContent?.includes("Could not load") === true);
   } finally {
     server.kill();
     await server.exited;

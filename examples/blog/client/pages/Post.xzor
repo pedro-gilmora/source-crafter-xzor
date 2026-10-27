@@ -10,12 +10,19 @@
   slug = "";
   page: PostPage | undefined;
   loading = true;
+  failed = false;
 
   // Runs on every slug change of this kept instance; a slower answer for an earlier slug is dropped.
   protected override async onParametersSetAsync() {
     const slug = this.slug;
     this.loading = true;
-    const page = await this.posts.get(slug);
+    this.failed = false;
+    let page: PostPage | undefined;
+    try {
+      page = await this.posts.get(slug);
+    } catch {
+      this.failed = true;
+    }
     if (slug !== this.slug) return;
     this.page = page;
     this.loading = false;
@@ -25,6 +32,8 @@
 <div class="progress" aria-hidden="true"></div>
 @if (loading) {
   <p class="xz-muted" role="status">Loading…</p>
+} else if (failed) {
+  <p class="xz-muted" role="alert">Could not load the post. Reload to try again.</p>
 } else if (page) {
   @{ const { post: p, next } = page; }
   <article class="article">

@@ -6,9 +6,14 @@
 @code {
   items: PostSummary[] = [];
   loading = true;
+  failed = false;
 
   protected override async onInitializedAsync() {
-    this.items = await this.posts.list({});
+    try {
+      this.items = await this.posts.list({});
+    } catch {
+      this.failed = true;
+    }
     this.loading = false;
   }
 }
@@ -19,6 +24,8 @@
 </header>
 @if (loading) {
   <p class="xz-muted" role="status">Loading…</p>
+} else if (failed) {
+  <p class="xz-muted" role="alert">Could not load the posts. Reload to try again.</p>
 } else {
   <div class="posts">
     @for (const post of items) {
