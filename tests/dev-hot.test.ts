@@ -67,6 +67,7 @@ test("an endpoint edit restarts the server and the new JSON is served", async ()
   const dir = join(repo, "target", "tmp-serve", `dev-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
   cpSync(join(import.meta.dir, "fixtures", "server"), dir, { recursive: true, filter: (src) => !/[\\/](\.xzor|node_modules|dist)$/.test(src) });
+  writeFileSync(join(dir, "client", "Home.css.xzor"), "h1 { color: red; }\n");
   const free = Bun.serve({ port: 0, fetch: () => new Response() });
   const port = free.port;
   await free.stop(true);
@@ -108,6 +109,11 @@ test("an endpoint edit restarts the server and the new JSON is served", async ()
     expect(page).toContain("Server fixture");
     // The page loads the bundle even though the project's index.html names none.
     expect(page).toContain(`src="dist/main.js"`);
+    // ... and its stylesheet, once the bundle emitted one.
+    const styled = await until("/posts/x", (s, body) => s === 200 && body.includes(`href="dist/main.css"`), { headers: { accept: "text/html" } });
+    expect(styled).toContain(`<link rel="stylesheet" href="dist/main.css">`);
+    // A `//host` path is a path on the app's server, never a protocol-relative URL: the app answers (404), nothing leaves the host.
+    expect((await fetch(`${base}//example.invalid/x`)).status).toBe(404);
     const missing = await fetch(`${base}/api/posts/nope`);
     expect([missing.status, await missing.text()]).toEqual([404, ""]);
 

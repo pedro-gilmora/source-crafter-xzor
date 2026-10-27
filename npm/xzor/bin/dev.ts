@@ -170,11 +170,16 @@ if (import.meta.main) {
     /<head[^>]*>/i.test(text) ? text.replace(/<head[^>]*>/i, (head) => head + client) : text.replace(/<script/i, `${client}<script`);
   // Never cached, so a reload always gets the latest build.
   const headers = { "Cache-Control": "no-store" };
-  // A server app's `index.html` has no script of its own: the bundle's is added, as the production build does.
-  const withMain = (text: string) =>
-    child && !/main\.js/.test(text) ? text.replace(/<\/body\s*>/i, `<script type="module" src="dist/main.js"></script>\n$&`) : text;
+  // A server app's `index.html` has no script or stylesheet of its own: the bundle's are added, as the production build does.
+  const withMain = async (text: string) => {
+    if (!child) return text;
+    if (!/main\.css/.test(text) && (await Bun.file(resolve(root, "dist", "main.css")).exists())) {
+      text = text.replace(/<\/head\s*>/i, `<link rel="stylesheet" href="dist/main.css">\n$&`);
+    }
+    return /main\.js/.test(text) ? text : text.replace(/<\/body\s*>/i, `<script type="module" src="dist/main.js"></script>\n$&`);
+  };
   const html = async (file: string) =>
-    new Response(inject(withMain(await Bun.file(file).text())), { headers: { ...headers, "Content-Type": "text/html;charset=utf-8" } });
+    new Response(inject(await withMain(await Bun.file(file).text())), { headers: { ...headers, "Content-Type": "text/html;charset=utf-8" } });
 
   // What no file answers goes to the app's server; a page path it doesn't know is a client route.
   const proxy = async (req: Request): Promise<Response> => {
@@ -184,7 +189,11 @@ if (import.meta.main) {
       const headers = new Headers(req.headers);
       headers.delete("host");
       const body = req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
-      res = await globalThis.fetch(new URL(url.pathname + url.search, await child!.url), { method: req.method, headers, body, redirect: "manual" });
+      // The origin plus the path: a `//host` path must not resolve as protocol-relative.
+      const target = new URL(await child!.url);
+      target.pathname = url.pathname;
+      target.search = url.search;
+      res = await globalThis.fetch(target, { method: req.method, headers, body, redirect: "manual" });
     } catch {
       return new Response("xzor dev: the server is not running", { status: 502, headers });
     }
