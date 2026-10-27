@@ -362,9 +362,9 @@ pub fn css_classes(css: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether `before` ends directly inside the braces of an open `@ClientRoutes(..) {`/`@ServerRoutes(..) {` block.
+/// Whether `before` ends directly inside the braces of an open `@Routes(..) {` block.
 fn directly_in_routes_block(before: &str) -> bool {
-    let Some(at) = ["@ClientRoutes", "@ServerRoutes"].iter().filter_map(|k| before.rfind(k)).max() else { return false };
+    let Some(at) = before.rfind("@Routes") else { return false };
     let mut depth = 0i32;
     let mut opened = false;
     for c in before[at..].chars() {
@@ -461,8 +461,7 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("show:if", "show:if ($1) {\n\t$0\n}", "Like @if, but a branch it leaves is hidden and kept, not removed"),
     ("show:switch", "show:switch ($1) {\n\tcase $2:\n\t\t$0\n}", "Like @switch, but a case it leaves is hidden and kept, not removed"),
     ("pause", "pause", "In a @show branch: stops it (bare, first) or a block of it (@pause { }) while hidden"),
-    ("ClientRoutes", "ClientRoutes(${1:route}) {\n\t$0\n}", "Routes block for a browser SPA"),
-    ("ServerRoutes", "ServerRoutes(${1:route}) {\n\t$0\n}", "Routes block for one page per route"),
+    ("Routes", "Routes(${1:route}) {\n\t$0\n}", "Routes block"),
 ];
 
 const ROUTE_SECTIONS: &[(&str, &str, &str)] = &[
@@ -841,14 +840,12 @@ mod tests {
 
     #[test]
     fn routes_block_directives_complete() {
-        let doc = "\n@ClientR";
+        let doc = "\n@Rout";
         let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "ClientRoutes");
-        assert_eq!(items[0].insert, "ClientRoutes(${1:route}) {\n\t$0\n}");
-        let doc = "\n@ServerR";
-        let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
-        assert_eq!(items[0].insert, "ServerRoutes(${1:route}) {\n\t$0\n}");
+        assert_eq!(items[0].label, "Routes");
+        assert_eq!(items[0].insert, "Routes(${1:route}) {\n\t$0\n}");
+        assert_eq!(items[0].detail, "Routes block");
     }
 
     #[test]
@@ -858,15 +855,15 @@ mod tests {
         let labels = |doc: &str| -> Vec<String> {
             completions(doc, doc.len(), Path::new("/app/A.xzor"), std::slice::from_ref(&admin)).into_iter().map(|c| c.label).collect()
         };
-        assert_eq!(labels("@ClientRoutes(route) {\n  @"), ["admin", "user", "notFound", "catch", "default"]);
-        assert_eq!(labels("@ServerRoutes(route)\n{\n  @a"), ["admin"]);
-        assert_eq!(labels("@ClientRoutes(route) {\n  @d"), ["default"]);
-        assert_eq!(labels("@ClientRoutes(route) {\n  @n"), ["notFound"]);
+        assert_eq!(labels("@Routes(route) {\n  @"), ["admin", "user", "notFound", "catch", "default"]);
+        assert_eq!(labels("@Routes(route)\n{\n  @a"), ["admin"]);
+        assert_eq!(labels("@Routes(route) {\n  @d"), ["default"]);
+        assert_eq!(labels("@Routes(route) {\n  @n"), ["notFound"]);
         // Inside a section body and after the block they are ordinary directives.
-        assert_eq!(labels("@ClientRoutes(route) {\n  @notFound {\n    @cas"), ["cascade"]);
-        assert_eq!(labels("@ClientRoutes(route) {\n}\n@cas"), ["cascade"]);
+        assert_eq!(labels("@Routes(route) {\n  @notFound {\n    @cas"), ["cascade"]);
+        assert_eq!(labels("@Routes(route) {\n}\n@cas"), ["cascade"]);
 
-        let doc = "@ClientRoutes(route) {\n  @catch(e) { <b/> }\n  @de";
+        let doc = "@Routes(route) {\n  @catch(e) { <b/> }\n  @de";
         assert_eq!(context(doc, doc.len()), Context::Route { prefix: "de".into(), start: doc.len() - 2 });
         let items = completions(doc, doc.len(), Path::new("/app/A.xzor"), &[]);
         assert_eq!(items[0].insert, "default(${1:page}) {\n\t$0\n}");

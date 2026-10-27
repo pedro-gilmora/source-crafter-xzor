@@ -292,11 +292,11 @@ else {
 <!--                        ^^^^ comment.line.double-slash.xzor
 @page "/x" asx
 <!--       ^^^ - keyword.control.as.xzor
-@ClientRoutes(route) {
+@Routes(route) {
 <!-- <- keyword.control.transition.xzor
-<!-- <~------------ keyword.control.directive.xzor
-<!--          ^^^^^ variable.parameter.xzor
-<!--                 ^ punctuation.section.block.begin.xzor
+<!-- <~------ keyword.control.directive.xzor
+<!--    ^^^^^ variable.parameter.xzor
+<!--           ^ punctuation.section.block.begin.xzor
   @admin(page) { <AdminLayout>@page</AdminLayout> }
 <!-- <~~- keyword.control.transition.xzor
 <!-- <~~~----- variable.other.constant.route.xzor
@@ -333,8 +333,8 @@ else {
 <!-- <- punctuation.section.block.end.xzor
 <p>@notFound(x)</p>
 <!-- <~~~~-------- variable.other.readwrite.xzor
-@ServerRoutes(route)
-<!-- <~------------ keyword.control.directive.xzor
+@Routes(route)
+<!-- <~------ keyword.control.directive.xzor
 {
 <!-- <- punctuation.section.block.begin.xzor
 }

@@ -200,8 +200,8 @@
       }
     },
     "routes-block": {
-      "comment": "@ClientRoutes(route) { sections }: only sections are recognized directly inside the braces.",
-      "begin": "(?<![[:alnum:]])(@)(ClientRoutes|ServerRoutes)[ \\t]*(?=\\()",
+      "comment": "@Routes(route) { sections }: only sections are recognized directly inside the braces.",
+      "begin": "(?<![[:alnum:]])(@)(Routes)[ \\t]*(?=\\()",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "keyword.control.directive.xzor" }

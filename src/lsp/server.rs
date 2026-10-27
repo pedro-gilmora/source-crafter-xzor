@@ -306,7 +306,7 @@ fn range_json(text: &str, start: usize, end: usize) -> Json {
 /// The route info of a `.xzor` read from disk; `None` when it has no pages and no routes block.
 fn route_unit(path: &Path, text: String) -> Option<RouteUnit> {
     // Compiling is the cost; a project without routes only pays for this scan.
-    if !text.contains("@page") && !text.contains("@ClientRoutes") && !text.contains("@ServerRoutes") {
+    if !text.contains("@page") && !text.contains("@Routes") {
         return None;
     }
     let g = crate::compile_mapped_with(&text, path, &|p| std::fs::read_to_string(p).ok()).ok()?;
