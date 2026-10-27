@@ -459,7 +459,15 @@ type ServiceDecorator = {
 };
 
 export const ServiceProvider = (): ClassDecorator => noop;
-export const Run = (_component: Function, _target: string): ClassDecorator => noop;
+type RunDecorator = {
+  /** Browser app: mounts `component` on `target`. */
+  (component: Function, target: string): ClassDecorator;
+  /** Server app with a page shell. */
+  (component: Function): ClassDecorator;
+  /** Server app, API only. */
+  (): ClassDecorator;
+};
+export const Run: RunDecorator = () => noop;
 export const Import = (..._providers: Function[]): ClassDecorator => noop;
 export const Singleton: ServiceDecorator = () => noop;
 export const Scoped: ServiceDecorator = () => noop;

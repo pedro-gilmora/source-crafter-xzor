@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": { "types": "./index.d.ts", "import": "./index.js" },
-    "./model": { "types": "./model.d.ts", "import": "./model.js" }
+    "./model": { "types": "./model.d.ts", "import": "./model.js" },
+    "./server": { "types": "./server.d.ts", "import": "./server.js" }
   },
   "types": "./index.d.ts",
   "files": ["*.js", "*.js.map", "*.d.ts"]

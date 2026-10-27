@@ -1200,8 +1200,9 @@ mod tests {
         fs::create_dir_all(root.join("services")).unwrap();
         let runtime = manifest.join("runtime").join("index.ts").display().to_string().replace('\\', "/");
         let model = runtime.replace("index.ts", "model.ts");
+        let server = runtime.replace("index.ts", "server.ts");
         let tsconfig = format!(
-            r#"{{"compilerOptions":{{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ESNext","DOM"],"strict":true,"noEmit":true,"skipLibCheck":true,"rootDirs":[".",".xzor"],"paths":{{"@source-crafter/xzor-runtime":["{runtime}"],"@source-crafter/xzor-runtime/model":["{model}"]}}}},"include":["**/*.ts",".xzor/**/*.ts"]}}"#
+            r#"{{"compilerOptions":{{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","lib":["ESNext","DOM"],"strict":true,"noEmit":true,"skipLibCheck":true,"rootDirs":[".",".xzor"],"paths":{{"@source-crafter/xzor-runtime":["{runtime}"],"@source-crafter/xzor-runtime/model":["{model}"],"@source-crafter/xzor-runtime/server":["{server}"]}}}},"include":["**/*.ts",".xzor/**/*.ts"]}}"#
         );
         fs::write(root.join("tsconfig.json"), tsconfig).unwrap();
         for (path, text) in files {
