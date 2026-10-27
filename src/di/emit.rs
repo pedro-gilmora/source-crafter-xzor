@@ -713,7 +713,7 @@ impl<'a> Emitter<'a> {
         }
 
         let views = r.server.as_ref().is_some_and(|s| s.root.is_some());
-        let fallback = if views {
+        if views {
             let join = self.imports.name("node:path", "join", "join", true);
             let exists = self.imports.name("node:fs", "existsSync", "existsSync", true);
             let read = self.imports.name("node:fs", "readFileSync", "readFileSync", true);
@@ -740,16 +740,15 @@ impl<'a> Emitter<'a> {
             w!(out, "}}");
             // `xzor build --minify` writes `dist/index.html` with the bundle's script and stylesheet.
             w!(out, "const index = [{join}(root, \"dist\", \"index.html\"), {join}(root, \"index.html\")].find((f) => {exists}(f));");
-            w!(out, "const notFound = index ? {read}(index) : null;");
-            "new Response(notFound, { status: 404, headers: { \"content-type\": \"text/html;charset=utf-8\" } })"
+            w!(out, "const notFound = new Response(index ? {read}(index) : null, {{ status: 404, headers: {{ \"content-type\": \"text/html;charset=utf-8\" }} }});");
         } else {
-            "new Response(null, { status: 404 })"
-        };
+            w!(out, "\nconst notFound = new Response(null, {{ status: 404 }});");
+        }
 
         let http = self.imports.name(SERVER, "HttpError", "HttpError", true);
         w!(out, "\nexport const server = Bun.serve({{");
         w!(out, "  ...options,");
-        w!(out, "  fetch: options.fetch?.bind(app) ?? (() => {fallback}),");
+        w!(out, "  fetch: options.fetch?.bind(app) ?? (() => notFound.clone()),");
         // Bun types the handler's `this` as the Server; the app's own handler runs on the app.
         w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app as never, e)),");
         w!(out, "  routes: {{");

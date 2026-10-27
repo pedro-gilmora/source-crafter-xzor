@@ -45,6 +45,13 @@ test("aliased imports are stripped by their local name only", () => {
   expect(out).not.toContain("@Single(A)");
 });
 
+test("endpoint decorators from the server entry are stripped, bare and aliased too", () => {
+  const src = `import { Endpoints, Get, Post as PostMethod } from "@source-crafter/xzor-runtime/server";\n@Endpoints("/a")\nclass P {\n  @Get(":id") one() {}\n  @Get\n  all() {}\n  @PostMethod() make() {}\n}\n`;
+  const out = stripMarkerDecorators(src);
+  expectBlanked(src, out);
+  expect(out.slice(src.indexOf("\n"))).not.toContain("@");
+});
+
 test("other decorators stay, including ones on the same line", () => {
   const src = `${IMPORT}import { sealed } from "./sealed";\n@sealed() @Singleton(A) @deco.member(1)\nexport class P {}\n`;
   const out = stripMarkerDecorators(src);

@@ -40,6 +40,8 @@ test("a server app builds its browser views and dist/server.js, and the server s
   expect(existsSync(join(dir, "dist", "main.js"))).toBe(true);
   expect(existsSync(join(dir, "dist", "client.js"))).toBe(false);
   expect(existsSync(join(dir, "dist", "server.js.map"))).toBe(false);
+  // The endpoint decorators are no-ops: the bundle carries neither the calls nor their helpers.
+  expect(dist("server.js")).not.toMatch(/__legacyDecorateClassTS|__decorateElement|__decorateClass|__decorate\b/);
   const pages = JSON.parse(dist("pages.json"));
   expect(pages.routes).toEqual({ "/": "pages/Home.html", "/posts/:slug": "pages/Post.html" });
   expect(pages.files).toContain("dist/main.js");

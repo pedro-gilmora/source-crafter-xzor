@@ -738,6 +738,9 @@ test("the generated server: sync and async handlers, query keys, shells and asse
   expect(text).toContain("assets = staticFiles(root, pages.files);");
   expect(text).toContain('"/api/posts": { GET: posts$list, POST: posts$create },');
   expect(text).toContain("...options.routes,");
+  // The 404 is built once and cloned per request.
+  expect(text).toContain('const notFound = new Response(index ? readFileSync(index) : null, { status: 404, headers: { "content-type": "text/html;charset=utf-8" } });');
+  expect(text).toContain("?? (() => notFound.clone()),");
   // Only the server entry: no browser mount, and the app's file is no longer a plain provider.
   expect(text).not.toContain("mount(");
   expect(existsSync(join(dir, ".xzor", "server", "app.provider.ts"))).toBe(false);

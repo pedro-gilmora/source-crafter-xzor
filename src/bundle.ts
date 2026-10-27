@@ -157,8 +157,8 @@ function tryResolve(spec: string, dir: string): string | undefined {
 }
 
 // xzor's DI decorators are no-ops read only by the analyzer; stripping them spares the bundle the decorator helpers.
-const MARKERS = new Set(["ServiceProvider", "Run", "Import", "Singleton", "Scoped", "Transient"]);
-const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@source-crafter\/xzor-runtime["']/g;
+const MARKERS = new Set(["ServiceProvider", "Run", "Import", "Singleton", "Scoped", "Transient", "Endpoints", "Get", "Post", "Put", "Patch", "Delete", "Query"]);
+const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@source-crafter\/xzor-runtime(?:\/server)?["']/g;
 const IDENT = /[A-Za-z_$][\w$]*/y;
 
 /** Local names bound to xzor's marker decorators by value imports from `@source-crafter/xzor-runtime`. */
@@ -250,7 +250,7 @@ function decorator(src: string, i: number, locals: Set<string>): { end: number; 
     if (end < 0) return undefined;
     k = skipSpace(src, end);
   }
-  if (src[k] !== "(") return { end: j, marker: false };
+  if (src[k] !== "(") return { end: j, marker: !dotted && locals.has(name) };
   const end = skipBalanced(src, k, "(", ")");
   if (end < 0) return undefined;
   return { end, marker: !dotted && locals.has(name) };
