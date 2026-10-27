@@ -25,7 +25,7 @@ const files: Record<string, string> = {
   <NavLink href="@href.UserPage({ id: 2 })">User 2</NavLink>
   <a class="missing-link" href="nope">nope</a>
 </nav>
-@ClientRoutes(route) {
+@Routes(route) {
   @notFound { <p class="missing">no route for @route.path</p> }
   @default(page) { <main class="main" data-path="@route.path">@page</main> }
 }

@@ -4,7 +4,7 @@
 
 @* The app's routes: which layout each page renders in, plus the pages that have no component. *@
 <Shell>
-  @ClientRoutes(route) {
+  @Routes(route) {
     @admin(page) { <AdminLayout>@page</AdminLayout> }
     @"/legal/:doc" { <article class="legal"><h2>Legal: @route.params.doc</h2></article> }
     @/^\/old-(?<slug>[\w-]+)$/ { <p class="moved">"@route.match.slug" has moved. <a href="/">Go home</a></p> }

@@ -55,10 +55,10 @@ if (current !== skill) {
 }
 
 if (!existsSync("main.ts")) {
-  writeFileSync("main.ts", `import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+  writeFileSync("main.ts", `import { type IApplication, Run } from "@source-crafter/xzor-runtime";
 import Counter from "./Counter.xzor";
 
-@Mount(Counter, "app")
+@Run(Counter, "app")
 export class Application implements IApplication {}
 `);
   if (!existsSync("Counter.xzor"))

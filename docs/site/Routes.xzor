@@ -1,7 +1,7 @@
 @import Shell from "./layouts/Shell.xzor"
 
 <Shell>
-  @ClientRoutes(route) {
+  @Routes(route) {
     @notFound {
       <section class="page narrow">
         <h1>Page not found</h1>

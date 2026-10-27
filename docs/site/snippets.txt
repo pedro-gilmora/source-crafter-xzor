@@ -28,10 +28,10 @@ bun x xzor init    # adds what xzor needs to package.json, tsconfig.json and .gi
   <p>That's a lot of clicks!</p>
 }
 --- main-counter | main.ts | typescript
-import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import { type IApplication, Run } from "@source-crafter/xzor-runtime";
 import Counter from "./Counter.xzor";
 
-@Mount(Counter, "app")              // renders into <div id="app">
+@Run(Counter, "app")               // renders into <div id="app">
 export class Application implements IApplication {}
 --- index-html | index.html | html
 <div id="app"></div>
@@ -83,16 +83,16 @@ export class Application implements IApplication {}
 --- routes | Routes.xzor | xzor
 @import MainLayout from "./layouts/MainLayout.xzor"
 
-@ClientRoutes(route) {
+@Routes(route) {
   @notFound { <p>Nothing at @route.path</p> }
   @catch(error) { <p class="error">This page failed: @(String(error))</p> }
   @default(page) { <MainLayout>@page</MainLayout> }
 }
 --- main-routes | main.ts | typescript
-import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import { type IApplication, Run } from "@source-crafter/xzor-runtime";
 import Routes from "./Routes.xzor";
 
-@Mount(Routes, "app")
+@Run(Routes, "app")
 export class Application implements IApplication {}
 --- layout-nav | layouts/MainLayout.xzor | xzor
 @import { NavLink } from "@source-crafter/xzor-runtime"
@@ -115,7 +115,7 @@ import { Scoped, ServiceProvider, Singleton } from "@source-crafter/xzor-runtime
 @Scoped(UnitOfWork)
 export class DataServices {}
 --- main-di | main.ts | typescript
-@Mount(Routes, "app")
+@Run(Routes, "app")
 @Import(DataServices)
 export class Application implements IApplication {}
 --- inject | Counter.xzor | xzor

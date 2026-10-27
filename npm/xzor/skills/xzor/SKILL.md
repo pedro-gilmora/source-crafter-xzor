@@ -14,7 +14,7 @@ A `.xzor` file is one component: HTML with `@` expressions plus a `@code { }` bl
 ## Turning a request into files
 
 1. Pick components (one `.xzor` each, PascalCase file name = component name), pages (components with `@page`), layouts (components with `@slot`) and services (`.ts` classes).
-2. Write `main.ts` (the entry: `@Mount`), `Routes.xzor` (only if there are pages), `index.html`, and check `tsconfig.json`.
+2. Write `main.ts` (the entry: `@Run`), `Routes.xzor` (only if there are pages), `index.html`, and check `tsconfig.json`.
 3. Run `bun x xzor build` and fix every error it reports before answering. Errors point at `.xzor` lines.
 
 ## Project setup
@@ -164,7 +164,7 @@ One `Routes.xzor` (never itself a `@page`) holds the router and the layouts:
 ```xzor
 @import MainLayout from "./layouts/MainLayout.xzor"
 
-@ClientRoutes(route) {
+@Routes(route) {
   @notFound { <p>Nothing at @route.path</p> }
   @catch(error) { <p class="error">@(String(error))</p> }
   @default(page) { <MainLayout>@page</MainLayout> }
@@ -183,12 +183,12 @@ One `Routes.xzor` (never itself a `@page`) holds the router and the layouts:
 ## Services (compile-time dependency injection)
 
 ```ts
-// main.ts: the entry. @Mount says which component renders into which element.
-import { type IApplication, Mount, Singleton, Scoped } from "@source-crafter/xzor-runtime";
+// main.ts: the entry. @Run says which component renders into which element.
+import { type IApplication, Run, Singleton, Scoped } from "@source-crafter/xzor-runtime";
 import Routes from "./Routes.xzor";
 import { TodoService } from "./services/todos";
 
-@Mount(Routes, "app")                 // <div id="app">
+@Run(Routes, "app")                 // <div id="app">
 @Singleton(TodoService)               // or @Singleton<ITodos>(TodoService), @Scoped(...), @Transient(...)
 export class Application implements IApplication {}
 ```
@@ -260,8 +260,8 @@ Every component is compiled with no render pass: the DOM is built once and each 
 
 | Wrong (Blazor or guess) | Right |
 |---|---|
-| `createApp(App).mount(...)`, `app.services.add...` | `@Mount(App, "app")` + `@Singleton(...)` on `Application` in `main.ts` |
-| `<Router>`, `<RouteView>`, `<Found>` | `@ClientRoutes(route) { @default(page) { ... } }` in `Routes.xzor` |
+| `createApp(App).mount(...)`, `app.services.add...` | `@Run(App, "app")` + `@Singleton(...)` on `Application` in `main.ts` |
+| `<Router>`, `<RouteView>`, `<Found>` | `@Routes(route) { @default(page) { ... } }` in `Routes.xzor` |
 | `@inherits LayoutComponentBase`, `@Body` | a plain component with `@slot` |
 | `@foreach (var x in xs)` | `@for (const x of xs)` |
 | imports inside `@code`, `@using` | `@import ...` at the top |

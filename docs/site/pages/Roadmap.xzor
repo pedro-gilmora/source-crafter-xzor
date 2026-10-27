@@ -13,7 +13,7 @@
         ["Template features", "Keyed loops and loop else, @attr:, class: toggles, aria-* booleans, @bind:input and @bind:debounce, @await, @leave, @once."],
         ["Show and hide", "@show:if and @show:switch hide branches instead of removing them; @pause stops a hidden one."],
         ["Less work", "Cached getters (@Volatile opts out), @async and @cached components, xzor build --minify with a chunk per page."],
-        ["Routing", "@page routes, a typed href table, client and server routes blocks."],
+        ["Routing", "@page routes, a typed href table, one @Routes block with History API navigation."],
         ["Dependency injection", "Services wired at build time from TypeScript types; no container at runtime."],
         ["Cascading values and inherited members", "@cascade blocks and @inherits base classes, checked by TypeScript."],
         ["Models and validation", "Trackable models with field state for forms."],

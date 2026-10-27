@@ -14,7 +14,7 @@ const userPage = `@page "/users/:id" as admin
 <p>@id</p>
 `;
 
-const app = (body: string, imports = "") => `${imports}@ClientRoutes(route) {
+const app = (body: string, imports = "") => `${imports}@Routes(route) {
   @default(page) {
     ${body}
     @page

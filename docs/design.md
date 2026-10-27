@@ -154,7 +154,7 @@ Full design: [the routing and cascading spec](superpowers/specs/2026-10-13-routi
 @page "/admin/users/:id" as admin
 @page "/users/:id/*"
 
-@ClientRoutes(route) {
+@Routes(route) {
   @admin(page) { <AdminLayout>@page</AdminLayout> }
   @/^\/docs\/(?<area>\w+)/i(page) { <DocsLayout area="@route.match.area">@page</DocsLayout> }
   @"/legal/:doc" { <LegalText doc="@route.params.doc" /> }
@@ -165,16 +165,16 @@ Full design: [the routing and cascading spec](superpowers/specs/2026-10-13-routi
 ```
 
 - **`@page "pattern" [as tag]`**: Bun.serve pattern syntax: `/`-led segments that are literals, `:param`, or a final `*`. A component may have several. Params fill the props of the same name, converted from the prop's declaration: `number` (`Number`, `NaN` is no match), `boolean` (`"true"`/`"false"`), a union of string literals (must be one of them), otherwise `string`. Values are decoded with `decodeURIComponent`. The text matched by `*` fills a prop named `rest` if the page declares one. The optional tag is shared by any number of routes (`default`, `notFound` and `catch` are reserved). Most specific wins, as in Bun: literal, then `:param`, then `*`.
-- **The routes block**: `@ClientRoutes(route) { ... }` or `@ServerRoutes(route) { ... }`, at most one per project, holding only sections (`{` may be on the next line). `route` is visible in every section. Sections: `@tag(page)` (a tag some `@page` uses), `@/regex/flags(page?)` (client only), `@"pattern"(page?)`, `@notFound`, `@catch(e)` (the matched page's construction, `onInitialized`, rejected `onInitializedAsync` or first render failed; cleared on the next navigation), `@default(page)` (last; `page` renders the matched page).
+- **The routes block**: `@Routes(route) { ... }`, at most one per project, holding only sections (`{` may be on the next line). `route` is visible in every section. Sections: `@tag(page)` (a tag some `@page` uses), `@/regex/flags(page?)`, `@"pattern"(page?)`, `@notFound`, `@catch(e)` (the matched page's construction, `onInitialized`, rejected `onInitializedAsync` or first render failed; cleared on the next navigation), `@default(page)` (last; `page` renders the matched page).
 - **Matching order**: when a `@page` route matches, the sections with `(page)` are tried in source order, then `@default`, then the page renders bare. Without a page route, the page-less sections are tried in order, then `@notFound`, then nothing renders. A `(page)` pattern section's captures are on `route.match`; a page-less one's are on `route.params`.
 - **`route`**: `{ path, tag, params, query, match, is(tag), navigate(url, { replace }) }`, also the cascading value `route`. `is(tag)` narrows `params` inside the routes block's sections; elsewhere type the field with the table's `AppRoute` (`@Cascade route!: AppRoute`, `import type { AppRoute } from "./routes"`) to get the same narrowing. A new object is published on each navigation. A page is kept across navigations within one route family of its component: routes that extend, segment by segment, the shortest of its own patterns they start with (`/users/:id`, `/users/:id/:view`, `/users/:id/*`). Its props are set again, params only the other routes of the family fill become `undefined`, and `onParametersSet` runs. A route that extends none of its page's shorter patterns builds a new instance.
 - **`href.<Component>(params)`**: from `routes` (imported relatively, e.g. `import { href } from "../routes"`). One overload per `@page` of the component, typed from its props, so `href.UserProfile({ id: "x" })` is a type error when `id` is a `number`. A route without parameters takes no argument (`href.About()`; the parameter defaults to `{}`, so `href.About({})` still works). Values are `encodeURIComponent`ed; the first of the component's patterns whose param names equal the given keys is used.
 - **`<NavLink href="/x" activeClass="active" match="prefix|exact">`**: an `<a>` that carries the class and `aria-current="page"` while the current path is on its `href` (resolved against the base URL, compared percent-encoded). It follows navigation by itself, so it also works outside the routes block (a nav bar beside it); it never intercepts clicks on its own.
 - **View transitions**: `viewTransitions(true)` (from the runtime, typically in `main.ts`) makes every navigation commit inside `document.startViewTransition` where the browser has it; elsewhere, or with it off, navigation stays synchronous. A skipped transition (hidden tab, a newer navigation) is not an error. Name shared elements with `view-transition-name` in CSS.
 - **Sub-path deployments**: with `<base href="/docs/">` (GitHub Pages serves a project at `/<repo>/`), patterns, `route.path` and section regexes are relative to that path (`basePath()`, from the runtime, gives `"/docs"`), `href.<Component>()` prefixes it, and the base root counts as the root for `NavLink`. Write other links relative (`href="users/1"`) so the browser resolves them against the base.
-- **Engines**: `@ClientRoutes` is a single-page app on the History API. It intercepts `<a>` clicks that are same-origin, left-button, without modifier keys, with `target` absent or `_self`, no `download` and no `rel="external"`. `popstate` re-renders, and `navigate` uses `pushState` (`replaceState` with `replace`). `@ServerRoutes` (one page per entry, no History API) is coming in the next part.
+- **Navigation**: `@Routes` is a single-page app on the History API. It intercepts `<a>` clicks that are same-origin, left-button, without modifier keys, with `target` absent or `_self`, no `download` and no `rel="external"`. `popstate` re-renders, and `navigate` uses `pushState` (`replaceState` with `replace`).
 - **`.xzor/routes.ts`**: the generated route table (matchers, `href`, `RouteTag`, `RouteParams`, `AppRoute`), written from every `@page` of the project and removed when it has none. A real `routes.ts` at the project root is reserved.
-- **Limits**: a trailing slash (`/a/`) is rejected, regex sections only work in `@ClientRoutes` (`@ServerRoutes` takes string patterns), a duplicate pattern or page component name is an error, and a `@page` component can't hold the routes block (it would render itself; keep the block in a shell component without `@page`).
+- **Limits**: a trailing slash (`/a/`) is rejected, a duplicate pattern or page component name is an error, and a `@page` component can't hold the routes block (it would render itself; keep the block in a shell component without `@page`).
 
 ## Rendering
 
@@ -216,12 +216,12 @@ Constructor and factory parameters are resolved by key, then by type. A `?` or d
 
 `@inject IDatabase db` in a `.xzor` adds a constructor parameter and a `readonly db` field. The application builds such components in its generated `createComponent`. A component with `@inject` cannot declare its own `constructor` (ZDI08).
 
-### The application: `@Mount`
+### The application: `@Run`
 
-The entry module declares one class with `@Mount(App, "app")` plus registrations and imports. xzor writes `.xzor/<entry>` with the generated subclass and the `mount(App, "app", new Application$())` call, and bundles that instead of the entry. Do not call `mount()` yourself.
+The entry module declares one class with `@Run(App, "app")` plus registrations and imports. xzor writes `.xzor/<entry>` with the generated subclass and the `mount(App, "app", new Application$())` call, and bundles that instead of the entry. Do not call `mount()` yourself.
 
 ```ts
-@Mount(App, "app")
+@Run(App, "app")
 @Import(DataServices)
 @Singleton(AuthService)
 @Singleton("requestId", Factories.newRequestId)
@@ -246,10 +246,10 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 | ZDI01 | Service registered twice in one provider, including a local registration of a service that an import already provides (shared dependencies are never overridden). |
 | ZDI02 | Unresolved dependency in a provider (includes self-sufficiency of imports). |
 | ZDI03 | Dependency cycle. |
-| ZDI04 | An `@inject` type is not provided by the application, or there is no `@Mount` application. |
+| ZDI04 | An `@inject` type is not provided by the application, or there is no `@Run` application. |
 | ZDI05 | Ambiguous: two registrations satisfy one unkeyed parameter. |
 | ZDI06 | Registration without an implementation or factory. |
-| ZDI07 | `@Mount` on more than one class, or outside the entry module. |
+| ZDI07 | `@Run` on more than one class, or outside the entry module. |
 | ZDI08 | A user constructor in a component with `@inject`. |
 | ZDI10 | Reserved. Captive dependencies are allowed: a singleton keeps the scoped instance of the scope that first resolved it. |
 | ZDI11 | Invalid registration found by the analyzer (unexported type, generic type, non-public factory, decorator misuse). |
@@ -261,7 +261,7 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 - A class cannot reference itself in its own decorators, so a keyed factory is either a public static method of another class or an exported function. It must be exported because the generated code imports it.
 - A `.xzor` must not import from `./main`: with `rootDirs`, that resolves to the generated `.xzor/main.ts`.
 - Optional members such as `dispose?()` are disposed with an optional call (`d0?.dispose?.()`).
-- `@Mount` must be in the entry module (`--entry`, default `main.ts`).
+- `@Run` must be in the entry module (`--entry`, default `main.ts`).
 - `routes.ts` at the project root is reserved, like `main.ts`: with `rootDirs`, an import of `<root>/routes` resolves to the generated `.xzor/routes.ts` (the route table, written when the project has `@page`s and removed when it has none).
 - Members of an `@inherits` base that can't be read (see the warning) are not rewritten to `this.x` in the template; write `this.x` yourself.
 

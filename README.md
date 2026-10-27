@@ -96,10 +96,10 @@ A component has two parts: **`@code`** holds its state and methods, and **the te
 **`main.ts`**: the entry point. It says which component to show and where.
 
 ```ts
-import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import { type IApplication, Run } from "@source-crafter/xzor-runtime";
 import Counter from "./Counter.xzor";
 
-@Mount(Counter, "app")              // renders into <div id="app">
+@Run(Counter, "app")               // renders into <div id="app">
 export class Application implements IApplication {}
 ```
 
@@ -217,7 +217,7 @@ Keep all your routes in one file, **`Routes.xzor`**. It decides which layout eac
 ```xzor
 @import MainLayout from "./layouts/MainLayout.xzor"
 
-@ClientRoutes(route) {
+@Routes(route) {
   @notFound { <p>Nothing at @route.path</p> }
   @catch(error) { <p class="error">This page failed: @(String(error))</p> }
   @default(page) { <MainLayout>@page</MainLayout> }
@@ -227,10 +227,10 @@ Keep all your routes in one file, **`Routes.xzor`**. It decides which layout eac
 **`main.ts`**: mount the routes instead of a single component.
 
 ```ts
-import { type IApplication, Mount } from "@source-crafter/xzor-runtime";
+import { type IApplication, Run } from "@source-crafter/xzor-runtime";
 import Routes from "./Routes.xzor";
 
-@Mount(Routes, "app")
+@Run(Routes, "app")
 export class Application implements IApplication {}
 ```
 
@@ -270,7 +270,7 @@ export class DataServices {}
 **`main.ts`**: register them with the application.
 
 ```ts
-@Mount(Routes, "app")
+@Run(Routes, "app")
 @Import(DataServices)
 export class Application implements IApplication {}
 ```

@@ -42,7 +42,7 @@ const app = `@import { href } from "./routes"
   <a class="admin-link" href="@href.AdminHome()">admin</a>
   <a class="missing-link" href="/nope">nope</a>
 </nav>
-@ClientRoutes(route) {
+@Routes(route) {
   @admin(page) { <section class="admin">@page</section> }
   @notFound { <p class="missing">no route for @route.path</p> }
   @default(page) { <main class="main">@page</main> }

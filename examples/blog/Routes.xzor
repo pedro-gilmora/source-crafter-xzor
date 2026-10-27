@@ -2,7 +2,7 @@
 @import Empty from "@source-crafter/xzor-ui/Empty.xzor"
 
 <Shell>
-  @ClientRoutes(route) {
+  @Routes(route) {
     @notFound {
       <Empty title="Nothing here" icon="book"><p>There is no page at @route.path.</p></Empty>
     }
