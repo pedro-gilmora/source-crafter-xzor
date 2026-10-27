@@ -782,3 +782,87 @@ export class Items {
     GlobalRegistrator.register();
   }
 });
+
+// Serves the generated entry of a built project in-process; the test preload's happy-dom Response and fetch can't go into Bun.serve.
+async function served(entry: string, run: (call: (method: string, path: string, body?: unknown) => Promise<[number, string]>) => Promise<void>) {
+  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+  await GlobalRegistrator.unregister();
+  try {
+    const { server } = await import(entry);
+    try {
+      await run(async (method, path, body) => {
+        const r = await fetch(new URL(path, server.url), { method, body: body === undefined ? undefined : JSON.stringify(body) });
+        return [r.status, await r.text()];
+      });
+    } finally {
+      server.stop(true);
+    }
+  } finally {
+    GlobalRegistrator.register();
+  }
+}
+
+test.each([
+  ["without an app error handler", "", undefined],
+  ["with an app error handler", `\n  error(e: unknown) { return new Response("custom " + (this as any).tag, { status: 500 }); }\n  tag = "app";`, "custom app"],
+])("an endpoint's HttpError keeps its status, sync or async, %s", async (name, extra, other) => {
+  const app = apiApp.replace("  port = 0;", `  port = 0;${extra}`);
+  const api = endpoints(
+    `import { HttpError } from "@source-crafter/xzor-runtime/server";
+
+@Endpoints("/api/e")
+export class E {
+  @Get("sync")
+  sync(): void { throw new HttpError(409, "sync busy"); }
+
+  @Get("async")
+  async later(): Promise<void> { throw new HttpError(410, "async gone"); }
+
+  @Post
+  create(body: { a: string }): void { throw new HttpError(422, "bad body"); }
+
+  @Get("plain")
+  plain(): void { throw new Error("Boom"); }
+}
+`,
+    "Get, Post",
+  );
+  const dir = serverProject("http-error-" + name.replace(/\W+/g, "-"), { "app.ts": app, "api.ts": api });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  await served(join(dir, ".xzor", "app.ts"), async (call) => {
+    expect(await call("GET", "/api/e/sync")).toEqual([409, "sync busy"]);
+    expect(await call("GET", "/api/e/async")).toEqual([410, "async gone"]);
+    expect(await call("POST", "/api/e", { a: "x" })).toEqual([422, "bad body"]);
+    // Any other error goes to the app's own handler (Bun's default one would only log it).
+    if (other) expect(await call("GET", "/api/e/plain")).toEqual([500, other]);
+  });
+});
+
+test("the generated server serves shells and files from a page-shells pages.json", async () => {
+  const dir = join(repo, "target", "tmp-serve", `shells-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  cpSync(serverRoot, dir, { recursive: true, filter: (src) => !/[\\/](\.xzor|node_modules)$/.test(src) });
+  temps.push(dir);
+  const app = join(dir, "server", "app.ts");
+  writeFileSync(app, readFileSync(app, "utf8").replace("port = 3000", "port = 0"));
+  // The format the page-shells build writes: `routes` relative to dist, `files` relative to the project root.
+  const files: Record<string, string> = {
+    "index.html": "<!doctype html><title>index</title>",
+    "dist/main.js": "console.log(1);",
+    "dist/pages/Post.html": "<!doctype html><title>post</title>",
+  };
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(join(dir, file, ".."), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  }
+  writeFileSync(join(dir, "dist", "pages.json"), JSON.stringify({ routes: { "/posts/:slug": "pages/Post.html" }, files: Object.keys(files).sort() }));
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  await served(join(dir, ".xzor", "server", "app.ts"), async (call) => {
+    expect(await call("GET", "/posts/hello")).toEqual([200, files["dist/pages/Post.html"]]);
+    expect(await call("GET", "/dist/main.js")).toEqual([200, files["dist/main.js"]]);
+    expect(await call("GET", "/index.html")).toEqual([200, files["index.html"]]);
+    expect(await call("GET", "/nope")).toEqual([404, files["index.html"]]);
+  });
+});

@@ -636,7 +636,7 @@ impl<'a> Emitter<'a> {
         w!(out, "\nexport const server = Bun.serve({{");
         w!(out, "  ...options,");
         w!(out, "  fetch: options.fetch?.bind(app) ?? (() => {fallback}),");
-        w!(out, "  error: options.error ?? ((e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : undefined)),");
+        w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app, e)),");
         w!(out, "  routes: {{");
         if views {
             w!(out, "    ...shells,");
