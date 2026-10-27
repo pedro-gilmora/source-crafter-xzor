@@ -17,7 +17,7 @@ One way to start an xzor app, as a browser app or as a server that delivers its 
 4. Endpoints are classes marked `@Endpoints("/prefix")` with `@Get`, `@Post`, `@Put`, `@Patch`, `@Delete`, `@Query` methods (bare or with a relative pattern), found automatically in the `@Run` file's folder and below. Method parameters come in a fixed order: path params, then `query`, then `body`.
 5. `xzor build --minify` writes a page shell per `@page` (PSR), and, for a server app, `dist/server.js`, which serves shells, assets and endpoints from memory.
 6. No aliases for the old names: they are compile errors that name the replacement (0.1.x).
-7. Contracts are plain interfaces an `@Endpoints` class implements, with each method's real return type (sync or `Promise`). Views reach them through a generated HTTP client typed `Remote<IContract>`, where every result is a `Promise`. The server never sees `Remote` or the client.
+7. Contracts are plain interfaces an `@Endpoints` class implements, with each method's real return type (sync or `Promise`). Views reach them through a generated HTTP client typed `Remote<IContract>`, where every result is a `Promise`. Endpoints and server services see only the contract; a shared service registered as `Remote<IContract>` gets an in-process adapter on the server (no HTTP).
 
 ## Layout
 
@@ -211,3 +211,4 @@ Body validation, middleware, OpenAPI, streaming or WebSocket endpoints in contra
 ## Later changes
 
 - 2026-10-27: final-review fixes for the server plan. The generated `Bun.serve` sets `development: !!process.env.XZOR_DEV` and an unhandled error answers a plain 500; a body endpoint answers 415 unless `Content-Type` is `application/json`; `xzor dev` listens on `localhost` unless `--host` is given (the generated dev server too); a route path Bun would reject is ZDI22; `Request` is special only in a server app.
+- 2026-10-27: contracts and clients built; on the server, Remote<IContract> registrations get an in-process adapter.
