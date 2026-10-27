@@ -983,6 +983,59 @@ test("a server app whose views inject nothing mounts without a container", () =>
   expect(client).not.toMatch(/Theme|Client\$/);
 });
 
+// Server-only code a view must not reach: the request, an `@Endpoints` class, a `bun:*` module.
+const leakApp = (regs: string) => viewsApp.replace("@Singleton(Theme)", `@Singleton(Theme)\n${regs}`).replace('import { Theme } from "./theme";', `import { Theme } from "./theme";
+import { CurrentUser } from "./user";
+import { Feed } from "./feed";
+import { Db } from "./db";
+import { Posts } from "./api/posts";`).replace("Import, Run, Singleton", "Import, Run, Scoped, Singleton");
+const leakFiles: Record<string, string> = {
+  ...viewsFiles,
+  "user.ts": "export class CurrentUser {\n  constructor(readonly req: Request) {}\n}\n",
+  "db.ts": 'import { Database } from "bun:sqlite";\n\nexport class Db {\n  db = new Database(":memory:");\n}\n',
+  "feed.ts": 'import type { Db } from "./db";\n\nexport class Feed {\n  constructor(readonly db: Db) {}\n}\n',
+  "api/posts.ts": endpoints(`@Endpoints("/api/posts")\nexport class Posts {\n  @Get\n  list() { return []; }\n}\n`),
+};
+const header = (ty: string) => `@import { type ${ty} } from "./${ty === "CurrentUser" ? "user" : ty === "Posts" ? "api/posts" : ty.toLowerCase()}"\n@inject ${ty} x\n\n<header>h</header>\n`;
+
+test.each([
+  ["the request", "@Scoped(CurrentUser)", "CurrentUser", "Header -> CurrentUser -> Request: a view can't reach the request"],
+  ["a bun: module", "@Singleton(Db)\n@Singleton(Feed)", "Feed", "Header -> Feed -> Db -> bun:sqlite: a view can't reach a server-only module"],
+  ["an @Endpoints class", "@Singleton(Posts)", "Posts", "Header -> Posts: a view can't reach an @Endpoints class"],
+])("a view reaching %s is an error naming the chain", (_, regs, ty, message) => {
+  const dir = serverProject(`leak-${ty}`, { ...leakFiles, "app.ts": leakApp(regs), "Header.xzor": header(ty) });
+  const { code, out } = xzorBuild(dir);
+  expect(code).not.toBe(0);
+  expect(out).toContain("ZDI20");
+  expect(out).toContain(message);
+});
+
+test("the server alone may reach the request and bun: modules", () => {
+  const dir = serverProject("leak-server-only", { ...leakFiles, "app.ts": leakApp("@Scoped(CurrentUser)\n@Singleton(Db)\n@Singleton(Feed)") });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  expect(readFileSync(join(dir, ".xzor", "client.ts"), "utf8")).not.toMatch(/CurrentUser|Feed|Db/);
+});
+
+test.each([
+  ["a view", { "Header.xzor": '@import { Posts } from "./api/posts"\n\n<header>@Posts.name</header>\n' }, "Header.xzor"],
+  ["a browser-reached service", { "theme.ts": 'import { Posts } from "./api/posts";\n\nexport class Theme {\n  dark = Posts.name === "";\n}\n' }, "theme.ts"],
+])("%s importing an @Endpoints class as a value is an error", (_, files, file) => {
+  const dir = serverProject(`value-${file}`, { ...leakFiles, "app.ts": leakApp(""), ...files });
+  const { code, out } = xzorBuild(dir);
+  expect(code).not.toBe(0);
+  expect(out).toContain(`${file}(1,`);
+  expect(out).toContain("ZDI21");
+  expect(out).toContain("Posts is an @Endpoints class: use import type");
+});
+
+test("import type of an @Endpoints class in browser code is fine", () => {
+  const theme = 'import type { Posts } from "./api/posts";\n\nexport class Theme {\n  dark = false;\n  posts?: Posts;\n}\n';
+  const dir = serverProject("value-type", { ...leakFiles, "app.ts": leakApp(""), "theme.ts": theme });
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+});
+
 test("the generated server serves shells and files from a page-shells pages.json", async () => {
   const dir = join(repo, "target", "tmp-serve", `shells-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });

@@ -570,7 +570,7 @@ pub fn di_run(
     }
     let files: Vec<String> = files.iter().map(|f| f.to_string_lossy().into_owned()).collect();
     let facts = analyzer.analyze(&files, &components, overlays)?;
-    let resolved = crate::di::graph::resolve(&facts).map_err(DiFailure::Diags)?;
+    let resolved = crate::di::graph::resolve(&facts).map_err(|d| DiFailure::Diags(to_sources(root, d, compiled)))?;
 
     let entry = entry.replace('\\', "/");
     let entry = entry.strip_prefix("./").unwrap_or(&entry);
@@ -607,6 +607,18 @@ pub fn di_run(
     }
     prune(&xzor, &written)?;
     Ok(mount.map(|_| xzor.join(entry)))
+}
+
+/// Moves diagnostics located in a generated `.xzor/X.xzor.ts` to the `.xzor` source, where the code was copied from.
+fn to_sources(root: &Path, mut diags: Vec<crate::di::graph::Diag>, compiled: &[Compiled]) -> Vec<crate::di::graph::Diag> {
+    for d in diags.iter_mut().filter(|d| d.inject.is_none() && d.param_at.is_none() && d.file.ends_with(".xzor.ts")) {
+        let path = normalize(&root.join(&d.file));
+        let Some(unit) = compiled.iter().find(|u| same_path(&normalize(&u.out), &path)) else { continue };
+        let src = unit.generated.to_src(utf16_to_byte(&unit.generated.code, d.at)).unwrap_or(0);
+        d.file = unit.source.strip_prefix(root).unwrap_or(&unit.source).display().to_string().replace('\\', "/");
+        d.at = unit.text[..src.min(unit.text.len())].encode_utf16().count();
+    }
+    diags
 }
 
 /// ZDI04 for every `@inject` when no `.ts` declares an application (same message as `di::graph` without `@Run`).

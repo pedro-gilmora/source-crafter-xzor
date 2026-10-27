@@ -31,6 +31,7 @@ import {
   isIdentifier,
   isImportDeclaration,
   isMethodDeclaration,
+  isNamedImports,
   isParameterDeclaration,
   isPropertyAccessExpression,
   isStringLiteral,
@@ -130,6 +131,10 @@ type Facts = {
   components: Component[];
   servers: Server[];
   endpoints: Endpoint[];
+  // A registered class's module importing `bun`, `bun:*` or `node:*`.
+  serverImports: { module: string; import: string }[];
+  // Value imports (not `import type`) of `@Endpoints` classes in views and registered classes' modules.
+  endpointImports: { file: string; module: string; at: number; class: string }[];
   errors: { file: string; at: number; message: string }[];
 };
 
@@ -156,7 +161,7 @@ type Lookup<T> = { node: Node; value?: T };
 const slash = (p: string) => p.replaceAll("\\", "/");
 
 function analyze(root: string, program: Program, checker: Checker, files: string[], componentFiles: string[]): Facts {
-  const facts: Facts = { providers: [], components: [], servers: [], endpoints: [], errors: [] };
+  const facts: Facts = { providers: [], components: [], servers: [], endpoints: [], serverImports: [], endpointImports: [], errors: [] };
   const rel = (fileName: string) => slash(relative(root, fileName));
   const errorAt = (sf: SourceFile, at: number, message: string) => facts.errors.push({ file: rel(sf.fileName), at, message });
   const error = (loc: Loc, message: string) => errorAt(loc.sf, loc.node.getStart(loc.sf), message);
@@ -661,6 +666,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     facts.components.push({ class: classRef(self, { sf: c.sf, node: c.cls.name ?? c.cls }), injects: paramsOf(ctors.get(self.id)) });
   }
   endpoints(served);
+  if (plans.some((p) => p.server?.component)) browserSafety();
 
   const allParams = paramPlans.flatMap((p) => p.params);
   if (allParams.length) {
@@ -702,6 +708,45 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     }
   }
   return facts;
+
+  // What browser code must not load, for a server app with views: the registered classes' modules importing
+  // `bun`/`bun:*`/`node:*`, and value imports of `@Endpoints` classes in those modules and in the views.
+  function browserSafety() {
+    const endpointIds = new Map<number, string>();
+    for (const e of endpointPlans) if (e.self.value) endpointIds.set(e.self.value.id, e.self.value.name);
+    const moduleOf = (fileName: string) => rel(fileName).replace(/^\.xzor\//, "").replace(/\.(d\.)?[cm]?tsx?$/, "");
+    const files = new Set<string>();
+    for (const p of plans) {
+      for (const r of p.regs) {
+        const decl = (r.impl ?? r.owner)?.value?.declarations?.[0];
+        const fileName = decl && fileOf(decl.path);
+        if (fileName) files.add(fileName);
+      }
+    }
+    const views = endpointIds.size ? program.getSourceFileNames().filter((n) => /^\.xzor\/.*\.xzor\.ts$/.test(rel(n))) : [];
+    const names: (Lookup<Sym | undefined> & { sf: SourceFile })[] = [];
+    for (const fileName of [...files, ...views]) {
+      const sf = program.getSourceFile(fileName);
+      if (!sf) continue;
+      for (const decl of sf.statements) {
+        if (!isImportDeclaration(decl) || !isStringLiteral(decl.moduleSpecifier)) continue;
+        const clause = decl.importClause;
+        if (clause?.phaseModifier === SyntaxKind.TypeKeyword) continue;
+        const spec = decl.moduleSpecifier.text;
+        if (files.has(fileName) && /^(bun|node):|^bun$/.test(spec)) facts.serverImports.push({ module: moduleOf(fileName), import: spec });
+        if (!endpointIds.size || !clause) continue;
+        if (clause.name) names.push({ node: clause.name, sf });
+        if (clause.namedBindings && isNamedImports(clause.namedBindings)) {
+          for (const el of clause.namedBindings.elements) if (!el.isTypeOnly) names.push({ node: el.name, sf });
+        }
+      }
+    }
+    symbols(names);
+    for (const n of names) {
+      const name = n.value && endpointIds.get(n.value.id);
+      if (name) facts.endpointImports.push({ file: rel(n.sf.fileName), module: moduleOf(n.sf.fileName), at: n.node.getStart(n.sf), class: name });
+    }
+  }
 
   // Endpoint classes: the constructor joins the batched parameters; methods and their parameters take one batched type request.
   function endpoints(plans: EndpointPlan[]) {

@@ -199,12 +199,27 @@ pub struct Endpoint {
     pub methods: Vec<EndpointMethod>,
 }
 
+/// A value import of an `@Endpoints` class (`import { Posts }`, not `import type`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EndpointImport {
+    /// Project-relative importing file (keeps `.xzor/`).
+    pub file: String,
+    /// The importing module, like `TypeRef.module`.
+    pub module: String,
+    /// UTF-16 code-unit offset of the imported name.
+    pub at: usize,
+    pub class: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Facts {
     pub providers: Vec<Provider>,
     pub components: Vec<Component>,
     pub servers: Vec<Server>,
     pub endpoints: Vec<Endpoint>,
+    /// (module, specifier): a registered class's module importing `bun`, `bun:*` or `node:*`.
+    pub server_imports: Vec<(String, String)>,
+    pub endpoint_imports: Vec<EndpointImport>,
     pub errors: Vec<FactError>,
 }
 
@@ -216,6 +231,10 @@ impl Facts {
             components: list(&root, "components", "", component)?,
             servers: list(&root, "servers", "", server)?,
             endpoints: list(&root, "endpoints", "", endpoint)?,
+            server_imports: list(&root, "serverImports", "", |j, p| Ok((string(j, "module", p)?, string(j, "import", p)?)))?,
+            endpoint_imports: list(&root, "endpointImports", "", |j, p| {
+                Ok(EndpointImport { file: string(j, "file", p)?, module: string(j, "module", p)?, at: number(j, "at", p)?, class: string(j, "class", p)? })
+            })?,
             errors: list(&root, "errors", "", |j, p| {
                 Ok(FactError { file: string(j, "file", p)?, at: number(j, "at", p)?, message: string(j, "message", p)? })
             })?,
@@ -429,7 +448,7 @@ fn endpoint(j: &Json, path: &str) -> Result<Endpoint, String> {
 mod tests {
     use super::*;
 
-    const FACTS: &str = r##"{"servers":[],"endpoints":[],"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.xzor.ts#default","text":"App","module":"App.xzor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.xzor.ts#default","text":"Counter","module":"Counter.xzor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".xzor/Counter.xzor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
+    const FACTS: &str = r##"{"servers":[],"endpoints":[],"serverImports":[],"endpointImports":[],"providers":[{"class":{"id":"main.ts#Application","text":"Application","module":"main","export":"Application"},"file":"main.ts","at":847,"imports":[{"id":"services/data.ts#DataServices","text":"DataServices","module":"services/data","export":"DataServices"}],"registrations":[{"lifetime":"singleton","service":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"},"impl":null,"key":"cache","factory":{"owner":{"id":"main.ts#Factories","text":"Factories","module":"main","export":"Factories"},"member":"_loadCache"},"async":true,"params":[],"dispose":null,"disposeOptional":false,"at":794},{"lifetime":"transient","service":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"impl":{"id":"main.ts#Report","text":"Report","module":"main","export":"Report"},"key":null,"factory":null,"async":false,"params":[{"name":"cache","optional":false,"promise":true,"file":"main.ts","at":300,"badKeys":["main.ts#Application:0"],"type":{"id":"main.ts#Cache","text":"Cache","module":"main","export":"Cache"}},{"name":"requestId","optional":true,"promise":false,"file":"main.ts","at":330,"badKeys":[],"type":{"id":"string","text":"string","module":null,"export":null}}],"dispose":"Symbol.asyncDispose","disposeOptional":true,"at":727}],"mount":{"component":{"id":"App.xzor.ts#default","text":"App","module":"App.xzor","export":"default"},"target":"app","at":662}}],"components":[{"class":{"id":"Counter.xzor.ts#default","text":"Counter","module":"Counter.xzor","export":"default"},"injects":[{"name":"db","optional":false,"promise":false,"file":".xzor/Counter.xzor.ts","at":250,"badKeys":[],"type":{"id":"services/data.ts#IDatabase","text":"IDatabase","module":"services/data","export":"IDatabase"}}]}],"errors":[{"file":"services/hidden.ts","at":112,"message":"Hidden must be exported to be injected"}]}"##;
 
     fn t(module: &str, name: &str) -> TypeRef {
         TypeRef { id: format!("{module}.ts#{name}"), text: name.into(), module: Some(module.into()), export: Some(name.into()) }
@@ -495,7 +514,7 @@ mod tests {
         assert_eq!(facts.errors, vec![FactError { file: "services/hidden.ts".into(), at: 112, message: "Hidden must be exported to be injected".into() }]);
     }
 
-    const SERVER_FACTS: &str = r##"{"providers":[],"components":[],"errors":[],"servers":[{"class":{"id":"server/app.ts#App","text":"App","module":"server/app","export":"App"},"file":"server/app.ts","at":180,"root":{"id":"client/Shell.xzor.ts#default","text":"Shell","module":"client/Shell.xzor","export":"default"}}],"endpoints":[{"class":{"id":"server/api/posts.ts#Posts","text":"Posts","module":"server/api/posts","export":"Posts"},"file":"server/api/posts.ts","at":210,"prefix":"/api/posts","ctor":[],"methods":[{"name":"get","verb":"GET","pattern":":slug","path":"/api/posts/:slug","returnsPromise":false,"at":300,"params":[{"name":"slug","kind":"path","type":"string","optional":false,"conv":"string","keys":null,"anyKey":false,"at":304},{"name":"query","kind":"query","type":"{ tag?: string; }","optional":true,"conv":null,"keys":[{"name":"tag","optional":true,"conv":["a","b"]}],"anyKey":true,"at":320},{"name":"x","kind":"other","type":"boolean","optional":false,"conv":null,"keys":null,"anyKey":false,"at":340}]},{"name":"create","verb":"QUERY","pattern":"","path":"/api/posts","returnsPromise":true,"at":400,"params":[{"name":"body","kind":"body","type":"NewPost","optional":false,"conv":null,"keys":null,"anyKey":false,"at":410}]}]}]}"##;
+    const SERVER_FACTS: &str = r##"{"providers":[],"components":[],"errors":[],"serverImports":[{"module":"server/db","import":"bun:sqlite"}],"endpointImports":[{"file":".xzor/client/Home.xzor.ts","module":"client/Home.xzor","at":9,"class":"Posts"}],"servers":[{"class":{"id":"server/app.ts#App","text":"App","module":"server/app","export":"App"},"file":"server/app.ts","at":180,"root":{"id":"client/Shell.xzor.ts#default","text":"Shell","module":"client/Shell.xzor","export":"default"}}],"endpoints":[{"class":{"id":"server/api/posts.ts#Posts","text":"Posts","module":"server/api/posts","export":"Posts"},"file":"server/api/posts.ts","at":210,"prefix":"/api/posts","ctor":[],"methods":[{"name":"get","verb":"GET","pattern":":slug","path":"/api/posts/:slug","returnsPromise":false,"at":300,"params":[{"name":"slug","kind":"path","type":"string","optional":false,"conv":"string","keys":null,"anyKey":false,"at":304},{"name":"query","kind":"query","type":"{ tag?: string; }","optional":true,"conv":null,"keys":[{"name":"tag","optional":true,"conv":["a","b"]}],"anyKey":true,"at":320},{"name":"x","kind":"other","type":"boolean","optional":false,"conv":null,"keys":null,"anyKey":false,"at":340}]},{"name":"create","verb":"QUERY","pattern":"","path":"/api/posts","returnsPromise":true,"at":400,"params":[{"name":"body","kind":"body","type":"NewPost","optional":false,"conv":null,"keys":null,"anyKey":false,"at":410}]}]}]}"##;
 
     #[test]
     fn parses_servers_and_endpoints() {
@@ -526,6 +545,8 @@ mod tests {
             ]
         );
         assert_eq!(create.params[0].kind, ParamKind::Body);
+        assert_eq!(f.server_imports, [("server/db".to_string(), "bun:sqlite".to_string())]);
+        assert_eq!(f.endpoint_imports, [EndpointImport { file: ".xzor/client/Home.xzor.ts".into(), module: "client/Home.xzor".into(), at: 9, class: "Posts".into() }]);
         assert_eq!(Facts::from_json(&SERVER_FACTS.replace(r#""verb":"QUERY""#, r#""verb":"HEAD""#)), Err("di facts: unknown endpoints[0].methods[1].verb 'HEAD'".into()));
     }
 

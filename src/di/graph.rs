@@ -117,6 +117,8 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
                 // The server keeps every registration; the browser gets what the views reach.
                 if s.root.is_some() {
                     r.browser = reached(&r.services, r.components.iter().flat_map(|(_, args, _)| args));
+                    view_leaks(facts, r, &mut cx.diags);
+                    endpoint_imports(facts, r, &mut cx.diags);
                 }
             }
         }
@@ -459,6 +461,75 @@ fn reached<'a>(services: &[Service], roots: impl Iterator<Item = &'a Arg>) -> Ve
         }
     }
     (0..services.len()).filter(|&i| seen[i]).collect()
+}
+
+/// The module that builds service `s`: its implementation's, else its factory owner's.
+fn module_of(s: &Service) -> Option<&str> {
+    s.reg.impl_.as_ref().or(s.reg.factory.as_ref().map(|f| &f.owner)).and_then(|t| t.module.as_deref())
+}
+
+enum Leak<'a> {
+    Request,
+    Endpoints,
+    Module(&'a str),
+}
+
+/// ZDI20: a view reaching, through its injects and their constructors, the request, an `@Endpoints` class or a
+/// module importing `bun`, `bun:*` or `node:*`.
+fn view_leaks(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) {
+    fn walk<'a>(facts: &'a Facts, services: &'a [Service], a: &Arg, chain: &mut Vec<&'a str>, seen: &mut [bool]) -> Option<Leak<'a>> {
+        if *a == Arg::Request {
+            return Some(Leak::Request);
+        }
+        let i = arg_service(a)?;
+        if std::mem::replace(&mut seen[i], true) {
+            return None;
+        }
+        let s = &services[i];
+        chain.push(needer(&s.reg));
+        let id = s.reg.impl_.as_ref().unwrap_or(&s.reg.service).id.as_str();
+        if facts.endpoints.iter().any(|e| e.class.id == id) {
+            return Some(Leak::Endpoints);
+        }
+        if let Some(m) = module_of(s) {
+            if let Some((_, spec)) = facts.server_imports.iter().find(|(module, _)| module == m) {
+                return Some(Leak::Module(spec));
+            }
+        }
+        for b in &s.args {
+            if let Some(leak) = walk(facts, services, b, chain, seen) {
+                return Some(leak);
+            }
+        }
+        chain.pop();
+        None
+    }
+    for (c, args, _) in &r.components {
+        for (prm, a) in c.injects.iter().zip(args) {
+            let mut chain = vec![c.class.text.as_str()];
+            let Some(leak) = walk(facts, &r.services, a, &mut chain, &mut vec![false; r.services.len()]) else { continue };
+            let chain = chain.join(" -> ");
+            let message = match leak {
+                Leak::Request => format!("{chain} -> Request: a view can't reach the request"),
+                Leak::Endpoints => format!("{chain}: a view can't reach an @Endpoints class"),
+                Leak::Module(spec) => format!("{chain} -> {spec}: a view can't reach a server-only module"),
+            };
+            let file = c.class.module.as_deref().unwrap_or(&c.class.text).to_string();
+            diags.push(Diag { file, at: 0, code: "ZDI20", message, inject: Some(prm.name.clone()), param_at: None });
+        }
+    }
+}
+
+/// ZDI21: browser code (a view, or the module of a service the views reach) importing an `@Endpoints` class as a value.
+fn endpoint_imports(facts: &Facts, r: &Resolved, diags: &mut Vec<Diag>) {
+    let modules: HashSet<&str> = r.browser.iter().filter_map(|&i| module_of(&r.services[i])).collect();
+    for e in &facts.endpoint_imports {
+        let view = e.file.starts_with(".xzor/") && e.file.ends_with(".xzor.ts");
+        if view || modules.contains(e.module.as_str()) {
+            let message = format!("{} is an @Endpoints class: use import type", e.class);
+            diags.push(Diag { file: e.file.clone(), at: e.at, code: "ZDI21", message, inject: None, param_at: None });
+        }
+    }
 }
 
 /// The `:name` segments of a route path.
