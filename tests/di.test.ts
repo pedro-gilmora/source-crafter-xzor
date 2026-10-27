@@ -504,7 +504,7 @@ test("reads endpoints under the app's folder only", () => {
     ["create", "POST", "", "/api/posts", true, text.indexOf("create(body")],
   ]);
   const [get, list, create] = posts.methods;
-  expect(get.params).toEqual([{ name: "slug", kind: "path", type: "string", optional: false, conv: "string", keys: null, at: text.indexOf("slug: string") }]);
+  expect(get.params).toEqual([{ name: "slug", kind: "path", type: "string", optional: false, conv: "string", keys: null, anyKey: false, at: text.indexOf("slug: string") }]);
   expect(list.params).toEqual([
     {
       name: "query",
@@ -516,10 +516,11 @@ test("reads endpoints under the app's folder only", () => {
         { name: "tag", optional: true, conv: "string" },
         { name: "page", optional: true, conv: "number" },
       ],
+      anyKey: false,
       at: text.indexOf("query: {"),
     },
   ]);
-  expect(create.params).toEqual([{ name: "body", kind: "body", type: "NewPost", optional: false, conv: null, keys: null, at: text.indexOf("body: NewPost") }]);
+  expect(create.params).toEqual([{ name: "body", kind: "body", type: "NewPost", optional: false, conv: null, keys: null, anyKey: false, at: text.indexOf("body: NewPost") }]);
 });
 
 test("endpoint parameter kinds and conversions", () => {
@@ -567,6 +568,21 @@ export class Items {
   // A `query` that is not an object type has no keys (Task 3 reports it).
   expect(find.params[1]).toMatchObject({ kind: "query", keys: null });
   expect(find.returnsPromise).toBe(false);
+});
+
+// `keys` and `anyKey` depend only on the `query` parameter's own type, so each case runs alone.
+test.each([
+  ["{}", [], false],
+  ["Record<string, string>", [], true],
+  ["{ tag?: string }", [{ name: "tag", optional: true, conv: "string" }], false],
+  ["{ tag?: string; [k: string]: string | undefined }", [{ name: "tag", optional: true, conv: "string" }], true],
+  ["string", null, false],
+])("query: %s", (type, keys, anyKey) => {
+  const app = `import { Run } from "@source-crafter/xzor-runtime";\nimport type { IServerApplication } from "@source-crafter/xzor-runtime/server";\n\n@Run()\nexport class App implements IServerApplication {}\n`;
+  const api = `import { Endpoints, Get } from "@source-crafter/xzor-runtime/server";\n\n@Endpoints("/api")\nexport class Items {\n  @Get\n  list(query: ${type}) {}\n}\n`;
+  const out = analyzeTemp({ "app.ts": app, "api.ts": api });
+  expect(out.errors).toEqual([]);
+  expect(out.endpoints[0].methods[0].params[0]).toMatchObject({ kind: "query", keys, anyKey });
 });
 
 test("@Run form must match what the class implements", () => {

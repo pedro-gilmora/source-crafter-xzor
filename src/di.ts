@@ -116,7 +116,10 @@ type EndpointParam = {
   type: string;
   optional: boolean;
   conv: Conv | null;
+  // A `query` of object type lists its declared properties (`[]` for `{}`); any other type is `null`.
   keys: { name: string; optional: boolean; conv: Conv }[] | null;
+  // The `query` type has a string index signature (`Record<string, string>`): every search param is read too.
+  anyKey: boolean;
   at: number;
 };
 type Verb = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "QUERY";
@@ -713,7 +716,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         const params: EndpointParam[] = m.method.parameters.map((p) => {
           const text = isIdentifier(p.name) ? p.name.text : p.name.getText(e.sf);
           const kind = text === "query" ? "query" : text === "body" ? "body" : pathParams.has(text) ? "path" : "other";
-          return { name: text, kind, type: "", optional: !!p.questionToken || !!p.initializer, conv: null, keys: null, at: p.name.getStart(e.sf) };
+          return { name: text, kind, type: "", optional: !!p.questionToken || !!p.initializer, conv: null, keys: null, anyKey: false, at: p.name.getStart(e.sf) };
         });
         const method = { name: m.method.name.getText(e.sf), verb: m.verb, pattern: m.pattern, path, params, returnsPromise: false, at: m.method.name.getStart(e.sf) };
         methods.push(method);
@@ -741,7 +744,11 @@ function analyze(root: string, program: Program, checker: Checker, files: string
         if (param.optional) t = checker.getNonNullableType(t) ?? t;
         param.type = checker.typeToString(t);
         if (param.kind === "path") param.conv = conv(t);
-        else if (param.kind === "query" && t.flags & TypeFlags.Object) queries.push({ param, type: t, props: checker.getPropertiesOfType(t) });
+        else if (param.kind === "query" && t.flags & TypeFlags.Object) {
+          param.keys = [];
+          param.anyKey = checker.getIndexInfosOfType(t).length > 0;
+          queries.push({ param, type: t, props: checker.getPropertiesOfType(t) });
+        }
       });
     }
     const props = queries.flatMap((q) => q.props);

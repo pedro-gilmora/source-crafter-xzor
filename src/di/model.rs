@@ -156,6 +156,8 @@ pub struct EndpointParam {
     pub conv: Option<Conv>,
     /// Set for a `Query` parameter of object type.
     pub keys: Option<Vec<QueryKey>>,
+    /// The `query` type has a string index signature, so every search param is read too.
+    pub any_key: bool,
     pub at: usize,
 }
 
@@ -373,6 +375,7 @@ fn endpoint_param(j: &Json, path: &str) -> Result<EndpointParam, String> {
         } else {
             Some(list(j, "keys", path, |k, p| Ok(QueryKey { name: string(k, "name", p)?, optional: boolean(k, "optional", p)?, conv: conv(field(k, "conv", p)?, &join(p, "conv"))? }))?)
         },
+        any_key: boolean(j, "anyKey", path)?,
         at: number(j, "at", path)?,
     })
 }
@@ -479,7 +482,7 @@ mod tests {
         assert_eq!(facts.errors, vec![FactError { file: "services/hidden.ts".into(), at: 112, message: "Hidden must be exported to be injected".into() }]);
     }
 
-    const SERVER_FACTS: &str = r##"{"providers":[],"components":[],"errors":[],"servers":[{"class":{"id":"server/app.ts#App","text":"App","module":"server/app","export":"App"},"file":"server/app.ts","at":180,"root":{"id":"client/Shell.xzor.ts#default","text":"Shell","module":"client/Shell.xzor","export":"default"}}],"endpoints":[{"class":{"id":"server/api/posts.ts#Posts","text":"Posts","module":"server/api/posts","export":"Posts"},"file":"server/api/posts.ts","at":210,"prefix":"/api/posts","ctor":[],"methods":[{"name":"get","verb":"GET","pattern":":slug","path":"/api/posts/:slug","returnsPromise":false,"at":300,"params":[{"name":"slug","kind":"path","type":"string","optional":false,"conv":"string","keys":null,"at":304},{"name":"query","kind":"query","type":"{ tag?: string; }","optional":true,"conv":null,"keys":[{"name":"tag","optional":true,"conv":["a","b"]}],"at":320},{"name":"x","kind":"other","type":"boolean","optional":false,"conv":null,"keys":null,"at":340}]},{"name":"create","verb":"QUERY","pattern":"","path":"/api/posts","returnsPromise":true,"at":400,"params":[{"name":"body","kind":"body","type":"NewPost","optional":false,"conv":null,"keys":null,"at":410}]}]}]}"##;
+    const SERVER_FACTS: &str = r##"{"providers":[],"components":[],"errors":[],"servers":[{"class":{"id":"server/app.ts#App","text":"App","module":"server/app","export":"App"},"file":"server/app.ts","at":180,"root":{"id":"client/Shell.xzor.ts#default","text":"Shell","module":"client/Shell.xzor","export":"default"}}],"endpoints":[{"class":{"id":"server/api/posts.ts#Posts","text":"Posts","module":"server/api/posts","export":"Posts"},"file":"server/api/posts.ts","at":210,"prefix":"/api/posts","ctor":[],"methods":[{"name":"get","verb":"GET","pattern":":slug","path":"/api/posts/:slug","returnsPromise":false,"at":300,"params":[{"name":"slug","kind":"path","type":"string","optional":false,"conv":"string","keys":null,"anyKey":false,"at":304},{"name":"query","kind":"query","type":"{ tag?: string; }","optional":true,"conv":null,"keys":[{"name":"tag","optional":true,"conv":["a","b"]}],"anyKey":true,"at":320},{"name":"x","kind":"other","type":"boolean","optional":false,"conv":null,"keys":null,"anyKey":false,"at":340}]},{"name":"create","verb":"QUERY","pattern":"","path":"/api/posts","returnsPromise":true,"at":400,"params":[{"name":"body","kind":"body","type":"NewPost","optional":false,"conv":null,"keys":null,"anyKey":false,"at":410}]}]}]}"##;
 
     #[test]
     fn parses_servers_and_endpoints() {
@@ -495,7 +498,7 @@ mod tests {
         assert_eq!(
             get.params,
             vec![
-                EndpointParam { name: "slug".into(), kind: ParamKind::Path, ty: "string".into(), optional: false, conv: Some(Conv::String), keys: None, at: 304 },
+                EndpointParam { name: "slug".into(), kind: ParamKind::Path, ty: "string".into(), optional: false, conv: Some(Conv::String), keys: None, any_key: false, at: 304 },
                 EndpointParam {
                     name: "query".into(),
                     kind: ParamKind::Query,
@@ -503,9 +506,10 @@ mod tests {
                     optional: true,
                     conv: None,
                     keys: Some(vec![QueryKey { name: "tag".into(), optional: true, conv: Conv::Literals(vec!["a".into(), "b".into()]) }]),
+                    any_key: true,
                     at: 320,
                 },
-                EndpointParam { name: "x".into(), kind: ParamKind::Other, ty: "boolean".into(), optional: false, conv: None, keys: None, at: 340 },
+                EndpointParam { name: "x".into(), kind: ParamKind::Other, ty: "boolean".into(), optional: false, conv: None, keys: None, any_key: false, at: 340 },
             ]
         );
         assert_eq!(create.params[0].kind, ParamKind::Body);
