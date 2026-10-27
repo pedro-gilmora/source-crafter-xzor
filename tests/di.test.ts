@@ -323,20 +323,44 @@ export class P {}
 });
 
 test("decorator misuse", () => {
-  const main = `import { Mount, ServiceProvider } from "@source-crafter/xzor-runtime";
+  const main = `import { Run, ServiceProvider } from "@source-crafter/xzor-runtime";
 export class App {}
 
-@Mount(App, "a")
-@Mount(App, "b")
+@Run(App, "a")
+@Run(App, "b")
 @ServiceProvider
 export class P {}
 `;
   const out = analyzeTemp({ "main.ts": main });
   expect(out.errors).toEqual([
     { file: "main.ts", at: main.indexOf("@ServiceProvider"), message: "@ServiceProvider must be called" },
-    { file: "main.ts", at: main.indexOf('@Mount(App, "b")'), message: "duplicate @Mount" },
+    { file: "main.ts", at: main.indexOf('@Run(App, "b")'), message: "duplicate @Run" },
   ]);
   expect(out.providers[0].mount.target).toBe("a");
+});
+
+test("@Run generates the same facts @Mount did", () => {
+  const main = `import { Run } from "@source-crafter/xzor-runtime";\nexport class App {}\n\n@Run(App, "app")\nexport class P {}\n`;
+  const out = analyzeTemp({ "main.ts": main });
+  expect(out.errors).toEqual([]);
+  expect(out.providers[0].mount.target).toBe("app");
+  expect(out.providers[0].mount.component.text).toBe("App");
+});
+
+test("@Run needs a component and a string literal target", () => {
+  const bad = (call: string) => {
+    const main = `import { Run } from "@source-crafter/xzor-runtime";\nexport class App {}\nconst target = "app";\n\n${call}\nexport class P {}\n`;
+    return analyzeTemp({ "main.ts": main }).errors.map((e: any) => e.message);
+  };
+  const message = "@Run expects a component and a string literal target";
+  expect(bad("@Run(App, 1)")).toEqual([message]);
+  expect(bad("@Run(App, target)")).toEqual([message]);
+});
+
+test("@Mount was renamed to @Run", () => {
+  const main = `import { Mount } from "@source-crafter/xzor-runtime";\nexport class App {}\n\n@Mount(App, "app")\nexport class P {}\n`;
+  const out = analyzeTemp({ "main.ts": main });
+  expect(out.errors).toEqual([{ file: "main.ts", at: main.indexOf("@Mount"), message: "@Mount was renamed to @Run" }]);
 });
 
 test("non-public factories are errors", () => {

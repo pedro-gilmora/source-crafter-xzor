@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { inProject, stripMarkerDecorators } from "../src/bundle";
 
-const IMPORT = `import { Import, Mount, Scoped, ServiceProvider, Singleton, Transient } from "@source-crafter/xzor-runtime";\n`;
+const IMPORT = `import { Import, Run, Scoped, ServiceProvider, Singleton, Transient } from "@source-crafter/xzor-runtime";\n`;
 
 function expectBlanked(src: string, out: string): void {
   expect(out.length).toBe(src.length);
@@ -17,7 +17,7 @@ test("blanks marker decorators and keeps imports, exports, length and line break
 });
 
 test("multi-line arguments", () => {
-  const src = `${IMPORT}@Mount(\n  App,\n  "app",\n)\n@Singleton(\n  "settings",\n  Factories.load,\n)\nexport class Application {}\n`;
+  const src = `${IMPORT}@Run(\n  App,\n  "app",\n)\n@Singleton(\n  "settings",\n  Factories.load,\n)\nexport class Application {}\n`;
   const out = stripMarkerDecorators(src);
   expectBlanked(src, out);
   expect(out.slice(IMPORT.length).trim()).toBe("export class Application {}");

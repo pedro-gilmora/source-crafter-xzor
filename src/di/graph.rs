@@ -49,7 +49,7 @@ pub struct Service {
 pub struct Resolved {
     pub provider: Provider,
     pub services: Vec<Service>,
-    /// Filled only for the `@Mount` provider; the `bool` marks an asynchronously resolved component.
+    /// Filled only for the `@Run` provider; the `bool` marks an asynchronously resolved component.
     pub components: Vec<(Component, Vec<Arg>, bool)>,
 }
 
@@ -86,7 +86,7 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
         let names = mounts.iter().map(|&i| providers[i].class.text.as_str()).collect::<Vec<_>>().join(", ");
         for &i in &mounts[1..] {
             let p = &providers[i];
-            cx.error(&p.file, p.mount.as_ref().map_or(p.at, |m| m.at), "ZDI07", format!("@Mount is declared on more than one class: {names}"));
+            cx.error(&p.file, p.mount.as_ref().map_or(p.at, |m| m.at), "ZDI07", format!("@Run is declared on more than one class: {names}"));
         }
     }
 
@@ -102,7 +102,7 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
         for c in &facts.components {
             let file = c.class.module.as_deref().unwrap_or(&c.class.text);
             for prm in &c.injects {
-                let message = format!("{} (injected as {} in {}) is not provided: no @Mount application", prm.ty.text, prm.name, c.class.text);
+                let message = format!("{} (injected as {} in {}) is not provided: no @Run application", prm.ty.text, prm.name, c.class.text);
                 cx.diags.push(Diag { file: file.to_string(), at: 0, code: "ZDI04", message, inject: Some(prm.name.clone()), param_at: None });
             }
         }
@@ -827,7 +827,7 @@ mod tests {
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI04"]);
         assert_eq!((d[0].file.as_str(), d[0].at, d[0].inject.as_deref()), ("Counter.xzor", 0, Some("db")));
-        assert_eq!(d[0].message, "IDatabase (injected as db in Counter) is not provided: no @Mount application");
+        assert_eq!(d[0].message, "IDatabase (injected as db in Counter) is not provided: no @Run application");
     }
 
     #[test]
@@ -907,7 +907,7 @@ mod tests {
         let d = err(&f);
         assert_eq!(codes(&d), ["ZDI07"]);
         assert_eq!((d[0].file.as_str(), d[0].at), ("Other.ts", 1));
-        assert_eq!(d[0].message, "@Mount is declared on more than one class: Application, Other");
+        assert_eq!(d[0].message, "@Run is declared on more than one class: Application, Other");
     }
 
     #[test]

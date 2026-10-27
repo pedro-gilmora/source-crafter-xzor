@@ -47,7 +47,7 @@ fn compile_ignores_mount_outside_main() {
     if !has_bun() {
         return;
     }
-    let app = "import { Mount, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+    let app = "import { Run, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Run(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
     let root = project("compile-mount", &[("app.ts", app), ("App.xzor", "<p/>")]);
     let out = compile(&root);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));

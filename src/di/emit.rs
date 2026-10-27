@@ -1,4 +1,4 @@
-//! Emits the generated TypeScript for providers and the `@Mount` application entry.
+//! Emits the generated TypeScript for providers and the `@Run` application entry.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -17,7 +17,7 @@ macro_rules! w {
     };
 }
 
-/// `services/data.ts` gives `services/data.provider.ts`; the `@Mount` entry keeps its name. Relative to `.xzor/`.
+/// `services/data.ts` gives `services/data.provider.ts`; the `@Run` entry keeps its name. Relative to `.xzor/`.
 pub fn output_name(source_file: &str, mount_entry: bool) -> String {
     if mount_entry {
         return source_file.to_string();
@@ -26,7 +26,7 @@ pub fn output_name(source_file: &str, mount_entry: bool) -> String {
 }
 
 /// The generated module for the providers declared in `source_file`. `all` is every resolved provider, so imported
-/// providers can be found; with `mount_entry`, the `@Mount` class becomes the application and the mount call.
+/// providers can be found; with `mount_entry`, the `@Run` class becomes the application and the mount call.
 pub fn emit_file(source_file: &str, all: &[Resolved], mount_entry: bool) -> String {
     let out_name = output_name(source_file, mount_entry);
     let mut from = vec![".xzor".to_string()];

@@ -156,7 +156,7 @@ function tryResolve(spec: string, dir: string): string | undefined {
 }
 
 // xzor's DI decorators are no-ops read only by the analyzer; stripping them spares the bundle the decorator helpers.
-const MARKERS = new Set(["ServiceProvider", "Mount", "Import", "Singleton", "Scoped", "Transient"]);
+const MARKERS = new Set(["ServiceProvider", "Run", "Import", "Singleton", "Scoped", "Transient"]);
 const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@source-crafter\/xzor-runtime["']/g;
 const IDENT = /[A-Za-z_$][\w$]*/y;
 

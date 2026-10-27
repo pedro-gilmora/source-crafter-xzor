@@ -503,7 +503,7 @@ fn run_checker(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Resu
 }
 
 /// Compile-time DI: analyzes the project's providers, writes the generated providers into `.xzor/`, and returns
-/// `.xzor/<entry>` when `entry` declares `@Mount` (that generated module is then the entry to bundle).
+/// `.xzor/<entry>` when `entry` declares `@Run` (that generated module is then the entry to bundle).
 /// `analyzer` belongs to `root` and may be reused across runs.
 pub fn di(root: &Path, entry: &str, compiled: &[Compiled], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, String> {
     di_with(root, entry, compiled, &provider_files(root), analyzer)
@@ -568,7 +568,7 @@ pub fn di_run(
     let entry = entry.strip_prefix("./").unwrap_or(&entry);
     let mount = resolved.iter().find_map(|r| Some((&r.provider.file, r.provider.mount.as_ref()?)));
     if let Some((file, m)) = mount.filter(|(file, _)| *file != entry) {
-        let message = format!("@Mount must be declared in the entry module {entry}");
+        let message = format!("@Run must be declared in the entry module {entry}");
         let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None, param_at: None };
         return Err(DiFailure::Diags(vec![d]));
     }
@@ -593,7 +593,7 @@ pub fn di_run(
     Ok(mount.map(|_| xzor.join(entry)))
 }
 
-/// ZDI04 for every `@inject` when no `.ts` declares an application (same message as `di::graph` without `@Mount`).
+/// ZDI04 for every `@inject` when no `.ts` declares an application (same message as `di::graph` without `@Run`).
 fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph::Diag> {
     let mut out = Vec::new();
     for unit in compiled {
@@ -601,7 +601,7 @@ fn unmounted_injects(root: &Path, compiled: &[Compiled]) -> Vec<crate::di::graph
         let name = unit.source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let class = crate::codegen::class_name(name.strip_suffix(".xzor").unwrap_or(&name));
         for i in &unit.generated.injects {
-            let message = format!("{} (injected as {} in {class}) is not provided: no @Mount application", i.ty.text, i.name.text);
+            let message = format!("{} (injected as {} in {class}) is not provided: no @Run application", i.ty.text, i.name.text);
             out.push(crate::di::graph::Diag { file: file.clone(), at: 0, code: "ZDI04", message, inject: Some(i.name.text.clone()), param_at: None });
         }
     }
@@ -643,12 +643,12 @@ fn remove_empty_dirs(dir: &Path) -> Result<bool, String> {
     Ok(empty)
 }
 
-/// Whether a `.ts` source declares `@ServiceProvider` or `@Mount`.
+/// Whether a `.ts` source declares `@ServiceProvider`, `@Run` or the renamed `@Mount` (kept so the analyzer reports the rename).
 pub fn declares_provider(text: &str) -> bool {
-    text.lines().map(str::trim_start).any(|l| l.starts_with("@ServiceProvider(") || l.starts_with("@Mount("))
+    text.lines().map(str::trim_start).any(|l| l.starts_with("@ServiceProvider(") || l.starts_with("@Run(") || l.starts_with("@Mount("))
 }
 
-/// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Mount`.
+/// Project `.ts` files (relative to `root`) that declare `@ServiceProvider` or `@Run`.
 pub fn provider_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if root.is_dir() {
@@ -906,7 +906,7 @@ mod tests {
         assert_eq!(plan(&["Counter.xzor"]), WatchPlan { recompile: vec![counter.clone()], remove: vec![], di: true, rebuild: true, config: false });
 
         assert_eq!(plan(&["services/data.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
-        fs::write(root.join("util.ts"), "@Mount(App, \"app\")\nexport class M {}\n").unwrap();
+        fs::write(root.join("util.ts"), "@Run(App, \"app\")\nexport class M {}\n").unwrap();
         assert_eq!(plan(&["util.ts"]), WatchPlan { di: true, rebuild: true, ..Default::default() });
         fs::write(root.join("util.ts"), "export const x = 2;\n").unwrap();
         // Providers import other `.ts` files, so with providers any `.ts` change reruns DI; without, only the rebuild.
@@ -1248,7 +1248,7 @@ mod tests {
         let root = di_project("injectnomount", &files);
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
-        assert!(err.lines().any(|l| l.ends_with("Counter.xzor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided: no @Mount application")), "{err}");
+        assert!(err.lines().any(|l| l.ends_with("Counter.xzor(2,19): error ZDI04: IDatabase (injected as db in Counter) is not provided: no @Run application")), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1260,7 +1260,7 @@ mod tests {
         fs::write(root.join("Page.xzor"), "@inject Clock clock\n<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
-        assert!(err.lines().any(|l| l.ends_with("Page.xzor(1,15): error ZDI04: Clock (injected as clock in Page) is not provided: no @Mount application")), "{err}");
+        assert!(err.lines().any(|l| l.ends_with("Page.xzor(1,15): error ZDI04: Clock (injected as clock in Page) is not provided: no @Run application")), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1283,7 +1283,7 @@ mod tests {
         if !has_bun() {
             return;
         }
-        let main = "import { Mount, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let main = "import { Run, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Run(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
         let data = "export interface IDatabase { readonly name: string }\n";
         let files = [("main.ts", main), ("services/data.ts", data), ("App.xzor", "<p/>"), ("Counter.xzor", COUNTER)];
         let root = di_project("injecterr", &files);
@@ -1298,11 +1298,11 @@ mod tests {
         if !has_bun() {
             return;
         }
-        let main = "import { Mount, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Mount(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
+        let main = "import { Run, ServiceProvider } from \"@source-crafter/xzor-runtime\";\nimport App from \"./App.xzor\";\n@Run(App, \"app\")\n@ServiceProvider()\nexport class Application {}\n";
         let root = di_project("mountentry", &[("app.ts", main), ("App.xzor", "<p/>")]);
         let units = compile_all(&root).unwrap();
         let err = di(&root, "main.ts", &units).unwrap_err();
-        assert!(err.lines().any(|l| l.ends_with("app.ts(3,1): error ZDI07: @Mount must be declared in the entry module main.ts")), "{err}");
+        assert!(err.lines().any(|l| l.ends_with("app.ts(3,1): error ZDI07: @Run must be declared in the entry module main.ts")), "{err}");
         assert!(!root.join(".xzor/app.ts").exists());
         fs::remove_dir_all(&root).unwrap();
     }
@@ -1355,7 +1355,7 @@ mod tests {
         assert!(root.join(".xzor/main.ts").is_file());
 
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();
-        // Without @Mount, @inject would be ZDI04.
+        // Without @Run, @inject would be ZDI04.
         fs::write(root.join("Counter.xzor"), "<p/>\n").unwrap();
         let units = compile_all(&root).unwrap();
         assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(None));
@@ -1369,10 +1369,12 @@ mod tests {
     #[test]
     fn decorators_match_only_as_usage() {
         let root = temp("declares");
-        fs::write(root.join("a.ts"), "// @ServiceProvider() in a comment\nconst s = \"@Mount(x)\";\n").unwrap();
+        fs::write(root.join("a.ts"), "// @ServiceProvider() in a comment\nconst s = \"@Run(x)\";\n").unwrap();
         fs::write(root.join("b.ts"), "export class B {}\n  @ServiceProvider()\nexport class P {}\n").unwrap();
-        fs::write(root.join("c.ts"), "@Mount(App, \"app\")\nexport class M {}\n").unwrap();
-        assert_eq!(provider_files(&root), [PathBuf::from("b.ts"), PathBuf::from("c.ts")]);
+        fs::write(root.join("c.ts"), "@Run(App, \"app\")\nexport class M {}\n").unwrap();
+        // Still matched so the analyzer can report the rename.
+        fs::write(root.join("d.ts"), "@Mount(App, \"app\")\nexport class M {}\n").unwrap();
+        assert_eq!(provider_files(&root), [PathBuf::from("b.ts"), PathBuf::from("c.ts"), PathBuf::from("d.ts")]);
         fs::remove_dir_all(&root).unwrap();
     }
 

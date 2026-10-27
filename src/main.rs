@@ -53,9 +53,9 @@ fn run(args: &[String]) -> Result<(), String> {
                     build::print_warnings(unit);
                     println!("{}", unit.out.display());
                 }
-                // `compile` has no entry option, so a @Mount outside main.ts is not an error here.
+                // `compile` has no entry option, so a @Run outside main.ts is not an error here.
                 if let Err(e) = build::di(&path, "main.ts", &units, &mut build::Analyzer::new(&path)) {
-                    let kept: Vec<&str> = e.lines().filter(|l| !l.contains("error ZDI07: @Mount must be declared in the entry module")).collect();
+                    let kept: Vec<&str> = e.lines().filter(|l| !l.contains("error ZDI07: @Run must be declared in the entry module")).collect();
                     if !kept.is_empty() {
                         eprintln!("{}", kept.join("\n"));
                         failed = true;

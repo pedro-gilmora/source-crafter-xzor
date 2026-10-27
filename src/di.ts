@@ -106,8 +106,8 @@ type Provider = {
 type Component = { class: TypeRef; injects: Param[] };
 type Facts = { providers: Provider[]; components: Component[]; errors: { file: string; at: number; message: string }[] };
 
-type Kind = "ServiceProvider" | "Mount" | "Import" | "Singleton" | "Scoped" | "Transient";
-const KINDS: Kind[] = ["ServiceProvider", "Mount", "Import", "Singleton", "Scoped", "Transient"];
+type Kind = "ServiceProvider" | "Run" | "Import" | "Singleton" | "Scoped" | "Transient";
+const KINDS: Kind[] = ["ServiceProvider", "Run", "Import", "Singleton", "Scoped", "Transient"];
 const LIFETIMES = { Singleton: "singleton", Scoped: "scoped", Transient: "transient" } as const;
 const NAMED = SymbolFlags.Class | SymbolFlags.Interface | SymbolFlags.Enum;
 const PRIMITIVE = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.BigInt | TypeFlags.ESSymbol;
@@ -220,7 +220,10 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     const decos: Deco[] = [];
     for (const c of calls) {
       const kind = c.callee.value && kinds.get(c.callee.value.id);
-      if (!kind) continue;
+      if (!kind) {
+        if (!c.callee.value && isIdentifier(c.callee.node) && c.callee.node.text === "Mount") errorAt(sf, c.at, "@Mount was renamed to @Run");
+        continue;
+      }
       if (c.call) decos.push({ kind, call: c.call, at: c.at });
       else errorAt(sf, c.at, `@${kind} must be called`);
     }
@@ -231,10 +234,10 @@ function analyze(root: string, program: Program, checker: Checker, files: string
       const loc = { sf, node: deco.call };
       if (deco.kind === "Import") {
         for (const a of args) plan.imports.push({ lookup: sym(a), loc: { sf, node: a } });
-      } else if (deco.kind === "Mount") {
+      } else if (deco.kind === "Run") {
         const [component, target] = args;
-        if (plan.mount) errorAt(sf, deco.at, "duplicate @Mount");
-        else if (!component || !target || !isStringLiteral(target)) error(loc, "@Mount expects a component and a string literal target");
+        if (plan.mount) errorAt(sf, deco.at, "duplicate @Run");
+        else if (!component || !target || !isStringLiteral(target) || args.length > 2) error(loc, "@Run expects a component and a string literal target");
         else plan.mount = { component: sym(component), target: target.text, at: deco.at, loc: { sf, node: component } };
       } else if (deco.kind !== "ServiceProvider") {
         const [first, second] = args;
@@ -444,7 +447,7 @@ function analyze(root: string, program: Program, checker: Checker, files: string
     if (p.mount) {
       const c = p.mount.component.value;
       if (isClass(c)) provider.mount = { component: classRef(c, p.mount.loc), target: p.mount.target, at: p.mount.at };
-      else error(p.mount.loc, "@Mount expects a component class");
+      else error(p.mount.loc, "@Run expects a component class");
     }
     for (const r of p.regs) {
       const lifetime = LIFETIMES[r.deco.kind as keyof typeof LIFETIMES];
