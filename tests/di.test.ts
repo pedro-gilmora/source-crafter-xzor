@@ -927,6 +927,62 @@ test("a singleton that needs the Request is an error naming the chain", () => {
   expect(out).toContain("AuthCache -> CurrentUser -> Request is built once but needs the request");
 });
 
+test("an endpoint without a disposable scoped service emits no dispose call", () => {
+  const dir = serverProject("scope-no-dispose", requestFiles);
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const text = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  expect(text).toContain("const s$ = new App$Scope(app, req);");
+  expect(text).not.toMatch(/dispos|finally/i);
+});
+
+// `Conn` is scoped and disposable: `Job` (sync and async handlers) reaches it, `Stat` reads how many were disposed.
+const connFiles = (dispose: string): Record<string, string> => ({
+  "app.ts": requestApp("@Scoped(Conn)\n@Singleton(Store)").replace('import { CurrentUser } from "./user";', 'import { Conn } from "./conn";'),
+  "store.ts": "export class Store {}\n",
+  "auth.ts": "export class AuthCache {}\n",
+  "conn.ts": `const g = globalThis as any;\ng.opened = 0;\ng.disposed = 0;\n\nexport class Conn {\n  constructor() { g.opened++; }\n  ${dispose}\n}\n`,
+  "api/job.ts": endpoints(`import { Conn } from "../conn";
+import { Store } from "../store";
+
+@Endpoints("/api/job")
+export class Job {
+  constructor(private conn: Conn) {}
+  @Get
+  now() { return { open: (globalThis as any).opened - (globalThis as any).disposed }; }
+  @Get("later")
+  async later(): Promise<{ open: number }> { await Promise.resolve(); return { open: (globalThis as any).opened - (globalThis as any).disposed }; }
+}
+
+@Endpoints("/api/stat")
+export class Stat {
+  constructor(private store: Store) {}
+  @Get
+  get() { return { opened: (globalThis as any).opened, disposed: (globalThis as any).disposed }; }
+}
+`),
+});
+
+test.each([
+  ["Symbol.dispose", "[Symbol.dispose]() { g.disposed++; }", "s$.dispose();", ""],
+  ["Symbol.asyncDispose", "async [Symbol.asyncDispose]() { await Promise.resolve(); g.disposed++; }", "await s$.disposeAsync();", "async "],
+])("a per-request scope disposes its %s service once per request, sync and async handlers", async (name, dispose, call, asyncKw) => {
+  const dir = serverProject("scope-dispose-" + name.replace(/\W+/g, "-"), connFiles(dispose));
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const text = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
+  // The sync handler awaits an async disposal; the async one awaits its reply first; Stat's scope-free handler has neither.
+  expect(text).toMatch(new RegExp(`const job\\$now = ${asyncKw}\\(req: [^]*?try \\{\\n    return reply\\(new Job\\(s\\$\\.conn\\)\\.now\\(\\)\\);\\n  \\} finally \\{\\n    ${call.replace(/[$.()]/g, "\\$&")}\\n  \\}`));
+  expect(text).toMatch(new RegExp(`const job\\$later = async \\(req: [^]*?return await replyAsync\\(new Job\\(s\\$\\.conn\\)\\.later\\(\\)\\);\\n  \\} finally \\{\\n    ${call.replace(/[$.()]/g, "\\$&")}`));
+  expect(text.match(/finally/g)).toHaveLength(2);
+  await served(join(dir, ".xzor", "app.ts"), async (call) => {
+    expect(await call("GET", "/api/job")).toEqual([200, '{"open":1}']);
+    expect(await call("GET", "/api/job/later")).toEqual([200, '{"open":1}']);
+    expect(await call("GET", "/api/job")).toEqual([200, '{"open":1}']);
+    expect(await call("GET", "/api/stat")).toEqual([200, '{"opened":3,"disposed":3}']);
+  });
+});
+
 // A server app with views: `@Singleton(Theme)` reached by a view, `@Import(DataServices)` only by the server.
 const viewsApp = `import { Import, Run, Singleton } from "@source-crafter/xzor-runtime";
 import type { IServerApplication } from "@source-crafter/xzor-runtime/server";

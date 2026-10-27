@@ -624,15 +624,9 @@ impl<'a> Emitter<'a> {
 
     /// The per-request scope: the request, the scoped and transient services per-request endpoints reach (built
     /// here, once per scope or per read), and forwarders to the app's singletons.
-    fn scope_class(&mut self, out: &mut String, r: &Resolved, app_cls: &str) -> String {
+    fn scope_class(&mut self, out: &mut String, r: &Resolved, app_cls: &str) -> (String, Scope) {
         let cls = self.imports.local(&format!("{app_cls}Scope"));
-        let mut seen = vec![false; r.services.len()];
-        let mut stack: Vec<usize> = r.endpoints.iter().filter(|e| e.2).flat_map(|e| e.1.iter().filter_map(arg_service)).collect();
-        while let Some(i) = stack.pop() {
-            if !std::mem::replace(&mut seen[i], true) && r.services[i].reg.lifetime != Lifetime::Singleton {
-                stack.extend(r.services[i].args.iter().filter_map(arg_service));
-            }
-        }
+        let seen = scope_reach(r, r.endpoints.iter().filter(|e| e.2).flat_map(|e| e.1.iter()));
         w!(out, "\nclass {cls} {{");
         w!(out, "  #app: {app_cls};");
         w!(out, "  #request: Request;");
@@ -656,13 +650,26 @@ impl<'a> Emitter<'a> {
             }
         }
         self.scope = false;
+        let tracked: Vec<usize> = (0..r.services.len()).filter(|&i| seen[i] && cached(&r.services[i]) && r.services[i].reg.dispose.is_some()).collect();
+        let tracked = dependents_first(&r.services, &tracked);
+        let is_async = tracked.iter().any(|&i| r.services[i].is_async || r.services[i].reg.dispose == Some(Dispose::AsyncSymbol));
+        if !tracked.is_empty() {
+            w!(out, "  {} {{", if is_async { "async disposeAsync(): Promise<void>" } else { "dispose(): void" });
+            for (n, &i) in tracked.iter().enumerate() {
+                let s = &r.services[i];
+                release(out, "    ", &Self::field(&cls, s), s, n);
+            }
+            w!(out, "  }}");
+        }
         w!(out, "}}");
-        cls
+        (cls, Scope { tracked, is_async })
     }
 
     /// The server entry's tail: the app, the endpoint instances and their handlers, then `Bun.serve`.
     fn server(&mut self, out: &mut String, r: &Resolved, cls: &str) {
         let scope = if r.endpoints.iter().any(|e| e.2) { Some(self.scope_class(out, r, cls)) } else { None };
+        let scope_info = scope.as_ref().map(|(_, s)| s);
+        let scope = scope.as_ref().map(|(c, _)| c.clone());
         let options_ty = self.imports.name(SERVER, "IServerApplication", "IServerApplication", false);
         w!(out, "\nconst app = new {cls}();");
         w!(out, "const options: {options_ty} = app;");
@@ -676,12 +683,16 @@ impl<'a> Emitter<'a> {
             let inst = if let (true, Some(scope)) = (per_request, &scope) {
                 let a = self.endpoint_args(r, args, "s$");
                 let is_async = args.iter().any(|a| matches!(a, Arg::Awaited(_) | Arg::Covered(_)));
-                Instance { expr: format!("new {class}({a})"), pre: format!("  const s$ = new {scope}(app, req);\n"), is_async }
+                // The scope is disposed only when this endpoint reaches a disposable scoped service.
+                let reach = scope_reach(r, args.iter());
+                let info = scope_info.expect("a scope exists for per-request endpoints");
+                let dispose = info.tracked.iter().any(|&i| reach[i]).then_some(info.is_async);
+                Instance { expr: format!("new {class}({a})"), pre: format!("  const s$ = new {scope}(app, req);\n"), is_async, dispose }
             } else {
                 let inst = self.imports.local(&base);
                 let a = self.endpoint_args(r, args, "app");
                 w!(out, "const {inst} = new {class}({a});");
-                Instance { expr: inst, pre: String::new(), is_async: false }
+                Instance { expr: inst, pre: String::new(), is_async: false, dispose: None }
             };
             for m in &e.methods {
                 let name = self.imports.local(&format!("{base}${}", m.name));
@@ -759,7 +770,9 @@ impl<'a> Emitter<'a> {
         let mut body = String::new();
         let mut args = Vec::with_capacity(m.params.len());
         let mut bad = false;
-        let mut is_async = m.returns_promise || inst.is_async;
+        // An async-disposable scope is awaited before the handler settles: a disposal error surfaces through `error`,
+        // and only endpoints that reach such a service pay the wait.
+        let mut is_async = m.returns_promise || inst.is_async || inst.dispose == Some(true);
         for (i, p) in m.params.iter().enumerate() {
             match p.kind {
                 ParamKind::Path => {
@@ -820,7 +833,19 @@ impl<'a> Emitter<'a> {
             w!(out, "{head} {{");
             out.push_str(&body);
             out.push_str(&inst.pre);
-            w!(out, "  return {call};");
+            match inst.dispose {
+                None => {
+                    w!(out, "  return {call};");
+                }
+                Some(wait) => {
+                    let (aw, d) = (if wait { "await " } else { "" }, if wait { "disposeAsync" } else { "dispose" });
+                    w!(out, "  try {{");
+                    w!(out, "    return {}{call};", if m.returns_promise { "await " } else { "" });
+                    w!(out, "  }} finally {{");
+                    w!(out, "    {aw}s$.{d}();");
+                    w!(out, "  }}");
+                }
+            }
             w!(out, "}};");
         }
         bad
@@ -874,6 +899,26 @@ struct Instance {
     expr: String,
     pre: String,
     is_async: bool,
+    /// `Some(awaited)` when the request scope holds disposable services this endpoint reaches.
+    dispose: Option<bool>,
+}
+
+/// The per-request scope's disposable scoped services (dependents first) and whether releasing them is async.
+struct Scope {
+    tracked: Vec<usize>,
+    is_async: bool,
+}
+
+/// The services built in a request scope from these args: everything reached through non-singletons.
+fn scope_reach<'b>(r: &Resolved, args: impl Iterator<Item = &'b Arg>) -> Vec<bool> {
+    let mut seen = vec![false; r.services.len()];
+    let mut stack: Vec<usize> = args.filter_map(arg_service).collect();
+    while let Some(i) = stack.pop() {
+        if !std::mem::replace(&mut seen[i], true) && r.services[i].reg.lifetime != Lifetime::Singleton {
+            stack.extend(r.services[i].args.iter().filter_map(arg_service));
+        }
+    }
+    seen
 }
 
 /// `const v = <raw converted>;` and its 400 check, like `@page` params; `raw` may be `null` (an absent optional key) when `nullable`.
