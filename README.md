@@ -44,7 +44,7 @@ bun run dev        # builds, serves the app (open the printed URL); saving a .xz
 ```sh
 bun add -d @source-crafter/xzor typescript@^7
 bun add @source-crafter/xzor-runtime
-bun x xzor init    # sets up package.json, tsconfig.json and .gitignore (`--server`: a server app with client/ and server/ folders)
+bun x xzor init    # sets up package.json, tsconfig.json and .gitignore (`--server`: a server app with client/, server/ and contracts/ (shared types) folders)
 ```
 
 **`tsconfig.json`**: what `xzor init` makes sure of. The two `.xzor` entries let TypeScript see the generated code.
