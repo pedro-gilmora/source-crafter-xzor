@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { $leave, ComponentBase, HttpError, type Remote, type RenderTreeBuilder, call, lazy, mount } from "./index";
+import { $leave, ComponentBase, HttpError, type Remote, type RenderTreeBuilder, call, lazy, mount, segment } from "./index";
 import { HttpError as ServerHttpError } from "./server";
 
 const realFetch = globalThis.fetch;
@@ -41,6 +41,34 @@ test("call resolves undefined for 404 and 204 and rejects other failures with Ht
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("call resolves undefined for a 200 with an empty body", async () => {
+  try {
+    stub(new Response("", { status: 200 }));
+    expect(await call("POST", "/x", undefined, undefined)).toBeUndefined();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("segment encodes a path parameter and rejects the ones URL normalization would turn into another route", () => {
+  expect(segment("a b/c")).toBe("a%20b%2Fc");
+  expect(segment(7)).toBe("7");
+  expect(segment("...")).toBe("...");
+  for (const bad of ["", ".", ".."]) {
+    const err = (() => {
+      try {
+        segment(bad);
+      } catch (e) {
+        return e as HttpError;
+      }
+    })();
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err?.status).toBe(400);
+  }
+  // Why: the URL parser resolves dot segments, and no encoding of `..` prevents it.
+  expect(new URL("/api/posts/" + encodeURIComponent("..") + "/comments", "http://x").pathname).toBe("/api/comments");
 });
 
 test("the server's HttpError is the main export's class", () => {

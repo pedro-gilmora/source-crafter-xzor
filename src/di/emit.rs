@@ -113,9 +113,10 @@ pub fn emit_clients(all: &[Resolved]) -> Vec<(String, String)> {
                 continue;
             }
             let mut em = Emitter { all, source_file: "", imports: Imports { from: vec![".xzor".into(), "clients".into()], refs: BTreeMap::new(), locals: BTreeSet::new() }, local: true, scope: false };
-            em.imports.locals.extend(["Parameters", "ReturnType", "Awaited", "Promise", "encodeURIComponent"].map(String::from));
+            em.imports.locals.extend(["Parameters", "ReturnType", "Awaited", "Promise"].map(String::from));
             em.imports.locals.extend(ep.methods.iter().flat_map(|m| m.params.iter().map(|p| p.name.clone())));
             let call = em.runtime("call");
+            let segment = em.runtime("segment");
             let class = em.ty(&ep.class);
             let mut body = String::new();
             w!(body, "\nexport class {}Client {{", contract.text);
@@ -131,8 +132,10 @@ pub fn emit_clients(all: &[Resolved]) -> Vec<(String, String)> {
                         _ => {}
                     }
                 }
-                let path = path_expr(&m.path);
-                w!(body, "  {}({}) {{", m.name, params.join(", "));
+                let path = path_expr(&m.path, &segment);
+                // A path parameter may throw (`segment`): `async` turns that into a rejection.
+                let asyn = if m.path.contains(':') { "async " } else { "" };
+                w!(body, "  {asyn}{}({}) {{", m.name, params.join(", "));
                 w!(body, "    return {call}({:?}, {path}, {query}, {data}) as Promise<Awaited<ReturnType<{member}>>>;", m.verb.as_str());
                 w!(body, "  }}");
             }
@@ -163,8 +166,8 @@ fn adapter_name(s: &Service) -> String {
     format!("{}Local$", text.strip_prefix("Remote<").and_then(|t| t.strip_suffix('>')).unwrap_or(text))
 }
 
-/// A route path as a TypeScript expression: `"/api/posts/" + encodeURIComponent(slug)`.
-fn path_expr(path: &str) -> String {
+/// A route path as a TypeScript expression: `"/api/posts/" + segment(slug)`.
+fn path_expr(path: &str, segment: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
     let mut lit = String::new();
     for (i, seg) in path.split('/').enumerate() {
@@ -174,7 +177,7 @@ fn path_expr(path: &str) -> String {
         if let Some(name) = seg.strip_prefix(':') {
             parts.push(format!("{lit:?}"));
             lit.clear();
-            parts.push(format!("encodeURIComponent({name})"));
+            parts.push(format!("{segment}({name})"));
         } else {
             lit.push_str(seg);
         }

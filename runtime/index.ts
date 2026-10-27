@@ -464,6 +464,13 @@ export async function call(method: string, path: string, query: Record<string, u
   return text ? JSON.parse(text) : undefined;
 }
 
+/** A path parameter of a generated client, encoded; `""`, `.` and `..` throw `HttpError(400)` before any request (URL normalization would turn them into another route). */
+export function segment(value: string | number | boolean): string {
+  const text = String(value);
+  if (text === "" || text === "." || text === "..") throw new HttpError(400, `invalid path parameter ${JSON.stringify(text)}`);
+  return encodeURIComponent(text);
+}
+
 const noop = () => {};
 const SELECTOR = /[#.[]/;
 

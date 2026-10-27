@@ -1347,17 +1347,44 @@ test("a view injecting a contract gets its generated client in the browser conta
   expect(client).toContain("if (type === Header) return new Header(this.remoteIPosts);");
   expect(client).not.toMatch(/from "\.\.\/(app|api)/);
   const text = readFileSync(join(dir, ".xzor", "clients", "IPosts.ts"), "utf8");
-  expect(text).toContain('import { call } from "@source-crafter/xzor-runtime";');
+  expect(text).toContain('import { call, segment } from "@source-crafter/xzor-runtime";');
   expect(text).toContain('import type { Posts } from "../../api/posts";');
   expect(text).toContain("export class IPostsClient {");
   expect(text).toContain(
-    '  get(slug: Parameters<Posts["get"]>[0]) {\n    return call("GET", "/api/posts/" + encodeURIComponent(slug), undefined, undefined) as Promise<Awaited<ReturnType<Posts["get"]>>>;\n  }',
+    '  async get(slug: Parameters<Posts["get"]>[0]) {\n    return call("GET", "/api/posts/" + segment(slug), undefined, undefined) as Promise<Awaited<ReturnType<Posts["get"]>>>;\n  }',
   );
   expect(text).toContain('list(query: Parameters<Posts["list"]>[0]) {\n    return call("GET", "/api/posts", query, undefined)');
   expect(text).toContain('create(body: Parameters<Posts["create"]>[0]) {\n    return call("POST", "/api/posts", undefined, body)');
-  expect(text).toContain('call("PUT", "/api/posts/" + encodeURIComponent(id) + "/tag/" + encodeURIComponent(label), undefined, body)');
+  expect(text).toContain('call("PUT", "/api/posts/" + segment(id) + "/tag/" + segment(label), undefined, body)');
+  expect(text).toMatch(/\n  async tag\(/);
+  expect(text).toMatch(/\n  list\(/);
   const server = readFileSync(join(dir, ".xzor", "app.ts"), "utf8");
   expect(server).not.toMatch(/IPostsClient|clients\//);
+});
+
+test("a generated client rejects a path parameter that would leave its route, before fetching", () => {
+  const dir = serverProject("client-dots", clientFiles);
+  const { code, out } = xzorBuild(dir);
+  expect(code, out).toBe(0);
+  const script = join(dir, "dots.ts");
+  writeFileSync(
+    script,
+    `import { IPostsClient } from "./.xzor/clients/IPosts";
+const urls: string[] = [];
+globalThis.fetch = (async (url: string) => (urls.push(url), Response.json({ slug: "x" }))) as unknown as typeof fetch;
+const client = new IPostsClient();
+const results: string[] = [];
+for (const v of ["", ".", "..", "a/b"]) {
+  const p = client.get(v);
+  results.push(p instanceof Promise ? await p.then(() => "ok", (e) => e.constructor.name + ":" + e.status) : "sync");
+}
+results.push(await client.tag(1, "..", { x: "" }).then(() => "ok", (e) => e.status));
+console.log(JSON.stringify({ results, urls }));
+`,
+  );
+  const run = Bun.spawnSync(["bun", script], { cwd: dir });
+  expect(run.stderr.toString()).toBe("");
+  expect(JSON.parse(run.stdout.toString())).toEqual({ results: ["HttpError:400", "HttpError:400", "HttpError:400", "ok", 400], urls: ["/api/posts/a%2Fb"] });
 });
 
 test("Remote<IPosts> in a view or a browser service resolves to the client, and the project type-checks", () => {
