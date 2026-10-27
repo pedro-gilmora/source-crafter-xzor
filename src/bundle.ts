@@ -978,7 +978,82 @@ function writeServiceWorker(root: string, outputs: string[], entryOutput: string
   writeFileSync(worker, serviceWorker(precacheVersion(root, files, known), files));
 }
 
-async function main(entry: string, outdir: string, hot = false, watch = false, minify = false): Promise<void> {
+/** One `@page` pattern as `build.rs` lists it: `file` is relative to the project root. */
+export type PageEntry = { pattern: string; file: string; name: string };
+
+type MetaOutput = { entryPoint?: string; inputs: Record<string, unknown>; imports: { path: string; kind: string }[] };
+/** The part of Bun's metafile the shells read: output keys and their imports are relative to `outdir`, input keys to the working directory. */
+export type BuildMetafile = { inputs: Record<string, unknown>; outputs: Record<string, MetaOutput> };
+
+/**
+ * One shell per page: `template` (`index.html`) with a `modulepreload` link, before `</head>`, for the page's chunk
+ * and every chunk its static imports and the entry's reach. `shells` maps `pages/<Name>.html` to the HTML, `routes`
+ * each pattern to its shell. Hrefs are relative to the project root, so a `<base>` keeps them working.
+ */
+export function pageShells(template: string, metafile: BuildMetafile, outdir: string, root: string, pages: PageEntry[]): { shells: Map<string, string>; routes: Record<string, string> } {
+  const at = template.search(/<\/head\s*>/i);
+  if (at < 0) throw new Error("index.html has no </head>");
+  const outputs = new Map<string, MetaOutput>();
+  for (const [key, out] of Object.entries(metafile.outputs)) outputs.set(resolve(outdir, key), out);
+  // The entry is the output nothing imports; the chunks of dynamic imports are imported.
+  const imported = new Set<string>();
+  const statics = new Map<string, string[]>();
+  for (const [path, out] of outputs) {
+    const list: string[] = [];
+    for (const imp of out.imports) {
+      const target = resolve(outdir, imp.path);
+      imported.add(target);
+      if (imp.kind === "import-statement") list.push(target);
+    }
+    statics.set(path, list);
+  }
+  const roots = [...outputs].filter(([path, out]) => out.entryPoint !== undefined && !imported.has(path)).map(([path]) => path);
+  const entries = new Set(roots);
+  const closure = (from: string, seen: Set<string>): void => {
+    if (seen.has(from)) return;
+    seen.add(from);
+    for (const next of statics.get(from) ?? []) closure(next, seen);
+  };
+  const base = new Set<string>();
+  for (const entry of roots) closure(entry, base);
+  const ownerOf = (candidates: string[]): string | undefined => {
+    let found: string | undefined;
+    for (const [path, out] of outputs) {
+      if (out.entryPoint !== undefined && candidates.includes(resolve(out.entryPoint))) return path;
+      if (found === undefined && Object.keys(out.inputs).some((i) => candidates.includes(resolve(i)))) found = path;
+    }
+    return found;
+  };
+  const shells = new Map<string, string>();
+  const routes: Record<string, string> = {};
+  const byFile = new Map<string, string>();
+  const names = new Set<string>();
+  for (const page of pages) {
+    let shell = byFile.get(page.file);
+    if (shell === undefined) {
+      // Two pages with one stem (`a/Post`, `b/Post`) must not share a shell.
+      let name = page.name;
+      for (let n = 2; names.has(name); n++) name = `${page.name}-${n}`;
+      names.add(name);
+      shell = `pages/${name}.html`;
+      byFile.set(page.file, shell);
+      const source = resolve(root, page.file);
+      const owner = ownerOf([source, `${source}.ts`, join(root, ".xzor", `${page.file}.ts`)]);
+      const seen = new Set(base);
+      if (owner !== undefined) closure(owner, seen);
+      const links: string[] = [];
+      for (const path of seen) {
+        if (entries.has(path)) continue;
+        links.push(`<link rel="modulepreload" href="${encodeURI(relative(root, path).replaceAll("\\", "/")).replaceAll("&", "&amp;")}">\n`);
+      }
+      shells.set(shell, template.slice(0, at) + links.join("") + template.slice(at));
+    }
+    routes[page.pattern] = shell;
+  }
+  return { shells, routes };
+}
+
+async function main(entry: string, outdir: string, hot = false, watch = false, minify = false, pagesFile?: string): Promise<void> {
   const root = projectRoot(dirname(resolve(entry)));
   // Stripped sources by absolute path; the source map shows the originals.
   const originals = new Map<string, string>();
@@ -1001,6 +1076,7 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
     outdir,
     target: "browser",
     sourcemap: "linked",
+    metafile: minify,
     // Lazy pages and `@async` components become chunks; the entry keeps the name index.html loads.
     ...(minify && { minify: true, splitting: true, naming: { entry: "[dir]/[name].[ext]", chunk: "chunks/[name]-[hash].[ext]", asset: "[name]-[hash].[ext]" } }),
     plugins: [
@@ -1078,6 +1154,24 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
     }
     console.log(`  ${output.path}`);
   }
+  if (minify && pagesFile) {
+    const index = join(dirname(resolve(outdir)), "index.html");
+    if (existsSync(index)) {
+      const pages: PageEntry[] = JSON.parse(readFileSync(pagesFile, "utf8"));
+      const { shells, routes } = pageShells(readFileSync(index, "utf8"), result.metafile!, resolve(outdir), root, pages);
+      rmSync(join(outdir, "pages"), { recursive: true, force: true });
+      mkdirSync(join(outdir, "pages"), { recursive: true });
+      const rel = (path: string) => relative(root, path).replaceAll("\\", "/");
+      const list = new Set(["index.html"]);
+      for (const o of outputs) if (!o.path.endsWith(".map")) list.add(rel(o.path));
+      for (const spec of fonts.keys()) list.add(rel(join(outdir, spec)));
+      for (const [shell, html] of shells) {
+        writeFileSync(join(outdir, shell), html);
+        list.add(rel(join(outdir, shell)));
+      }
+      writeFileSync(join(outdir, "pages.json"), JSON.stringify({ routes, files: [...list].sort() }));
+    }
+  }
   if (!watch) {
     const paths = outputs.map((o) => o.path);
     writeServiceWorker(root, paths, outputs.find((o) => o.kind === "entry-point")?.path);
@@ -1086,7 +1180,9 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  const [entry, outdir] = args.filter((a) => !a.startsWith("--"));
-  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir> [--hot] [--watch] [--minify]");
-  await main(entry, outdir, args.includes("--hot"), args.includes("--watch"), args.includes("--minify"));
+  const at = args.indexOf("--pages");
+  // `--pages` takes a value, which is not a positional.
+  const [entry, outdir] = args.filter((a, i) => !a.startsWith("--") && !(at >= 0 && i === at + 1));
+  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir> [--hot] [--watch] [--minify] [--pages <file>]");
+  await main(entry, outdir, args.includes("--hot"), args.includes("--watch"), args.includes("--minify"), at >= 0 ? args[at + 1] : undefined);
 }
