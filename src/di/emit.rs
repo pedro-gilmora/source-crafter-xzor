@@ -672,7 +672,8 @@ impl<'a> Emitter<'a> {
         let scope = scope.as_ref().map(|(c, _)| c.clone());
         let options_ty = self.imports.name(SERVER, "IServerApplication", "IServerApplication", false);
         w!(out, "\nconst app = new {cls}();");
-        w!(out, "const options: {options_ty} = app;");
+        // An assertion, not an annotation: an app with no `Bun.serve` member would fail TypeScript's weak-type check.
+        w!(out, "const options = app as {options_ty};");
         let mut handlers = String::new();
         let mut routes: Vec<(&str, Vec<(Verb, String)>)> = Vec::new();
         let mut bad = false;
@@ -718,7 +719,12 @@ impl<'a> Emitter<'a> {
             let read = self.imports.name("node:fs", "readFileSync", "readFileSync", true);
             let files = self.imports.name(SERVER, "staticFiles", "staticFiles", true);
             let up = vec![".."; self.imports.from.len()].join("/");
-            w!(out, "\nconst root = {join}(import.meta.dir, {up:?});");
+            if up == ".." {
+                w!(out, "\nconst root = {join}(import.meta.dir, \"..\");");
+            } else {
+                // Bundled, this module is `dist/server.js`.
+                w!(out, "\nconst root = {join}(import.meta.dir, import.meta.file === \"server.js\" ? \"..\" : {up:?});");
+            }
             w!(out, "const pagesJson = {join}(root, \"dist\", \"pages.json\");");
             w!(out, "const shells: Record<string, (req: Request) => Response> = {{}};");
             w!(out, "let assets: Record<string, (req: Request) => Response> = {{}};");
@@ -729,8 +735,9 @@ impl<'a> Emitter<'a> {
             w!(out, "}} else {{");
             w!(out, "  console.log(\"xzor: no dist/pages.json, so no pages or assets are served: run xzor build --minify\");");
             w!(out, "}}");
-            w!(out, "const index = {join}(root, \"index.html\");");
-            w!(out, "const notFound = {exists}(index) ? {read}(index) : null;");
+            // `xzor build --minify` writes `dist/index.html` with the bundle's script and stylesheet.
+            w!(out, "const index = [{join}(root, \"dist\", \"index.html\"), {join}(root, \"index.html\")].find((f) => {exists}(f));");
+            w!(out, "const notFound = index ? {read}(index) : null;");
             "new Response(notFound, { status: 404, headers: { \"content-type\": \"text/html;charset=utf-8\" } })"
         } else {
             "new Response(null, { status: 404 })"
@@ -760,6 +767,7 @@ impl<'a> Emitter<'a> {
         w!(out, "    ...options.routes,");
         w!(out, "  }},");
         w!(out, "}});");
+        w!(out, "console.log(`xzor: serving ${{server.url}}`);");
     }
 
     /// `const name = (req: Bun.BunRequest<"path">) => reply(inst.method(...));`, with the conversions first; returns

@@ -1,6 +1,6 @@
 // Bundles a xzor app with Bun. `./X.xzor` imports resolve to the generated `<project>/.xzor/<rel>/X.xzor.ts`,
 // and the bundle's source map is composed with each generated file's map so it points at the `.xzor` sources.
-// Usage: bun bundle.ts <entry> <outdir> [--hot] [--watch]
+// Usage: bun bundle.ts <entry|-> <outdir> [--hot] [--watch] [--minify] [--pages <file>] [--server <file>]
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
@@ -1081,8 +1081,26 @@ export function pageShells(template: string, metafile: BuildMetafile, outdir: st
   return { shells, routes };
 }
 
-async function main(entry: string, outdir: string, hot = false, watch = false, minify = false, pagesFile?: string): Promise<void> {
-  const root = projectRoot(dirname(resolve(entry)));
+/**
+ * `template` with the browser bundle's module script before `</body>` and its stylesheet link (when `css` is given)
+ * before `</head>`, each unless the template already points at a file of that name. Hrefs are relative to the root.
+ */
+export function withBundle(template: string, script: string, css?: string): string {
+  const has = (tag: string, attr: string, href: string) =>
+    new RegExp(`<${tag}\\b[^>]*\\b${attr}\\s*=\\s*["']?(?:[^"'\\s>]*/)?${basename(href).replaceAll(".", "\\.")}(?![\\w.-])`, "i").test(template);
+  const insert = (text: string, at: number, line: string) => (at < 0 ? text + line : text.slice(0, at) + line + text.slice(at));
+  let out = template;
+  if (css && !has("link", "href", css)) out = insert(out, out.search(/<\/head\s*>/i), `<link rel="stylesheet" href="${css}">\n`);
+  if (!has("script", "src", script)) out = insert(out, out.search(/<\/body\s*>/i), `<script type="module" src="${script}"></script>\n`);
+  return out;
+}
+
+/**
+ * `entry` is the browser entry (none for an API-only server). `server` marks a server app: its browser bundle is
+ * named `main` and, under `minify`, `server` is bundled with `target: "bun"` to `<outdir>/server.js`, minified, with no map.
+ */
+async function main(entry: string | undefined, outdir: string, hot = false, watch = false, minify = false, pagesFile?: string, server?: string): Promise<void> {
+  const root = projectRoot(dirname(resolve((entry ?? server)!)));
   // Stripped sources by absolute path; the source map shows the originals.
   const originals = new Map<string, string>();
   // Sources of the modules a model's `extends` is followed into, read once each.
@@ -1102,15 +1120,10 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
   // So are the shells, pages.json and compressed copies of a --minify build.
   rmSync(join(outdir, "pages"), { recursive: true, force: true });
   rmSync(join(outdir, "pages.json"), { force: true });
+  if (server) rmSync(join(outdir, "server.js"), { force: true });
   if (existsSync(outdir)) for (const f of readdirSync(outdir)) if (/\.(br|gz)$/.test(f)) rmSync(join(outdir, f), { force: true });
-  const result = await Bun.build({
-    entrypoints: [entry],
-    outdir,
-    target: "browser",
-    sourcemap: "linked",
-    metafile: minify,
-    // Lazy pages and `@async` components become chunks; the entry keeps the name index.html loads.
-    ...(minify && { minify: true, splitting: true, naming: { entry: "[dir]/[name].[ext]", chunk: "chunks/[name]-[hash].[ext]", asset: "[name]-[hash].[ext]" } }),
+  const run = (config: Bun.BuildConfig) => Bun.build({
+    ...config,
     plugins: [
       {
         name: "xzor",
@@ -1155,10 +1168,30 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
       },
     ],
   });
-  for (const log of result.logs) console.error(log);
-  if (!result.success) process.exit(1);
+  // The entry keeps the name index.html loads (`main` for a server app, whose entry is `.xzor/client.ts`).
+  const entryName = server ? "main.[ext]" : "[dir]/[name].[ext]";
+  const [result, bundled] = await Promise.all([
+    entry &&
+      run({
+        entrypoints: [entry],
+        outdir,
+        target: "browser",
+        sourcemap: "linked",
+        metafile: minify,
+        // Lazy pages and `@async` components become chunks.
+        ...(minify ? { minify: true, splitting: true, naming: { entry: entryName, chunk: "chunks/[name]-[hash].[ext]", asset: "[name]-[hash].[ext]" } } : { naming: { entry: entryName } }),
+      }),
+    server && minify && run({ entrypoints: [server], outdir, target: "bun", minify: true, naming: "server.[ext]" }),
+  ]);
+  for (const r of [result, bundled]) {
+    if (!r) continue;
+    for (const log of r.logs) console.error(log);
+    if (!r.success) process.exit(1);
+  }
+  // Never listed, served, compressed or mapped: `bun dist/server.js` runs it.
+  for (const o of bundled ? bundled.outputs : []) console.log(`  ${o.path}`);
   // Bun also writes each chunk's CSS into the entry's, and nothing loads the chunk copy.
-  const outputs = result.outputs.filter((o) => {
+  const outputs = (result ? result.outputs : []).filter((o) => {
     const dup = minify && o.path.endsWith(".css") && /[\\/]chunks[\\/]/.test(o.path);
     if (dup) rmSync(o.path, { force: true });
     return !dup;
@@ -1190,14 +1223,24 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
   // Written outside Bun's outputs; the worker precaches them and the copies are made of them.
   const extra: string[] = [];
   const rel = (path: string) => relative(root, path).replaceAll("\\", "/");
-  const listed = new Set(["index.html"]);
+  // A server app's index.html is served as `dist/index.html`, the project's with the bundle's script and stylesheet added.
+  const listed = new Set(server ? [] : ["index.html"]);
   const pagesJson = join(outdir, "pages.json");
   let routes: Record<string, string> | undefined;
-  if (minify && pagesFile) {
+  if (minify && pagesFile && result) {
     const index = join(dirname(resolve(outdir)), "index.html");
     if (existsSync(index)) {
       const pages: PageEntry[] = JSON.parse(readFileSync(pagesFile, "utf8"));
-      const built = pageShells(readFileSync(index, "utf8"), result.metafile!, resolve(outdir), root, pages);
+      let template = readFileSync(index, "utf8");
+      if (server) {
+        const css = outputs.some((o) => basename(o.path) === "main.css");
+        template = withBundle(template, rel(join(outdir, "main.js")), css ? rel(join(outdir, "main.css")) : undefined);
+        const served = join(outdir, "index.html");
+        writeFileSync(served, template);
+        extra.push(served);
+        listed.add(rel(served));
+      }
+      const built = pageShells(template, result.metafile!, resolve(outdir), root, pages);
       routes = built.routes;
       rmSync(join(outdir, "pages"), { recursive: true, force: true });
       mkdirSync(join(outdir, "pages"), { recursive: true });
@@ -1224,9 +1267,10 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  const at = args.indexOf("--pages");
-  // `--pages` takes a value, which is not a positional.
-  const [entry, outdir] = args.filter((a, i) => !a.startsWith("--") && !(at >= 0 && i === at + 1));
-  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry> <outdir> [--hot] [--watch] [--minify] [--pages <file>]");
-  await main(entry, outdir, args.includes("--hot"), args.includes("--watch"), args.includes("--minify"), at >= 0 ? args[at + 1] : undefined);
+  const value = (flag: string) => args[args.indexOf(flag) + 1];
+  const at = ["--pages", "--server"].map((f) => args.indexOf(f)).filter((i) => i >= 0);
+  // `--pages` and `--server` take a value, which is not a positional.
+  const [entry, outdir] = args.filter((a, i) => !a.startsWith("--") && !at.includes(i - 1));
+  if (!entry || !outdir) throw new Error("usage: bun bundle.ts <entry|-> <outdir> [--hot] [--watch] [--minify] [--pages <file>] [--server <file>]");
+  await main(entry === "-" ? undefined : entry, outdir, args.includes("--hot"), args.includes("--watch"), args.includes("--minify"), args.includes("--pages") ? value("--pages") : undefined, args.includes("--server") ? value("--server") : undefined);
 }

@@ -109,7 +109,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let start = Instant::now();
             let di_entry = build::di(&opts.dir, &opts.entry, &units, &mut build::Analyzer::new(&opts.dir))?;
             t.di = start.elapsed();
-            finish(&opts, &units, di_entry.as_deref(), &mut None, &mut t)?;
+            finish(&opts, &units, di_entry.as_ref(), &mut None, &mut t)?;
             t.print(&opts);
         }
         "highlight" => {
@@ -173,10 +173,13 @@ impl Timings {
 /// Type check and bundle (from the DI-generated entry when there is one), running together.
 /// Bundle paths print only after a passing check: `xzor dev` reloads on them. `hot` holds the ids
 /// patchable since the last success (None: not patchable); a success prints and clears it.
-fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, hot: &mut Option<BTreeSet<String>>, t: &mut Timings) -> Result<(), String> {
-    let entry = match di_entry.and_then(|p| p.strip_prefix(&o.dir).ok()) {
-        Some(generated) => generated.to_string_lossy().into_owned(),
-        None => o.entry.clone(),
+fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&build::Entry>, hot: &mut Option<BTreeSet<String>>, t: &mut Timings) -> Result<(), String> {
+    let rel = |p: &Path| p.strip_prefix(&o.dir).unwrap_or(p).to_string_lossy().into_owned();
+    // The browser entry (none for an API-only server) and the server entry (a server app only).
+    let (entry, server) = match di_entry {
+        Some(build::Entry::Browser(p)) => (Some(rel(p)), None),
+        Some(build::Entry::Server { server, browser }) => (browser.as_deref().map(rel), Some(rel(server))),
+        None => (Some(o.entry.clone()), None),
     };
     let timed_check = || {
         let start = Instant::now();
@@ -185,7 +188,7 @@ fn finish(o: &Options, units: &[build::Compiled], di_entry: Option<&Path>, hot: 
     };
     let timed_bundle = || {
         let start = Instant::now();
-        (build::bundle(&o.dir, &entry, o.hot, o.watch, o.minify), start.elapsed())
+        (build::bundle(&o.dir, entry.as_deref(), server.as_deref(), o.hot, o.watch, o.minify), start.elapsed())
     };
     let (checked, bundled) = match (o.check, o.bundle) {
         (true, true) => {
@@ -349,7 +352,7 @@ fn rebuild(
     providers: &HashSet<PathBuf>,
     analyzer: &mut build::Analyzer,
     di_due: &mut bool,
-    di_entry: &mut Option<PathBuf>,
+    di_entry: &mut Option<build::Entry>,
     (routes_due, routes_written): (&mut bool, &mut HashSet<PathBuf>),
     hot: &mut Option<BTreeSet<String>>,
     mut t: Timings,
@@ -376,7 +379,7 @@ fn rebuild(
         t.di = start.elapsed();
         *di_due = false;
     }
-    finish(o, units, di_entry.as_deref(), hot, &mut t)?;
+    finish(o, units, di_entry.as_ref(), hot, &mut t)?;
     t.print(o);
     Ok(())
 }

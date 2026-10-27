@@ -510,15 +510,24 @@ fn run_checker(dir: &Path, checker: Option<&str>, compiled: &[Compiled]) -> Resu
     Ok((output.status.success(), map_tsc_output(&text, compiled, &cwd)))
 }
 
+/// The generated entries of a `@Run` application.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Entry {
+    /// A browser app's `.xzor/<entry>`.
+    Browser(PathBuf),
+    /// A server app's `.xzor/<app file>`, and `.xzor/client.ts` when it has views.
+    Server { server: PathBuf, browser: Option<PathBuf> },
+}
+
 /// Compile-time DI: analyzes the project's providers, writes the generated providers into `.xzor/`, and returns
-/// `.xzor/<entry>` when `entry` declares `@Run` (that generated module is then the entry to bundle).
+/// the generated entries when the project declares `@Run` (they are then the entries to bundle).
 /// `analyzer` belongs to `root` and may be reused across runs.
-pub fn di(root: &Path, entry: &str, compiled: &[Compiled], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, String> {
+pub fn di(root: &Path, entry: &str, compiled: &[Compiled], analyzer: &mut Analyzer) -> Result<Option<Entry>, String> {
     di_with(root, entry, compiled, &provider_files(root), analyzer)
 }
 
 /// `di` with the provider `files` (relative to `root`) already known.
-pub fn di_with(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, String> {
+pub fn di_with(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<Entry>, String> {
     di_checked(root, entry, compiled, files, analyzer).map_err(|f| match f {
         DiFailure::Diags(d) => format_diags(root, &d, compiled, &std::env::current_dir().unwrap_or_default()),
         DiFailure::Other(e) => e,
@@ -538,7 +547,7 @@ impl From<String> for DiFailure {
 }
 
 /// `di` with its diagnostics left structured; `files` are `provider_files(root)`.
-pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<PathBuf>, DiFailure> {
+pub fn di_checked(root: &Path, entry: &str, compiled: &[Compiled], files: &[PathBuf], analyzer: &mut Analyzer) -> Result<Option<Entry>, DiFailure> {
     di_run(root, entry, compiled, files, analyzer, &[], true)
 }
 
@@ -551,7 +560,7 @@ pub fn di_run(
     analyzer: &mut Analyzer,
     overlays: &[(PathBuf, String)],
     write: bool,
-) -> Result<Option<PathBuf>, DiFailure> {
+) -> Result<Option<Entry>, DiFailure> {
     let xzor = root.join(".xzor");
     if files.is_empty() {
         let diags = unmounted_injects(root, compiled);
@@ -580,13 +589,21 @@ pub fn di_run(
         let d = crate::di::graph::Diag { file: file.clone(), at: m.at, code: "ZDI07", message, inject: None, param_at: None };
         return Err(DiFailure::Diags(vec![d]));
     }
+    // A server app's file becomes its server entry, `.xzor/<app file>`.
+    let server_app = resolved.iter().find(|r| r.server.is_some());
+    let server = server_app.map(|r| r.provider.file.as_str());
+    let entries = match server_app {
+        Some(r) => Some(Entry::Server {
+            server: xzor.join(&r.provider.file),
+            browser: r.server.as_ref().is_some_and(|s| s.root.is_some()).then(|| xzor.join("client.ts")),
+        }),
+        None => mount.map(|_| Entry::Browser(xzor.join(entry))),
+    };
     if !write {
-        return Ok(mount.map(|_| xzor.join(entry)));
+        return Ok(entries);
     }
     let mut done: Vec<&str> = Vec::with_capacity(resolved.len());
     let mut written = Vec::with_capacity(resolved.len());
-    // A server app's file becomes its server entry, `.xzor/<app file>`.
-    let server = resolved.iter().find(|r| r.server.is_some()).map(|r| r.provider.file.as_str());
     for r in &resolved {
         let file = r.provider.file.as_str();
         if done.contains(&file) {
@@ -606,7 +623,7 @@ pub fn di_run(
         written.push(out);
     }
     prune(&xzor, &written)?;
-    Ok(mount.map(|_| xzor.join(entry)))
+    Ok(entries)
 }
 
 /// Moves diagnostics located in a generated `.xzor/X.xzor.ts` to the `.xzor` source, where the code was copied from.
@@ -803,16 +820,21 @@ fn utf16_to_byte(text: &str, at: usize) -> usize {
 
 const BUNDLE_SCRIPT: &str = include_str!("bundle.ts");
 
-/// Bundles `entry` into `<dir>/dist`; returns the script's stdout (one output path per line).
+/// Bundles into `<dir>/dist`; returns the script's stdout (one output path per line).
+/// `entry` is the browser entry (none for an API-only server); `server` marks a server app and is its server entry,
+/// bundled to `dist/server.js` under `minify`; a server app's browser bundle is named `main`.
 /// `hot` passes `--hot`; `watch` passes `--watch`, which keeps the script from touching `sw.js`;
 /// `minify` minifies and splits the bundle into chunks.
-pub fn bundle(dir: &Path, entry: &str, hot: bool, watch: bool, minify: bool) -> Result<String, String> {
+pub fn bundle(dir: &Path, entry: Option<&str>, server: Option<&str>, hot: bool, watch: bool, minify: bool) -> Result<String, String> {
     let script = std::env::temp_dir().join(format!("xzor-bundle-{}.ts", env!("CARGO_PKG_VERSION")));
     if fs::read_to_string(&script).ok().as_deref() != Some(BUNDLE_SCRIPT) {
         fs::write(&script, BUNDLE_SCRIPT).map_err(|e| format!("{}: {e}", script.display()))?;
     }
     let mut cmd = Command::new("bun");
-    cmd.arg(&script).arg(dir.join(entry)).arg(dir.join("dist"));
+    cmd.arg(&script).arg(entry.map_or_else(|| "-".into(), |e| dir.join(e))).arg(dir.join("dist"));
+    if let Some(server) = server {
+        cmd.arg("--server").arg(dir.join(server));
+    }
     if hot {
         cmd.arg("--hot");
     }
@@ -1284,7 +1306,7 @@ mod tests {
     }
 
     /// `build::di` with an analyzer of its own, stopped before returning (so `root` can be deleted).
-    fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<PathBuf>, String> {
+    fn di(root: &Path, entry: &str, compiled: &[Compiled]) -> Result<Option<Entry>, String> {
         super::di(root, entry, compiled, &mut Analyzer::new(root))
     }
 
@@ -1324,7 +1346,7 @@ mod tests {
         let files = [("main.ts", &*main), ("services/data.ts", &*data), ("App.xzor", app), ("Counter.xzor", COUNTER)];
         let root = di_project("mount", &files);
         let units = compile_all(&root).unwrap();
-        assert_eq!(di(&root, "main.ts", &units), Ok(Some(root.join(".xzor").join("main.ts"))));
+        assert_eq!(di(&root, "main.ts", &units), Ok(Some(Entry::Browser(root.join(".xzor").join("main.ts")))));
         assert!(root.join(".xzor/services/data.provider.ts").is_file());
         let entry = fs::read_to_string(root.join(".xzor/main.ts")).unwrap();
         assert!(entry.contains("Counter"), "{entry}");
@@ -1446,7 +1468,7 @@ mod tests {
         let root = di_project("unmount", &files);
         let units = compile_all(&root).unwrap();
         let mut analyzer = Analyzer::new(&root);
-        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(Some(root.join(".xzor").join("main.ts"))));
+        assert_eq!(super::di(&root, "main.ts", &units, &mut analyzer), Ok(Some(Entry::Browser(root.join(".xzor").join("main.ts")))));
         assert!(root.join(".xzor/main.ts").is_file());
 
         fs::write(root.join("main.ts"), "console.log(1);\n").unwrap();

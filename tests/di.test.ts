@@ -734,7 +734,7 @@ test("the generated server: sync and async handlers, query keys, shells and asse
   expect(text).toMatch(/const posts\$create = async \(req: Bun\.BunRequest<"\/api\/posts">\) => \{[^]*?return replyAsync\(posts\.create\(body\$\)\);/);
   expect([...text.matchAll(/search\$\.get\("(\w+)"\)/g)].map((m) => m[1])).toEqual(["tag", "page"]);
   expect(text).not.toContain("Object.fromEntries");
-  expect(text).toContain('const root = join(import.meta.dir, "../..");');
+  expect(text).toContain('const root = join(import.meta.dir, import.meta.file === "server.js" ? ".." : "../..");');
   expect(text).toContain("assets = staticFiles(root, pages.files);");
   expect(text).toContain('"/api/posts": { GET: posts$list, POST: posts$create },');
   expect(text).toContain("...options.routes,");

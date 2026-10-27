@@ -1,3 +1,10 @@
 <main>
   <p>Shell</p>
+  @Routes(route) {
+    @default(page) { @page }
+  }
 </main>
+
+<style>
+  main { margin: 0 auto; }
+</style>
