@@ -184,6 +184,11 @@
         <Code name="recipe-server-app" />
         <p class="xz-muted">Path params come first, then <code>query</code>, then <code>body</code>. A <code>Response</code> passes through, <code>undefined</code> answers 404, anything else is JSON, and <code>HttpError</code> answers its status. Take <code>Request</code> in a constructor to read the current request. A <code>body</code> parameter needs a <code>Content-Type: application/json</code> request (415 otherwise), and an unhandled error is a plain 500.</p>
         <Code name="recipe-endpoints" />
+        <p class="xz-muted">A contract is an interface in a plain <code>.ts</code> file that the endpoint class <code>implements</code>. A view writes <code>@@inject INotes notes</code> and gets <code>Remote&lt;INotes&gt;</code>: the same methods, every result a <code>Promise</code>. The build writes the client that calls the route (parameters in the same order; a 404 or 204 resolves <code>undefined</code>, any other failure throws <code>HttpError</code>), and bundles only clients a view reaches.</p>
+        <Code name="recipe-contract" />
+        <Code name="recipe-contract-view" />
+        <p class="xz-muted">In a <code>.ts</code> service the views reach, write <code>Remote&lt;INotes&gt;</code>: TypeScript reads <code>.ts</code> as written, so <code>INotes</code> there is a build error. On the server <code>INotes</code> is the endpoint itself, and <code>Remote&lt;INotes&gt;</code> an in-process adapter.</p>
+        <Code name="recipe-contract-service" />
       </div>
     </Panel>
   </div>

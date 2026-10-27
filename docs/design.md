@@ -266,6 +266,9 @@ A factory returning `Promise<T>` makes the service async, and that spreads to ev
 | ZDI20 | A view reaches `Request`, an `@Endpoints` class or a service whose module imports `bun`, `bun:*` or `node:*`; the chain is named. |
 | ZDI21 | A view or a browser-reached service's module imports an `@Endpoints` class as a value (use `import type`). |
 | ZDI22 | An endpoint's route path Bun would reject at start: it doesn't start with `/` (an `@Endpoints` prefix without the leading `/`), or a path parameter name starts with a digit or is repeated. |
+| ZDI23 | Two `@Endpoints` classes implement one contract; both are named. |
+| ZDI24 | A view injects a contract (`@inject IPosts`, or `Remote<IPosts>`) that no `@Endpoints` class implements and the app doesn't provide. |
+| ZDI25 | A service the views reach takes a contract by its own name; browser code takes `Remote<IPosts>`. |
 
 ### Gotchas
 
@@ -322,6 +325,39 @@ export class Posts {
 - **Build.** `xzor build --minify` bundles the server entry with `target: "bun"` to `dist/server.js` (minified, no map), after the browser bundle, shells and `pages.json`; it is not in `pages.json`, so it is never served. Run it with `bun dist/server.js`: it finds `dist/pages.json` from its own location. Without `--minify` there is no `dist/server.js`.
 - **`xzor dev`.** With a server app, `xzor dev` runs the generated server behind its own file server, on a port of its own (`XZOR_DEV=1`, `PORT=0`, bound to `localhost`; the app's `port` and `hostname` are ignored), without shells, assets or compression. Project files are answered as before (HTML with the hot client); what no file answers is proxied to the server, and a `404` to a page request (`accept: text/html`) is answered with `index.html` so client routes load. `.xzor`-only builds still patch in place and leave the server alone. Any other build that type-checks (a `.ts` changed, so nothing could be patched) restarts the server, which waits for the old one to exit; a build that fails its type check keeps the running one.
 - **Limits.** One `@Run` class per project and one tsconfig project for every role. No body validation, middleware, OpenAPI, or streaming and WebSocket endpoints (set `websocket` or `routes` on the app by hand). No static-host output, pre-rendered markup or `bun build --compile`.
+
+### Contracts and clients
+
+A contract is an interface in a plain `.ts` file both sides import (`contracts/`), with the server's real signatures: sync where the work is sync. An `@Endpoints` class lists it in `implements`, so `tsc` checks every method; the build reads which interfaces the endpoint classes implement.
+
+```ts
+// contracts/posts.ts
+export interface IPosts {
+  get(slug: string): PostPage | undefined;
+  list(query: { tag?: string }): PostSummary[];
+}
+```
+
+```xzor
+@import type { IPosts, PostPage } from "../../contracts/posts"
+@inject IPosts posts          @* readonly posts: Remote<IPosts> *@
+
+@code {
+  slug = "";
+  page: PostPage | undefined;
+
+  protected override async onParametersSetAsync() {
+    this.page = await this.posts.get(this.slug);
+  }
+}
+```
+
+- **`Remote<T>`** (`runtime/index.ts`, types only): every method of `T` keeps its parameters (names, optional ones) and its result `R` becomes `Promise<Awaited<R>>`; a member that isn't a method becomes `never`. So a sync contract method is async for a view.
+- **Generated clients.** For each contract a view reaches, the build writes `.xzor/clients/<IContract>.ts`: a class with one method per contract method, taking the same parameters in the same order and calling the runtime's `call(method, path, query, body)` for that route. Path params go through `encodeURIComponent` (a `/` in a slug is `%2F`; Bun matches it inside one segment and decodes it once); `query` becomes the search string, skipping `undefined` values; `body` is sent as JSON with `content-type: application/json`. A 404 or 204 resolves `undefined`; any other non-2xx status throws `HttpError` (`status`, and the body text as the message); anything else resolves the parsed JSON. No client is written for a contract no view reaches, so only reached ones are bundled.
+- **Browser registration.** The client is registered in the browser container under `Remote<IContract>`, with no registration to write. A contract that no `@Endpoints` class implements has no client: ZDI24.
+- **In `.xzor` files**, `@inject IPosts posts` writes the contract's name and generates `readonly posts: Remote<IPosts>` (the field and the constructor parameter), so the template type-checks against the async view and hover shows `Remote<IPosts>`. The compiler learns the contract names from the DI analysis, which runs before the type check; only the files that inject a contract are compiled again.
+- **In browser `.ts` services**, write `Remote<IPosts>` as the constructor parameter type: `tsc` reads `.ts` as written, so nothing can rewrite it. `IPosts` there is ZDI25. Both are resolved to the same client.
+- **On the server**, `IPosts` is the real interface: a server service injecting `IPosts` gets the `@Endpoints` instance. A registration there that takes `Remote<IPosts>` gets an in-process adapter over that instance (real `Promise`s, no HTTP), so code shared by both sides runs on either. Two endpoint classes implementing one contract is ZDI23.
 
 ## Models
 
@@ -422,7 +458,7 @@ Full design: [the design kit spec](superpowers/specs/2026-10-17-design-kit-desig
 - The bundle's source map is composed with the generated files' maps (Bun does not chain input maps), so browser devtools show the `.xzor` sources.
 - `xzor build --watch` is event-driven. A Bun watcher (`src/watch.ts`) reports changed paths. xzor recompiles only the changed `.xzor` files and their dependents. It reruns DI when any `.ts` changes in a project with providers, or when an `@inject` set changes. Then it type-checks and bundles. Its own writes (`.xzor/`, `dist/`) are ignored. A `tsconfig.json` or `package.json` change recompiles everything and restarts the analyzer. `node_modules` is not watched, so an `@inherits` base in a package is only read again on such a full rebuild.
 - DI analysis runs in a persistent process (`di.ts --serve`). It keeps one TypeScript 7 session per project root, so warm requests take a few milliseconds. `--watch` and the language server reuse it. It is recycled after 500 requests.
-- `xzor init --server` (`npm/xzor/bin/init.ts`) sets up a server app: the usual `package.json`/`tsconfig.json`/`.gitignore` plus `@types/bun` (devDependency and `"types": ["bun"]`) and a starter `client/` (`Shell`, `Home`), `contracts/hello.ts` (a shared interface), `server/app.ts` (`@Run(Shell)` on an `IServerApplication`) and `server/api/hello.ts` (one `@Endpoints`), with an `index.html` whose body is empty. `examples/blog` is the reference server app: views in `client/`, `server/{app,posts-store}.ts`, `server/api/{posts,tags}.ts` and shared types in `contracts/posts.ts` (lists are `PostSummary`, without the body; `get` answers the post with its next one). A component imports the route table relative to the project root (`../../routes` from `client/pages`).
+- `xzor init --server` (`npm/xzor/bin/init.ts`) sets up a server app: the usual `package.json`/`tsconfig.json`/`.gitignore` plus `@types/bun` (devDependency and `"types": ["bun"]`) and a starter `client/` (`Shell`, `Home`), `contracts/hello.ts` (a shared interface), `server/app.ts` (`@Run(Shell)` on an `IServerApplication`) and `server/api/hello.ts` (one `@Endpoints`), with an `index.html` whose body is empty. `examples/blog` is the reference server app: views in `client/`, `server/{app,posts-store,posts-data}.ts` (the data lives on the server), `server/api/{posts,tags}.ts`, and `contracts/posts.ts` with `IPosts`, `ITags` and the shared types (lists are `PostSummary`, without the body; `get` answers a `PostPage`, the post with the one to read next). Its pages read through `@inject IPosts`. A component imports the route table relative to the project root (`../../routes` from `client/pages`).
 - `xzor dev` (the npm launcher's `bin/dev.ts`, which `xzor init` puts behind `bun run dev`) runs `xzor build --watch --hot` and serves the project folder on port 3000 (or `PORT`, or a free port) bound to `localhost`: it answers files such as `.env` and server code, so other machines can't reach it unless you pass `--host <name>` (`--host` alone is every interface; `--host` is not passed on to `xzor build`): `no-store` responses, unknown paths answered with `index.html` so client routes load, and nothing outside the folder is served. A server app's generated server runs behind it (see [Server apps](#server-apps)). Served HTML gets a `<script src="/__xzor/hot.js">` right after `<head>`, the dev-only client (`bin/hot.ts`) the hot bundle registers its component classes into; it listens for build results over `EventSource`. When a build only changed `.xzor` files, the server sends the recompiled modules and the client patches those classes in place, so the open page shows the edit and every component keeps its state (field values, focus, scroll). A save that changes no generated code (whitespace, format on save) sends nothing. Anything else reloads the page, as does a `#private` member, a new import or a changed base class; arrow-function fields keep their old code until a reload. A patch constructs the new class once to read its fields, and again per instance missing a new field, so field initializers with side effects (timers, sockets) run again; edit such components with a reload. A failed build keeps the last working page.
 - PWA: when `<project root>/manifest.webmanifest` sits next to `index.html`, `xzor build` (never `--watch`) writes a dependency-free `<project root>/sw.js` (first line `// Generated by xzor. Do not edit.`; `xzor init` gitignores it) and appends one registration line to the entry bundle, `navigator.serviceWorker.register(new URL("<rel>/sw.js", import.meta.url))`, so the scope is the app's folder, sub-paths included. The precache list is `./`, `index.html`, `manifest.webmanifest`, every icon in the manifest, every local `href`/`src` in `index.html` and every build output except `*.map`. The cache is named `xzor-<version>`, the version being a hash of the precached files' paths and contents, so a rebuild with no change writes the same `sw.js` and a changed file installs a new worker; activation deletes the other `xzor-` caches. The worker only handles same-origin GETs: navigations go network-first and fall back to the cached `index.html` (so deep links work offline), everything else is cache-first. After a deploy, the new worker installs in the background on the first load and serves the new files from the second. The manifest is checked and problems print as `xzor: manifest.webmanifest: ...` on stderr without failing the build (invalid JSON, no `name`/`short_name`, no 192x192 or 512x512 icon, a missing icon file, no `display`). Without a manifest nothing is written and a stale generated `sw.js` is deleted; a `sw.js` you wrote is never touched. `xzor dev` answers `/sw.js` with a worker that unregisters itself, so a production worker never serves stale code in development.
 - After stale generated files are pruned, empty folders under `.xzor/` are removed.
@@ -459,5 +495,5 @@ The documentation site's Roadmap page is the public view; this is the short list
 1. Publish xzor-ui to npm as `@source-crafter/xzor-ui`, keeping the import paths apps use today.
 2. HTML element and attribute completion in markup.
 3. Page shells (preloaded shell rendering, PSR) and server apps with endpoints: built. Proposal and measurements: [backlog-page-shells](plans/backlog-page-shells.md).
-4. Contracts and typed clients for endpoints: next.
+4. Contracts and typed clients for endpoints: built.
 5. Later: a native rendering target for the same components.

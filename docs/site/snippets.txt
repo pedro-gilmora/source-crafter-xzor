@@ -300,10 +300,11 @@ export class App implements IServerApplication {
 }
 --- recipe-endpoints | server/api/notes.ts | typescript
 import { Endpoints, Get, Post } from "@source-crafter/xzor-runtime/server";
-import { type Note, NoteStore } from "../note-store";
+import type { INotes, Note } from "../../contracts/notes";
+import { NoteStore } from "../note-store";
 
 @Endpoints("/api/notes")
-export class Notes {
+export class Notes implements INotes {
   constructor(private store: NoteStore) {}
 
   @Get
@@ -314,6 +315,40 @@ export class Notes {
 
   @Post
   async add(body: { text: string }): Promise<Note> { return this.store.add(body.text); }
+}
+--- recipe-contract | contracts/notes.ts | typescript
+export interface Note { id: number; text: string; }
+
+// the server's real signatures: the endpoint implements it, views inject it
+export interface INotes {
+  list(query: { tag?: string }): Note[];
+  get(id: number): Note | undefined;
+  add(body: { text: string }): Promise<Note>;
+}
+--- recipe-contract-view | client/Notes.xzor | xzor
+@import type { INotes, Note } from "../contracts/notes"
+@inject INotes notes            @* readonly notes: Remote<INotes>: every method returns a Promise *@
+
+@code {
+  items: Note[] = [];
+
+  protected override async onInitializedAsync() {
+    this.items = await this.notes.list({});
+  }
+}
+
+<ul>
+  @for (const n of items) @key(n.id) { <li>@n.text</li> }
+</ul>
+--- recipe-contract-service | client/note-feed.ts | typescript
+import type { Remote } from "@source-crafter/xzor-runtime";
+import type { INotes } from "../contracts/notes";
+
+// browser code writes Remote<INotes>; INotes here is a build error (ZDI25)
+export class NoteFeed {
+  constructor(private notes: Remote<INotes>) {}
+
+  async latest() { return (await this.notes.list({}))[0]; }
 }
 --- more-keys | Team.xzor | xzor
 @code {

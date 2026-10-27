@@ -461,10 +461,11 @@ export class App implements IServerApplication {
 
 ```ts
 import { Endpoints, Get, Post } from "@source-crafter/xzor-runtime/server";
-import { type Note, NoteStore } from "../note-store";
+import type { INotes, Note } from "../../contracts/notes";
+import { NoteStore } from "../note-store";
 
 @Endpoints("/api/notes")
-export class Notes {
+export class Notes implements INotes {
   constructor(private store: NoteStore) {}
 
   @Get
@@ -478,8 +479,40 @@ export class Notes {
 }
 ```
 
+**`contracts/notes.ts`**: an interface both sides import. The endpoint implements it, and views inject it.
+
+```ts
+export interface Note { id: number; text: string; }
+
+export interface INotes {
+  list(query: { tag?: string }): Note[];
+  get(id: number): Note | undefined;
+  add(body: { text: string }): Promise<Note>;
+}
+```
+
+**`client/Notes.xzor`**
+
+```xzor
+@import type { INotes, Note } from "../contracts/notes"
+@inject INotes notes
+
+@code {
+  items: Note[] = [];
+
+  protected override async onInitializedAsync() {
+    this.items = await this.notes.list({});
+  }
+}
+
+<ul>
+  @for (const n of items) @key(n.id) { <li>@n.text</li> }
+</ul>
+```
+
 - Parameters come in a fixed order: the path's `:params` (converted to their type, or 400), then `query`, then `body` (parsed JSON, only on `@Post`, `@Put`, `@Patch` and `@Query`; any `Content-Type` but `application/json` answers 415, so a cross-site form post can't reach the method). A `Response` passes through, `undefined` is 404, anything else is JSON, and `throw new HttpError(status, message)` answers that status. Any other error is logged and answers a plain 500 with no details. A route path must start with `/` (`@Endpoints("api/x")` is a build error, ZDI22).
 - Constructor parameters are injected like any service. Take `Request` to read the current request: the class is then built per request, and a singleton that needs it is a build error.
+- A contract is an interface an `@Endpoints` class implements. In a view, `@inject INotes notes` is typed `Remote<INotes>` (every method returns a `Promise`, even a sync one) and the build writes the client that calls the route: parameters keep their order, a 404 or 204 resolves `undefined`, any other non-2xx status throws `HttpError`. In a `.ts` service the views reach, write `Remote<INotes>` (`INotes` there is a build error, ZDI25). On the server, `INotes` is the endpoint instance, and `Remote<INotes>` an in-process adapter. Only clients a view reaches are bundled; a contract nothing implements is ZDI24.
 - The views reach services through `@inject`; the build gives the browser only those services and the server the rest, and errors if a view reaches the request, an endpoint or a server-only module.
 - `bun run dev` (`xzor dev`) runs the server behind the dev server with hot reload and restarts it when a `.ts` changes. The dev server answers the project's files (`.env`, server code) and so listens on `localhost` only; `xzor dev --host <name>` (bare `--host` is every interface) opens it to others. To ship: `xzor build --minify`, then `bun dist/server.js`.
 

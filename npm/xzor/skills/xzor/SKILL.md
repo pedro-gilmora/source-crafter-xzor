@@ -244,6 +244,38 @@ export class Notes {
 - Run: `bun run dev` (the server runs behind the dev server, which listens on `localhost` only: `xzor dev --host <name>` opens it up; any `.ts` change restarts the server, `.xzor` edits patch in place). Ship: `xzor build --minify`, then `bun dist/server.js`: it serves the shells, assets (ETag, brotli, gzip) and endpoints, and unknown paths get `index.html` with status 404 so `@notFound` renders.
 - Not supported: body validation, middleware, streaming or WebSocket endpoints (use the app's `routes`/`websocket` members), more than one `@Run` class per project.
 
+## Contracts and generated clients
+
+A contract is an interface in a plain `.ts` file both sides import (`contracts/posts.ts`), with the server's real signatures, that an `@Endpoints` class lists in `implements`. A view injects it and the build generates the HTTP client.
+
+```ts
+// contracts/posts.ts
+export interface IPosts {
+  get(slug: string): Post | undefined;
+  list(query: { tag?: string }): Post[];
+}
+
+// server/api/posts.ts
+@Endpoints("/api/posts")
+export class Posts implements IPosts { /* @Get(":slug") get(...), @Get list(...) */ }
+```
+
+```xzor
+@import type { IPosts } from "../../contracts/posts"
+@inject IPosts posts          @* generated as readonly posts: Remote<IPosts> *@
+
+@code {
+  protected override async onInitializedAsync() { this.list = await this.posts.list({}); }
+}
+```
+
+- `Remote<T>` (from `@source-crafter/xzor-runtime`, types only) keeps every method's parameters and turns its result `R` into `Promise<Awaited<R>>`; other members become `never`. A sync contract method is async in a view: always `await` it.
+- In a `.xzor`, write the contract's own name (`@inject IPosts posts`): the field is typed `Remote<IPosts>`. In a browser-reached `.ts` service write `Remote<IPosts>` as the parameter type; `IPosts` there is ZDI25 (TypeScript reads `.ts` as written). On the server `Remote<IPosts>` is an in-process adapter over the endpoint, so a service shared by both sides works on both.
+- The client (`.xzor/clients/<IContract>.ts`, never edit it) passes the contract's parameters in order: path params `encodeURIComponent`-encoded (a `/` or a space in a slug is fine), `query` as the search string (undefined values skipped), `body` as JSON with `content-type: application/json`. A 404 or 204 resolves `undefined` (so `get` can return `undefined`, and the view checks it); any other non-2xx throws `HttpError` (`.status`).
+- Only clients a view reaches are bundled. A contract is an interface some `@Endpoints` class implements: injecting one nothing implements is ZDI24, two implementing classes is ZDI23. An endpoint without `implements` still serves, with no client.
+- A contract carries only what a browser can send: no `Request` parameter, and everything crosses as JSON (no `Date`, `Map` or class instances).
+- Put shared types (`Post`, `PostSummary`) in `contracts/` too, never import an `@Endpoints` class as a value in a view (ZDI21).
+
 ## Models (state that tracks its changes)
 
 Use a model for data that is edited and then saved: a form, a row of a table, anything where you need "what changed", "undo" or "is it valid". For plain UI state, keep using `@code` fields.

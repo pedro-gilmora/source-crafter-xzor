@@ -16,6 +16,7 @@
         ["Routing", "@page routes, a typed href table, one @Routes block with History API navigation."],
         ["Page shells (PSR)", "xzor build --minify writes one index.html per @page that preloads exactly that page's chunks, plus precompressed copies. In a first test it painted pages 20-39% sooner than a single shell."],
         ["Server apps and endpoints", "A @Run class that implements IServerApplication is a Bun server: it serves the shells and assets from memory (ETag, brotli, gzip) and @Endpoints classes become routes, with typed path, query and body parameters. xzor dev runs it with hot reload."],
+        ["Contracts and typed clients", "An interface an endpoint class implements is a contract: a view injects it as Remote<IContract> and the build generates the HTTP client, typed from the contract."],
         ["Dependency injection", "Services wired at build time from TypeScript types; no container at runtime."],
         ["Cascading values and inherited members", "@cascade blocks and @inherits base classes, checked by TypeScript."],
         ["Models and validation", "Trackable models with field state for forms."],
@@ -39,7 +40,6 @@
       tone: "warning",
       items: [
         ["HTML completion", "Element and attribute names in markup, next to the component ones."],
-        ["Contracts and typed clients", "Interfaces that endpoint classes implement, and a generated client that views inject, typed from the contract."],
       ],
     },
     {
