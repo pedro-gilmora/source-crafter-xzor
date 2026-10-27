@@ -1,7 +1,5 @@
 import type { Post } from "../contracts/posts";
 
-export type { Block, Post } from "../contracts/posts";
-
 export const posts: Post[] = [
   {
     slug: "glass-without-javascript",
@@ -65,7 +63,3 @@ export const posts: Post[] = [
     ],
   },
 ];
-
-export const tags = [...new Set(posts.flatMap((p) => p.tags))].sort();
-
-export const day = (iso: string): string => new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });

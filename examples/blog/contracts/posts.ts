@@ -13,4 +13,5 @@ export interface Post {
 export interface IPosts {
   get(slug: string): Post | undefined;
   list(query: { tag?: string }): Post[];
+  tags(): string[];
 }

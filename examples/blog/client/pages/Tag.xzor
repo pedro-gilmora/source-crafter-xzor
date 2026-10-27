@@ -2,13 +2,28 @@
 @import PostCard from "../layouts/PostCard.xzor"
 @import Empty from "@source-crafter/xzor-ui/Empty.xzor"
 @import { href } from "../../routes"
-@import { posts, tags } from "../posts"
+@import type { IPosts, Post } from "../../contracts/posts"
+@inject IPosts posts
 
 @code {
   tag = "";
+  tags: string[] = [];
+  tagged: Post[] = [];
+  loading = true;
 
-  get tagged() {
-    return posts.filter((p) => p.tags.includes(this.tag));
+  protected override async onInitializedAsync() {
+    this.tags = await this.posts.tags();
+  }
+
+  // Runs on every tag change of this kept instance; a slower answer for an earlier tag is dropped.
+  protected override async onParametersSetAsync() {
+    const tag = this.tag;
+    this.tagged = [];
+    this.loading = true;
+    const tagged = await this.posts.list({ tag });
+    if (tag !== this.tag) return;
+    this.tagged = tagged;
+    this.loading = false;
   }
 }
 
@@ -20,7 +35,9 @@
     }
   </nav>
 </header>
-@if (tagged.length === 0) {
+@if (loading) {
+  <p class="xz-muted" role="status">Loading…</p>
+} else if (tagged.length === 0) {
   <Empty title="No posts with this tag" icon="tag"><p><a href="@href.Home()">See every post</a></p></Empty>
 } else {
   <div class="posts">

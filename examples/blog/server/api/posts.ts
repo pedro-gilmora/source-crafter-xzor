@@ -11,4 +11,7 @@ export class Posts implements IPosts {
 
   @Get
   list(query: { tag?: string }): Post[] { return this.store.list(query); }
+
+  @Get("tags")
+  tags(): string[] { return this.store.tags(); }
 }

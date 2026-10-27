@@ -2,23 +2,32 @@
 @import Badge from "@source-crafter/xzor-ui/Badge.xzor"
 @import Empty from "@source-crafter/xzor-ui/Empty.xzor"
 @import { href } from "../../routes"
-@import { day, posts } from "../posts"
+@import { day } from "../day"
+@import type { IPosts, Post as Entry } from "../../contracts/posts"
+@inject IPosts posts
 
 @code {
   slug = "";
+  post: Entry | undefined;
+  next!: Entry;
+  loading = true;
 
-  get post() {
-    return posts.find((p) => p.slug === this.slug);
-  }
-
-  get next() {
-    const at = posts.findIndex((p) => p.slug === this.slug);
-    return posts[(at + 1) % posts.length]!;
+  // Runs on every slug change of this kept instance; a slower answer for an earlier slug is dropped.
+  protected override async onParametersSetAsync() {
+    const slug = this.slug;
+    this.loading = true;
+    const [post, all] = await Promise.all([this.posts.get(slug), this.posts.list({})]);
+    if (slug !== this.slug) return;
+    this.post = post;
+    this.next = all[(all.findIndex((p) => p.slug === slug) + 1) % all.length]!;
+    this.loading = false;
   }
 }
 
 <div class="progress" aria-hidden="true"></div>
-@if (post) {
+@if (loading) {
+  <p class="xz-muted" role="status">Loading…</p>
+} else if (post) {
   @{ const p = post; }
   <article class="article">
     <p class="meta"><a href="@href.Home()">Field Notes</a><time datetime="@p.date">@day(p.date)</time><span>@p.minutes min read</span></p>

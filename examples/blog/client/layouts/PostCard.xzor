@@ -1,6 +1,7 @@
 @import Badge from "@source-crafter/xzor-ui/Badge.xzor"
 @import { href } from "../../routes"
-@import { day, type Post } from "../posts"
+@import { day } from "../day"
+@import type { Post } from "../../contracts/posts"
 
 @code {
   post!: Post;

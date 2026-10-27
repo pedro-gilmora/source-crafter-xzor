@@ -1,13 +1,28 @@
 @page "/"
 @import PostCard from "../layouts/PostCard.xzor"
-@import { posts } from "../posts"
+@import type { IPosts, Post } from "../../contracts/posts"
+@inject IPosts posts
+
+@code {
+  items: Post[] = [];
+  loading = true;
+
+  protected override async onInitializedAsync() {
+    this.items = await this.posts.list({});
+    this.loading = false;
+  }
+}
 
 <header class="intro">
   <h1>Field Notes</h1>
   <p class="xz-muted">Short notes on building interfaces with modern CSS: glass, popovers, transitions and layout, with no JavaScript doing the styling.</p>
 </header>
-<div class="posts">
-  @for (const post of posts) {
-    <PostCard post="@post" />
-  }
-</div>
+@if (loading) {
+  <p class="xz-muted" role="status">Loading…</p>
+} else {
+  <div class="posts">
+    @for (const post of items) {
+      <PostCard post="@post" />
+    }
+  </div>
+}
