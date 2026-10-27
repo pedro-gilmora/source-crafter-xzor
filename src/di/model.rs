@@ -109,7 +109,7 @@ pub struct Server {
     pub root: Option<TypeRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Verb {
     Get,
     Post,
@@ -117,6 +117,19 @@ pub enum Verb {
     Patch,
     Delete,
     Query,
+}
+
+impl Verb {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verb::Get => "GET",
+            Verb::Post => "POST",
+            Verb::Put => "PUT",
+            Verb::Patch => "PATCH",
+            Verb::Delete => "DELETE",
+            Verb::Query => "QUERY",
+        }
+    }
 }
 
 /// From the parameter's name: a `:param` of the path, `query`, `body`, else `Other` (not bindable).

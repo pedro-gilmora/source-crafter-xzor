@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::model::{Component, Facts, Lifetime, Param, Provider, Registration};
+use super::model::{Component, Endpoint, Facts, Lifetime, Param, ParamKind, Provider, Registration, Server, Verb};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diag {
@@ -51,6 +51,10 @@ pub struct Resolved {
     pub services: Vec<Service>,
     /// Filled only for the `@Run` provider; the `bool` marks an asynchronously resolved component.
     pub components: Vec<(Component, Vec<Arg>, bool)>,
+    /// Set on the `@Run` server application's provider.
+    pub server: Option<Server>,
+    /// Filled only for the server application: each `@Endpoints` class with its constructor args.
+    pub endpoints: Vec<(Endpoint, Vec<Arg>)>,
 }
 
 /// Where a registration was declared: (provider index, registration index).
@@ -81,14 +85,17 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
         diags: Vec::new(),
     };
 
-    let mounts: Vec<usize> = (0..providers.len()).filter(|&i| providers[i].mount.is_some()).collect();
+    let server_of = |p: &Provider| facts.servers.iter().find(|s| s.class.id == p.class.id);
+    let mounts: Vec<usize> = (0..providers.len()).filter(|&i| providers[i].mount.is_some() || server_of(&providers[i]).is_some()).collect();
     if mounts.len() > 1 {
         let names = mounts.iter().map(|&i| providers[i].class.text.as_str()).collect::<Vec<_>>().join(", ");
         for &i in &mounts[1..] {
             let p = &providers[i];
-            cx.error(&p.file, p.mount.as_ref().map_or(p.at, |m| m.at), "ZDI07", format!("@Run is declared on more than one class: {names}"));
+            let at = p.mount.as_ref().map(|m| m.at).or(server_of(p).map(|s| s.at)).unwrap_or(p.at);
+            cx.error(&p.file, at, "ZDI07", format!("@Run is declared on more than one class: {names}"));
         }
     }
+    check_endpoints(facts, &mut cx.diags);
 
     for i in 0..providers.len() {
         cx.provider(i);
@@ -96,7 +103,12 @@ pub fn resolve(facts: &Facts) -> Result<Vec<Resolved>, Vec<Diag>> {
 
     if let Some(&m) = mounts.first() {
         if let State::Done(r, o) = &mut cx.states[m] {
+            // A server app's views resolve here too until its registrations are split by reachability.
             r.components = components(facts, r, o, &mut cx.diags);
+            if let Some(s) = server_of(&r.provider) {
+                r.server = Some(s.clone());
+                r.endpoints = endpoints(facts, r, o, &mut cx.diags);
+            }
         }
     } else {
         for c in &facts.components {
@@ -296,7 +308,7 @@ impl<'a> Cx<'a> {
             return None;
         }
 
-        Some((Resolved { provider: p.clone(), services, components: Vec::new() }, origins))
+        Some((Resolved { provider: p.clone(), services, components: Vec::new(), server: None, endpoints: Vec::new() }, origins))
     }
 }
 
@@ -331,6 +343,105 @@ fn components(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<D
         out.push((c.clone(), args, is_async));
     }
     out
+}
+
+/// Resolves each `@Endpoints` class's constructor against the server application's registrations.
+fn endpoints(facts: &Facts, r: &Resolved, origins: &[Origin], diags: &mut Vec<Diag>) -> Vec<(Endpoint, Vec<Arg>)> {
+    let table = Table::new(&r.services);
+    let sets = Sets::new(&r.services);
+    let app = &r.provider.class.text;
+    let mut out = Vec::with_capacity(facts.endpoints.len());
+    for e in &facts.endpoints {
+        let mut args = Vec::with_capacity(e.ctor.len());
+        for prm in &e.ctor {
+            let needer = &e.class.text;
+            let (code, message) = match table.find(prm) {
+                Found::One(i) if mismatched(facts, prm, &r.services[i], origins[i]) => ("ZDI12", zdi12(prm, &r.services[i])),
+                Found::One(i) => {
+                    args.push(if prm.promise { Arg::Promise(i) } else { Arg::Service(i) });
+                    continue;
+                }
+                Found::None if prm.optional => {
+                    args.push(Arg::Undefined);
+                    continue;
+                }
+                Found::None => ("ZDI02", format!("{} (needed by {needer} in provider {app}) is not registered or imported", prm.ty.text)),
+                Found::Many(c) => ("ZDI05", format!("{} (needed by {needer} in provider {app}) is ambiguous: {}", prm.ty.text, table.names(&c))),
+            };
+            diags.push(Diag { file: e.file.clone(), at: e.at, code, message, inject: None, param_at: Some((prm.file.clone(), prm.at)) });
+            args.push(Arg::Undefined);
+        }
+        out.push((e.clone(), classify(&r.services, &sets, &args)));
+    }
+    out
+}
+
+/// The `:name` segments of a route path.
+pub fn path_params(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/').filter_map(|s| s.strip_prefix(':'))
+}
+
+/// Routes and parameters: one handler per method and path; path params (in order), then `query`, then `body`.
+fn check_endpoints(facts: &Facts, diags: &mut Vec<Diag>) {
+    // Keyed with the params unnamed: Bun can't tell `/a/:id` from `/a/:slug`.
+    let mut routes: HashMap<(Verb, String), (&Endpoint, &str)> = HashMap::new();
+    for e in &facts.endpoints {
+        let mut error = |at: usize, code: &'static str, message: String| {
+            diags.push(Diag { file: e.file.clone(), at, code, message, inject: None, param_at: None });
+        };
+        for m in &e.methods {
+            let name = format!("{}.{}", e.class.text, m.name);
+            let verb = m.verb.as_str();
+            let key = m.path.split('/').map(|s| if s.starts_with(':') { ":" } else { s }).collect::<Vec<_>>().join("/");
+            match routes.get(&(m.verb, key.clone())) {
+                Some((first, method)) => {
+                    let message = format!("{verb} {} is handled twice: {}.{method} ({}) and {name} ({})", m.path, first.class.text, first.file, e.file);
+                    error(m.at, "ZDI13", message);
+                }
+                None => {
+                    routes.insert((m.verb, key), (e, m.name.as_str()));
+                }
+            }
+            let names: Vec<&str> = path_params(&m.path).collect();
+            if let Some(r) = names.iter().find(|n| matches!(**n, "query" | "body")) {
+                error(m.at, "ZDI14", format!("{name}: :{r} in {} is reserved: a path parameter can't be named query or body", m.path));
+                continue;
+            }
+            let mut bad = false;
+            for p in &m.params {
+                match p.kind {
+                    ParamKind::Other => {
+                        error(p.at, "ZDI17", format!("{name}: {} is not a path parameter of {}, nor query or body", p.name, m.path));
+                    }
+                    ParamKind::Body if !matches!(m.verb, Verb::Post | Verb::Put | Verb::Patch | Verb::Query) => {
+                        error(p.at, "ZDI16", format!("{name}: {verb} takes no body (only POST, PUT, PATCH and QUERY do)"));
+                    }
+                    ParamKind::Query if p.keys.is_none() => {
+                        error(p.at, "ZDI18", format!("{name}: query must be an object type, not {}", p.ty));
+                    }
+                    _ => continue,
+                }
+                bad = true;
+            }
+            if bad {
+                continue;
+            }
+            let n = names.len();
+            let in_order = m.params.len() >= n
+                && m.params[..n].iter().zip(&names).all(|(p, name)| p.kind == ParamKind::Path && p.name == *name)
+                && m.params[n..].windows(2).all(|w| w[0].kind == ParamKind::Query && w[1].kind == ParamKind::Body)
+                && m.params[n..].iter().all(|p| p.kind != ParamKind::Path)
+                && m.params.len() <= n + 2;
+            if !in_order {
+                let message = if n == 0 {
+                    format!("{name}: parameters must be query, then body")
+                } else {
+                    format!("{name}: parameters must be the path parameters of {} in order ({}), then query, then body", m.path, names.join(", "))
+                };
+                error(m.at, "ZDI15", message);
+            }
+        }
+    }
 }
 
 /// A key match (the key equals the parameter name) whose registration the analyzer listed in `badKeys`.
@@ -564,7 +675,7 @@ impl<'a> Table<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::di::model::{Component, FactError, Facts, Factory, Lifetime, Mount, Param, Provider, Registration, TypeRef};
+    use crate::di::model::{Component, EndpointMethod, EndpointParam, FactError, Facts, Factory, Lifetime, Mount, Param, Provider, Registration, TypeRef};
 
     fn ty(name: &str) -> TypeRef {
         TypeRef { id: format!("m.ts#{name}"), text: name.into(), module: Some("m".into()), export: Some(name.into()) }
@@ -1124,5 +1235,64 @@ mod tests {
             vec![single("IDatabase", "Database", vec![]), single("Database", "Database", vec![]), single("IO", "IO", vec![])],
         )]);
         assert_eq!(getters(&ok(&f)[0]), ["database", "database1", "o"]);
+    }
+
+    fn eparam(name: &str, kind: ParamKind) -> EndpointParam {
+        let keys = (kind == ParamKind::Query).then(Vec::new);
+        EndpointParam { name: name.into(), kind, ty: "T".into(), optional: false, conv: None, keys, any_key: false, at: 50 }
+    }
+
+    fn method(name: &str, verb: Verb, path: &str, params: Vec<EndpointParam>) -> EndpointMethod {
+        EndpointMethod { name: name.into(), verb, pattern: String::new(), path: path.into(), params, returns_promise: false, at: 40 }
+    }
+
+    fn endpoint(name: &str, ctor: Vec<Param>, methods: Vec<EndpointMethod>) -> Endpoint {
+        Endpoint { class: ty(name), file: format!("{name}.ts"), at: 30, prefix: String::new(), ctor, methods }
+    }
+
+    fn served(providers: Vec<Provider>, endpoints: Vec<Endpoint>) -> Facts {
+        let server = Server { class: providers[0].class.clone(), file: providers[0].file.clone(), at: 2, root: None };
+        Facts { servers: vec![server], endpoints, ..facts(providers) }
+    }
+
+    #[test]
+    fn endpoint_constructors_resolve_against_the_server_app() {
+        let f = served(
+            vec![provider("App", &[], vec![single("Store", "Store", vec![])])],
+            vec![endpoint("Posts", vec![param("store", "Store")], vec![method("list", Verb::Get, "/api", vec![])])],
+        );
+        let r = ok(&f);
+        assert_eq!(r[0].server.as_ref().map(|s| s.at), Some(2));
+        assert_eq!(r[0].endpoints[0].1, [Arg::Service(0)]);
+
+        let f = served(vec![provider("App", &[], vec![])], vec![endpoint("Posts", vec![param("store", "Store")], vec![])]);
+        let d = err(&f);
+        assert_eq!(codes(&d), ["ZDI02"]);
+        assert_eq!((d[0].file.as_str(), d[0].at, d[0].param_at.clone()), ("Posts.ts", 30, Some(("params.ts".into(), 11))));
+        assert_eq!(d[0].message, "Store (needed by Posts in provider App) is not registered or imported");
+    }
+
+    #[test]
+    fn endpoint_routes_and_parameters() {
+        let check = |methods: Vec<EndpointMethod>| -> Vec<(&'static str, String)> {
+            match resolve(&served(vec![provider("App", &[], vec![])], vec![endpoint("A", vec![], methods)])) {
+                Ok(_) => vec![],
+                Err(d) => d.into_iter().map(|d| (d.code, d.message)).collect(),
+            }
+        };
+        use ParamKind::*;
+        let path = |n: &str| eparam(n, Path);
+        // Bun can't tell params apart by name.
+        let dup = check(vec![method("a", Verb::Get, "/x/:id", vec![path("id")]), method("b", Verb::Get, "/x/:slug", vec![path("slug")])]);
+        assert_eq!(dup, [("ZDI13", "GET /x/:slug is handled twice: A.a (A.ts) and A.b (A.ts)".to_string())]);
+        assert_eq!(check(vec![method("a", Verb::Get, "/x/:id", vec![path("id")]), method("b", Verb::Delete, "/x/:id", vec![path("id")])]), []);
+        let ok_order = vec![path("org"), path("id"), eparam("query", Query), eparam("body", Body)];
+        assert_eq!(check(vec![method("a", Verb::Query, "/:org/:id", ok_order)]), []);
+        assert_eq!(check(vec![method("a", Verb::Post, "/x", vec![eparam("body", Body), eparam("query", Query)])]), [("ZDI15", "A.a: parameters must be query, then body".to_string())]);
+        assert_eq!(check(vec![method("a", Verb::Get, "/:a/:b", vec![path("a")])])[0].0, "ZDI15");
+        assert_eq!(check(vec![method("a", Verb::Get, "/:body", vec![])])[0].0, "ZDI14");
+        assert_eq!(check(vec![method("a", Verb::Delete, "/x", vec![eparam("body", Body)])])[0].0, "ZDI16");
+        assert_eq!(check(vec![method("a", Verb::Get, "/x", vec![eparam("x", Other)])])[0].0, "ZDI17");
+        assert_eq!(check(vec![method("a", Verb::Get, "/x", vec![EndpointParam { keys: None, ..eparam("query", Query) }])])[0].0, "ZDI18");
     }
 }

@@ -609,3 +609,96 @@ export class Shell {}
 test("a browser app has no servers or endpoints", () => {
   expect([facts.servers, facts.endpoints]).toEqual([[], []]);
 });
+
+// Server projects built with the xzor binary (`--no-check --no-bundle`), under target/ so Bun resolves the runtime.
+const repo = join(import.meta.dir, "..");
+const exe = join(repo, "target", "debug", process.platform === "win32" ? "xzor.exe" : "xzor");
+let cargoBuilt = false;
+function xzorBuild(dir: string) {
+  if (!cargoBuilt) {
+    const b = Bun.spawnSync(["cargo", "build", "-q"], { cwd: repo });
+    expect(b.exitCode, b.stderr.toString()).toBe(0);
+    cargoBuilt = true;
+  }
+  const run = Bun.spawnSync([exe, "build", dir, "--no-check", "--no-bundle"], { cwd: repo });
+  return { code: run.exitCode, out: run.stdout.toString() + run.stderr.toString() };
+}
+
+const apiApp = `import { Run } from "@source-crafter/xzor-runtime";
+import type { IServerApplication } from "@source-crafter/xzor-runtime/server";
+
+@Run()
+export class App implements IServerApplication {
+  port = 0;
+}
+`;
+
+function serverProject(name: string, files: Record<string, string>) {
+  const dir = join(repo, "target", "tmp-serve", `${name}-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  temps.push(dir);
+  const runtime = join(repo, "runtime").replaceAll("\\", "/");
+  const compilerOptions = {
+    target: "ES2022", module: "ESNext", moduleResolution: "bundler", lib: ["ESNext", "DOM", "ESNext.Disposable"], strict: true, noEmit: true, skipLibCheck: true,
+    rootDirs: [".", ".xzor"],
+    paths: { "@source-crafter/xzor-runtime": [`${runtime}/index.ts`], "@source-crafter/xzor-runtime/server": [`${runtime}/server.ts`] },
+  };
+  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["**/*.ts", ".xzor/**/*.ts"] }));
+  for (const [file, text] of Object.entries({ "app.ts": apiApp, ...files })) {
+    mkdirSync(join(dir, file, ".."), { recursive: true });
+    writeFileSync(join(dir, file), text);
+  }
+  return dir;
+}
+
+const endpoints = (body: string, imports = "Get") =>
+  `import { Endpoints, ${imports} } from "@source-crafter/xzor-runtime/server";\n\n${body}`;
+
+test.each([
+  [
+    "duplicate method and path",
+    {
+      "api/a.ts": endpoints(`@Endpoints("/api/x")\nexport class A {\n  @Get\n  list() {}\n}\n`),
+      "api/b.ts": endpoints(`@Endpoints("/api")\nexport class B {\n  @Get("x")\n  all() {}\n}\n`),
+    },
+    "ZDI13",
+    ["GET /api/x is handled twice", "A.list (api/a.ts)", "B.all (api/b.ts)"],
+  ],
+  [
+    ":query in a pattern",
+    { "api.ts": endpoints(`@Endpoints("/api")\nexport class A {\n  @Get(":query")\n  get(query: { a?: string }) {}\n}\n`) },
+    "ZDI14",
+    ["A.get: :query in /api/:query is reserved"],
+  ],
+  [
+    "GET with body",
+    { "api.ts": endpoints(`@Endpoints("/api")\nexport class A {\n  @Get\n  get(body: { a: string }) {}\n}\n`) },
+    "ZDI16",
+    ["A.get: GET takes no body (only POST, PUT, PATCH and QUERY do)"],
+  ],
+  [
+    "a parameter that is not a path param, query or body",
+    { "api.ts": endpoints(`@Endpoints("/api")\nexport class A {\n  @Get\n  get(slug: string) {}\n}\n`) },
+    "ZDI17",
+    ["A.get: slug is not a path parameter of /api, nor query or body"],
+  ],
+  [
+    "path params out of pattern order",
+    { "api.ts": endpoints(`@Endpoints("/api/:a")\nexport class A {\n  @Get(":b")\n  get(b: string, a: string) {}\n}\n`) },
+    "ZDI15",
+    ["A.get: parameters must be the path parameters of /api/:a/:b in order (a, b), then query, then body"],
+  ],
+  [
+    "a query that is not an object type",
+    { "api.ts": endpoints(`@Endpoints("/api")\nexport class A {\n  @Get\n  get(query: string) {}\n}\n`) },
+    "ZDI18",
+    ["A.get: query must be an object type, not string"],
+  ],
+])("endpoint error: %s", (name, files, code, parts) => {
+  const dir = serverProject(name.replace(/\W+/g, "-"), files);
+  const { code: exit, out } = xzorBuild(dir);
+  expect(exit).not.toBe(0);
+  expect(out).toContain(code);
+  for (const part of parts) expect(out).toContain(part);
+});
