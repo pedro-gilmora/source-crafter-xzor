@@ -991,7 +991,7 @@ function writeServiceWorker(root: string, outputs: string[], entryOutput: string
   writeFileSync(worker, serviceWorker(precacheVersion(root, files, known), files));
 }
 
-const TEXT_OUTPUT = /\.(js|css|html|json|svg|txt)$/;
+const TEXT_OUTPUT = /\.(js|css|html|json|svg)$/;
 
 /** Writes a `.br` and a `.gz` copy beside each text file (fonts and images are already compressed) and returns the paths written. */
 export function compressOutputs(paths: string[]): string[] {
@@ -1191,8 +1191,6 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
   let routes: Record<string, string> | undefined;
   if (minify && pagesFile) {
     const index = join(dirname(resolve(outdir)), "index.html");
-    // A pages.json of an earlier build must not reach the worker's version.
-    rmSync(pagesJson, { force: true });
     if (existsSync(index)) {
       const pages: PageEntry[] = JSON.parse(readFileSync(pagesFile, "utf8"));
       const built = pageShells(readFileSync(index, "utf8"), result.metafile!, resolve(outdir), root, pages);
@@ -1206,7 +1204,6 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
         extra.push(join(outdir, shell));
         listed.add(rel(join(outdir, shell)));
       }
-      extra.push(pagesJson);
     }
   }
   if (!watch) writeServiceWorker(root, [...paths, ...extra], outputs.find((o) => o.kind === "entry-point")?.path);
@@ -1218,7 +1215,7 @@ async function main(entry: string, outdir: string, hot = false, watch = false, m
     }
     writeFileSync(pagesJson, JSON.stringify({ routes, files: [...listed].sort() }));
   }
-  if (minify) compressOutputs([...paths, ...extra.filter((p) => p !== pagesJson)]);
+  if (minify) compressOutputs([...paths, ...extra]);
 }
 
 if (import.meta.main) {

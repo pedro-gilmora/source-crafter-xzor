@@ -192,7 +192,7 @@ test("a broken manifest warns but still builds", () => {
   expect(readFileSync(join(dir, "sw.js"), "utf8").startsWith(HEADER)).toBe(true);
 }, 60_000);
 
-test("shells and pages.json are precached, compressed copies are not", () => {
+test("shells are precached, pages.json and compressed copies are not", () => {
   writeFileSync(join(dir, "manifest.webmanifest"), MANIFEST);
   const index = readFileSync(join(dir, "index.html"), "utf8");
   writeFileSync(join(dir, "index.html"), `<!doctype html>\n<html><head>\n<link rel="stylesheet" href="styles.css">\n</head><body><script type="module" src="./dist/main.js"></script></body></html>\n`);
@@ -202,7 +202,7 @@ test("shells and pages.json are precached, compressed copies are not", () => {
     const worker = readFileSync(join(dir, "sw.js"), "utf8");
     const files: string[] = JSON.parse(worker.match(/const FILES = (\[.*\]);/)![1]!);
     expect(files).toContain("dist/pages/Home.html");
-    expect(files).toContain("dist/pages.json");
+    expect(files).not.toContain("dist/pages.json");
     expect(files).toContain("dist/main.js");
     expect(files.some((f) => /\.(br|gz)$/.test(f))).toBe(false);
     // Both exist when the worker installs; the copies exist too, and a rebuild must not pick them up.
