@@ -8,6 +8,7 @@ import {
   Route,
   type RouteSection,
   type RouteTable,
+  lazy,
   mount,
   setNavigationForTests,
   setTransitionCapForTests,
@@ -718,6 +719,48 @@ test("onParametersSetAsync on a kept page is awaited too", async () => {
     expect(r.html()).toBe("<aside><h1>p1</h1></aside>");
     await updates[0];
     expect(r.html()).toBe("<aside><h1>p2</h1></aside>");
+  });
+});
+
+const lazyTable = (load: () => Promise<{ default: typeof LoadOnParams }>): RouteTable => [
+  { tag: undefined, pattern: "/", component: RootPage, match: (s) => (s.length === 0 ? {} : null) },
+  {
+    tag: undefined,
+    pattern: "/p/:id",
+    component: lazy(load),
+    match: (s) => (s.length === 2 && s[0] === "p" ? { id: Number(s[1]) } : null),
+  },
+];
+
+test("the transition's update waits for a lazy page's chunk and then its async hooks", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const table = lazyTable(() => later(10).then(() => ({ default: LoadOnParams })));
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table });
+    history.replaceState(null, "", "/p/7");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(updates[0]).toBeInstanceOf(Promise);
+    expect(r.html()).toBe("<aside></aside>");
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>p7</h1></aside>");
+  });
+});
+
+test("the 1500 ms cap holds when a lazy page's import never resolves", async () => {
+  await withTransitions(async (updates) => {
+    setTransitionCapForTests(20);
+    history.replaceState(null, "", "/");
+    const r = routed([{ kind: "default", render: wrap("aside") }], {
+      table: lazyTable(() => new Promise(() => {})),
+    });
+    history.replaceState(null, "", "/p/1");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    const started = performance.now();
+    await updates[0];
+    expect(performance.now() - started).toBeGreaterThanOrEqual(15);
+    expect(r.html()).toBe("<aside></aside>");
   });
 });
 

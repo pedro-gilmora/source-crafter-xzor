@@ -1294,8 +1294,20 @@ function createComponent(v: VComponent, app: IApplication | undefined, scope: Ca
       latest: v,
       pass,
     });
-    made.then(
-      (instance) => arrive(mounted, instance),
+    // Inside a transition's update, the chunk and the hooks of the page that arrives with it are awaited too.
+    const outer = awaiting;
+    const arrived = made.then(
+      (instance) => {
+        if (!outer) return void arrive(mounted, instance);
+        const started: Promise<void>[] = [];
+        awaiting = started;
+        try {
+          arrive(mounted, instance);
+        } finally {
+          awaiting = undefined;
+        }
+        return Promise.allSettled(started);
+      },
       (err) => {
         const latest = mounted.latest;
         mounted.latest = undefined;
@@ -1304,6 +1316,7 @@ function createComponent(v: VComponent, app: IApplication | undefined, scope: Ca
         else if (!v.onError) rethrow(err);
       },
     );
+    if (outer) outer.push(arrived.then(noop));
     return [mounted.anchor];
   }
   v.instance = made;
