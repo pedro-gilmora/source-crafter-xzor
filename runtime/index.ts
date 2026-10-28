@@ -216,11 +216,35 @@ export function viewTransitions(on: boolean): void {
   transitions = on;
 }
 
+let transitionCap = 1500;
+
+/** @internal The longest a view transition waits for a page's data, in ms; `undefined` restores 1500. */
+export function setTransitionCapForTests(ms: number | undefined): void {
+  transitionCap = ms ?? 1500;
+}
+
 function notifyNavigated(): void {
   const doc = document as Document & { startViewTransition?: (update: () => void) => { ready: Promise<unknown> } };
   // `ready` rejects when the browser skips the animation (a hidden tab, a newer navigation): the update still ran.
-  if (transitions && doc.startViewTransition) doc.startViewTransition(notifyAll).ready.catch(noop);
+  if (transitions && doc.startViewTransition) doc.startViewTransition(commitTransition).ready.catch(noop);
   else notifyAll();
+}
+
+// Set only while a transition's update runs: the pending async hooks of the pages it commits.
+let awaiting: Promise<void>[] | undefined;
+
+/** The browser captures the new view when this resolves: wait (up to the cap) for the new page's data. */
+function commitTransition(): Promise<unknown> | undefined {
+  const list = (awaiting = []);
+  try {
+    notifyAll();
+  } finally {
+    awaiting = undefined;
+  }
+  if (!list.length) return undefined;
+  let timer: ReturnType<typeof setTimeout>;
+  const cap = new Promise((done) => (timer = setTimeout(done, transitionCap)));
+  return Promise.race([Promise.allSettled(list), cap]).finally(() => clearTimeout(timer));
 }
 
 function notifyAll(): void {
@@ -958,7 +982,10 @@ function batch(fn: () => void): void {
 
 function settle(component: ComponentBase, result: Promise<void> | void, node?: VComponent): void {
   if (!(result instanceof Promise)) return;
-  void result.then(() => update(component), node?.onError && ((err: unknown) => fail(node, err)));
+  const done = result.then(() => update(component), node?.onError && ((err: unknown) => fail(node, err)));
+  // `done` resolves after the update, so the transition captures the rendered data; errors are still reported.
+  if (awaiting) awaiting.push(done.catch(rethrow));
+  else void done;
 }
 
 /** `@catch`: the failure is reported with the navigation the page belongs to, so a late one can be dropped. */

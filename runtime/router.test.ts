@@ -10,6 +10,7 @@ import {
   type RouteTable,
   mount,
   setNavigationForTests,
+  setTransitionCapForTests,
   viewTransitions,
 } from "./index";
 
@@ -589,6 +590,145 @@ test("viewTransitions(true) commits a navigation inside document.startViewTransi
     viewTransitions(false);
     delete doc.startViewTransition;
   }
+});
+
+// A page that renders its heading only once its data arrived, like the blog's Post page.
+const later = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+class LoadOnInit extends ComponentBase {
+  title = "";
+  protected override async onInitializedAsync(): Promise<void> {
+    await later(5);
+    this.title = "init";
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    if (this.title) {
+      b.openElement("h1");
+      b.addText(this.title);
+      b.closeElement();
+    }
+  }
+}
+
+class LoadOnParams extends ComponentBase {
+  id = 0;
+  title = "";
+  protected override async onParametersSetAsync(): Promise<void> {
+    await later(5);
+    this.title = `p${this.id}`;
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    if (this.title) {
+      b.openElement("h1");
+      b.addText(this.title);
+      b.closeElement();
+    }
+  }
+}
+
+class Hang extends ComponentBase {
+  protected override onInitializedAsync(): Promise<void> {
+    return new Promise<void>(() => {});
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.addText("hang");
+  }
+}
+
+const asyncPages: RouteTable = [
+  { tag: undefined, pattern: "/", component: RootPage, match: (s) => (s.length === 0 ? {} : null) },
+  { tag: undefined, pattern: "/init", component: LoadOnInit, match: (s) => (s.length === 1 && s[0] === "init" ? {} : null) },
+  { tag: undefined, pattern: "/hang", component: Hang, match: (s) => (s.length === 1 && s[0] === "hang" ? {} : null) },
+  {
+    tag: undefined,
+    pattern: "/p/:id",
+    component: LoadOnParams,
+    match: (s) => (s.length === 2 && s[0] === "p" ? { id: Number(s[1]) } : null),
+  },
+];
+
+/** Runs `body` with `document.startViewTransition` stubbed; each call's callback result lands in `updates`. */
+async function withTransitions(body: (updates: unknown[]) => Promise<void> | void): Promise<void> {
+  const doc = document as unknown as { startViewTransition?: (cb: () => unknown) => { ready: Promise<void> } };
+  const updates: unknown[] = [];
+  doc.startViewTransition = (cb) => {
+    updates.push(cb());
+    return { ready: Promise.resolve() };
+  };
+  viewTransitions(true);
+  try {
+    await body(updates);
+  } finally {
+    viewTransitions(false);
+    setTransitionCapForTests(undefined);
+    delete doc.startViewTransition;
+  }
+}
+
+test("the transition's update resolves after the new page's onInitializedAsync", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    history.replaceState(null, "", "/init");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(r.html()).toBe("<aside></aside>");
+    expect(updates[0]).toBeInstanceOf(Promise);
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>init</h1></aside>");
+  });
+});
+
+test("the transition's update resolves after 1500 ms at most when the hook never settles", async () => {
+  await withTransitions(async (updates) => {
+    setTransitionCapForTests(20);
+    history.replaceState(null, "", "/");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    history.replaceState(null, "", "/hang");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    const started = performance.now();
+    await updates[0];
+    expect(performance.now() - started).toBeGreaterThanOrEqual(15);
+    expect(r.html()).toBe("<aside>hang</aside>");
+  });
+});
+
+test("a page without async hooks needs no wait: the update returns nothing", async () => {
+  await withTransitions((updates) => {
+    history.replaceState(null, "", "/init");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    history.replaceState(null, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(updates).toEqual([undefined]);
+    expect(r.html()).toBe("<aside><r>root</r></aside>");
+  });
+});
+
+test("onParametersSetAsync on a kept page is awaited too", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/p/1");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    await later(20);
+    expect(r.html()).toBe("<aside><h1>p1</h1></aside>");
+
+    history.replaceState(null, "", "/p/2");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(r.html()).toBe("<aside><h1>p1</h1></aside>");
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>p2</h1></aside>");
+  });
+});
+
+test("outside a transition the settle path collects nothing", async () => {
+  history.replaceState(null, "", "/");
+  const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+  history.replaceState(null, "", "/init");
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  expect(r.html()).toBe("<aside></aside>");
+  await later(20);
+  expect(r.html()).toBe("<aside><h1>init</h1></aside>");
 });
 
 class ThrowingCtor extends ComponentBase {

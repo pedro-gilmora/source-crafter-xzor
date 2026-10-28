@@ -177,7 +177,7 @@ One `Routes.xzor` (never itself a `@page`) holds the router and the layouts:
 - A layout is an ordinary component with `@slot` where the page goes.
 - Typed links: `@import { href } from "./routes"` (relative path; the table is generated), then `<a href="@href.TodoPage({ id: 3 })">`. A page without parameters needs no argument: `href.About()`.
 - `@import { NavLink } from "@source-crafter/xzor-runtime"`, then `<NavLink href="/" match="exact">Home</NavLink>`: it adds `class="active"` and `aria-current="page"` on its route; `match="prefix"` is the default.
-- Animated page changes: call `viewTransitions(true)` (from `@source-crafter/xzor-runtime`) in `main.ts`; give an element the same `view-transition-name` on both pages to morph it.
+- Animated page changes: call `viewTransitions(true)` (from `@source-crafter/xzor-runtime`) in `main.ts`; give an element the same `view-transition-name` on both pages to morph it. The transition waits up to 1500 ms for the new page's `onInitializedAsync`/`onParametersSetAsync`, so a heading rendered after loading data still morphs.
 - Plain `<a href="/about">` links navigate without reloading.
 - Tag routes with `@page "/admin" as admin` and give them a layout with `@admin(page) { <AdminLayout>@page</AdminLayout> }`.
 - Served under a sub-path (GitHub Pages): add `<base href="/repo/">` to `index.html`; routes and `href` follow it.
