@@ -4,6 +4,7 @@
   "scripts": {
     "example": "cargo run -q -- build examples/counter",
     "ui": "cargo run -q -- compile ui",
+    "serve": "cargo build -q && bun npm/xzor/bin/serve.ts target/debug/xzor",
     "examples": "cargo run -q -- compile ui && cargo run -q -- build examples/dashboard && cargo run -q -- build examples/blog && cargo run -q -- build examples/sales",
     "docs": "bun docs/site/publish.ts",
     "test:grammar": "bun editors/vscode/test/run.ts",
