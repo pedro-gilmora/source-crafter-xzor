@@ -49,6 +49,10 @@
   margin: var(--xz-space-7) auto;
 }
 
+main.page {
+  min-height: 100dvh;
+}
+
 .intro {
   margin-bottom: var(--xz-space-6);
 }

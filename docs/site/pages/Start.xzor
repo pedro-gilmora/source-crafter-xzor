@@ -27,6 +27,10 @@
   <h2>Run it</h2>
   <Code name="run" />
   <p>
+    <code>xzor serve</code> builds with <code>--minify</code> and serves the app the way it ships (<code>--port</code>, <code>--host</code>;
+    it listens on <code>localhost</code> unless you pass <code>--host</code>).
+  </p>
+  <p>
     Save a <code>.xzor</code> file and the open page shows the change at once. Only the components you changed are
     updated in place, and they keep their state (field values, focus, scroll). Any other change reloads the page. A
     <code>#private</code> member, a new import or a changed base class also reload, and arrow-function fields keep their old
