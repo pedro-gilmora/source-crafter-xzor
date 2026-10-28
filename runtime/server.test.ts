@@ -53,15 +53,17 @@ describe("staticFiles", () => {
     writeFileSync(join(root, "dist", "a.js.br"), "br-a");
     writeFileSync(join(root, "dist", "a.js.gz"), "gz-a");
     writeFileSync(join(root, "dist", "chunks", "b.js"), "raw-b");
+    writeFileSync(join(root, "dist", "chunks", "c.js"), "raw-c");
+    writeFileSync(join(root, "dist", "chunks", "c.js.br"), "br-c");
     writeFileSync(join(root, "dist", "f.woff2"), "font");
     writeFileSync(join(root, "dist", "big.js"), "x".repeat(1024 * 1024 + 1));
     writeFileSync(join(root, "dist", "big.js.br"), "big-br");
-    routes = staticFiles(root, ["dist/a.js", "dist/chunks/b.js", "dist/f.woff2", "dist/big.js"]);
+    routes = staticFiles(root, ["dist/a.js", "dist/chunks/b.js", "dist/chunks/c.js", "dist/f.woff2", "dist/big.js"]);
   });
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   test("keys are URL paths", () => {
-    expect(Object.keys(routes).sort()).toEqual(["/dist/a.js", "/dist/big.js", "/dist/chunks/b.js", "/dist/f.woff2"]);
+    expect(Object.keys(routes).sort()).toEqual(["/dist/a.js", "/dist/big.js", "/dist/chunks/b.js", "/dist/chunks/c.js", "/dist/f.woff2"]);
   });
   test("br is preferred when accepted", async () => {
     const res = req("/dist/a.js", { "accept-encoding": "gzip, br" });
@@ -87,14 +89,51 @@ describe("staticFiles", () => {
     expect(res.headers.get("content-encoding")).toBeNull();
   });
   test("If-None-Match with the etag is 304 without a body", async () => {
-    const etag = req("/dist/a.js").headers.get("etag")!;
+    const etag = req("/dist/chunks/c.js").headers.get("etag")!;
     expect(etag).toMatch(/^"[0-9a-f]+"$/);
-    const res = req("/dist/a.js", { "if-none-match": etag });
+    const res = req("/dist/chunks/c.js", { "if-none-match": etag });
     expect(res.status).toBe(304);
     expect(await res.text()).toBe("");
-    const brEtag = req("/dist/a.js", { "accept-encoding": "br" }).headers.get("etag")!;
+    const brEtag = req("/dist/chunks/c.js", { "accept-encoding": "br" }).headers.get("etag")!;
     expect(brEtag).not.toBe(etag);
-    expect(req("/dist/a.js", { "accept-encoding": "br", "if-none-match": brEtag }).status).toBe(304);
+    expect(req("/dist/chunks/c.js", { "accept-encoding": "br", "if-none-match": brEtag }).status).toBe(304);
+  });
+  test("hashed chunks keep their etag and immutable", () => {
+    for (const path of ["/dist/chunks/b.js", "/dist/f.woff2"]) {
+      const res = req(path);
+      expect(res.headers.get("etag")).toMatch(/^"[0-9a-f]+"$/);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+      expect(res.headers.get("last-modified")).toBeNull();
+    }
+  });
+  test("non-hashed files have no etag and a last-modified", () => {
+    for (const path of ["/dist/a.js", "/dist/big.js"]) {
+      const res = req(path);
+      expect(res.headers.get("etag")).toBeNull();
+      const modified = res.headers.get("last-modified")!;
+      expect(new Date(modified).toUTCString()).toBe(modified);
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+    }
+  });
+  test("if-modified-since equal to last-modified gives 304 with no body", async () => {
+    for (const path of ["/dist/a.js", "/dist/big.js"]) {
+      const modified = req(path).headers.get("last-modified")!;
+      const res = req(path, { "if-modified-since": modified });
+      expect(res.status).toBe(304);
+      expect(await res.text()).toBe("");
+      expect(res.headers.get("last-modified")).toBe(modified);
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+      expect(res.headers.get("vary")).toBe("accept-encoding");
+      expect(res.headers.get("etag")).toBeNull();
+    }
+  });
+  test("an older or invalid if-modified-since gives 200", async () => {
+    const modified = req("/dist/a.js").headers.get("last-modified")!;
+    const older = new Date(Date.parse(modified) - 1000).toUTCString();
+    const res = req("/dist/a.js", { "if-modified-since": older });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("raw-a");
+    expect(req("/dist/a.js", { "if-modified-since": "not a date" }).status).toBe(200);
   });
   test("chunks and fonts are immutable, the rest no-cache", () => {
     const immutable = "public, max-age=31536000, immutable";
@@ -110,7 +149,7 @@ describe("staticFiles", () => {
     expect(res.headers.get("cache-control")).toBe("no-cache");
     const raw = req("/dist/big.js");
     expect((await raw.text()).length).toBe(1024 * 1024 + 1);
-    expect(req("/dist/big.js", { "if-none-match": raw.headers.get("etag")! }).status).toBe(304);
+    expect(req("/dist/big.js", { "if-modified-since": raw.headers.get("last-modified")! }).status).toBe(304);
   });
   test("a response can be served twice", async () => {
     expect(await req("/dist/a.js").text()).toBe("raw-a");
