@@ -787,7 +787,7 @@ test("the generated server: sync and async handlers, query keys, shells and asse
   const { code, out } = xzorBuild(dir);
   expect(code, out).toBe(0);
   const text = readFileSync(join(dir, ".xzor", "server", "app.ts"), "utf8");
-  expect(text).toContain('import { HttpError, type IServerApplication, reply, replyAsync, staticFiles } from "@source-crafter/xzor-runtime/server";');
+  expect(text).toContain('import { HttpError, type IServerApplication, reply, replyAsync, serveDist } from "@source-crafter/xzor-runtime/server";');
   expect(text).toContain("class App$ extends App {");
   expect(text).toContain("const app = new App$();");
   expect(text).toContain("const posts = new Posts(app.postStore);");
@@ -796,12 +796,13 @@ test("the generated server: sync and async handlers, query keys, shells and asse
   expect([...text.matchAll(/search\$\.get\("(\w+)"\)/g)].map((m) => m[1])).toEqual(["tag", "page"]);
   expect(text).not.toContain("Object.fromEntries");
   expect(text).toContain('const root = join(import.meta.dir, import.meta.file === "server.js" ? ".." : "../..");');
-  expect(text).toContain("assets = staticFiles(root, pages.files);");
+  expect(text).toContain("const dist = serveDist(root, !process.env.XZOR_DEV);");
+  expect(text).toContain("...(dist.found ? dist.routes : null),");
+  // The pages.json logic lives in the runtime's serveDist, not in the generated server.
+  for (const inlined of ["staticFiles", "pages.json\"", "pagesJson", "readFileSync", "existsSync"]) expect(text).not.toContain(inlined);
   expect(text).toContain('"/api/posts": { GET: posts$list, POST: posts$create },');
   expect(text).toContain("...options.routes,");
-  // The 404 is built once and cloned per request.
-  expect(text).toContain('const notFound = new Response(index ? readFileSync(index) : null, { status: 404, headers: { "content-type": "text/html;charset=utf-8" } });');
-  expect(text).toContain("?? (() => notFound.clone()),");
+  expect(text).toContain("?? dist.fallback,");
   // Only the server entry: no browser mount, and the app's file is no longer a plain provider.
   expect(text).not.toContain("mount(");
   expect(existsSync(join(dir, ".xzor", "server", "app.provider.ts"))).toBe(false);

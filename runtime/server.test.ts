@@ -1,9 +1,9 @@
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Delete, Endpoints, Get, HttpError, Patch, Post, Put, Query, reply, replyAsync, staticFiles, type IServerApplication } from "./server";
+import { Delete, Endpoints, Get, HttpError, Patch, Post, Put, Query, reply, replyAsync, serveDist, staticFiles, type IServerApplication } from "./server";
 import { Run } from "./index";
 
 // The preload's happy-dom replaces Request/Response/Headers; these tests need Bun's.
@@ -154,6 +154,57 @@ describe("staticFiles", () => {
   test("a response can be served twice", async () => {
     expect(await req("/dist/a.js").text()).toBe("raw-a");
     expect(await req("/dist/a.js").text()).toBe("raw-a");
+  });
+});
+
+describe("serveDist", () => {
+  let root = "";
+  const write = (files: Record<string, string>) => {
+    for (const [file, text] of Object.entries(files)) {
+      mkdirSync(join(root, file, ".."), { recursive: true });
+      writeFileSync(join(root, file), text);
+    }
+  };
+  const get = (fn: (req: Request) => Response) => fn(new Request("http://x/"));
+  beforeAll(() => void (root = mkdtempSync(join(tmpdir(), "xzor-serve-"))));
+  afterEach(() => {
+    for (const f of readdirSync(root)) rmSync(join(root, f), { recursive: true, force: true });
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  test("pages.json gives shells, files and the /index.html alias; the fallback is dist/index.html with 404", async () => {
+    const files = { "dist/pages/Home.html": "home", "dist/main.js": "js", "dist/index.html": "built", "index.html": "source" };
+    write(files);
+    write({ "dist/pages.json": JSON.stringify({ routes: { "/": "pages/Home.html" }, files: Object.keys(files).filter((f) => f !== "dist/pages.json").sort() }) });
+    const s = serveDist(root);
+    expect(s.found).toBe(true);
+    expect(await get(s.routes["/"]!).text()).toBe("home");
+    expect(await get(s.routes["/dist/main.js"]!).text()).toBe("js");
+    expect(await get(s.routes["/index.html"]!).text()).toBe("built");
+    const miss = get(s.fallback);
+    expect([miss.status, await miss.text(), miss.headers.get("content-type")]).toEqual([404, "built", "text/html;charset=utf-8"]);
+    expect(get(s.fallback)).not.toBe(miss);
+  });
+  test("no pages.json: index.html only, found is false", async () => {
+    write({ "index.html": "source" });
+    const s = serveDist(root);
+    expect(s.found).toBe(false);
+    expect(Object.keys(s.routes).sort()).toEqual(["/", "/index.html"]);
+    expect(await get(s.routes["/"]!).text()).toBe("source");
+    expect(get(s.routes["/"]!).status).toBe(200);
+    expect(get(s.fallback).status).toBe(404);
+  });
+  test("no pages.json and no index.html: no routes and an empty 404", async () => {
+    const s = serveDist(root);
+    expect([s.found, s.routes]).toEqual([false, {}]);
+    const miss = get(s.fallback);
+    expect([miss.status, await miss.text()]).toEqual([404, ""]);
+  });
+  test("routes off: the fallback only, pages.json unread", () => {
+    write({ "index.html": "source", "dist/pages.json": "not json" });
+    const s = serveDist(root, false);
+    expect([s.found, s.routes]).toEqual([false, {}]);
+    expect(get(s.fallback).status).toBe(404);
   });
 });
 

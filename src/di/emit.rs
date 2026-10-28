@@ -189,8 +189,8 @@ fn path_expr(path: &str, segment: &str) -> String {
 }
 
 /// Names the server entry declares or reads as globals; imports named like them are aliased.
-const SERVER_LOCALS: [&str; 20] = [
-    "app", "options", "server", "bad", "root", "pagesJson", "pages", "shells", "assets", "index", "notFound", "Bun", "Response", "Request", "Number",
+const SERVER_LOCALS: [&str; 16] = [
+    "app", "options", "server", "bad", "root", "dist", "notFound", "Bun", "Response", "Request", "Number",
     "Object", "URL", "JSON", "Record", "console",
 ];
 
@@ -866,9 +866,7 @@ impl<'a> Emitter<'a> {
         let views = r.server.as_ref().is_some_and(|s| s.root.is_some());
         if views {
             let join = self.imports.name("node:path", "join", "join", true);
-            let exists = self.imports.name("node:fs", "existsSync", "existsSync", true);
-            let read = self.imports.name("node:fs", "readFileSync", "readFileSync", true);
-            let files = self.imports.name(SERVER, "staticFiles", "staticFiles", true);
+            let serve = self.imports.name(SERVER, "serveDist", "serveDist", true);
             let up = vec![".."; self.imports.from.len()].join("/");
             if up == ".." {
                 w!(out, "\nconst root = {join}(import.meta.dir, \"..\");");
@@ -876,23 +874,11 @@ impl<'a> Emitter<'a> {
                 // Bundled, this module is `dist/server.js`.
                 w!(out, "\nconst root = {join}(import.meta.dir, import.meta.file === \"server.js\" ? \"..\" : {up:?});");
             }
-            w!(out, "const pagesJson = {join}(root, \"dist\", \"pages.json\");");
-            w!(out, "const shells: Record<string, (req: Request) => Response> = {{}};");
-            w!(out, "let assets: Record<string, (req: Request) => Response> = {{}};");
             // `xzor dev` sets XZOR_DEV: pages are the dev server's, so no shells or assets from an older build.
-            w!(out, "if (!process.env.XZOR_DEV && {exists}(pagesJson)) {{");
-            w!(out, "  const pages: {{ routes: Record<string, string>; files: string[] }} = JSON.parse({read}(pagesJson, \"utf8\"));");
-            w!(out, "  assets = {files}(root, pages.files);");
-            w!(out, "  for (const pattern in pages.routes) shells[pattern] = assets[`/dist/${{pages.routes[pattern]}}`]!;");
-            // The worker precaches and falls back to `/index.html`: the build's copy, with the bundle's tags, answers it.
-            w!(out, "  const home = assets[\"/dist/index.html\"];");
-            w!(out, "  if (home) assets[\"/index.html\"] = home;");
-            w!(out, "}} else if (!process.env.XZOR_DEV) {{");
+            w!(out, "const dist = {serve}(root, !process.env.XZOR_DEV);");
+            w!(out, "if (!dist.found && !process.env.XZOR_DEV) {{");
             w!(out, "  console.log(\"xzor: no dist/pages.json, so no pages or assets are served: run xzor build --minify\");");
             w!(out, "}}");
-            // `xzor build --minify` writes `dist/index.html` with the bundle's script and stylesheet.
-            w!(out, "const index = [{join}(root, \"dist\", \"index.html\"), {join}(root, \"index.html\")].find((f) => {exists}(f));");
-            w!(out, "const notFound = new Response(index ? {read}(index) : null, {{ status: 404, headers: {{ \"content-type\": \"text/html;charset=utf-8\" }} }});");
         } else {
             w!(out, "\nconst notFound = new Response(null, {{ status: 404 }});");
         }
@@ -904,13 +890,16 @@ impl<'a> Emitter<'a> {
         w!(out, "  ...options,");
         // `xzor dev` runs the server on a port of its own, on localhost, whatever the app sets.
         w!(out, "  ...(process.env.XZOR_DEV ? {{ port: Number(process.env.PORT), hostname: \"localhost\" }} : null),");
-        w!(out, "  fetch: options.fetch?.bind(app) ?? (() => notFound.clone()),");
+        if views {
+            w!(out, "  fetch: options.fetch?.bind(app) ?? dist.fallback,");
+        } else {
+            w!(out, "  fetch: options.fetch?.bind(app) ?? (() => notFound.clone()),");
+        }
         // Bun types the handler's `this` as the Server; the app's own handler runs on the app.
         w!(out, "  error: (e) => (e instanceof {http} ? new Response(e.message, {{ status: e.status }}) : options.error?.call(app as never, e) ?? (process.env.XZOR_DEV ? undefined : (console.error(e), new Response(\"Internal Server Error\", {{ status: 500 }})))),");
         w!(out, "  routes: {{");
         if views {
-            w!(out, "    ...shells,");
-            w!(out, "    ...assets,");
+            w!(out, "    ...(dist.found ? dist.routes : null),");
         }
         for (path, hs) in &routes {
             // Bun's route objects have no QUERY key: one function dispatches on the method.
