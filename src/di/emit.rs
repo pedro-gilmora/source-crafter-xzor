@@ -888,8 +888,8 @@ impl<'a> Emitter<'a> {
         // Bun's development error page shows the stack: only `xzor dev` (or the app's own `development`) gets it.
         w!(out, "  development: !!process.env.XZOR_DEV,");
         w!(out, "  ...options,");
-        // `xzor dev` runs the server on a port of its own, on localhost, whatever the app sets.
-        w!(out, "  ...(process.env.XZOR_DEV ? {{ port: Number(process.env.PORT), hostname: \"localhost\" }} : null),");
+        // `xzor dev` runs the server on a port of its own, on localhost, whatever the app sets; otherwise `xzor serve --host` sets HOST (Bun ignores it) and undefined keeps Bun's default.
+        w!(out, "  ...(process.env.XZOR_DEV ? {{ port: Number(process.env.PORT), hostname: \"localhost\" }} : {{ hostname: options.hostname ?? process.env.HOST }}),");
         if views {
             w!(out, "  fetch: options.fetch?.bind(app) ?? dist.fallback,");
         } else {

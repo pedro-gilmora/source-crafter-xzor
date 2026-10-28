@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
 // `xzor serve` (npm/xzor/bin/serve.ts) on built-from-source apps: a browser-only app served from dist/, a server app run through dist/server.js.
@@ -108,13 +109,49 @@ test("a browser-only app with no @page serves index.html and its bundle", async 
   }
 }, 120_000);
 
-test("a server app runs through dist/server.js", async () => {
+/** The server fixture; its `port = 3000` is replaced by `members` so the server takes PORT and HOST from the environment. */
+function serverApp(members = ""): string {
   const dir = `${base}-server`;
   rmSync(dir, { recursive: true, force: true });
   cpSync(join(import.meta.dir, "fixtures", "server"), dir, { recursive: true, filter: (src) => !/[\\/](\.xzor|node_modules|dist)$/.test(src) });
-  // No port: the server takes PORT from the environment.
   const app = join(dir, "server", "app.ts");
-  writeFileSync(app, readFileSync(app, "utf8").replace(/\r?\n\s*port = 3000;/, ""));
+  writeFileSync(app, readFileSync(app, "utf8").replace(/\r?\n\s*port = 3000;/, members));
+  return dir;
+}
+const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family === "IPv4" && !i.internal)?.address;
+const reach = (port: string) => fetch(`http://${lan}:${port}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.status, () => "unreachable");
+
+test("a server app listens on localhost unless --host says otherwise", async () => {
+  const dir = serverApp();
+  const local = await serve(dir, "--port", "0");
+  try {
+    expect((await fetch(new URL("/", local.url))).status).toBe(200);
+    if (lan) expect(await reach(local.url.port)).toBe("unreachable");
+  } finally {
+    await local.stop();
+  }
+  const open = await serve(dir, "--port", "0", "--host", "0.0.0.0");
+  try {
+    if (lan) expect(await reach(open.url.port)).toBe(200);
+    else expect((await fetch(`http://127.0.0.1:${open.url.port}/`)).status).toBe(200);
+  } finally {
+    await open.stop();
+  }
+}, 120_000);
+
+test("a server app's own hostname wins over --host", async () => {
+  const dir = serverApp('\n  hostname = "localhost";');
+  const s = await serve(dir, "--port", "0", "--host", "0.0.0.0");
+  try {
+    expect((await fetch(new URL("/", s.url))).status).toBe(200);
+    if (lan) expect(await reach(s.url.port)).toBe("unreachable");
+  } finally {
+    await s.stop();
+  }
+}, 120_000);
+
+test("a server app runs through dist/server.js", async () => {
+  const dir = serverApp();
   const s = await serve(dir, "--port", "0");
   try {
     expect(existsSync(join(dir, "dist", "server.js"))).toBe(true);

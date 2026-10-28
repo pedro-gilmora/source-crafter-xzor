@@ -803,6 +803,7 @@ test("the generated server: sync and async handlers, query keys, shells and asse
   expect(text).toContain('"/api/posts": { GET: posts$list, POST: posts$create },');
   expect(text).toContain("...options.routes,");
   expect(text).toContain("?? dist.fallback,");
+  expect(text).toContain('{ port: Number(process.env.PORT), hostname: "localhost" } : { hostname: options.hostname ?? process.env.HOST }');
   // Only the server entry: no browser mount, and the app's file is no longer a plain provider.
   expect(text).not.toContain("mount(");
   expect(existsSync(join(dir, ".xzor", "server", "app.provider.ts"))).toBe(false);
