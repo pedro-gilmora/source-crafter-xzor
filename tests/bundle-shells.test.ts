@@ -111,6 +111,16 @@ test("a page the entry imports itself preloads only what the entry already loads
   }
 }, 120_000);
 
+test("a minified build with index.html and no @page still writes pages.json, with no routes and no maps", () => {
+  const { dir, exitCode, out } = build("nopages", index(), { "Home.xzor": `<p>home</p>\n`, "main.ts": `import { mount } from "@source-crafter/xzor-runtime";\nimport Home from "./Home.xzor";\n\nmount(Home, document.getElementById("app")!);\n` });
+  expect(exitCode, out).toBe(0);
+  const manifest = JSON.parse(readFileSync(join(dir, "dist", "pages.json"), "utf8")) as { routes: Record<string, string>; files: string[] };
+  expect(manifest.routes).toEqual({});
+  expect(manifest.files).toContain("index.html");
+  expect(manifest.files).toContain("dist/main.js");
+  expect(manifest.files.some((f) => f.endsWith(".map"))).toBe(false);
+}, 120_000);
+
 test("no index.html writes no shells", () => {
   const { dir, exitCode, out } = build("noindex", undefined);
   expect(exitCode, out).toBe(0);

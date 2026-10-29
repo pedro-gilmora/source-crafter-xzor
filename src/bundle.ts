@@ -1227,8 +1227,8 @@ async function main(entry: string | undefined, outdir: string, hot = false, watc
   const listed = new Set(server ? [] : ["index.html"]);
   const pagesJson = join(outdir, "pages.json");
   let routes: Record<string, string> | undefined;
-  // A server app with views gets it with or without `@page`s (its 404 body and `/index.html`).
-  if (minify && result && (pagesFile || server)) {
+  // Every minified build with an index.html gets it: it is the allow-list `serveDist` serves from (an app with no `@page` has no routes).
+  if (minify && result) {
     const index = join(dirname(resolve(outdir)), "index.html");
     if (existsSync(index)) {
       let template = readFileSync(index, "utf8");

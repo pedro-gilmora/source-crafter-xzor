@@ -102,8 +102,8 @@ export function staticFiles(root: string, files: string[]): Record<string, (req:
 
 /**
  * What a production `dist/` under `root` serves: the page shells and files `dist/pages.json` lists (plus `/index.html` as the build's copy),
- * and a fallback answering 404 with `dist/index.html` (or `index.html`). Without `pages.json`, `found` is false and `routes` holds the
- * project's `index.html` (at `/` too) and the files in `dist/`. `withRoutes` false reads no `pages.json` and serves only the fallback.
+ * and a fallback answering 404 with `dist/index.html` (or `index.html`). Without `pages.json`, `found` is false and `routes` holds only the
+ * project's `index.html` (at `/` too). `withRoutes` false reads no `pages.json` and serves only the fallback.
  */
 export function serveDist(root: string, withRoutes = true): { routes: Record<string, (req: Request) => Response>; fallback: (req: Request) => Response; found: boolean } {
   const pagesJson = join(root, "dist", "pages.json");
@@ -117,10 +117,10 @@ export function serveDist(root: string, withRoutes = true): { routes: Record<str
     // The worker precaches and falls back to `/index.html`: the build's copy, with the bundle's tags, answers it.
     const home = routes["/dist/index.html"];
     if (home) routes["/index.html"] = home;
+    // No `@page`: the project's index.html is the app.
+    else if (routes["/index.html"] && !Object.keys(pages.routes).length) routes["/"] = routes["/index.html"];
   } else if (withRoutes && existsSync(join(root, "index.html"))) {
-    const files = ["index.html"];
-    for (const f of new Bun.Glob("dist/**/*").scanSync({ cwd: root })) if (!/\.(br|gz)$/.test(f)) files.push(f);
-    routes = staticFiles(root, files);
+    routes = staticFiles(root, ["index.html"]);
     routes["/"] = routes["/index.html"]!;
   }
   const index = [join(root, "dist", "index.html"), join(root, "index.html")].find((f) => existsSync(f));

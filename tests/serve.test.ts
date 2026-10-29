@@ -22,6 +22,12 @@ const plain: Record<string, string> = {
   "main.ts": `import { mount } from "@source-crafter/xzor-runtime";\nimport Home from "./Home.xzor";\n\nmount(Home, document.getElementById("app")!);\n`,
 };
 
+/** What lies in or beside dist/ but is not part of the build's served files. */
+const hidden = ["/dist/main.js.map", "/main.ts", "/tsconfig.json", "/.env", "/dist/pages.json"];
+const expectHidden = async (url: URL) => {
+  for (const path of hidden) expect([path, (await fetch(new URL(path, url))).status]).toEqual([path, 404]);
+};
+
 function browserApp(name: string, files: Record<string, string>): string {
   const dir = join(base, name);
   rmSync(dir, { recursive: true, force: true });
@@ -34,6 +40,7 @@ function browserApp(name: string, files: Record<string, string>): string {
   };
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
   writeFileSync(join(dir, "index.html"), html);
+  writeFileSync(join(dir, ".env"), "SECRET=1\n");
   for (const [file, text] of Object.entries(files)) writeFileSync(join(dir, file), text);
   return dir;
 }
@@ -90,6 +97,8 @@ test("a browser-only app is served from dist/: page shells, files, and index.htm
     expect([js.status, await js.text()]).toEqual([200, dist("main.js")]);
     const miss = await fetch(new URL("/nope", s.url));
     expect([miss.status, await miss.text()]).toEqual([404, html]);
+    expect(existsSync(join(dir, "dist", "main.js.map"))).toBe(true);
+    await expectHidden(s.url);
   } finally {
     await s.stop();
   }
@@ -104,6 +113,8 @@ test("a browser-only app with no @page serves index.html and its bundle", async 
     expect((await fetch(new URL("/index.html", s.url))).status).toBe(200);
     expect((await fetch(new URL("/dist/main.js", s.url))).status).toBe(200);
     expect((await fetch(new URL("/nope", s.url))).status).toBe(404);
+    expect(existsSync(join(dir, "dist", "main.js.map"))).toBe(true);
+    await expectHidden(s.url);
   } finally {
     await s.stop();
   }
@@ -155,6 +166,9 @@ test("a server app runs through dist/server.js", async () => {
   const s = await serve(dir, "--port", "0");
   try {
     expect(existsSync(join(dir, "dist", "server.js"))).toBe(true);
+    writeFileSync(join(dir, ".env"), "SECRET=1\n");
+    await expectHidden(s.url);
+    expect((await fetch(new URL("/dist/server.js", s.url))).status).toBe(404);
     // An endpoint: only the server answers it.
     const api = await fetch(new URL("/api/posts/x", s.url));
     expect(api.status).toBe(404);

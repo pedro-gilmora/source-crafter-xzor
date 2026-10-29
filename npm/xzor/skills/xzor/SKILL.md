@@ -25,7 +25,7 @@ bun add @source-crafter/xzor-runtime
 bun x xzor init          # package.json scripts, tsconfig.json, .gitignore (adds only what is missing); --server starts a server app (client/, server/, contracts/ for shared types, @types/bun)
 bun run dev              # xzor dev: build, serve (SPA fallback), print the URL; saving a .xzor patches the open page keeping state, other changes reload
 bun x xzor build         # one-off production build into dist/
-bun x xzor serve [dir] [--port N] [--host H]   # build --minify and serve it as shipped (server app: dist/server.js; browser-only: shells and assets from dist/); localhost unless --host
+bun x xzor serve [dir] [--port N] [--host H]   # build --minify and serve it as shipped (server app: dist/server.js; browser-only: shells and assets from dist/); localhost unless --host; a server app's own port/hostname members override both flags, and `bun dist/server.js` reads the HOST env when the app sets no hostname
 ```
 
 `xzor build --minify` splits a chunk per `@page` and `@async` component and, with an `index.html`, also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes`: pattern to shell; `files`: what to serve); every `--minify` build, with or without `index.html`, also writes `.br`/`.gz` copies of every text output. A server app also gets `dist/server.js` (below). Generated: never edit or commit `dist/`.

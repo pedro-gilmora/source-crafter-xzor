@@ -38,7 +38,7 @@ Then:
 bun run dev        # builds, serves the app (open the printed URL); saving a .xzor updates it in place, keeping state
 ```
 
-`bun x xzor serve [dir] [--port N] [--host H]` builds with `--minify` and serves the app the way it ships: a server app runs its `dist/server.js`; a browser-only app is served from `dist/` (page shells, hashed assets, `index.html` with status 404 for unknown paths). It listens on `localhost`; `--host <name>` (bare `--host` is every interface) opens it. In this repo, `bun run serve examples/blog`.
+`bun x xzor serve [dir] [--port N] [--host H]` builds with `--minify` and serves the app the way it ships: a server app runs its `dist/server.js`; a browser-only app is served from `dist/` (page shells, hashed assets, `index.html` with status 404 for unknown paths). It listens on `localhost`; `--host <name>` (bare `--host` is every interface) opens it. A server app's own `port`/`hostname` members override `--port`/`--host`, and `bun dist/server.js` reads the `HOST` env when the app sets no `hostname`. In this repo, `bun run serve examples/blog`.
 
 <details>
 <summary>Prefer to set it up by hand?</summary>

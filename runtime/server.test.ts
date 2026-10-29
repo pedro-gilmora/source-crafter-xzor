@@ -185,14 +185,21 @@ describe("serveDist", () => {
     expect([miss.status, await miss.text(), miss.headers.get("content-type")]).toEqual([404, "built", "text/html;charset=utf-8"]);
     expect(get(s.fallback)).not.toBe(miss);
   });
-  test("no pages.json: index.html only, found is false", async () => {
-    write({ "index.html": "source" });
+  test("no pages.json: index.html only (no dist/ files, maps included), found is false", async () => {
+    write({ "index.html": "source", "dist/main.js": "js", "dist/main.js.map": "map" });
     const s = serveDist(root);
     expect(s.found).toBe(false);
     expect(Object.keys(s.routes).sort()).toEqual(["/", "/index.html"]);
     expect(await get(s.routes["/"]!).text()).toBe("source");
     expect(get(s.routes["/"]!).status).toBe(200);
     expect(get(s.fallback).status).toBe(404);
+  });
+  test("pages.json without routes serves its files and index.html at /", async () => {
+    write({ "index.html": "source", "dist/main.js": "js", "dist/main.js.map": "map", "dist/pages.json": JSON.stringify({ routes: {}, files: ["dist/main.js", "index.html"] }) });
+    const s = serveDist(root);
+    expect(s.found).toBe(true);
+    expect(Object.keys(s.routes).sort()).toEqual(["/", "/dist/main.js", "/index.html"]);
+    expect(await get(s.routes["/"]!).text()).toBe("source");
   });
   test("no pages.json and no index.html: no routes and an empty 404", async () => {
     const s = serveDist(root);
