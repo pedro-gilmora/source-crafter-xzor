@@ -28,7 +28,7 @@
   <Code name="run" />
   <p>
     <code>xzor serve</code> builds with <code>--minify</code> and serves the app the way it ships (<code>--port</code>, <code>--host</code>;
-    it listens on <code>localhost</code> unless you pass <code>--host</code>).
+    it listens on <code>127.0.0.1</code> unless you pass <code>--host</code>).
   </p>
   <p>
     Save a <code>.xzor</code> file and the open page shows the change at once. Only the components you changed are

@@ -82,7 +82,7 @@ test("a browser-only app is served from dist/: page shells, files, and index.htm
   const dir = browserApp("pages", sources);
   const s = await serve(dir, "--port", "0");
   try {
-    expect(s.url.hostname).toBe("localhost");
+    expect(s.url.hostname).toBe("127.0.0.1");
     const dist = (file: string) => readFileSync(join(dir, "dist", file), "utf8");
     const home = await fetch(new URL("/", s.url));
     expect(home.status).toBe(200);
@@ -130,7 +130,7 @@ function serverApp(members = ""): string {
 const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family === "IPv4" && !i.internal)?.address;
 const reach = (port: string) => fetch(`http://${lan}:${port}/`, { signal: AbortSignal.timeout(3000) }).then((r) => r.status, () => "unreachable");
 
-test("a server app listens on localhost unless --host says otherwise", async () => {
+test("a server app listens on 127.0.0.1 unless --host says otherwise", async () => {
   const dir = serverApp();
   const local = await serve(dir, "--port", "0");
   try {
@@ -149,7 +149,7 @@ test("a server app listens on localhost unless --host says otherwise", async () 
 }, 120_000);
 
 test("a server app's own hostname wins over --host", async () => {
-  const dir = serverApp('\n  hostname = "localhost";');
+  const dir = serverApp('\n  hostname = "127.0.0.1";');
   const s = await serve(dir, "--port", "0", "--host", "0.0.0.0");
   try {
     expect((await fetch(new URL("/", s.url))).status).toBe(200);

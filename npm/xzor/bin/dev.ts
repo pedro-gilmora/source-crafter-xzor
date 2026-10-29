@@ -60,10 +60,11 @@ export async function findServerEntry(root: string): Promise<string | undefined>
   }
 }
 
-/** `--host [name]` opts the dev server into an interface other than localhost (bare: every one); the rest goes to `xzor build`. */
+/** `--host [name]` opts the dev server into an interface other than loopback (bare: every one); the rest goes to `xzor build`. */
 export function parseHost(args: string[]): { hostname: string; rest: string[] } {
   const rest: string[] = [];
-  let hostname = "localhost";
+  // Not "localhost": on Linux Bun binds it to ::1 only, while Bun's fetch (the dev proxy) resolves it to 127.0.0.1.
+  let hostname = "127.0.0.1";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--host") hostname = args[i + 1] && !args[i + 1]!.startsWith("-") ? args[++i]! : "0.0.0.0";

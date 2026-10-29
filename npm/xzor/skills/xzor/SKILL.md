@@ -25,7 +25,7 @@ bun add @source-crafter/xzor-runtime
 bun x xzor init          # package.json scripts, tsconfig.json, .gitignore (adds only what is missing); --server starts a server app (client/, server/, contracts/ for shared types, @types/bun)
 bun run dev              # xzor dev: build, serve (SPA fallback), print the URL; saving a .xzor patches the open page keeping state, other changes reload
 bun x xzor build         # one-off production build into dist/
-bun x xzor serve [dir] [--port N] [--host H]   # build --minify and serve it as shipped (server app: dist/server.js; browser-only: shells and assets from dist/); localhost unless --host; a server app's own port/hostname members override both flags, and `bun dist/server.js` reads the HOST env when the app sets no hostname
+bun x xzor serve [dir] [--port N] [--host H]   # build --minify and serve it as shipped (server app: dist/server.js; browser-only: shells and assets from dist/); 127.0.0.1 unless --host; a server app's own port/hostname members override both flags, and `bun dist/server.js` reads the HOST env when the app sets no hostname
 ```
 
 `xzor build --minify` splits a chunk per `@page` and `@async` component and, with an `index.html`, also writes `dist/pages/<Page>.html` (that page's shell, preloading its chunks), `dist/pages.json` (`routes`: pattern to shell; `files`: what to serve); every `--minify` build, with or without `index.html`, also writes `.br`/`.gz` copies of every text output. A server app also gets `dist/server.js` (below). Generated: never edit or commit `dist/`.
@@ -242,7 +242,7 @@ export class Notes {
 - Views (`@inject`) reach only services the browser can load: the build registers in the browser what the views reach and on the server what the endpoints and the app reach. A view reaching `Request`, an `@Endpoints` class or a service importing `bun`, `bun:*` or `node:*` is a build error, as is importing an `@Endpoints` class as a value in browser code (use `import type`).
 - Two handlers for one method and path are a build error.
 - `index.html` is yours, with an empty `<body>`: the views render into it and the build adds the bundle's tags. No `main.ts` or `mount()`.
-- Run: `bun run dev` (the server runs behind the dev server, which listens on `localhost` only: `xzor dev --host <name>` opens it up; any `.ts` change restarts the server, `.xzor` edits patch in place). Ship: `xzor build --minify`, then `bun dist/server.js` (`xzor serve` does both): it serves the shells, assets (hashed chunks and fonts `immutable` with an ETag, the rest `no-cache` with `Last-Modified`; brotli, gzip) and endpoints, and unknown paths get `index.html` with status 404 so `@notFound` renders.
+- Run: `bun run dev` (the server runs behind the dev server, which listens on `127.0.0.1` only: `xzor dev --host <name>` opens it up; any `.ts` change restarts the server, `.xzor` edits patch in place). Ship: `xzor build --minify`, then `bun dist/server.js` (`xzor serve` does both): it serves the shells, assets (hashed chunks and fonts `immutable` with an ETag, the rest `no-cache` with `Last-Modified`; brotli, gzip) and endpoints, and unknown paths get `index.html` with status 404 so `@notFound` renders.
 - Not supported: body validation, middleware, streaming or WebSocket endpoints (use the app's `routes`/`websocket` members), more than one `@Run` class per project.
 
 ## Contracts and generated clients

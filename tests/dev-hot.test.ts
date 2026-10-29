@@ -85,7 +85,7 @@ test("an endpoint edit restarts the server and the new JSON is served", async ()
   const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
   await GlobalRegistrator.unregister();
   try {
-    const base = `http://localhost:${port}`;
+    const base = `http://127.0.0.1:${port}`;
     const until = async (path: string, ok: (status: number, body: string) => boolean, init?: RequestInit) => {
       const end = Date.now() + 90_000;
       let last = "";
@@ -139,8 +139,8 @@ test("an endpoint edit restarts the server and the new JSON is served", async ()
   }
 }, 240_000);
 
-test("xzor dev binds to localhost; --host opts into another interface and is not passed to the build", () => {
-  expect(parseHost(["--no-check"])).toEqual({ hostname: "localhost", rest: ["--no-check"] });
+test("xzor dev binds to 127.0.0.1; --host opts into another interface and is not passed to the build", () => {
+  expect(parseHost(["--no-check"])).toEqual({ hostname: "127.0.0.1", rest: ["--no-check"] });
   expect(parseHost(["--host", "192.168.1.5", "--no-check"])).toEqual({ hostname: "192.168.1.5", rest: ["--no-check"] });
   expect(parseHost(["--host=::1"])).toEqual({ hostname: "::1", rest: [] });
   expect(parseHost(["--host"])).toEqual({ hostname: "0.0.0.0", rest: [] });

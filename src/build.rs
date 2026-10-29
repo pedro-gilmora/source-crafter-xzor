@@ -759,6 +759,8 @@ pub fn provider_files(root: &Path) -> Vec<PathBuf> {
     }
     files.retain(|p| fs::read_to_string(p).is_ok_and(|t| declares_provider(&t)));
     files.iter_mut().for_each(|p| *p = p.strip_prefix(root).map_or_else(|_| p.clone(), Path::to_path_buf));
+    // Directory order differs across platforms: sorted, the analyzer sees the same input everywhere.
+    files.sort();
     files
 }
 
