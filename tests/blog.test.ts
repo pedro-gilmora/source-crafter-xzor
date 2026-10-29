@@ -28,11 +28,13 @@ async function printedUrl(out: ReadableStream<Uint8Array>): Promise<URL> {
   throw new Error(`the server printed no URL:\n${text}`);
 }
 
+// Generous: under the full suite a lazy chunk plus a server round trip can take seconds.
 const until = async (what: string, ok: () => boolean): Promise<void> => {
-  for (let i = 0; i < 200; i++) {
+  for (const end = performance.now() + 15_000; performance.now() < end; ) {
     if (ok()) return;
     await new Promise((r) => setTimeout(r, 10));
   }
+  if (ok()) return;
   throw new Error(`timed out waiting for ${what}:\n${document.body.innerHTML.slice(0, 600)}`);
 };
 

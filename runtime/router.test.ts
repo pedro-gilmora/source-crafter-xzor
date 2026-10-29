@@ -764,6 +764,34 @@ test("the 1500 ms cap holds when a lazy page's import never resolves", async () 
   });
 });
 
+// Loads, then renders a child that loads its own data: the second wait starts in a later re-render.
+class LoadThenChild extends ComponentBase {
+  ready = false;
+  protected override async onInitializedAsync(): Promise<void> {
+    await later(5);
+    this.ready = true;
+  }
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    if (this.ready) b.addComponent(LoadOnInit, {});
+  }
+}
+
+test("the transition's update also waits for hooks started by the re-render after the page's data", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const table: RouteTable = [
+      ...asyncPages,
+      { tag: undefined, pattern: "/nested", component: LoadThenChild, match: (s) => (s.length === 1 && s[0] === "nested" ? {} : null) },
+    ];
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table });
+    history.replaceState(null, "", "/nested");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>init</h1></aside>");
+  });
+});
+
 test("outside a transition the settle path collects nothing", async () => {
   history.replaceState(null, "", "/");
   const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });

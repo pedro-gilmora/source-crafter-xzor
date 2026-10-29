@@ -982,10 +982,27 @@ function batch(fn: () => void): void {
 
 function settle(component: ComponentBase, result: Promise<void> | void, node?: VComponent): void {
   if (!(result instanceof Promise)) return;
-  const done = result.then(() => update(component), node?.onError && ((err: unknown) => fail(node, err)));
-  // `done` resolves after the update, so the transition captures the rendered data; errors are still reported.
-  if (awaiting) awaiting.push(done.catch(rethrow));
+  const outer = awaiting;
+  const done = result.then(
+    () => (outer ? collect(() => update(component)) : update(component)),
+    node?.onError && ((err: unknown) => fail(node, err)),
+  );
+  // `done` resolves after the update and the hooks it starts, so the transition captures the rendered data; errors are still reported.
+  if (outer) outer.push(done.then(noop, rethrow));
   else void done;
+}
+
+/** Runs `fn` collecting the async hooks it starts, for a transition still waiting; resolves when they settle. */
+function collect(fn: () => void): Promise<unknown> {
+  const started: Promise<void>[] = [];
+  const prev = awaiting;
+  awaiting = started;
+  try {
+    fn();
+  } finally {
+    awaiting = prev;
+  }
+  return Promise.allSettled(started);
 }
 
 /** `@catch`: the failure is reported with the navigation the page belongs to, so a late one can be dropped. */
@@ -1297,17 +1314,7 @@ function createComponent(v: VComponent, app: IApplication | undefined, scope: Ca
     // Inside a transition's update, the chunk and the hooks of the page that arrives with it are awaited too.
     const outer = awaiting;
     const arrived = made.then(
-      (instance) => {
-        if (!outer) return void arrive(mounted, instance);
-        const started: Promise<void>[] = [];
-        awaiting = started;
-        try {
-          arrive(mounted, instance);
-        } finally {
-          awaiting = undefined;
-        }
-        return Promise.allSettled(started);
-      },
+      (instance) => (outer ? collect(() => arrive(mounted, instance)) : arrive(mounted, instance)),
       (err) => {
         const latest = mounted.latest;
         mounted.latest = undefined;

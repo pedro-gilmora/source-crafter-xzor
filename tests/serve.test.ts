@@ -51,9 +51,7 @@ async function serve(dir: string, ...args: string[]): Promise<{ url: URL; out: s
   const proc = Bun.spawn(["bun", script, exe, dir, ...args], { cwd: repo, stdout: "pipe", stderr: "inherit" });
   running.push(proc);
   const stop = async () => {
-    // Killing only the launcher would leave a server app's `dist/server.js` running.
-    if (process.platform === "win32") Bun.spawnSync(["taskkill", "/PID", String(proc.pid), "/T", "/F"]);
-    else proc.kill();
+    proc.kill();
     await proc.exited;
   };
   const decoder = new TextDecoder();
@@ -178,6 +176,9 @@ test("a server app runs through dist/server.js", async () => {
   } finally {
     await s.stop();
   }
+  // Killing `xzor serve` (a forced kill on Windows) also ends the server it started.
+  const gone = await Bun.sleep(500).then(() => fetch(s.url, { signal: AbortSignal.timeout(2000) }).then(() => "listening", () => "gone"));
+  expect(gone).toBe("gone");
 }, 120_000);
 
 test("a failed build stops before serving", async () => {
