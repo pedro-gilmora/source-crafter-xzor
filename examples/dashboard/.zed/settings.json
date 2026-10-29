@@ -1,0 +1,10 @@
+{
+  "languages": { "XZor": { "semantic_tokens": "combined" } },
+  "lsp": {
+    "xzor": {
+      "binary": { "path": "D:/Code/rs-zor/target/debug/xzor.exe", "arguments": ["lsp"] },
+      "initialization_options": { "syntaxTokens": true }
+    }
+  }
+}
+
