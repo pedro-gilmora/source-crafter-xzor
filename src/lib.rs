@@ -472,7 +472,8 @@ mod tests {
         assert!(g.code.contains(&format!("\"--{id}-0\", () => String(this.w) + \"%\"")), "{}", g.code);
         assert!(g.code.contains(&format!("\"data-{id}-0\", () => this.on")), "{}", g.code);
         // The content passed to `Box` renders in its DOM: it carries the scope and the bindings too.
-        assert!(g.code.contains(&format!("__b.addAttribute(\"data-xz\", \"{id}\")")), "{}", g.code);
+        assert!(g.code.contains(&format!("[\"p\", [\"data-xz\", \"{id}\"], \"fill\"]")), "{}", g.code);
+        assert_eq!(g.code.matches(&format!("\"--{id}-0\", () => String(this.w) + \"%\"")).count(), 2, "{}", g.code);
         assert!(!g.code.contains("<style"), "{}", g.code);
     }
 

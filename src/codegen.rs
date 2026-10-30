@@ -4076,7 +4076,7 @@ mod tests {
     }
 
     #[test]
-    fn fine_components_build_the_dom_once_with_bindings() {
+    fn components_build_the_dom_once_with_bindings() {
         let src = "@fine\n@code {\ncount = 0;\nlabel = \"\";\nok = false;\nteam: Worker[] = [];\nel?: HTMLElement;\ninc() { this.count++; }\n}\n<div class=\"team\" title=\"n @label\">\n<button @onclick=\"inc\" @ref=\"el\">@count</button>\n<input @bind=\"label\" @bind:event=\"oninput\" />\n<input type=\"checkbox\" @bind=\"ok\" />\n@if (count > 1) {\n<p>many</p>\n} else {\n<p>few</p>\n}\n@for (const w of team) {\n<li>@w.name <b>@(w.hours * 2)</b></li>\n}\n@for (let i = 0; i < count; i++) {\n<i>@i</i>\n}\n@for (const [k, v] of Object.entries(team)) {\n@if (v) {\n<u>@k</u>\n}\n}\n@{ const total = count * 2; }\n<span>@total</span>\n</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
@@ -4127,7 +4127,7 @@ mod tests {
     }
 
     #[test]
-    fn fine_getters_are_cached_unless_volatile() {
+    fn getters_are_cached_unless_volatile() {
         let src = "@fine\n@code {\n  n = 1;\n  get total(): number { return this.n * 2; }\n  @Volatile get now(): number { return Date.now(); }\n  static get shared(): number { return 1; }\n  set total2(v: number) {}\n}\n<p>@total @now</p>";
         let g = gen_with(src, &[]);
         assert!(g.code.contains("static { __dom.memo(this, [\"total\"]); }"), "{}", g.code);
@@ -4246,7 +4246,7 @@ mod tests {
     }
 
     #[test]
-    fn fine_loops_render_their_else_when_no_pass_ran() {
+    fn keyed_loops_render_their_else_when_no_pass_ran() {
         let src = "@fine\n@code { xs: string[] = []; }\n<ul>\n@for (const x of xs) {\n<li>@x</li>\n} else {\n<li>@xs.length</li>\n}\n</ul>\n@for (let i = 0; i < xs.length; i++) {\n<b>@i</b>\n} else {\n<u/>\n}";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
@@ -4259,7 +4259,7 @@ mod tests {
     }
 
     #[test]
-    fn fine_loops_key_their_passes() {
+    fn loops_key_their_passes() {
         let src = "@fine\n@code {\n  @Key(\"sku\") lines: { sku: string; qty: number }[] = [];\n  team: Record<string, number> = {};\n  n = 0;\n}\n<ul>@for (const l of lines.filter((x) => x.qty > 0)) {<li>@l.sku</li>}</ul>\n<ol>@for (const [k, v] of Object.entries(team)) {<li>@k @if (v > 1) {<b>many</b>}</li>} else {<p>none</p>}</ol>\n<p>@for (let i = 0; i < n; i++) @key(i * 2) {<i>@i</i>}</p>\n@for (const r of lines) @key(r.sku + r.qty) {<s>@r.sku</s>}\n@for (const [a, b] of Object.entries(team)) { @{ const c = b; } <u>@a @c</u> }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
@@ -4286,7 +4286,7 @@ mod tests {
     }
 
     #[test]
-    fn a_row_elements_key_keys_its_fine_loop() {
+    fn a_row_elements_key_keys_its_loop() {
         let src = "@fine\n@code { rows: { id: number }[] = []; n = 0; }\n<ul>@for (const r of rows) {\n  <li @key=\"r.id\">@r.id</li>\n}</ul>\n<p>@for (let i = 0; i < n; i++) {<i @key=\"i * 2\">@i</i>}</p>\n<div>@for (const r of rows) {<Row @key=\"r.id\" />}</div>";
         let g = gen_with(src, &[("Row", "")]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
@@ -4296,7 +4296,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fine_element_key_that_keys_no_row_is_an_error() {
+    fn an_element_key_that_keys_no_row_is_an_error() {
         let rows = "@fine\n@code { rows: { id: number }[] = []; }\n";
         for body in [
             "<p @key=\"1\">x</p>",
@@ -4316,25 +4316,25 @@ mod tests {
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // No two-comment templates: the anchors go straight in.
         assert!(!g.code.contains("dom.template([null, null])") && !g.code.contains("dom.template([null])"), "{}", g.code);
-        has("= dom.anchors(__p);\n");
+        has("= __dom.anchors(__p);\n");
         // A keyed loop only needs its end: one anchor in its element's template.
         has("[\"ol\", 0, null]");
         // A row that is only a pass-only `@if` builds it straight into the row.
-        has("const __p = __pass(__i++, [k, v]);\n          if (__p !== undefined) {\n            if (v > 1) {");
+        has("const __p = __pass(__i++, [k, v]);\n        if (__p !== undefined) {\n          if (v > 1) {");
         // A member of a pass value can change while the value stays: `t.done` and `else if` conditions keep a region.
         let g = gen_with("@fine\n@code { m: Record<string, { done: boolean }> = {}; }\n<ol>@for (const [k, t] of Object.entries(m)) {@if (k === \"a\") {<b/>} else if (t.done) {<i/>}}</ol>", &[]);
         assert!(g.code.contains("dom.branchAt("), "{}", g.code);
     }
 
     #[test]
-    fn fine_nested_flow_in_a_region_gets_its_own_regions_and_lists() {
+    fn nested_flow_in_a_region_gets_its_own_regions_and_lists() {
         let src = "@fine\n@code { open = false; items = [\"a\"]; text = \"\"; }\n@if (open) {\n<dialog>\n<input @bind=\"text\" />\n@if (text.length > 2) {\n<p>long</p>\n}\n<ul>\n@for (const it of items) {\n<li>@it</li>\n}\n</ul>\n</dialog>\n}";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The outer region only reads `open`: the nested `@if` and `@for` bind on their own.
-        has("dom.branchAt(_e0, (__p) => {\n        if (this.open) {\n          if (!__p) return 0;\n          const _e1 = __t0() as El<\"dialog\">;");
-        has("dom.branchAt(_e3, (__p) => {\n            if (this.text.length > 2) {");
-        has("dom.listAt(_e5, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
+        has("__dom.branchAt(_e0, (__p) => {\n      if (this.open) {\n        if (!__p) return 0;\n        const _e1 = __t0() as El<\"dialog\">;");
+        has("__dom.branchAt(_e3, (__p) => {\n          if (this.text.length > 2) {");
+        has("__dom.listAt(_e5, () => this.items, [\n          (it) => it,\n        ], (__p) => {");
         assert!(!g.code.contains("for (const it of"), "{}", g.code);
     }
 
@@ -4343,36 +4343,36 @@ mod tests {
         let src = "@fine\n@code { tab = \"a\"; n = 1; }\n@show:if (tab === \"a\") {\n<p>@n</p>\n} else {\n@pause\n<section>@n</section>\n}\n<div>@show:switch (n) { case 1: <b>one</b> default: <i>@pause { <u>@n</u> }</i> }</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("dom.showAt(_e1, (__p) => {\n        if (this.tab === \"a\") {\n          if (!__p) return 0;\n");
-        has("} else {\n          if (!__p) return 1;\n");
-        has("        }\n        return 2;\n      });");
+        has("__dom.showAt(_e1, (__p) => {\n      if (this.tab === \"a\") {\n        if (!__p) return 0;\n");
+        has("} else {\n        if (!__p) return 1;\n");
+        has("      }\n      return 2;\n    });");
         // Bare `@pause` takes the whole branch; `@pause { }` its block, at any depth.
-        assert_eq!(g.code.matches("dom.pauseAt(").count(), 2, "{}", g.code);
-        has("case 1: {\n            if (!__p) return 0;\n");
+        assert_eq!(g.code.matches("__dom.pauseAt(").count(), 2, "{}", g.code);
+        has("case 1: {\n          if (!__p) return 0;\n");
         let err = |src: &str| generate_with(&parse(&format!("@fine\n@code {{ a = 1; }}\n{src}")).unwrap().0, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
         for top in ["text", "@a", "@if (a) {<b/>}", "<Child />"] {
             assert!(err(&format!("@show:if (a) {{ {top} }}")).contains("wrap it in an element"), "{top}");
         }
         assert!(err("@show:if (a) { <b/> @pause <i/> }").contains("bare @pause goes first in a @show branch"));
         assert!(err("<p>@pause { <b/> }</p>").contains("@pause belongs in a @show:if or @show:switch branch"));
-        let doc = parse("@render\n@code { a = 1; }\n@show:if (a) { <b/> }").unwrap().0;
-        let e = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
-        assert!(e.contains("can't go inside a component's content"), "{e}");
+        // In a component's content (a slot fill) it builds like anywhere else.
+        let g = gen_with("@code { a = 1; }\n<Card>@show:if (a) { <b/> }</Card>", &[("Card", "<p/>")]);
+        assert!(g.code.contains("__dom.showAt("), "{}", g.code);
     }
 
     #[test]
-    fn fine_if_and_switch_rebuild_only_when_their_branch_changes() {
+    fn if_and_switch_rebuild_only_when_their_branch_changes() {
         let src = "@fine\n@code { count = 3; list: { id: number }[] = []; kind = \"a\"; }\n@if (!count) {\n<p>none</p>\n} else if (count > 9) {\n<b>many</b>\n} else {\n<ul>@for (const n of list) @key(n.id) {<li>@n.id</li>}</ul>\n}\n@switch (kind) { case \"a\": case \"b\": <i>ab</i> default: <u>other</u> }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // Called without a parent it only picks the branch: same branch, same DOM.
-        has("dom.branchAt(_e1, (__p) => {\n        if (!this.count) {\n          if (!__p) return 0;\n");
-        has("} else if (this.count > 9) {\n          if (!__p) return 1;\n");
-        has("} else {\n          if (!__p) return 2;\n");
-        has("        }\n        return 3;\n      });");
-        has("case \"b\": {\n            if (!__p) return 0;\n");
-        has("default: {\n            if (!__p) return 1;\n");
-        has("        }\n        return 2;\n      });");
+        has("__dom.branchAt(_e1, (__p) => {\n      if (!this.count) {\n        if (!__p) return 0;\n");
+        has("} else if (this.count > 9) {\n        if (!__p) return 1;\n");
+        has("} else {\n        if (!__p) return 2;\n");
+        has("      }\n      return 3;\n    });");
+        has("case \"b\": {\n          if (!__p) return 0;\n");
+        has("default: {\n          if (!__p) return 1;\n");
+        has("      }\n      return 2;\n    });");
         // Code run while a branch builds would go stale in a kept branch: that one stays a plain region.
         let g = gen_with("@fine\n@code { n = 1; }\n@if (n > 0) {\n@{ const twice = n * 2; }\n<p>@twice</p>\n}", &[]);
         assert!(g.code.contains("dom.regionAt(") && !g.code.contains("branchAt"), "{}", g.code);
@@ -4382,17 +4382,17 @@ mod tests {
         assert!(g.code.contains("if (!__p) return 0;"), "{}", g.code);
         // A row whose nested list or child component closes over the item can be given a new one (#6).
         let g = gen_with("@fine\n@code { people: { id: number; roles: string[] }[] = []; ROLES = [\"a\"]; }\n<ul>@for (const p of people) @key(p.id) {<li>@for (const r of ROLES) @key(r) {<b>@(p.roles.includes(r) ? r : \"\")</b>}</li>}</ul>", &[]);
-        assert!(g.code.contains("], (__p, p) => {\n        dom.rowItem((__v: typeof p) => { p = __v; });\n"), "{}", g.code);
+        assert!(g.code.contains("], (__p, p) => {\n      __dom.rowItem((__v: typeof p) => { p = __v; });\n"), "{}", g.code);
     }
 
     #[test]
-    fn fine_rows_share_their_reads_and_handlers() {
+    fn rows_share_their_reads_and_handlers() {
         let src = "@fine\n@code { team: Worker[] = []; pick(w: Worker) {} }\n<ul>\n@for (const w of team) {\n<li class=\"@w.kind\" @onclick=\"() => pick(w)\"><input @bind=\"w.name\" />@if (w.late) {\n<b>@w.name</b>\n}\n<i @onclick=\"pick\">@team.length</i></li>\n}\n</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("dom.listAt(_e1, () => this.team, [\n        (w) => w.kind,\n        (w): ((e: any) => unknown) => () => this.pick(w),\n        (w) => w.name,\n        (w): ((e: any) => unknown) => (__e) => { w.name = Component.bindValue(__e, w.name); },\n        (w, __p) => {\n          if (w.late) {");
+        has("__dom.listAt(_e1, () => this.team, [\n      (w) => w.kind,\n      (w): ((e: any) => unknown) => () => this.pick(w),\n      (w) => w.name,\n      (w): ((e: any) => unknown) => (__e) => { w.name = __Component.bindValue(__e, w.name); },\n      (w, __p) => {\n        if (w.late) {");
         // A read that does not use the item does not name it.
-        has("(_): ((e: any) => unknown) => this.pick.bind(this),\n        (_) => this.team.length,\n      ], (__p) => {");
+        has("(_): ((e: any) => unknown) => this.pick.bind(this),\n      (_) => this.team.length,\n    ], (__p) => {");
         has("dom.attrItem(_e2, \"class\", 0);");
         has("dom.onItem(_e2, \"click\", 1);");
         has("dom.attrItem(_e3, \"value\", 2);");
@@ -4403,18 +4403,18 @@ mod tests {
     }
 
     #[test]
-    fn fine_components_put_the_rest_in_islands() {
+    fn components_slots_cascades_and_attributes_bind_in_place() {
         let card = "@code { title = \"\"; }\n<section>@title</section>";
         let src = "@fine\n@code { n = 1; show = true; extra = {}; }\n<div>\n<Card title=\"@(n)\"><b>@n</b></Card>\n<p @onclick:preventDefault @onclick=\"() => n++\">x</p>\n<p @attributes=\"extra\" />\n@cascade:theme(n) { <i>@n</i> }\n@slot\n@if (show) {\n<Card />\n}\n</div>";
         let g = gen_with(src, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        // A lone island needs no template: its anchor goes straight into the region's fragment.
-        has("const _e7 = dom.anchor(__p);\n          dom.islandAt(_e7, (__b) => { __b.addComponent(Card, {}); });");
-        has("dom.islandAt(_e1, (__b) => { __b.addComponent(Card, { title: this.n }, { default: () => Component.fragment((__b) => { __b.openElement(\"b\"); __b.addContent(this.n); __b.closeElement(); }) }); });");
-        has("dom.islandAt(_e2, (__b) => { __b.openElement(\"p\"); __b.addEventModifier(\"click\", \"preventDefault\", true);");
-        has("dom.islandAt(_e3, (__b) => { __b.openElement(\"p\"); __b.addAttributes(this.extra);");
-        has("dom.islandAt(_e4, (__b) => { __b.openCascade(\"theme\", this.n);");
-        has("dom.islandAt(_e5, (__b) => { __b.addContent(this.slots.default?.() ?? null); });");
+        // A lone component needs no template: its anchor goes straight into the region's fragment.
+        has("const _e11 = __dom.anchor(__p);\n        __dom.component(_e11, Card, (): Partial<Card> => ({}));");
+        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: this.n }), undefined, { default: () => __Component.$fragment((__p) => {");
+        has("__dom.on(_e2, \"click\", () => this.n++, 1);");
+        has("__dom.attrs(_e3, () => this.extra);");
+        has("__dom.cascadeAt(_e4, \"theme\", () => this.n, false, (__p) => {");
+        has("__dom.slotAt(_e5, () => this.slots.default);");
     }
 
     #[test]
