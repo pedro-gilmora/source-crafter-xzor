@@ -390,7 +390,7 @@ pub fn generate_in(
     }
     if !memos.is_empty() {
         let names: Vec<String> = memos.iter().map(|n| js_string(n)).collect();
-        g.line(&format!("static {{ fine.memo(this, [{}]); }}", names.join(", ")));
+        g.line(&format!("static {{ dom.memo(this, [{}]); }}", names.join(", ")));
     }
     if let Some(Node::Routes { sections, .. }) = block {
         for (i, section) in sections.iter().enumerate() {
@@ -472,7 +472,7 @@ pub fn generate_in(
     if !g.templates.is_empty() {
         g.line("");
         for (i, spec) in std::mem::take(&mut g.templates).iter().enumerate() {
-            g.line(&format!("const __t{i} = fine.template([{spec}]);"));
+            g.line(&format!("const __t{i} = dom.template([{spec}]);"));
         }
     }
     // Removal looks for `data-leave` only once a component that sets it is loaded.
@@ -481,8 +481,14 @@ pub fn generate_in(
     }
     let types = g.route_types.get();
     let mut head = String::from("import { ComponentBase, ");
+    if doc.fine {
+        head.push_str("dom, ");
+    }
     if uses_lazy {
         head.push_str("lazy, ");
+    }
+    if doc.fine && g.uses_el {
+        head.push_str("type El, ");
     }
     head.push_str("type RenderTreeBuilder");
     if !remotes.is_empty() {
@@ -495,10 +501,6 @@ pub fn generate_in(
         head.push_str(", type Route");
     }
     head.push_str(" } from \"@source-crafter/xzor-runtime\";\n");
-    if doc.fine {
-        let el = if g.uses_el { ", type El" } else { "" };
-        head.push_str(&format!("import {{ fine{el} }} from \"@source-crafter/xzor-runtime/model\";\n"));
-    }
     if block.is_some() {
         let params = if types & ROUTE_PARAMS != 0 { ", type RouteParams as __RouteParams" } else { "" };
         let app = if types & ROUTE_APP != 0 { ", type AppRoute as __AppRoute" } else { "" };
@@ -691,7 +693,7 @@ struct Gen<'p> {
     route_types: std::cell::Cell<u8>,
     /// Next `_e<N>` node variable of a `@fine` template.
     fine_ids: usize,
-    /// Emitting inside a `fine.region`: its bindings close over their values instead of sharing a row's reads.
+    /// Emitting inside a `dom.region`: its bindings close over their values instead of sharing a row's reads.
     in_region: bool,
     /// Emitting a plain loop's body in a region: nested structure stays inline, the region rebuilds it whole.
     in_loop: bool,
@@ -760,7 +762,7 @@ struct Reads {
     list: Vec<M>,
 }
 
-/// `[tag, attrs | 0, ...children]`, a string, `""` for a hole or `null` for an anchor; see `fine.template`.
+/// `[tag, attrs | 0, ...children]`, a string, `""` for a hole or `null` for an anchor; see `dom.template`.
 fn spec_js(t: &Tpl) -> String {
     match t {
         Tpl::Text(s) => js_string(s),
@@ -1534,7 +1536,7 @@ impl Gen<'_> {
     /// An element whose children hold control flow, in a plain loop: created on its own.
     fn fine_element(&mut self, el: &Element, parent: &str) -> Result<(), String> {
         let var = self.fine_var();
-        self.line(&format!("const {var} = fine.el({parent}, {});", js_string(&el.name)));
+        self.line(&format!("const {var} = dom.el({parent}, {});", js_string(&el.name)));
         self.fine_attrs(el, &var, true)?;
         let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
         let owner = self.owner.replace(var.clone());
@@ -1568,7 +1570,7 @@ impl Gen<'_> {
             }
             let var = self.fine_var();
             let call = if kids.len() == 2 { "anchors" } else { "anchor" };
-            self.line(&format!("const {var} = fine.{call}({parent});"));
+            self.line(&format!("const {var} = dom.{call}({parent});"));
             return self.fine_part(part, &var);
         }
         let t = self.templates.len();
@@ -1797,7 +1799,7 @@ impl Gen<'_> {
             }
             FinePart::Region(node) if keyable(node) => self.fine_keyed(node, var)?,
             FinePart::Region(node) if !self.row_level() && branchable(node) => {
-                self.line(&format!("fine.branchAt({var}, (__p) => {{"));
+                self.line(&format!("dom.branchAt({var}, (__p) => {{"));
                 let outer = std::mem::replace(&mut self.in_region, true);
                 let pass = self.pass_locals.take();
                 self.depth += 1;
@@ -1828,7 +1830,7 @@ impl Gen<'_> {
             FinePart::Await(node) => self.fine_await(node, var)?,
             FinePart::Show(node) => {
                 let node = show_branches(node)?;
-                self.line(&format!("fine.showAt({var}, (__p) => {{"));
+                self.line(&format!("dom.showAt({var}, (__p) => {{"));
                 let outer = std::mem::replace(&mut self.in_region, true);
                 let pass = self.pass_locals.take();
                 self.depth += 1;
@@ -1843,7 +1845,7 @@ impl Gen<'_> {
                 self.line("});");
             }
             FinePart::Pause(body) => {
-                self.line(&format!("fine.pauseAt({var}, (__p) => {{"));
+                self.line(&format!("dom.pauseAt({var}, (__p) => {{"));
                 let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
                 let pass = self.pass_locals.take();
                 let r = self.fine_block(body, "__p");
@@ -1855,10 +1857,10 @@ impl Gen<'_> {
             FinePart::Flow(node) => self.fine_flow(node, var)?,
             FinePart::OnceText(e) => {
                 let read = self.expr(e);
-                self.emit(M::lit(&format!("fine.textOnce({var}, () => ")).add(read).lit_then(");"));
+                self.emit(M::lit(&format!("dom.textOnce({var}, () => ")).add(read).lit_then(");"));
             }
             FinePart::Once(body) => {
-                self.line(&format!("fine.onceAt({var}, (__p) => {{"));
+                self.line(&format!("dom.onceAt({var}, (__p) => {{"));
                 // Plain control flow, and values set rather than bound.
                 let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, true), std::mem::replace(&mut self.once, true));
                 let pass = self.pass_locals.take();
@@ -1870,12 +1872,12 @@ impl Gen<'_> {
             }
             FinePart::ParentAttr(a) => {
                 let read = self.value(&a.value);
-                self.emit(M::lit(&format!("fine.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
+                self.emit(M::lit(&format!("dom.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
             }
             // Virtual-DOM builder calls, in a binding that patches them when what they read changes.
             FinePart::Island(nodes) => {
                 let body = self.inline_nodes(nodes, true, &[])?;
-                self.emit(M::lit(&format!("fine.islandAt({var}, (__b) => {{ ")).add(body).lit_then(" });"));
+                self.emit(M::lit(&format!("dom.islandAt({var}, (__b) => {{ ")).add(body).lit_then(" });"));
             }
         }
         Ok(())
@@ -1899,23 +1901,23 @@ impl Gen<'_> {
     fn fine_bound(&mut self, call: &str, args: &str, read: M) {
         if self.once {
             let call = if call == "text" { "setText" } else { "set" };
-            self.emit(M::lit(&format!("fine.{call}({args}, ")).add(read).lit_then(");"));
+            self.emit(M::lit(&format!("dom.{call}({args}, ")).add(read).lit_then(");"));
         } else if self.row_level() {
             let i = self.push_read("", read);
-            self.line(&format!("fine.{call}Item({args}, {i});"));
+            self.line(&format!("dom.{call}Item({args}, {i});"));
         } else {
             let call = if call == "text" { "textAt" } else { call };
-            self.emit(M::lit(&format!("fine.{call}({args}, () => ")).add(read).lit_then(");"));
+            self.emit(M::lit(&format!("dom.{call}({args}, () => ")).add(read).lit_then(");"));
         }
     }
 
     fn fine_on(&mut self, var: &str, event: &str, handler: M) {
         if self.row_level() {
-            // The return type types the handler's event, as `fine.on` does.
+            // The return type types the handler's event, as `dom.on` does.
             let i = self.push_read("): ((e: any) => unknown", handler);
-            self.line(&format!("fine.onItem({var}, {}, {i});", js_string(event)));
+            self.line(&format!("dom.onItem({var}, {}, {i});", js_string(event)));
         } else {
-            self.emit(M::lit(&format!("fine.on({var}, {}, ", js_string(event))).add(handler).lit_then(");"));
+            self.emit(M::lit(&format!("dom.on({var}, {}, ", js_string(event))).add(handler).lit_then(");"));
         }
     }
 
@@ -1937,9 +1939,9 @@ impl Gen<'_> {
         if row {
             let close = format!("{}}}", "  ".repeat(self.depth));
             let i = self.push_read(", __p", M::lit("{\n").add(code).lit_then(&close));
-            self.line(&format!("fine.{}({end}, {i});", if branch { "branchItem" } else { "regionItem" }));
+            self.line(&format!("dom.{}({end}, {i});", if branch { "branchItem" } else { "regionItem" }));
         } else {
-            self.line(&format!("fine.{}({end}, (__p) => {{", if branch { "branchAt" } else { "regionAt" }));
+            self.line(&format!("dom.{}({end}, (__p) => {{", if branch { "branchAt" } else { "regionAt" }));
             self.splice(code);
             self.line("});");
         }
@@ -1983,7 +1985,7 @@ impl Gen<'_> {
             }
             None => None,
         };
-        self.emit(M::lit(&format!("fine.listAt({end}, () => ")).add(items).lit_then(", ["));
+        self.emit(M::lit(&format!("dom.listAt({end}, () => ")).add(items).lit_then(", ["));
         self.depth += 1;
         for read in reads.list {
             self.emit(read.lit_then(","));
@@ -1995,7 +1997,7 @@ impl Gen<'_> {
         if takes_item {
             // What closes over the item gets the one that replaces it under the same key: the row is kept.
             self.depth += 1;
-            self.line(&format!("fine.rowItem((__v: typeof {0}) => {{ {0} = __v; }});", reads.name));
+            self.line(&format!("dom.rowItem((__v: typeof {0}) => {{ {0} = __v; }});", reads.name));
             self.depth -= 1;
         }
         self.splice(row);
@@ -2051,7 +2053,7 @@ impl Gen<'_> {
             _ => unreachable!("only loops are keyed"),
         };
         let (key, root) = loop_key(key, body)?;
-        self.line(&format!("fine.keyedAt({end}, (__pass) => {{"));
+        self.line(&format!("dom.keyedAt({end}, (__pass) => {{"));
         self.depth += 1;
         if key.is_none() {
             self.line("let __i = 0;");
@@ -2103,7 +2105,7 @@ impl Gen<'_> {
             Some((callee, args)) => {
                 let part = |(a, b): (usize, usize)| Src::new(&promise.text[a..b], if promise.at == Src::UNMAPPED { Src::UNMAPPED } else { promise.at + a });
                 let params = (0..args.len()).map(|i| format!("__a{i}")).collect::<Vec<_>>().join(", ");
-                let mut m = M::lit(&format!("fine.awaitCallAt({end}, () => ["));
+                let mut m = M::lit(&format!("dom.awaitCallAt({end}, () => ["));
                 for (i, &range) in args.iter().enumerate() {
                     if i > 0 {
                         m = m.lit_then(", ");
@@ -2112,7 +2114,7 @@ impl Gen<'_> {
                 }
                 m.lit_then(&format!("], ({params}) => ")).add(self.expr(&part(callee))).lit_then(&format!("({params}), (__p) => {{"))
             }
-            None => M::lit(&format!("fine.awaitAt({end}, () => ")).add(self.expr(promise)).lit_then(", (__p) => {"),
+            None => M::lit(&format!("dom.awaitAt({end}, () => ")).add(self.expr(promise)).lit_then(", (__p) => {"),
         };
         self.emit(head);
         let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
@@ -4082,35 +4084,35 @@ mod tests {
         let src = "@fine\n@code {\ncount = 0;\nlabel = \"\";\nok = false;\nteam: Worker[] = [];\nel?: HTMLElement;\ninc() { this.count++; }\n}\n<div class=\"team\" title=\"n @label\">\n<button @onclick=\"inc\" @ref=\"el\">@count</button>\n<input @bind=\"label\" @bind:event=\"oninput\" />\n<input type=\"checkbox\" @bind=\"ok\" />\n@if (count > 1) {\n<p>many</p>\n} else {\n<p>few</p>\n}\n@for (const w of team) {\n<li>@w.name <b>@(w.hours * 2)</b></li>\n}\n@for (let i = 0; i < count; i++) {\n<i>@i</i>\n}\n@for (const [k, v] of Object.entries(team)) {\n@if (v) {\n<u>@k</u>\n}\n}\n@{ const total = count * 2; }\n<span>@total</span>\n</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("import { fine, type El } from \"@source-crafter/xzor-runtime/model\";");
+        has("import { ComponentBase, dom, type El, type RenderTreeBuilder } from \"@source-crafter/xzor-runtime\";");
         has("export default class C extends ComponentBase {");
         has("__b.addFine((__p) => {");
         // Elements and static text are a template, cloned; each dynamic part binds the node it has in place.
-        has("const __t0 = fine.template([[\"div\", [\"class\", \"team\"], [\"button\", 0, \"\"], [\"input\", 0], [\"input\", [\"type\", \"checkbox\"]], null, null, null, null, null, null, null]]);");
+        has("const __t0 = dom.template([[\"div\", [\"class\", \"team\"], [\"button\", 0, \"\"], [\"input\", 0], [\"input\", [\"type\", \"checkbox\"]], null, null, null, null, null, null, null]]);");
         has("const _e0 = __t0() as El<\"div\">;\n      const _e1 = _e0.firstChild! as El<\"button\">;\n      const _e2 = _e1.firstChild! as Text;\n      const _e3 = _e1.nextSibling! as El<\"input\">;");
-        has("fine.attr(_e0, \"title\", () => \"n \" + String(this.label));");
-        has("fine.on(_e1, \"click\", this.inc.bind(this));");
+        has("dom.attr(_e0, \"title\", () => \"n \" + String(this.label));");
+        has("dom.on(_e1, \"click\", this.inc.bind(this));");
         has("this.el = _e1;");
-        has("fine.textAt(_e2, () => this.count);");
-        has("fine.attr(_e3, \"value\", () => this.label);");
-        has("fine.on(_e3, \"input\", (__e) => { this.label = ComponentBase.bindValue(__e, this.label); });");
-        has("fine.attr(_e4, \"checked\", () => this.ok);");
-        has("fine.on(_e4, \"change\", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); });");
-        has("fine.branchAt(_e5, (__p) => {\n        if (this.count > 1) {\n          if (!__p) return 0;\n          const _e10 = __t1() as El<\"p\">;\n          __p.appendChild(_e10);");
+        has("dom.textAt(_e2, () => this.count);");
+        has("dom.attr(_e3, \"value\", () => this.label);");
+        has("dom.on(_e3, \"input\", (__e) => { this.label = ComponentBase.bindValue(__e, this.label); });");
+        has("dom.attr(_e4, \"checked\", () => this.ok);");
+        has("dom.on(_e4, \"change\", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); });");
+        has("dom.branchAt(_e5, (__p) => {\n        if (this.count > 1) {\n          if (!__p) return 0;\n          const _e10 = __t1() as El<\"p\">;\n          __p.appendChild(_e10);");
         // A row's bindings share the list's reads, which take the item.
-        has("fine.listAt(_e6, () => this.team, [\n        (w) => w.name,\n        (w) => w.hours * 2,\n      ], (__p) => {\n        const _e12 = __t3() as El<\"li\">;");
-        has("fine.textItem(_e13, 0);");
-        has("fine.textItem(_e15, 1);");
-        has("const __t3 = fine.template([[\"li\", 0, \"\", \" \", [\"b\", 0, \"\"]]]);");
+        has("dom.listAt(_e6, () => this.team, [\n        (w) => w.name,\n        (w) => w.hours * 2,\n      ], (__p) => {\n        const _e12 = __t3() as El<\"li\">;");
+        has("dom.textItem(_e13, 0);");
+        has("dom.textItem(_e15, 1);");
+        has("const __t3 = dom.template([[\"li\", 0, \"\", \" \", [\"b\", 0, \"\"]]]);");
         has("for (let i = 0; i < this.count; i++) {");
-        has("fine.textAt(_e17, () => i);");
+        has("dom.textAt(_e17, () => i);");
         // Destructured items (entries, tuples) are new on every run: a keyed list would rebuild every row.
         has("for (const [k, v] of Object.entries(this.team)) {");
         assert!(!g.code.contains("[k, v]) =>"), "{}", g.code);
         // Keyed by a pass counter: a pass that saw the same `k` and `v` keeps its row, and its `@if` is a region.
         has("for (const [k, v] of Object.entries(this.team)) {\n          const __p = __pass(__i++, [k, v]);");
         // A `@{ }` block and the siblings after it are one region: its locals stay in scope and current.
-        has("fine.regionAt(_e9, (__p) => {\n        const total = this.count * 2;");
+        has("dom.regionAt(_e9, (__p) => {\n        const total = this.count * 2;");
         has("() => total);");
         has("__p.appendChild(_e0);");
         assert!(!g.code.contains("__b.openElement"), "{}", g.code);
@@ -4132,10 +4134,10 @@ mod tests {
     fn fine_getters_are_cached_unless_volatile() {
         let src = "@fine\n@code {\n  n = 1;\n  get total(): number { return this.n * 2; }\n  @Volatile get now(): number { return Date.now(); }\n  static get shared(): number { return 1; }\n  set total2(v: number) {}\n}\n<p>@total @now</p>";
         let g = gen_with(src, &[]);
-        assert!(g.code.contains("static { fine.memo(this, [\"total\"]); }"), "{}", g.code);
+        assert!(g.code.contains("static { dom.memo(this, [\"total\"]); }"), "{}", g.code);
         assert!(!g.code.contains("@Volatile"), "{}", g.code);
         let g = gen_with("@render\n@code { get total(): number { return 1; } }\n<p/>", &[]);
-        assert!(!g.code.contains("fine.memo"), "{}", g.code);
+        assert!(!g.code.contains("dom.memo"), "{}", g.code);
     }
 
     #[test]
@@ -4143,18 +4145,18 @@ mod tests {
         let src = "@fine\n@code { q = \"\"; load(q: string): Promise<string[]> { return Promise.resolve([q]); } }\n<ul>@await (load(q)) {<li>…</li>} then (rows) {@for (const r of rows) {<li>@r</li>}} catch (e) {<li>@String(e)</li>}</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("fine.awaitCallAt(_e1, () => [this.q], (__a0) => this.load(__a0), (__p) => {");
+        has("dom.awaitCallAt(_e1, () => [this.q], (__a0) => this.load(__a0), (__p) => {");
         has("}, (__p, rows) => {");
-        has("fine.listAt(");
+        has("dom.listAt(");
         has("}, (__p, e) => {");
         has("() => String(e)");
         // Arguments with nested calls, strings and commas; a callee through a member chain.
         let g = gen_with("@fine\n@code { q = \"\"; api = { find: (a: string, b: number[]) => Promise.resolve(a) }; }\n@await (api.find(q.trim(), [1, 2])) {} then (v) {@v}", &[]);
-        assert!(g.code.contains("fine.awaitCallAt(_e0, () => [this.q.trim(), [1, 2]], (__a0, __a1) => this.api.find(__a0, __a1), "), "{}", g.code);
+        assert!(g.code.contains("dom.awaitCallAt(_e0, () => [this.q.trim(), [1, 2]], (__a0, __a1) => this.api.find(__a0, __a1), "), "{}", g.code);
         // Anything else, or a call without arguments, runs whole on every change.
         for promise in ["load()", "q ? load(q) : load(\"\")", "load(q).then((r) => r)", "load(...qs)", "load(`${q}`)"] {
             let g = gen_with(&format!("@fine\n@code {{ q = \"\"; qs: string[] = []; load(...a: string[]) {{ return Promise.resolve(a); }} }}\n@await ({promise}) {{}}"), &[]);
-            assert!(g.code.contains("fine.awaitAt(") && !g.code.contains("awaitCallAt"), "{promise}:\n{}", g.code);
+            assert!(g.code.contains("dom.awaitAt(") && !g.code.contains("awaitCallAt"), "{promise}:\n{}", g.code);
         }
         let doc = parse("@render\n@await (p) { } then { }").unwrap().0;
         let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
@@ -4180,8 +4182,8 @@ mod tests {
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The static class stays in the template; each toggle is its own binding.
         has("[\"div\", [\"class\", \"field\"], \"x\"]");
-        has("fine.attr(_e0, \"class:invalid\", () => this.err);");
-        has("fine.attr(_e0, \"class:round\", () => true);");
+        has("dom.attr(_e0, \"class:invalid\", () => this.err);");
+        has("dom.attr(_e0, \"class:round\", () => true);");
         let g = gen_with(&format!("@render\n{src}"), &[]);
         // After the element's own class, whatever the order they were written in.
         assert!(g.code.contains("__b.addAttribute(\"class\", \"field\");\n    __b.toggleClass(\"invalid\", this.err);\n    __b.toggleClass(\"round\", true);"), "{}", g.code);
@@ -4202,7 +4204,7 @@ mod tests {
     #[test]
     fn bind_input_is_bind_on_input() {
         let src = "@code { q = \"\"; }\n<input @bind:input=\"q\" />";
-        for (mode, attr, on) in [("@render\n", "__b.addAttribute(\"value\", this.q);", "__b.addEventHandler(\"input\", "), ("@fine\n", "fine.attr(", "fine.on(_e0, \"input\", ")] {
+        for (mode, attr, on) in [("@render\n", "__b.addAttribute(\"value\", this.q);", "__b.addEventHandler(\"input\", "), ("@fine\n", "dom.attr(", "dom.on(_e0, \"input\", ")] {
             let g = gen_with(&format!("{mode}{src}"), &[]);
             let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
             has(attr);
@@ -4216,15 +4218,15 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // A value read once into its hole; the other `@n` stays bound.
-        has("fine.textOnce(_e2, () => this.n);");
-        has("fine.textAt(_e3, () => this.n);");
+        has("dom.textOnce(_e2, () => this.n);");
+        has("dom.textAt(_e3, () => this.n);");
         // A block built once: plain control flow, values set, no binding inside.
-        has("fine.onceAt(");
-        has("fine.set(_e");
-        has("fine.setText(_e");
+        has("dom.onceAt(");
+        has("dom.set(_e");
+        has("dom.setText(_e");
         has("for (const x of this.xs) {");
-        let block = &g.code[g.code.find("fine.onceAt(").unwrap()..];
-        assert!(!block[..block.find("});\n").unwrap()].contains("fine.textAt"), "{}", g.code);
+        let block = &g.code[g.code.find("dom.onceAt(").unwrap()..];
+        assert!(!block[..block.find("});\n").unwrap()].contains("dom.textAt"), "{}", g.code);
         // A render pass has no \"once\": the block renders as usual.
         let g = gen_with("@render\n@code { n = 0; }\n<p>@once(n)</p>", &[]);
         assert!(g.code.contains("__b.addContent(this.n);"), "{}", g.code);
@@ -4237,10 +4239,10 @@ mod tests {
         let src = "@fine\n@code { n = 0; items: string[] = []; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text\" none }</span>\n<ul>@for (const it of items) {<li>@if (it) { @attr:title=\"@it\" }</li>}</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("fine.attrOf(_e1, \"class\", () => \"error-text\");");
+        has("dom.attrOf(_e1, \"class\", () => \"error-text\");");
         // In a row, a region naming the row's element builds in the row, not in the list's shared reads.
-        has("fine.branchAt(");
-        has("fine.attrOf(_e");
+        has("dom.branchAt(");
+        has("dom.attrOf(_e");
         has(", \"title\", () => it);");
         let doc = parse("@fine\n@attr:class=\"x\"").unwrap().0;
         let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
@@ -4264,7 +4266,7 @@ mod tests {
         // The else is the list's empty build: its bindings close over their values, as in a region.
         has("], (__p) => {\n        const _e");
         has("}, (__p) => {\n        const _e");
-        has("fine.textAt(");
+        has("dom.textAt(");
         has("for (let i = 0; i < this.xs.length; i++) {\n          const __p = __pass(__i++, [i]);\n          if (__p !== undefined) {");
         has("}, (__p) => {\n        const _e10 = __t4() as El<\"u\">;");
     }
@@ -4278,7 +4280,7 @@ mod tests {
         has("}, undefined, (l) => l.sku);");
         assert!(!g.code.contains("@Key"), "{}", g.code);
         // No key: a pass counter; the row's nested `@if` is a region of its own.
-        has("fine.keyedAt(");
+        has("dom.keyedAt(");
         has("let __i = 0;");
         has("for (const [k, v] of Object.entries(this.team)) {");
         has("const __p = __pass(__i++, [k, v]);\n");
@@ -4326,15 +4328,15 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // No two-comment templates: the anchors go straight in.
-        assert!(!g.code.contains("fine.template([null, null])") && !g.code.contains("fine.template([null])"), "{}", g.code);
-        has("= fine.anchors(__p);\n");
+        assert!(!g.code.contains("dom.template([null, null])") && !g.code.contains("dom.template([null])"), "{}", g.code);
+        has("= dom.anchors(__p);\n");
         // A keyed loop only needs its end: one anchor in its element's template.
         has("[\"ol\", 0, null]");
         // A row that is only a pass-only `@if` builds it straight into the row.
         has("const __p = __pass(__i++, [k, v]);\n          if (__p !== undefined) {\n            if (v > 1) {");
         // A member of a pass value can change while the value stays: `t.done` and `else if` conditions keep a region.
         let g = gen_with("@fine\n@code { m: Record<string, { done: boolean }> = {}; }\n<ol>@for (const [k, t] of Object.entries(m)) {@if (k === \"a\") {<b/>} else if (t.done) {<i/>}}</ol>", &[]);
-        assert!(g.code.contains("fine.branchAt("), "{}", g.code);
+        assert!(g.code.contains("dom.branchAt("), "{}", g.code);
     }
 
     #[test]
@@ -4343,9 +4345,9 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The outer region only reads `open`: the nested `@if` and `@for` bind on their own.
-        has("fine.branchAt(_e0, (__p) => {\n        if (this.open) {\n          if (!__p) return 0;\n          const _e1 = __t0() as El<\"dialog\">;");
-        has("fine.branchAt(_e3, (__p) => {\n            if (this.text.length > 2) {");
-        has("fine.listAt(_e5, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
+        has("dom.branchAt(_e0, (__p) => {\n        if (this.open) {\n          if (!__p) return 0;\n          const _e1 = __t0() as El<\"dialog\">;");
+        has("dom.branchAt(_e3, (__p) => {\n            if (this.text.length > 2) {");
+        has("dom.listAt(_e5, () => this.items, [\n            (it) => it,\n          ], (__p) => {");
         assert!(!g.code.contains("for (const it of"), "{}", g.code);
     }
 
@@ -4354,11 +4356,11 @@ mod tests {
         let src = "@fine\n@code { tab = \"a\"; n = 1; }\n@show:if (tab === \"a\") {\n<p>@n</p>\n} else {\n@pause\n<section>@n</section>\n}\n<div>@show:switch (n) { case 1: <b>one</b> default: <i>@pause { <u>@n</u> }</i> }</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("fine.showAt(_e1, (__p) => {\n        if (this.tab === \"a\") {\n          if (!__p) return 0;\n");
+        has("dom.showAt(_e1, (__p) => {\n        if (this.tab === \"a\") {\n          if (!__p) return 0;\n");
         has("} else {\n          if (!__p) return 1;\n");
         has("        }\n        return 2;\n      });");
         // Bare `@pause` takes the whole branch; `@pause { }` its block, at any depth.
-        assert_eq!(g.code.matches("fine.pauseAt(").count(), 2, "{}", g.code);
+        assert_eq!(g.code.matches("dom.pauseAt(").count(), 2, "{}", g.code);
         has("case 1: {\n            if (!__p) return 0;\n");
         let err = |src: &str| generate_with(&parse(&format!("@fine\n@code {{ a = 1; }}\n{src}")).unwrap().0, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
         for top in ["text", "@a", "@if (a) {<b/>}", "<Child />"] {
@@ -4377,7 +4379,7 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // Called without a parent it only picks the branch: same branch, same DOM.
-        has("fine.branchAt(_e1, (__p) => {\n        if (!this.count) {\n          if (!__p) return 0;\n");
+        has("dom.branchAt(_e1, (__p) => {\n        if (!this.count) {\n          if (!__p) return 0;\n");
         has("} else if (this.count > 9) {\n          if (!__p) return 1;\n");
         has("} else {\n          if (!__p) return 2;\n");
         has("        }\n        return 3;\n      });");
@@ -4386,14 +4388,14 @@ mod tests {
         has("        }\n        return 2;\n      });");
         // Code run while a branch builds would go stale in a kept branch: that one stays a plain region.
         let g = gen_with("@fine\n@code { n = 1; }\n@if (n > 0) {\n@{ const twice = n * 2; }\n<p>@twice</p>\n}", &[]);
-        assert!(g.code.contains("fine.regionAt(") && !g.code.contains("branchAt"), "{}", g.code);
+        assert!(g.code.contains("dom.regionAt(") && !g.code.contains("branchAt"), "{}", g.code);
         // A row's `@if` picks its branch from the row's item, so a row that takes a new item keeps it too.
         let g = gen_with("@fine\n@code { lines: { qty: number }[] = []; }\n<ul>@for (const l of lines) {<li>@if (l.qty > 1) {<b/>} else {<i/>}</li>}</ul>", &[]);
-        assert!(g.code.contains("fine.branchItem(") && g.code.contains("(l, __p) => {\n"), "{}", g.code);
+        assert!(g.code.contains("dom.branchItem(") && g.code.contains("(l, __p) => {\n"), "{}", g.code);
         assert!(g.code.contains("if (!__p) return 0;"), "{}", g.code);
         // A row whose nested list or child component closes over the item can be given a new one (#6).
         let g = gen_with("@fine\n@code { people: { id: number; roles: string[] }[] = []; ROLES = [\"a\"]; }\n<ul>@for (const p of people) @key(p.id) {<li>@for (const r of ROLES) @key(r) {<b>@(p.roles.includes(r) ? r : \"\")</b>}</li>}</ul>", &[]);
-        assert!(g.code.contains("], (__p, p) => {\n        fine.rowItem((__v: typeof p) => { p = __v; });\n"), "{}", g.code);
+        assert!(g.code.contains("], (__p, p) => {\n        dom.rowItem((__v: typeof p) => { p = __v; });\n"), "{}", g.code);
     }
 
     #[test]
@@ -4401,16 +4403,16 @@ mod tests {
         let src = "@fine\n@code { team: Worker[] = []; pick(w: Worker) {} }\n<ul>\n@for (const w of team) {\n<li class=\"@w.kind\" @onclick=\"() => pick(w)\"><input @bind=\"w.name\" />@if (w.late) {\n<b>@w.name</b>\n}\n<i @onclick=\"pick\">@team.length</i></li>\n}\n</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("fine.listAt(_e1, () => this.team, [\n        (w) => w.kind,\n        (w): ((e: any) => unknown) => () => this.pick(w),\n        (w) => w.name,\n        (w): ((e: any) => unknown) => (__e) => { w.name = ComponentBase.bindValue(__e, w.name); },\n        (w, __p) => {\n          if (w.late) {");
+        has("dom.listAt(_e1, () => this.team, [\n        (w) => w.kind,\n        (w): ((e: any) => unknown) => () => this.pick(w),\n        (w) => w.name,\n        (w): ((e: any) => unknown) => (__e) => { w.name = ComponentBase.bindValue(__e, w.name); },\n        (w, __p) => {\n          if (w.late) {");
         // A read that does not use the item does not name it.
         has("(_): ((e: any) => unknown) => this.pick.bind(this),\n        (_) => this.team.length,\n      ], (__p) => {");
-        has("fine.attrItem(_e2, \"class\", 0);");
-        has("fine.onItem(_e2, \"click\", 1);");
-        has("fine.attrItem(_e3, \"value\", 2);");
-        has("fine.onItem(_e3, \"change\", 3);");
-        has("fine.branchItem(_e4, 4);");
+        has("dom.attrItem(_e2, \"class\", 0);");
+        has("dom.onItem(_e2, \"click\", 1);");
+        has("dom.attrItem(_e3, \"value\", 2);");
+        has("dom.onItem(_e3, \"change\", 3);");
+        has("dom.branchItem(_e4, 4);");
         // Inside the row's region, bindings close over the item as usual.
-        has("fine.textAt(_e8, () => w.name);");
+        has("dom.textAt(_e8, () => w.name);");
     }
 
     #[test]
@@ -4420,12 +4422,12 @@ mod tests {
         let g = gen_with(src, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // A lone island needs no template: its anchor goes straight into the region's fragment.
-        has("const _e7 = fine.anchor(__p);\n          fine.islandAt(_e7, (__b) => { __b.addComponent(Card, {}); });");
-        has("fine.islandAt(_e1, (__b) => { __b.addComponent(Card, { title: this.n }, { default: () => ComponentBase.fragment((__b) => { __b.openElement(\"b\"); __b.addContent(this.n); __b.closeElement(); }) }); });");
-        has("fine.islandAt(_e2, (__b) => { __b.openElement(\"p\"); __b.addEventModifier(\"click\", \"preventDefault\", true);");
-        has("fine.islandAt(_e3, (__b) => { __b.openElement(\"p\"); __b.addAttributes(this.extra);");
-        has("fine.islandAt(_e4, (__b) => { __b.openCascade(\"theme\", this.n);");
-        has("fine.islandAt(_e5, (__b) => { __b.addContent(this.slots.default?.() ?? null); });");
+        has("const _e7 = dom.anchor(__p);\n          dom.islandAt(_e7, (__b) => { __b.addComponent(Card, {}); });");
+        has("dom.islandAt(_e1, (__b) => { __b.addComponent(Card, { title: this.n }, { default: () => ComponentBase.fragment((__b) => { __b.openElement(\"b\"); __b.addContent(this.n); __b.closeElement(); }) }); });");
+        has("dom.islandAt(_e2, (__b) => { __b.openElement(\"p\"); __b.addEventModifier(\"click\", \"preventDefault\", true);");
+        has("dom.islandAt(_e3, (__b) => { __b.openElement(\"p\"); __b.addAttributes(this.extra);");
+        has("dom.islandAt(_e4, (__b) => { __b.openCascade(\"theme\", this.n);");
+        has("dom.islandAt(_e5, (__b) => { __b.addContent(this.slots.default?.() ?? null); });");
     }
 
     #[test]

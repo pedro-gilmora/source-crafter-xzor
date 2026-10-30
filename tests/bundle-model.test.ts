@@ -41,7 +41,7 @@ test("every field of a model class becomes a private slot with a getter and a se
 
 test("project sources and generated components get tracked fields; other generated files do not", () => {
   const root = join(repo, "examples", "counter");
-  const fineText = `import { fine } from "@source-crafter/xzor-runtime/model";`;
+  const fineText = `import { dom } from "@source-crafter/xzor-runtime";`;
   expect(tracksFields(join(root, "models", "worker.ts"), root, "")).toBe(true);
   expect(tracksFields(join(root, ".xzor", "pages", "TeamFine.xzor.ts"), root, fineText)).toBe(true);
   expect(tracksFields(join(root, ".xzor", "pages", "Team.xzor.ts"), root, "class Team extends ComponentBase {}")).toBe(true);
@@ -49,13 +49,12 @@ test("project sources and generated components get tracked fields; other generat
   expect(tracksFields(join(root, "node_modules", "x", "y.xzor.ts"), root, fineText)).toBe(false);
 });
 
-const FINE = `import { ComponentBase, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
-import { FineComponent, fine } from "@source-crafter/xzor-runtime/model";
-export default class Counter extends FineComponent {
+const FINE = `import { ComponentBase, dom, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
+export default class Counter extends ComponentBase {
   count = 0;
   static inject = [];
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
-    __b.addFine((__p) => fine.text(__p, () => this.count));
+    __b.addFine((__p) => dom.text(__p, () => this.count));
   }
 }
 export class Twice extends Counter {
@@ -63,11 +62,11 @@ export class Twice extends Counter {
 }
 `;
 
-test("a fine component's fields are tracked like a model's, with no generated constructor", () => {
+test("a component's fields are tracked like a model's, with no generated constructor", () => {
   const out = trackModelFields(FINE);
   expect(out.split("\n")).toHaveLength(FINE.split("\n").length);
-  expect(out).toContain(`export default class Counter extends FineComponent {\n  #count = 0; get count() { FineComponent.$reader?.(this, 0); return this.#count; } set count(v) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }\n`);
-  expect(out).toContain(`static { FineComponent.$define(this, ["count"]); } }`);
+  expect(out).toContain(`export default class Counter extends ComponentBase {\n  #count = 0; get count() { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }\n`);
+  expect(out).toContain(`static { ComponentBase.$define(this, ["count"]); } }`);
   // The derived class continues after its base's fields, through the offset `$define` returns.
   expect(out).toContain(`get step() { Counter.$reader?.(this, Twice.$at + 0); return this.#step; }`);
   expect(out).not.toContain("constructor(");

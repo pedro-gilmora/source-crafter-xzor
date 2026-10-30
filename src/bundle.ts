@@ -331,7 +331,7 @@ type Field = {
 
 type ClassHead = { name: string; model: string; open: number; close: number };
 
-/** Local names bound to `Model`, a component base (`ComponentBase`, or its old name `FineComponent`) and `Untracked` by value imports from the runtime. */
+/** Local names bound to `Model`, a component base (`ComponentBase`) and `Untracked` by value imports from the runtime. */
 function modelLocals(src: string): { model: Set<string>; fine: Set<string>; untracked: Set<string> } {
   const model = new Set<string>();
   const fine = new Set<string>();
@@ -352,7 +352,6 @@ function modelLocals(src: string): { model: Set<string>; fine: Set<string>; untr
       const local = as === "as" && alias ? alias : name;
       if (!local) continue;
       if (name === "Model") model.add(local);
-      else if (name === "FineComponent") fine.add(local);
       else if (name === "Untracked") untracked.add(local);
     }
   }
@@ -497,8 +496,8 @@ export function trackModelFields(src: string, file?: string, resolve?: ModelReso
         // A component is built by the runtime (or its injector), never from server data.
         const component = kind === "fine";
         if (kind !== true && kind !== "fine") {
-          // A package base only matters to a file that uses the model runtime.
-          if (kind.spec.startsWith(".") || [...info.imports.values()].some((i) => i.spec === MODEL)) {
+          // A package base only matters to a component or a file that uses the model runtime.
+          if (kind.spec.startsWith(".") || info.fine.size > 0 || [...info.imports.values()].some((i) => i.spec === MODEL)) {
             warn(src, i, file, `${name} is not tracked: its base ${head.base} comes from "${kind.spec}" and could not be followed`);
           }
         } else if (derived && !head.name) {
