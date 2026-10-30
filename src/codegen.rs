@@ -485,8 +485,11 @@ pub fn generate_in(
     if !remotes.is_empty() {
         names.push("type Remote");
     }
-    if !slots.is_empty() || types & ROUTE_FRAGMENT != 0 {
+    if !slots.is_empty() {
         names.push("type RenderFragment");
+    }
+    if types & ROUTE_FRAGMENT != 0 {
+        names.push("type Markup");
     }
     if types & ROUTE_TYPE != 0 {
         names.push("type Route");
@@ -732,6 +735,10 @@ enum FinePart<'n> {
     Code(&'n [CodePart], &'n [Node]),
     List(&'n Node),
     Island(&'n [Node]),
+    /// `@cascade`, between its two anchors.
+    Cascade(&'n Node),
+    /// `@Routes`, between its two anchors.
+    Routes(&'n Node),
     /// `@slot`, between its two anchors.
     Slot(&'n Slot),
     /// A child component, before its one anchor.
@@ -1149,7 +1156,7 @@ impl<'p> Gen<'p> {
         if let Some(bound) = bound {
             locals.push(bound.text.clone());
         }
-        let body = self.fragment_of(&section.body, true, &locals)?;
+        let body = self.dom_fragment(&section.body, true, &locals)?;
         // Only what the body reads is declared, so `noUnusedLocals`/`noUnusedParameters` stay quiet.
         let uses_var = mentions(&body.text, &var.text);
         let uses_bound = bound.is_some_and(|b| mentions(&body.text, &b.text));
@@ -1166,7 +1173,7 @@ impl<'p> Gen<'p> {
         }
         if let Some(bound) = bound.filter(|_| uses_bound) {
             types |= if is_catch { 0 } else { ROUTE_FRAGMENT };
-            params = params.lit_then(", ").add(M::src(bound, bound.at)).lit_then(if is_catch { ": unknown" } else { ": RenderFragment" });
+            params = params.lit_then(", ").add(M::src(bound, bound.at)).lit_then(if is_catch { ": unknown" } else { ": Markup" });
         }
         if uses_var {
             types |= ROUTE_APP;
@@ -1773,8 +1780,14 @@ impl<'p> Gen<'p> {
                     parts.push((at(kids), FinePart::Slot(slot)));
                     kids.push(Tpl::Anchor);
                 }
-                Node::Cascade { .. } | Node::Routes { .. } => {
-                    parts.push((at(kids), FinePart::Island(std::slice::from_ref(node))));
+                Node::Cascade { .. } => {
+                    kids.push(Tpl::Anchor);
+                    parts.push((at(kids), FinePart::Cascade(node)));
+                    kids.push(Tpl::Anchor);
+                }
+                Node::Routes { .. } => {
+                    kids.push(Tpl::Anchor);
+                    parts.push((at(kids), FinePart::Routes(node)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
@@ -1945,6 +1958,35 @@ impl<'p> Gen<'p> {
                 let read = self.value(&a.value);
                 self.emit(M::lit(&format!("__dom.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
             }
+            FinePart::Cascade(Node::Cascade { name, value, fixed, body }) => {
+                let quoted = js_string(name);
+                // The mapping stays on the name only while the literal is a straight copy of it.
+                let literal = if quoted[1..quoted.len() - 1] == *name.text {
+                    M::lit("\"").add(M::src(name, name.at)).lit_then("\"")
+                } else {
+                    M::lit(&quoted)
+                };
+                let head = M::lit(&format!("__dom.cascadeAt({var}, ")).add(literal).lit_then(", () => ").add(self.expr(value));
+                self.emit(head.lit_then(&format!(", {}, (__p) => {{", fixed)));
+                let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
+                let pass = self.pass_locals.take();
+                let r = self.fine_block(body, "__p");
+                self.pass_locals = pass;
+                (self.in_region, self.in_loop) = flags;
+                r?;
+                self.line("});");
+            }
+            FinePart::Routes(Node::Routes { var: route, sections }) => {
+                self.line(&format!("__dom.routesAt({var}, __routes, ["));
+                self.depth += 1;
+                for (i, section) in sections.iter().enumerate() {
+                    let m = self.route_section(i, route, section)?;
+                    self.emit(m);
+                }
+                self.depth -= 1;
+                self.line("]);");
+            }
+            FinePart::Cascade(_) | FinePart::Routes(_) => unreachable!("built from their own nodes"),
             // Virtual-DOM builder calls, in a binding that patches them when what they read changes.
             FinePart::Slot(slot) => {
                 let name = match &slot.name {
