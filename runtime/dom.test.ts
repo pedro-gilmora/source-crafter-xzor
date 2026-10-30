@@ -2723,3 +2723,101 @@ test("a lazy child removed before it arrives is disposed on arrival, and nothing
   expect(el.querySelector("b")).toBeNull();
   expect([made, disposed]).toEqual([1, 1]);
 });
+
+test("an onAfterRender that starts a nested pass runs that pass's hooks at once, and the outer queue goes on in order", () => {
+  const order: string[] = [];
+  const other = mount(class Other extends Component {
+    protected override onAfterRender(first: boolean): void { order.push(`other ${first}`); }
+    protected override render(__p: Node): void { dom.t(__p, "o"); }
+  }, host());
+  let selfOnce = true;
+  class A extends Component {
+    protected override onAfterRender(first: boolean): void {
+      order.push(`A ${first}`);
+      if (!first) return;
+      other.stateHasChanged();
+      if (selfOnce) { selfOnce = false; this.stateHasChanged(); }
+    }
+    protected override render(__p: Node): void { dom.t(__p, "a"); }
+  }
+  class B extends Component {
+    protected override onAfterRender(first: boolean): void { order.push(`B ${first}`); }
+    protected override render(__p: Node): void { dom.t(__p, "b"); }
+  }
+  class Root extends Component {
+    protected override onAfterRender(first: boolean): void { order.push(`Root ${first}`); }
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), A, () => ({}));
+      dom.component(dom.anchor(__p), B, () => ({}));
+    }
+  }
+  order.length = 0;
+  const el = host();
+  mount(Root, el);
+  // The nested pass (`other`, then A's own re-render) completes inside A's hook; B and Root still run after, once each.
+  expect(order).toEqual(["A true", "other false", "A false", "B true", "Root true"]);
+  expect(el.textContent).toBe("ab");
+  order.length = 0;
+  other.stateHasChanged();
+  expect(order).toEqual(["other false"]);
+});
+
+test("a @pause region holding a child component freezes the child while hidden and catches it up when shown", async () => {
+  let runs = 0;
+  let kid: PKid | undefined;
+  class PKid extends Component {
+    #v = 0; get v(): number { Component.$reader?.(this, 0); return this.#v; } set v(x: number) { const p = this.#v; if (Component.same(p, x)) return; this.#v = x; this.$changed(0, p); }
+    #own = 0; get own(): number { Component.$reader?.(this, 1); return this.#own; } set own(x: number) { const p = this.#own; if (Component.same(p, x)) return; this.#own = x; this.$changed(1, p); }
+    static { Component.$define(this, ["v", "own"]); }
+    protected override render(__p: Node): void {
+      dom.textAt(dom.el(__p, "i").appendChild(document.createTextNode("")), () => (runs++, `${this.v}:${this.own}`));
+    }
+  }
+  class Page extends Component {
+    #tab = "a"; get tab(): string { Component.$reader?.(this, 0); return this.#tab; } set tab(v: string) { const p = this.#tab; if (Component.same(p, v)) return; this.#tab = v; this.$changed(0, p); }
+    #n = 1; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+    static { Component.$define(this, ["tab", "n"]); }
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addFine((__p) => {
+        dom.showAt(dom.anchors(__p), (__p) => {
+          if (this.tab === "a") {
+            if (!__p) return 0;
+            __p.appendChild(document.createElement("u"));
+          } else {
+            if (!__p) return 1;
+            const b = __p.appendChild(document.createElement("section"));
+            dom.pauseAt(dom.anchors(b), (__p) => {
+              dom.component(dom.anchor(__p), PKid, () => ({ v: this.n }), undefined, undefined, (c) => (kid = c as PKid));
+            });
+          }
+          return 2;
+        });
+      });
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  p.tab = "b";
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("1:0");
+  p.tab = "a";
+  await tick();
+  expect(el.querySelector("section")!.style.display).toBe("none");
+  const before = runs;
+  p.n = 2;
+  kid!.own = 5;
+  await tick();
+  p.n = 3;
+  await tick();
+  expect(runs).toBe(before);
+  expect(el.querySelector("i")!.textContent).toBe("1:0");
+  p.tab = "b";
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("3:5");
+  // Once from the thaw, once more from the flush the new prop queued meanwhile; never one per missed change.
+  expect(runs).toBeLessThanOrEqual(before + 2);
+  expect(el.querySelector("section")!.style.display).toBe("");
+  p.n = 4;
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("4:5");
+});
