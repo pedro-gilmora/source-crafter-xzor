@@ -2281,7 +2281,15 @@ impl<'p> Gen<'p> {
                 }
                 "@attributes" => {
                     let bag = self.directive_expr(a)?;
-                    self.emit(M::lit(&format!("__dom.attrs({var}, () => ")).add(bag).lit_then(");"));
+                    // Attributes written after the bag win over its keys.
+                    let later = el.attrs.iter().skip_while(|x| !std::ptr::eq(*x, a)).skip(1);
+                    let names: Vec<String> = later.map(|x| &*x.name.text).filter(|n| !n.starts_with('@') && !n.contains(':')).map(js_string).collect();
+                    let skip = if names.is_empty() { String::new() } else { format!(", [{}]", names.join(", ")) };
+                    if self.once {
+                        self.emit(M::lit(&format!("__dom.setAttrs({var}, ")).add(bag).lit_then(&format!("{skip});")));
+                    } else {
+                        self.emit(M::lit(&format!("__dom.attrs({var}, () => ")).add(bag).lit_then(&format!("{skip});")));
+                    }
                 }
                 _ if name.starts_with("@on") => {
                     let event = name[3..].split(':').next().unwrap_or_default();
@@ -3422,9 +3430,12 @@ pub fn class_name(stem: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Every test runs the one emitter; a leading `@render` (removed from the language) is blanked out.
+    /// Every test runs the one emitter; a leading `@render` or `@fine` (until `@fine` is a parse error) is blanked out.
     fn parse(src: &str) -> Result<(Document, Vec<crate::parser::Token>), crate::parser::ParseError> {
-        let src = src.strip_prefix("@render\n").map(|s| format!("{}{s}", " ".repeat("@render\n".len()))).unwrap_or_else(|| src.to_string());
+        let src = ["@render\n", "@fine\n"]
+            .iter()
+            .find_map(|m| src.strip_prefix(m).map(|s| format!("{}{s}", " ".repeat(m.len()))))
+            .unwrap_or_else(|| src.to_string());
         crate::parser::parse(&src)
     }
 
@@ -3467,7 +3478,7 @@ mod tests {
         let src = "@code { static s = 2; n = 1; static go() {} }\n<p title=\"@s\">@s @n @(`${s}`)</p>\n<button @onclick=\"go\" @onfocus=\"() => s++\">x</button>";
         let (doc, _) = parse(src).unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
-        for m in ["addContent(C.s)", "addContent(this.n)", "${C.s}", "C.go.bind(C)", "() => C.s++", "addAttribute(\"title\", C.s)"] {
+        for m in ["__dom.textAt(_e2, () => C.s)", "__dom.textAt(_e3, () => this.n)", "${C.s}", "C.go.bind(C)", "() => C.s++", "__dom.attr(_e1, \"title\", () => C.s)"] {
             assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
         }
         assert!(!g.code.contains("this.s") && !g.code.contains("this.go"), "{}", g.code);
@@ -3563,21 +3574,26 @@ mod tests {
         )
         .unwrap();
         let ts = generate(&doc, "S", "S.xzor").unwrap().code;
-        let expected = "    __b.openRegion();
-    switch (this.mode) {
-      case 1:
-      case 2: {
-        __b.openElement(\"b\");
-        __b.addText(\"low\");
-        __b.closeElement();
-        break;
+        let expected = "    __dom.branchAt(_e0, (__p) => {
+      switch (this.mode) {
+        case 1:
+        case 2: {
+          if (!__p) return 0;
+          const _e1 = __t0() as El<\"b\">;
+          __p.appendChild(_e1);
+          break;
+        }
+        default: {
+          if (!__p) return 1;
+          const _e2 = __t1();
+          const _e3 = _e2.firstChild! as Text;
+          __dom.textAt(_e3, () => this.mode);
+          __p.appendChild(_e2);
+          break;
+        }
       }
-      default: {
-        __b.addContent(this.mode);
-        break;
-      }
-    }
-    __b.closeRegion();
+      return 2;
+    });
 ";
         assert!(ts.contains(expected), "{ts}");
     }
@@ -3586,17 +3602,22 @@ mod tests {
     fn if_and_for_are_wrapped_in_regions() {
         let (doc, _) = parse("@if (a) {<b/>}\n@for (const x of xs) {@x}").unwrap();
         let ts = generate(&doc, "R", "R.xzor").unwrap().code;
-        let expected = "    __b.openRegion();
-    if (a) {
-      __b.openElement(\"b\");
-      __b.closeElement();
-    }
-    __b.closeRegion();
-    __b.openRegion();
-    for (const x of xs) {
-      __b.addContent(x);
-    }
-    __b.closeRegion();
+        let expected = "    __dom.branchAt(_e1, (__p) => {
+      if (a) {
+        if (!__p) return 0;
+        const _e3 = __t1() as El<\"b\">;
+        __p.appendChild(_e3);
+      }
+      return 1;
+    });
+    __dom.listAt(_e2, () => xs, [
+      (x) => x,
+    ], (__p) => {
+      const _e4 = __t2();
+      const _e5 = _e4.firstChild! as Text;
+      __dom.textItem(_e5, 0);
+      __p.appendChild(_e4);
+    });
 ";
         assert!(ts.contains(expected), "{ts}");
     }
@@ -3630,13 +3651,14 @@ mod tests {
         let src = "@code {\n  state = 1;\n  cached = <B />;\n  pick(t: number) {\n    return t ? <A state=\"@this.state\" n=\"@t\" /> : this.cached;\n  }\n}\n<p>@pick(1)</p>";
         let (doc, _) = parse(src).unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
-        assert!(g.code.contains("  cached = Component.fragment((__b) => { __b.addComponent(B, {}); });"), "{}", g.code);
+        // A markup value is a DOM fragment owned by the component.
+        assert!(g.code.contains("  cached = __Component.$fragment((__p) => {\n    const _e0 = __dom.anchor(__p);\n    __dom.component(_e0, B, (): Partial<B> => ({}));\n  }, this);"), "{}", g.code);
         assert!(
-            g.code.contains("return t ? Component.fragment((__b) => { __b.addComponent(A, { state: this.state, n: t }); }) : this.cached;"),
+            g.code.contains("return t ? __Component.$fragment((__p) => {\n    const _e1 = __dom.anchor(__p);\n    __dom.component(_e1, A, (): Partial<A> => ({ state: this.state, n: t }));\n  }, this) : this.cached;"),
             "{}",
             g.code
         );
-        assert!(g.code.contains("__b.addContent(this.pick(1));"));
+        assert!(g.code.contains("__dom.textAt(_e3, () => this.pick(1));"));
         for m in &g.mappings {
             assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}");
         }
@@ -3648,10 +3670,9 @@ mod tests {
         let src = "@code { n = 1; }\n<p title=\"a &amp; b\" class=\"x &lt;@n&gt;\">&lt;b&gt; caf&eacute; &#233;&#xE9; &copy; &nbsp; &unknown; &amp;amp; 5 &amp 6</p>\n<div><style>a &gt; b</style></div>\n<Child label=\"Tom &amp; Jerry\" n=\"n\" />";
         let g = gen_with(src, &[("Child", child)]);
         for m in [
-            "__b.addAttribute(\"title\", \"a & b\");",
-            "__b.addAttribute(\"class\", \"x <\" + String(this.n) + \">\");",
-            "__b.addText(\"<b> café éé © \u{a0} &unknown; &amp; 5 &amp 6\");",
-            "__b.addText(\"a &gt; b\");",
+            "[\"p\", [\"title\", \"a & b\"], \"<b> café éé © \u{a0} &unknown; &amp; 5 &amp 6\"]",
+            "__dom.attr(_e1, \"class\", () => \"x <\" + String(this.n) + \">\");",
+            "[\"style\", 0, \"a &gt; b\"]",
             "label: \"Tom & Jerry\"",
             "n: this.n",
         ] {
@@ -3694,11 +3715,11 @@ mod tests {
         let info = component_info(src);
         assert!(!info.props.contains_key("#test") && !info.props.contains_key("test"), "{:?}", info.props);
         let g = gen_with(src, &[]);
-        for m in ["addAttribute(\"title\", this.#test)", "addContent(this.#test)", "addContent(this.#test + 1)", "addContent(this.#go())", "addContent(C.#all)", "() => this.#test++", "addContent(#test in this)"] {
+        for m in ["__dom.attr(_e1, \"title\", () => this.#test)", "__dom.textAt(_e2, () => this.#test)", "() => this.#test + 1", "() => this.#go()", "() => C.#all", "() => this.#test++", "() => #test in this"] {
             assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
         }
         // `this.#test` is left alone, and a bare `test` is not the private field.
-        assert!(!g.code.contains("this.this.") && g.code.contains("addContent(test)"), "{}", g.code);
+        assert!(!g.code.contains("this.this.") && g.code.contains("() => test)"), "{}", g.code);
     }
 
     fn gen_with(src: &str, components: &[(&str, &str)]) -> Generated {
@@ -4047,49 +4068,49 @@ mod tests {
         let src = "@fine\n@code {\ncount = 0;\nlabel = \"\";\nok = false;\nteam: Worker[] = [];\nel?: HTMLElement;\ninc() { this.count++; }\n}\n<div class=\"team\" title=\"n @label\">\n<button @onclick=\"inc\" @ref=\"el\">@count</button>\n<input @bind=\"label\" @bind:event=\"oninput\" />\n<input type=\"checkbox\" @bind=\"ok\" />\n@if (count > 1) {\n<p>many</p>\n} else {\n<p>few</p>\n}\n@for (const w of team) {\n<li>@w.name <b>@(w.hours * 2)</b></li>\n}\n@for (let i = 0; i < count; i++) {\n<i>@i</i>\n}\n@for (const [k, v] of Object.entries(team)) {\n@if (v) {\n<u>@k</u>\n}\n}\n@{ const total = count * 2; }\n<span>@total</span>\n</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("import { Component, dom, type El, type RenderTreeBuilder } from \"@source-crafter/xzor-runtime\";");
-        has("export default class C extends Component {");
-        has("__b.addFine((__p) => {");
+        has("import { Component as __Component, dom as __dom, type El } from \"@source-crafter/xzor-runtime\";");
+        has("export default class C extends __Component {");
+        has("protected override render(__p: Node): void {");
         // Elements and static text are a template, cloned; each dynamic part binds the node it has in place.
-        has("const __t0 = dom.template([[\"div\", [\"class\", \"team\"], [\"button\", 0, \"\"], [\"input\", 0], [\"input\", [\"type\", \"checkbox\"]], null, null, null, null, null, null, null]]);");
-        has("const _e0 = __t0() as El<\"div\">;\n      const _e1 = _e0.firstChild! as El<\"button\">;\n      const _e2 = _e1.firstChild! as Text;\n      const _e3 = _e1.nextSibling! as El<\"input\">;");
-        has("dom.attr(_e0, \"title\", () => \"n \" + String(this.label));");
-        has("dom.on(_e1, \"click\", this.inc.bind(this));");
+        has("const __t0 = __dom.template([[\"div\", [\"class\", \"team\"], [\"button\", 0, \"\"], [\"input\", 0], [\"input\", [\"type\", \"checkbox\"]], null, null, null, null, null, null, null]]);");
+        has("const _e0 = __t0() as El<\"div\">;\n    const _e1 = _e0.firstChild! as El<\"button\">;\n    const _e2 = _e1.firstChild! as Text;\n    const _e3 = _e1.nextSibling! as El<\"input\">;");
+        has("__dom.attr(_e0, \"title\", () => \"n \" + String(this.label));");
+        has("__dom.on(_e1, \"click\", this.inc.bind(this));");
         has("this.el = _e1;");
-        has("dom.textAt(_e2, () => this.count);");
-        has("dom.attr(_e3, \"value\", () => this.label);");
-        has("dom.on(_e3, \"input\", (__e) => { this.label = Component.bindValue(__e, this.label); });");
-        has("dom.attr(_e4, \"checked\", () => this.ok);");
-        has("dom.on(_e4, \"change\", (__e) => { this.ok = Component.bindValue(__e, this.ok); });");
-        has("dom.branchAt(_e5, (__p) => {\n        if (this.count > 1) {\n          if (!__p) return 0;\n          const _e10 = __t1() as El<\"p\">;\n          __p.appendChild(_e10);");
+        has("__dom.textAt(_e2, () => this.count);");
+        has("__dom.attr(_e3, \"value\", () => this.label);");
+        has("__dom.on(_e3, \"input\", (__e) => { this.label = __Component.bindValue(__e, this.label); });");
+        has("__dom.attr(_e4, \"checked\", () => this.ok);");
+        has("__dom.on(_e4, \"change\", (__e) => { this.ok = __Component.bindValue(__e, this.ok); });");
+        has("__dom.branchAt(_e5, (__p) => {\n      if (this.count > 1) {\n        if (!__p) return 0;\n        const _e10 = __t1() as El<\"p\">;\n        __p.appendChild(_e10);");
         // A row's bindings share the list's reads, which take the item.
-        has("dom.listAt(_e6, () => this.team, [\n        (w) => w.name,\n        (w) => w.hours * 2,\n      ], (__p) => {\n        const _e12 = __t3() as El<\"li\">;");
-        has("dom.textItem(_e13, 0);");
-        has("dom.textItem(_e15, 1);");
-        has("const __t3 = dom.template([[\"li\", 0, \"\", \" \", [\"b\", 0, \"\"]]]);");
+        has("__dom.listAt(_e6, () => this.team, [\n      (w) => w.name,\n      (w) => w.hours * 2,\n    ], (__p) => {\n      const _e12 = __t3() as El<\"li\">;");
+        has("__dom.textItem(_e13, 0);");
+        has("__dom.textItem(_e15, 1);");
+        has("const __t3 = __dom.template([[\"li\", 0, \"\", \" \", [\"b\", 0, \"\"]]]);");
         has("for (let i = 0; i < this.count; i++) {");
-        has("dom.textAt(_e17, () => i);");
+        has("__dom.textAt(_e17, () => i);");
         // Destructured items (entries, tuples) are new on every run: a keyed list would rebuild every row.
         has("for (const [k, v] of Object.entries(this.team)) {");
         assert!(!g.code.contains("[k, v]) =>"), "{}", g.code);
         // Keyed by a pass counter: a pass that saw the same `k` and `v` keeps its row, and its `@if` is a region.
-        has("for (const [k, v] of Object.entries(this.team)) {\n          const __p = __pass(__i++, [k, v]);");
+        has("for (const [k, v] of Object.entries(this.team)) {\n        const __p = __pass(__i++, [k, v]);");
         // A `@{ }` block and the siblings after it are one region: its locals stay in scope and current.
-        has("dom.regionAt(_e9, (__p) => {\n        const total = this.count * 2;");
+        has("__dom.regionAt(_e9, (__p) => {\n      const total = this.count * 2;");
         has("() => total);");
         has("__p.appendChild(_e0);");
-        assert!(!g.code.contains("__b.openElement"), "{}", g.code);
+        assert!(!g.code.contains("__b."), "{}", g.code);
     }
 
     #[test]
     fn async_components_load_on_first_use_and_cached_ones_say_so() {
         let chart = "@async\n@code { label = \"\"; }\n<p>@label</p>";
-        let g = gen_with("@render\n@import Chart from \"./Chart.xzor\"\n@cached\n<Chart label=\"x\" />", &[("Chart", chart)]);
+        let g = gen_with("@import Chart from \"./Chart.xzor\"\n@cached\n<Chart label=\"x\" />", &[("Chart", chart)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("import { Component, lazy, type RenderTreeBuilder } from \"@source-crafter/xzor-runtime\";");
+        has("import { Component as __Component, dom as __dom, lazy as __lazy } from \"@source-crafter/xzor-runtime\";");
         // The class stays a type for the props; the tree gets its loader.
-        has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
-        has("__b.addComponent(__lazy_Chart, { label: \"x\" });");
+        has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = __lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
+        has("__dom.component(_e0, __lazy_Chart, (): Partial<Chart> => ({ label: \"x\" }));");
         has("static readonly cached = true;");
     }
 
@@ -4097,10 +4118,8 @@ mod tests {
     fn fine_getters_are_cached_unless_volatile() {
         let src = "@fine\n@code {\n  n = 1;\n  get total(): number { return this.n * 2; }\n  @Volatile get now(): number { return Date.now(); }\n  static get shared(): number { return 1; }\n  set total2(v: number) {}\n}\n<p>@total @now</p>";
         let g = gen_with(src, &[]);
-        assert!(g.code.contains("static { dom.memo(this, [\"total\"]); }"), "{}", g.code);
+        assert!(g.code.contains("static { __dom.memo(this, [\"total\"]); }"), "{}", g.code);
         assert!(!g.code.contains("@Volatile"), "{}", g.code);
-        let g = gen_with("@render\n@code { get total(): number { return 1; } }\n<p/>", &[]);
-        assert!(!g.code.contains("dom.memo"), "{}", g.code);
     }
 
     #[test]
@@ -4108,58 +4127,50 @@ mod tests {
         let src = "@fine\n@code { q = \"\"; load(q: string): Promise<string[]> { return Promise.resolve([q]); } }\n<ul>@await (load(q)) {<li>…</li>} then (rows) {@for (const r of rows) {<li>@r</li>}} catch (e) {<li>@String(e)</li>}</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("dom.awaitCallAt(_e1, () => [this.q], (__a0) => this.load(__a0), (__p) => {");
+        has("__dom.awaitCallAt(_e1, () => [this.q], (__a0) => this.load(__a0), (__p) => {");
         has("}, (__p, rows) => {");
-        has("dom.listAt(");
+        has("__dom.listAt(");
         has("}, (__p, e) => {");
         has("() => String(e)");
         // Arguments with nested calls, strings and commas; a callee through a member chain.
         let g = gen_with("@fine\n@code { q = \"\"; api = { find: (a: string, b: number[]) => Promise.resolve(a) }; }\n@await (api.find(q.trim(), [1, 2])) {} then (v) {@v}", &[]);
-        assert!(g.code.contains("dom.awaitCallAt(_e0, () => [this.q.trim(), [1, 2]], (__a0, __a1) => this.api.find(__a0, __a1), "), "{}", g.code);
+        assert!(g.code.contains("__dom.awaitCallAt(_e0, () => [this.q.trim(), [1, 2]], (__a0, __a1) => this.api.find(__a0, __a1), "), "{}", g.code);
         // Anything else, or a call without arguments, runs whole on every change.
         for promise in ["load()", "q ? load(q) : load(\"\")", "load(q).then((r) => r)", "load(...qs)", "load(`${q}`)"] {
             let g = gen_with(&format!("@fine\n@code {{ q = \"\"; qs: string[] = []; load(...a: string[]) {{ return Promise.resolve(a); }} }}\n@await ({promise}) {{}}"), &[]);
-            assert!(g.code.contains("dom.awaitAt(") && !g.code.contains("awaitCallAt"), "{promise}:\n{}", g.code);
+            assert!(g.code.contains("__dom.awaitAt(") && !g.code.contains("awaitCallAt"), "{promise}:\n{}", g.code);
         }
-        let doc = parse("@render\n@await (p) { } then { }").unwrap().0;
-        let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
-        assert!(err.contains("@await can't go inside a component's content"), "{err}");
+        // Inside a component's content (a slot fill) it builds like anywhere else.
+        let g = gen_with("@code { p = Promise.resolve(1); }\n<Card>@await (p) { } then { }</Card>", &[("Card", "<p/>")]);
+        assert!(g.code.contains("__dom.awaitAt("), "{}", g.code);
     }
 
     #[test]
     fn leave_marks_the_element() {
         let src = "@code { open = true; }\n@if (open) {<dialog @leave>x</dialog>}";
-        let g = gen_with(&format!("@fine\n{src}"), &[]);
+        let g = gen_with(src, &[]);
         assert!(g.code.contains("[\"dialog\", [\"data-leave\", \"\"], \"x\"]"), "{}", g.code);
-        assert!(g.code.contains("Component.$leaves = true;"), "{}", g.code);
-        let g = gen_with(&format!("@render\n{src}"), &[]);
-        assert!(g.code.contains("__b.addAttribute(\"data-leave\", \"\");"), "{}", g.code);
-        assert!(g.code.contains("Component.$leaves = true;"), "{}", g.code);
+        assert!(g.code.contains("__Component.$leaves = true;"), "{}", g.code);
         assert!(!gen_with("@code { open = true; }\n<p>x</p>", &[]).code.contains("$leaves"));
     }
 
     #[test]
     fn class_toggles() {
         let src = "@code { err = \"\"; }\n<div class=\"field\" class:invalid=\"@err\" class:round>x</div>";
-        let g = gen_with(&format!("@fine\n{src}"), &[]);
+        let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The static class stays in the template; each toggle is its own binding.
         has("[\"div\", [\"class\", \"field\"], \"x\"]");
-        has("dom.attr(_e0, \"class:invalid\", () => this.err);");
-        has("dom.attr(_e0, \"class:round\", () => true);");
-        let g = gen_with(&format!("@render\n{src}"), &[]);
-        // After the element's own class, whatever the order they were written in.
-        assert!(g.code.contains("__b.addAttribute(\"class\", \"field\");\n    __b.toggleClass(\"invalid\", this.err);\n    __b.toggleClass(\"round\", true);"), "{}", g.code);
+        has("__dom.attr(_e0, \"class:invalid\", () => this.err);");
+        has("__dom.attr(_e0, \"class:round\", () => true);");
     }
 
     #[test]
     fn bind_debounce_waits_for_a_pause() {
         let src = "@code { q = \"\"; filter() {} }\n<input @bind:input=\"q\" @bind:debounce=\"300\" @bind:after=\"filter\" />";
-        for mode in ["@render\n", "@fine\n"] {
-            let g = gen_with(&format!("{mode}{src}"), &[]);
-            // The value shown stays bound; the write back waits, and its promise re-renders after it.
-            assert!(g.code.contains("(__e) => Component.debounce(__e, 300, () => { this.q = Component.bindValue(__e, this.q); return this.filter(); })"), "{}", g.code);
-        }
+        let g = gen_with(src, &[]);
+        // The value shown stays bound; the write back waits, and its promise re-renders after it.
+        assert!(g.code.contains("(__e) => __Component.debounce(__e, 300, () => { this.q = __Component.bindValue(__e, this.q); return this.filter(); })"), "{}", g.code);
         let err = generate_with(&parse("<input @bind=\"q\" @bind:debounce=\"soon\" />").unwrap().0, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
         assert!(err.contains("@bind:debounce requires milliseconds"), "{err}");
     }
@@ -4167,12 +4178,10 @@ mod tests {
     #[test]
     fn bind_input_is_bind_on_input() {
         let src = "@code { q = \"\"; }\n<input @bind:input=\"q\" />";
-        for (mode, attr, on) in [("@render\n", "__b.addAttribute(\"value\", this.q);", "__b.addEventHandler(\"input\", "), ("@fine\n", "dom.attr(", "dom.on(_e0, \"input\", ")] {
-            let g = gen_with(&format!("{mode}{src}"), &[]);
-            let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-            has(attr);
-            has(&format!("{on}(__e) => {{ this.q = Component.bindValue(__e, this.q); }}"));
-        }
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("__dom.attr(_e0, \"value\", () => this.q);");
+        has("__dom.on(_e0, \"input\", (__e) => { this.q = __Component.bindValue(__e, this.q); });");
     }
 
     #[test]
@@ -4181,31 +4190,32 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // A value read once into its hole; the other `@n` stays bound.
-        has("dom.textOnce(_e2, () => this.n);");
-        has("dom.textAt(_e3, () => this.n);");
+        has("__dom.textOnce(_e2, () => this.n);");
+        has("__dom.textAt(_e3, () => this.n);");
         // A block built once: plain control flow, values set, no binding inside.
-        has("dom.onceAt(");
-        has("dom.set(_e");
-        has("dom.setText(_e");
+        has("__dom.onceAt(");
+        has("__dom.set(_e");
+        has("__dom.setText(_e");
         has("for (const x of this.xs) {");
-        let block = &g.code[g.code.find("dom.onceAt(").unwrap()..];
-        assert!(!block[..block.find("});\n").unwrap()].contains("dom.textAt"), "{}", g.code);
-        // A render pass has no \"once\": the block renders as usual.
-        let g = gen_with("@render\n@code { n = 0; }\n<p>@once(n)</p>", &[]);
-        assert!(g.code.contains("__b.addContent(this.n);"), "{}", g.code);
+        let block = &g.code[g.code.find("__dom.onceAt(").unwrap()..];
+        assert!(!block[..block.find("});\n").unwrap()].contains("__dom.textAt"), "{}", g.code);
+        // `@attributes` inside it is set, not bound; what is written after it still wins.
+        let g = gen_with("@code { bag = {}; }\n@once { <p @attributes=\"bag\" class=\"x\" /> }", &[]);
+        assert!(g.code.contains("__dom.setAttrs(_e") && g.code.contains("this.bag, [\"class\"]);") && !g.code.contains("__dom.attrs("), "{}", g.code);
     }
 
     #[test]
     fn parent_attributes_set_the_enclosing_element() {
-        let g = gen_with("@render\n@code { n = 0; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text @n\" none }</span>", &[]);
-        assert!(g.code.contains("__b.addParentAttribute(\"class\", \"error-text \" + String(this.n));"), "{}", g.code);
         let src = "@fine\n@code { n = 0; items: string[] = []; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text\" none }</span>\n<ul>@for (const it of items) {<li>@if (it) { @attr:title=\"@it\" }</li>}</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("dom.attrOf(_e1, \"class\", () => \"error-text\");");
+        has("__dom.attrOf(_e1, \"class\", () => \"error-text\");");
+        // The value is read like any other binding.
+        let g = gen_with("@code { n = 0; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text @n\" none }</span>", &[]);
+        assert!(g.code.contains("__dom.attrOf(_e0, \"class\", () => \"error-text \" + String(this.n));"), "{}", g.code);
         // In a row, a region naming the row's element builds in the row, not in the list's shared reads.
-        has("dom.branchAt(");
-        has("dom.attrOf(_e");
+        has("__dom.branchAt(");
+        has("__dom.attrOf(_e");
         has(", \"title\", () => it);");
         let doc = parse("@fine\n@attr:class=\"x\"").unwrap().0;
         let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
@@ -4216,9 +4226,11 @@ mod tests {
     fn loops_render_their_else_when_no_pass_ran() {
         let g = gen_with("@code { xs: number[] = []; n = 0; }\n@for (const x of xs) {<i>@x</i>} else {<p>none</p>}\n@while (n < 0) { <b/> } else { <u/> }", &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("{\n      let __none = true;\n      for (const x of this.xs) {\n        __none = false;");
-        has("if (__none) {\n        __b.openElement(\"p\");");
-        has("while (this.n < 0) {\n        __none = false;");
+        has("__dom.listAt(_e1, () => this.xs, [\n      (x) => x,\n    ], (__p) => {");
+        has("    }, (__p) => {\n      const _e5 = __t2() as El<\"p\">;");
+        // A plain loop runs in a region and tracks whether a pass ran.
+        has("{\n        let __none = true;\n        while (this.n < 0) {\n          __none = false;");
+        has("if (__none) {\n          const _e7 = __t4() as El<\"u\">;");
     }
 
     #[test]
@@ -4227,11 +4239,11 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The else is the list's empty build: its bindings close over their values, as in a region.
-        has("], (__p) => {\n        const _e");
-        has("}, (__p) => {\n        const _e");
-        has("dom.textAt(");
-        has("for (let i = 0; i < this.xs.length; i++) {\n          const __p = __pass(__i++, [i]);\n          if (__p !== undefined) {");
-        has("}, (__p) => {\n        const _e10 = __t4() as El<\"u\">;");
+        has("], (__p) => {\n      const _e");
+        has("}, (__p) => {\n      const _e");
+        has("__dom.textAt(");
+        has("for (let i = 0; i < this.xs.length; i++) {\n        const __p = __pass(__i++, [i]);\n        if (__p !== undefined) {");
+        has("}, (__p) => {\n      const _e10 = __t4() as El<\"u\">;");
     }
 
     #[test]

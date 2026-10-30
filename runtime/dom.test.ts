@@ -2131,6 +2131,54 @@ test("@attributes sets the bag's values, and removes the keys a new bag lacks", 
   expect(input.outerHTML).toBe('<input name="n" title="back">');
 });
 
+// Later attributes override the bag, earlier ones are overridden by it: codegen lists the names written after `@attributes`.
+class BagOrder extends Component {
+  #bag: Record<string, unknown> | null | undefined = { class: "bag", id: "bag", title: "bag" };
+  get bag(): Record<string, unknown> | null | undefined { Component.$reader?.(this, 0); return this.#bag; } set bag(v: Record<string, unknown> | null | undefined) { const p = this.#bag; if (Component.same(p, v)) return; this.#bag = v; this.$changed(0, p); }
+  static { Component.$define(this, ["bag"]); }
+  protected override render(__p: Node): void {
+    const _e0 = dom.el(__p, "p");
+    _e0.setAttribute("id", "before");
+    _e0.setAttribute("class", "after");
+    dom.attrs(_e0, () => this.bag, ["class"]);
+  }
+}
+
+test("@attributes: a static written after it wins, one written before it loses, on every run", async () => {
+  const el = host();
+  const b = mount(BagOrder, el);
+  const p = el.querySelector("p")!;
+  expect(p.outerHTML).toBe('<p id="bag" class="after" title="bag"></p>');
+  b.bag = { class: "other", id: "other" };
+  await tick();
+  expect(p.outerHTML).toBe('<p id="other" class="after"></p>');
+  b.bag = null;
+  await tick();
+  expect(p.outerHTML).toBe('<p class="after"></p>');
+});
+
+test("@attributes inside @once sets the bag once, untracked", async () => {
+  class OnceBag extends Component {
+    #bag: Record<string, unknown> = { id: "a", class: "bag" };
+    get bag(): Record<string, unknown> { Component.$reader?.(this, 0); return this.#bag; } set bag(v: Record<string, unknown>) { const p = this.#bag; if (Component.same(p, v)) return; this.#bag = v; this.$changed(0, p); }
+    static { Component.$define(this, ["bag"]); }
+    protected override render(__p: Node): void {
+      dom.onceAt(__p.appendChild(document.createComment("")), (__p) => {
+        const _e0 = dom.el(__p, "p");
+        _e0.setAttribute("class", "after");
+        dom.setAttrs(_e0, this.bag, ["class"]);
+      });
+    }
+  }
+  const el = host();
+  const b = mount(OnceBag, el);
+  const p = el.querySelector("p")!;
+  expect(p.outerHTML).toBe('<p class="after" id="a"></p>');
+  b.bag = { id: "b" };
+  await tick();
+  expect(p.outerHTML).toBe('<p class="after" id="a"></p>');
+});
+
 // Event modifiers: 1 = preventDefault, 2 = stopPropagation.
 const __mods = dom.template([["div", 0, ["button", 0, "go"], ["form", 0, ["input", 0]]]]);
 class Mods extends Component {
