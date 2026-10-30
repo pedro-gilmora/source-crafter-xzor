@@ -1,6 +1,12 @@
 // xzor runtime: the RenderTreeBuilder that generated components call into, and a DOM
 // renderer that re-renders one component at a time and patches only what changed.
 
+import { fineHooks } from "./dom";
+import { changed, same as equal } from "./track";
+
+/** @internal What generated code calls to build a component's DOM. */
+export { dom, type El } from "./dom";
+
 type Handler = (e: Event) => unknown;
 type Modifier = "preventDefault" | "stopPropagation";
 type Modifiers = Partial<Record<Modifier, boolean>>;
@@ -61,39 +67,13 @@ export type VNode = VText | VElement | VRegion | VComponent | VFine;
 /** A `@fine` component's DOM: built once by `fine.ts`, between two comments; patches only refresh it. */
 export type VFine = { kind: "fine"; build: (parent: Node) => void; root?: FineRoot };
 
-/** @internal What `fine.ts` keeps for one fine vnode. */
+/** @internal What `dom.ts` keeps for one fine vnode. */
 export type FineRoot = { bindings: unknown; start: Comment; end: Comment };
-
-type FineHooks = {
-  create(build: (parent: Node) => void, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot;
-  refresh(root: FineRoot): void;
-  dispose(root: FineRoot): void;
-  /** A handler of a fine component ran: it re-runs the bindings that read nothing tracked. */
-  handled(owner: ComponentBase, result: unknown): void;
-};
-
-let fineHooks: FineHooks | undefined;
 
 /** @internal On a component whose fine root was built (its fine context): its handlers and callbacks write tracked fields, so nothing re-renders it. */
 export const FINE: unique symbol = Symbol("xzor.fine");
 
 const isFine = (c: ComponentBase): boolean => (c as unknown as Record<symbol, unknown>)[FINE] !== undefined;
-
-/** @internal Set by `fine.ts` (the model entry), so the renderer pays nothing without it. */
-export function setFineHooks(h: FineHooks): void {
-  fineHooks = h;
-}
-
-type Tracking = { model: { $reader: ((source: any, index: number) => void) | undefined; same(a: unknown, b: unknown): boolean }; notify(dep: object, index: number): void };
-let tracking: Tracking | undefined;
-
-/** @internal Set by the model entry: what a component's tracked fields report to. */
-export function setTracking(t: Tracking): void {
-  tracking = t;
-  // Every tracked read goes through `$reader`: read the model directly, not through `tracking`.
-  const model = t.model;
-  Object.defineProperty(ComponentBase, "$reader", { get: () => model.$reader, configurable: true });
-}
 
 const FIELDS = Symbol("xzor.fields");
 type Watcher = { slot: number };
@@ -580,14 +560,11 @@ export abstract class ComponentBase {
   /** @internal Set by components that use `@leave`: until then, removal skips the `data-leave` check. */
   static $leaves = false;
 
-  /** @internal What tracked getters report to; the bundle emits `ComponentBase.$reader?.(this, i)`. */
-  static get $reader(): ((source: object, index: number) => void) | undefined {
-    return tracking?.model.$reader;
-  }
+  /** @internal What tracked getters report to, set by the bindings (and the model tracker) while they run; the bundle emits `ComponentBase.$reader?.(this, i)`. */
+  static $reader: ((source: object, index: number) => void) | undefined = undefined;
 
-  static same(a: unknown, b: unknown): boolean {
-    return tracking === undefined ? Object.is(a, b) : tracking.model.same(a, b);
-  }
+  /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */
+  static readonly same: (a: unknown, b: unknown) => boolean = equal;
 
   /** @internal Records a class's tracked fields after its base's; where they start is the class's `$at`. */
   static $define(cls: Function, names: string[]): number {
@@ -619,7 +596,7 @@ export abstract class ComponentBase {
   /** @internal What a tracked setter reports once it stored a different value. */
   protected $changed(index: number, _previous: unknown): void {
     const subs = this.#subs;
-    if (subs !== undefined) for (let i = 0; i < subs.length; i++) tracking!.notify(subs[i]!, index);
+    if (subs !== undefined) for (let i = 0; i < subs.length; i++) changed(subs[i]!, index);
   }
 
   /** Wraps builder calls as a RenderFragment; xzor emits this for markup used as a value. */
@@ -911,7 +888,7 @@ export class RenderTreeBuilder {
     if (isFine(owner))
       return (arg: T) => {
         const result = handler(arg);
-        fineHooks!.handled(owner, result);
+        fineHooks.handled(owner, result);
         return result;
       };
     return (arg: T) => {
@@ -1210,7 +1187,7 @@ function listen(el: Element, event: string): void {
     const handler = record.events[event];
     if (!handler) return;
     const result = handler(e);
-    if (isFine(record.owner)) return fineHooks!.handled(record.owner, result);
+    if (isFine(record.owner)) return fineHooks.handled(record.owner, result);
     update(record.owner);
     if (result instanceof Promise) void result.then(() => update(record.owner));
   });
@@ -1255,10 +1232,8 @@ function create(
         return failedComponent(v, err, app, scope);
       }
     }
-    case "fine": {
-      if (!fineHooks) throw new Error("xzor: a @fine component needs @source-crafter/xzor-runtime/model");
+    case "fine":
       return fineNodes((v.root = fineHooks.create(v.build, owner, app, scope)));
-    }
   }
 }
 
@@ -1408,7 +1383,7 @@ function dispose(v: VNode): void {
       disposeInstance(v.instance);
       return;
     case "fine":
-      fineHooks!.dispose(v.root!);
+      fineHooks.dispose(v.root!);
       return;
   }
 }
@@ -1522,7 +1497,7 @@ function patch(
     }
     case "fine": {
       // Built once: a re-render (`stateHasChanged`) re-runs the bindings, for changes nothing tracks.
-      fineHooks!.refresh((n.root = (o as VFine).root!));
+      fineHooks.refresh((n.root = (o as VFine).root!));
       return;
     }
   }

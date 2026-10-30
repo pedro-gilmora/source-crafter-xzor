@@ -1,9 +1,9 @@
-// Fine components (`@fine`): no render pass. A fine component builds its DOM once, and each dynamic expression
-// is a binding: it collects the tracked fields it reads while it runs, and re-runs through the model queue (once
-// per microtask) when one of them changes. A binding is its own dep for the first source it reads.
+// The renderer: a component builds its DOM once, and each dynamic expression is a binding: it collects the
+// tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
+// them changes. A binding is its own dep for the first source it reads.
 
-import { $inSvg as inSvg, $isFragment, $leave as leave, ComponentBase, disposeIsland, FINE, patchIsland, setFineHooks, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
-import { $flush, $keyName, Model } from "./model";
+import { $inSvg as inSvg, $isFragment, $leave as leave, ComponentBase, disposeIsland, FINE, patchIsland, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { META, bitOf, flush } from "./track";
 
 const TEXT = 0;
 const ATTR = 1;
@@ -39,14 +39,11 @@ const PAUSE = 2048;
 const PAUSED = 4096;
 const STALE = 8192;
 
-// Same bits as the model tracker: fields from the 30th share bit 30, `state` (-1) has bit 31.
-const bitOf = (index: number): number => (index === -1 ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
-
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
-/** Where the fine component was mounted: what an island needs to mount components. */
+/** Where the component was mounted: what an island needs to mount components. */
 type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown; loose: Binding[]; sweep: boolean };
-/** Where bindings are chained: a fine root, a region or a list row. */
+/** Where bindings are chained: a component's root, a region or a list row. */
 type Holder = { bindings: unknown; ctx: Ctx };
 type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
 /** A built branch of a show block: its top-level elements, and their inline `display` while hidden. */
@@ -54,7 +51,7 @@ type ShowBranch = Region & { first: Node | null; els: HTMLElement[]; display: st
 type Show = { ctx: Ctx; start: Comment; index: number; build: (parent: Node) => unknown; branches: (ShowBranch | undefined)[] };
 /** A row's shared reads, from the list: `(item, x) => value`; a handler's gives the handler. */
 type Reads = readonly ((item: any, x?: any) => any)[];
-/** `set`: a build that closes over its item gives it the new one (`fine.rowItem`). */
+/** `set`: a build that closes over its item gives it the new one (`dom.rowItem`). */
 type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
@@ -62,10 +59,10 @@ type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
 type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
-/** A component's cached getters by `fine.memo` index, created when a second binding reads them. */
-const MEMOS = Symbol("xzor.fine.memos");
+/** A component's cached getters by `dom.memo` index, created when a second binding reads them. */
+const MEMOS = Symbol("xzor.dom.memos");
 /** The key of the row an empty list's else builds. */
-const EMPTY = Symbol("xzor.fine.empty");
+const EMPTY = Symbol("xzor.dom.empty");
 
 /** The element type of tag `K`. */
 export type El<K extends string> = K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : HTMLElement;
@@ -109,7 +106,7 @@ function collectBits(source: Source, bit: number): void {
   dep.mask |= bit;
 }
 
-/** One dynamic part of a fine component. 8 fields, so one 80-byte JSC cell. */
+/** One dynamic part of a component. 8 fields, so one 80-byte JSC cell. */
 class Binding {
   model: Source | Map<Source, Dep> | undefined = undefined;
   mask = 0;
@@ -126,7 +123,7 @@ class Binding {
     public data: any,
   ) {}
 
-  // The model queue reads these; prototype accessors cost no field.
+  // The change queue reads these; prototype accessors cost no field.
   get owner(): Binding {
     return this;
   }
@@ -204,15 +201,15 @@ class Binding {
 
   #run(parent?: Node): unknown {
     const prev = collecting;
-    const reader = Model.$reader;
+    const reader = ComponentBase.$reader;
     collecting = this;
-    Model.$reader = collect as unknown as typeof Model.$reader;
+    ComponentBase.$reader = collect as unknown as typeof ComponentBase.$reader;
     this.#reset();
     try {
       return (this.flags & ITEM) !== 0 ? this.read(this.data.item, parent) : this.read(parent);
     } finally {
       collecting = prev;
-      Model.$reader = reader;
+      ComponentBase.$reader = reader;
       this.#sweep();
     }
   }
@@ -364,7 +361,7 @@ function refreshLoose(ctx: Ctx): void {
 
 // Like a render after a vdom handler, what the handler changed shows before it returns.
 function afterHandler(ctx: Ctx, result: unknown): void {
-  $flush();
+  flush();
   refreshLoose(ctx);
   if (result instanceof Promise) void result.then(() => refreshLoose(ctx));
 }
@@ -372,14 +369,14 @@ function afterHandler(ctx: Ctx, result: unknown): void {
 // Runs `run` with no binding collecting, so what it reads subscribes nothing (`@once`).
 function untracked<T>(run: () => T): T {
   const prev = collecting;
-  const reader = Model.$reader;
+  const reader = ComponentBase.$reader;
   collecting = undefined;
-  Model.$reader = undefined;
+  ComponentBase.$reader = undefined;
   try {
     return run();
   } finally {
     collecting = prev;
-    Model.$reader = reader;
+    ComponentBase.$reader = reader;
   }
 }
 
@@ -591,6 +588,10 @@ function place(end: Node, old: Row[], order: Row[]): void {
 
 const duplicate = (key: unknown): Error => new Error(`xzor: duplicate @key ${String(key)}`);
 
+// The `@Key` member of a model's class, from the class's tracked-field record.
+const keyName = (item: unknown): string | undefined =>
+  ((item as object | null | undefined)?.constructor as Record<symbol, { key?: string } | undefined> | undefined)?.[META]?.key;
+
 // Rows are matched by key (the list's, the models' `@Key`, else the item itself). A key whose item is a new object
 // keeps its row, which takes the item, unless its build closes over the item (it is rebuilt then).
 function reconcile(list: Binding, items: Iterable<unknown>): void {
@@ -598,7 +599,7 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
   const rows = state.rows;
   let next = Array.isArray(items) ? (items as unknown[]) : [...items];
   if (next.length === 0 && state.empty !== undefined) next = [EMPTY];
-  const named = state.key === undefined ? $keyName(next[0]) : undefined;
+  const named = state.key === undefined ? keyName(next[0]) : undefined;
   const keyOf = state.key ?? (named === undefined ? undefined : (item: any) => item[named]);
   let keys = next;
   if (keyOf === undefined) {
@@ -741,7 +742,7 @@ function make(spec: Spec, svg = false): Node {
 const DELEGATED = new Set(["beforeinput", "click", "dblclick", "contextmenu", "focusin", "focusout", "input", "keydown", "keyup", "mousedown", "mousemove", "mouseout", "mouseover", "mouseup", "pointerdown", "pointermove", "pointerout", "pointerover", "pointerup", "touchend", "touchmove", "touchstart"]);
 // Symbols, so another copy of the runtime on the page (another bundle) never runs this one's handlers.
 const keys = new Map<string, symbol>();
-const HOLDER = Symbol("xzor.fine.holder");
+const HOLDER = Symbol("xzor.dom.holder");
 
 function keyOf(type: string): symbol {
   let key = keys.get(type);
@@ -826,11 +827,11 @@ function awaiting<R>(end: Comment, pending: Build | undefined, then: ((parent: N
 }
 
 /**
- * What generated `@fine` code calls. A run of nodes is a `template` clone; the `...At` calls bind the nodes it
+ * What generated code calls. A run of nodes is a `template` clone; the `...At` calls bind the nodes it
  * has in place, and the `...Item` ones bind a row's nodes to a read its list shares (`reads[i]`, given the item).
  * The others append the node they bind to `parent`.
  */
-export const fine = {
+export const dom = {
   /**
    * Builds the nodes of `specs` (a fragment unless they are one element). The first call builds them directly:
    * a component used once keeps no copy. From the second on, calls clone a copy built then.
@@ -882,7 +883,7 @@ export const fine = {
 
   /** Text that follows `read()`; markup (a `RenderFragment`) renders as markup. */
   text(parent: Node, read: () => unknown): void {
-    fine.textAt(parent.appendChild(document.createTextNode("")), read);
+    dom.textAt(parent.appendChild(document.createTextNode("")), read);
   },
 
   textAt(node: Text, read: () => unknown): void {
@@ -1067,7 +1068,7 @@ export const fine = {
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */
   island(parent: Node, build: (b: RenderTreeBuilder) => void): void {
-    fine.islandAt(anchor(parent), build);
+    dom.islandAt(anchor(parent), build);
   },
 
   islandAt(end: Comment, build: (b: RenderTreeBuilder) => void): void {
@@ -1079,35 +1080,32 @@ export const fine = {
 
 const noop = (): void => {};
 
-/** @deprecated Every component is fine: `ComponentBase` does what this did. */
-export const FineComponent = ComponentBase;
-export type FineComponent = ComponentBase;
-
-setFineHooks({
+/** @internal What `index.ts` calls to mount, refresh and dispose a component's DOM. */
+export const fineHooks = {
   create(build: Build, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot {
     const frag = document.createDocumentFragment();
     const start = frag.appendChild(document.createComment(""));
     const ctx: Ctx = { owner, app, scope, loose: [], sweep: false };
     (owner as unknown as Record<symbol, Ctx>)[FINE] = ctx;
     const root: FineRoot & Holder = { bindings: undefined, ctx, start, end: start };
-    // Reads outside a binding subscribe nothing: a fine component is never re-rendered by what it reads.
-    const reader = Model.$reader;
-    Model.$reader = undefined;
+    // Reads outside a binding subscribe nothing: a component is never re-rendered by what it reads.
+    const reader = ComponentBase.$reader;
+    ComponentBase.$reader = undefined;
     try {
       within(root, () => build(frag));
     } finally {
-      Model.$reader = reader;
+      ComponentBase.$reader = reader;
     }
     root.end = frag.appendChild(document.createComment(""));
     return root;
   },
-  refresh(root) {
+  refresh(root: FineRoot): void {
     // A whole-component pass recomputes the cached getters too: what changed may be untracked.
     const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, (Binding | undefined)[] | undefined>)[MEMOS];
     if (memos !== undefined) for (const m of memos) if (m !== undefined) m.flags &= ~FRESH;
     refreshAll(root as FineRoot & Holder);
   },
-  dispose(root) {
+  dispose(root: FineRoot): void {
     const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, (Binding | undefined)[] | undefined>)[MEMOS];
     if (memos !== undefined) for (const m of memos) m?.dispose();
     disposeAll(root as FineRoot & Holder);
@@ -1116,4 +1114,4 @@ setFineHooks({
     const ctx = (owner as unknown as Record<symbol, Ctx | undefined>)[FINE];
     if (ctx !== undefined) afterHandler(ctx, result);
   },
-});
+};

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, mount, type RenderTreeBuilder } from "./index";
-import { EntitySet, FineComponent, Key, Model, fine } from "./model";
+import { ComponentBase, dom, mount, type RenderTreeBuilder } from "./index";
+import { EntitySet, Key, Model } from "./model";
 
-// Models and fine components are written the way the bundle and codegen emit them.
+// Models and components are written the way the bundle and codegen emit them.
 
 class Worker extends Model { constructor(data?: object) { super(data); this.assign(data); }
   #name = ""; get name(): string { Model.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Model.same(p, v)) return; this.#name = v; this.$changed(0, p); }
@@ -25,21 +25,21 @@ function host(): HTMLElement {
 
 let renders = 0;
 
-class Counter extends FineComponent {
-  #count = 0; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-  #label = "n"; get label(): string { FineComponent.$reader?.(this, 1); return this.#label; } set label(v: string) { const p = this.#label; if (FineComponent.same(p, v)) return; this.#label = v; this.$changed(1, p); }
+class Counter extends ComponentBase {
+  #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+  #label = "n"; get label(): string { ComponentBase.$reader?.(this, 1); return this.#label; } set label(v: string) { const p = this.#label; if (ComponentBase.same(p, v)) return; this.#label = v; this.$changed(1, p); }
   untracked = 0;
-  static { FineComponent.$define(this, ["count", "label"]); }
+  static { ComponentBase.$define(this, ["count", "label"]); }
 
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     renders++;
     __b.addFine((__p) => {
-      const _button0 = fine.el(__p, "button");
+      const _button0 = dom.el(__p, "button");
       _button0.addEventListener("click", () => this.count++);
-      fine.attr(_button0, "title", () => `${this.label}${this.count}`);
-      fine.text(_button0, () => this.count);
-      fine.t(__p, " ");
-      fine.text(__p, () => this.untracked);
+      dom.attr(_button0, "title", () => `${this.label}${this.count}`);
+      dom.text(_button0, () => this.count);
+      dom.t(__p, " ");
+      dom.text(__p, () => this.untracked);
     });
   }
 }
@@ -61,15 +61,15 @@ test("a tracked component field updates its bindings without a re-render", async
   expect(button.getAttribute("title")).toBe("x2");
 });
 
-class Bar extends FineComponent {
-  #count = 0; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-  static { FineComponent.$define(this, ["count"]); }
+class Bar extends ComponentBase {
+  #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+  static { ComponentBase.$define(this, ["count"]); }
 
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     __b.addFine((__p) => {
-      const _div0 = fine.el(__p, "div");
-      fine.attr(_div0, "--w", () => this.count * 10 + "%");
-      fine.attr(_div0, "--on", () => this.count > 1 || null);
+      const _div0 = dom.el(__p, "div");
+      dom.attr(_div0, "--w", () => this.count * 10 + "%");
+      dom.attr(_div0, "--on", () => this.count > 1 || null);
     });
   }
 }
@@ -100,26 +100,26 @@ test("stateHasChanged refreshes what nothing tracks", async () => {
   expect(el.textContent).toBe("0 5");
 });
 
-class Sheet extends FineComponent {
-  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { FineComponent.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (FineComponent.same(p, v)) return; this.#team = v; this.$changed(0, p); }
-  static { FineComponent.$define(this, ["team"]); }
+class Sheet extends ComponentBase {
+  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { ComponentBase.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (ComponentBase.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+  static { ComponentBase.$define(this, ["team"]); }
 
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     __b.addFine((__p) => {
-      const _ul0 = fine.el(__p, "ul");
-      fine.list(_ul0, () => this.team.view, (__p, worker: Worker) => {
-        const _li0 = fine.el(__p, "li");
-        const _input0 = fine.el(_li0, "input");
-        fine.attr(_input0, "value", () => worker.hours);
+      const _ul0 = dom.el(__p, "ul");
+      dom.list(_ul0, () => this.team.view, (__p, worker: Worker) => {
+        const _li0 = dom.el(__p, "li");
+        const _input0 = dom.el(_li0, "input");
+        dom.attr(_input0, "value", () => worker.hours);
         _input0.addEventListener("input", (__e) => (worker.hours = Number((__e.target as HTMLInputElement).value)));
-        const _span0 = fine.el(_li0, "span");
-        fine.text(_span0, () => worker.payment.toFixed(2));
-        fine.region(_li0, (__p) => {
-          if (worker.hours > 24) fine.t(fine.el(__p, "small"), "too many");
+        const _span0 = dom.el(_li0, "span");
+        dom.text(_span0, () => worker.payment.toFixed(2));
+        dom.region(_li0, (__p) => {
+          if (worker.hours > 24) dom.t(dom.el(__p, "small"), "too many");
         });
       });
-      const _b0 = fine.el(__p, "b");
-      fine.text(_b0, () => this.team.view.reduce((sum, w) => sum + w.payment, 0));
+      const _b0 = dom.el(__p, "b");
+      dom.text(_b0, () => this.team.view.reduce((sum, w) => sum + w.payment, 0));
     });
   }
 }
@@ -191,14 +191,14 @@ test("islands: child components get their parameters, and re-render only when wh
       b.closeElement();
     }
   }
-  class Parent extends FineComponent {
-    #name = "a"; get name(): string { FineComponent.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (FineComponent.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-    #other = 0; get other(): number { FineComponent.$reader?.(this, 1); return this.#other; } set other(v: number) { const p = this.#other; if (FineComponent.same(p, v)) return; this.#other = v; this.$changed(1, p); }
-    static { FineComponent.$define(this, ["name", "other"]); }
+  class Parent extends ComponentBase {
+    #name = "a"; get name(): string { ComponentBase.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (ComponentBase.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+    #other = 0; get other(): number { ComponentBase.$reader?.(this, 1); return this.#other; } set other(v: number) { const p = this.#other; if (ComponentBase.same(p, v)) return; this.#other = v; this.$changed(1, p); }
+    static { ComponentBase.$define(this, ["name", "other"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.text(fine.el(__p, "b"), () => this.other);
-        fine.island(__p, (__b) => __b.addComponent(Child, { label: this.name }));
+        dom.text(dom.el(__p, "b"), () => this.other);
+        dom.island(__p, (__b) => __b.addComponent(Child, { label: this.name }));
       });
     }
   }
@@ -222,11 +222,11 @@ test("islands: slot content reading the fine parent re-renders the child that sh
       b.closeElement();
     }
   }
-  class Page extends FineComponent {
-    #name = "a"; get name(): string { FineComponent.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (FineComponent.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["name"]); }
+  class Page extends ComponentBase {
+    #name = "a"; get name(): string { ComponentBase.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (ComponentBase.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["name"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => fine.island(__p, (__b) => __b.addComponent(Card, {}, { default: () => ComponentBase.fragment((__b) => { __b.openElement("i"); __b.addContent(this.name); __b.closeElement(); }) } as never)));
+      __b.addFine((__p) => dom.island(__p, (__b) => __b.addComponent(Card, {}, { default: () => ComponentBase.fragment((__b) => { __b.openElement("i"); __b.addContent(this.name); __b.closeElement(); }) } as never)));
     }
   }
   const el = host();
@@ -247,14 +247,14 @@ test("islands: a callback from a child updates the fine parent through its track
     }
   }
   let renders = 0;
-  class Page extends FineComponent {
-    #picked = 0; get picked(): number { FineComponent.$reader?.(this, 0); return this.#picked; } set picked(v: number) { const p = this.#picked; if (FineComponent.same(p, v)) return; this.#picked = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["picked"]); }
+  class Page extends ComponentBase {
+    #picked = 0; get picked(): number { ComponentBase.$reader?.(this, 0); return this.#picked; } set picked(v: number) { const p = this.#picked; if (ComponentBase.same(p, v)) return; this.#picked = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["picked"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       renders++;
       __b.addFine((__p) => {
-        fine.island(__p, (__b) => __b.addComponent(Btn, { onPick: __b.callback((n: number) => (this.picked = n)) }));
-        fine.text(fine.el(__p, "b"), () => this.picked);
+        dom.island(__p, (__b) => __b.addComponent(Btn, { onPick: __b.callback((n: number) => (this.picked = n)) }));
+        dom.text(dom.el(__p, "b"), () => this.picked);
       });
     }
   }
@@ -267,12 +267,12 @@ test("islands: a callback from a child updates the fine parent through its track
 });
 
 test("a markup value in @expr renders as markup and follows what it reads", async () => {
-  class Page extends FineComponent {
-    #n = 1; get n(): number { FineComponent.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["n"]); }
+  class Page extends ComponentBase {
+    #n = 1; get n(): number { ComponentBase.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["n"]); }
     summary = ComponentBase.fragment((__b) => { __b.openElement("u"); __b.addContent(this.n); __b.closeElement(); });
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => fine.text(fine.el(__p, "div"), () => this.summary));
+      __b.addFine((__p) => dom.text(dom.el(__p, "div"), () => this.summary));
     }
   }
   const el = host();
@@ -286,18 +286,18 @@ test("a markup value in @expr renders as markup and follows what it reads", asyn
 test("after its own handler, a fine component re-runs the bindings that read nothing tracked", async () => {
   const work = { changes: 0 };
   let tracked = 0;
-  class Page extends FineComponent {
-    #count = 0; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["count"]); }
+  class Page extends ComponentBase {
+    #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["count"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const _e0 = fine.el(__p, "button");
-        fine.on(_e0, "click", () => {
+        const _e0 = dom.el(__p, "button");
+        dom.on(_e0, "click", () => {
           work.changes++;
           this.count++;
         });
-        fine.text(fine.el(__p, "i"), () => work.changes);
-        fine.text(fine.el(__p, "b"), () => (tracked++, this.count));
+        dom.text(dom.el(__p, "i"), () => work.changes);
+        dom.text(dom.el(__p, "b"), () => (tracked++, this.count));
       });
     }
   }
@@ -314,9 +314,9 @@ test("after its own handler, a fine component re-runs the bindings that read not
 test("a set's hasChanges and hasErrors follow pushes", async () => {
   const el = host();
   const set = EntitySet.track(Worker, [{ name: "a", hours: 1, tax: 0 }]);
-  class Flags extends FineComponent {
+  class Flags extends ComponentBase {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => fine.text(__p, () => `${set.hasChanges}/${set.hasErrors}`));
+      __b.addFine((__p) => dom.text(__p, () => `${set.hasChanges}/${set.hasErrors}`));
     }
   }
   mount(Flags, el);
@@ -361,12 +361,12 @@ test("replacing the list field rebuilds the rows", async () => {
 test("bindings inside a region that drops them stop writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
-  class Parent extends FineComponent {
-    #show = true; get show(): boolean { FineComponent.$reader?.(this, 0); return this.#show; } set show(v: boolean) { const p = this.#show; if (FineComponent.same(p, v)) return; this.#show = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["show"]); }
+  class Parent extends ComponentBase {
+    #show = true; get show(): boolean { ComponentBase.$reader?.(this, 0); return this.#show; } set show(v: boolean) { const p = this.#show; if (ComponentBase.same(p, v)) return; this.#show = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["show"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => fine.region(__p, (__p) => {
-        if (this.show) fine.text(fine.el(__p, "p"), () => worker.hours);
+      __b.addFine((__p) => dom.region(__p, (__p) => {
+        if (this.show) dom.text(dom.el(__p, "p"), () => worker.hours);
       }));
     }
   }
@@ -381,33 +381,33 @@ test("bindings inside a region that drops them stop writing", async () => {
 });
 
 test("nested regions and lists in a region change alone: the outer block keeps its nodes", async () => {
-  const __t0 = fine.template([null, null]);
-  const __t1 = fine.template([["dialog", 0, ["input", 0], null, null, ["ul", 0, null]]]);
-  const __t2 = fine.template([["p", 0, "long"]]);
-  const __t3 = fine.template([["li", 0, ""]]);
+  const __t0 = dom.template([null, null]);
+  const __t1 = dom.template([["dialog", 0, ["input", 0], null, null, ["ul", 0, null]]]);
+  const __t2 = dom.template([["p", 0, "long"]]);
+  const __t3 = dom.template([["li", 0, ""]]);
   let outer = 0;
-  class Page extends FineComponent {
-    #open = true; get open(): boolean { FineComponent.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (FineComponent.same(p, v)) return; this.#open = v; this.$changed(0, p); }
-    #items = ["a", "b"]; get items(): string[] { FineComponent.$reader?.(this, 1); return this.#items; } set items(v: string[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(1, p); }
-    #text = ""; get text(): string { FineComponent.$reader?.(this, 2); return this.#text; } set text(v: string) { const p = this.#text; if (FineComponent.same(p, v)) return; this.#text = v; this.$changed(2, p); }
-    static { FineComponent.$define(this, ["open", "items", "text"]); }
+  class Page extends ComponentBase {
+    #open = true; get open(): boolean { ComponentBase.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (ComponentBase.same(p, v)) return; this.#open = v; this.$changed(0, p); }
+    #items = ["a", "b"]; get items(): string[] { ComponentBase.$reader?.(this, 1); return this.#items; } set items(v: string[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(1, p); }
+    #text = ""; get text(): string { ComponentBase.$reader?.(this, 2); return this.#text; } set text(v: string) { const p = this.#text; if (ComponentBase.same(p, v)) return; this.#text = v; this.$changed(2, p); }
+    static { ComponentBase.$define(this, ["open", "items", "text"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const _e0 = __t0();
-        fine.regionAt(_e0.firstChild!.nextSibling! as Comment, (__p) => {
+        dom.regionAt(_e0.firstChild!.nextSibling! as Comment, (__p) => {
           outer++;
           if (this.open) {
             const _e2 = __t1() as HTMLDialogElement;
             const _e3 = _e2.firstChild! as HTMLInputElement;
             const _e4 = _e3.nextSibling!.nextSibling! as Comment;
             const _e5 = _e4.nextSibling! as HTMLUListElement;
-            fine.attr(_e3, "value", () => this.text);
-            fine.regionAt(_e4, (__p) => {
+            dom.attr(_e3, "value", () => this.text);
+            dom.regionAt(_e4, (__p) => {
               if (this.text.length > 2) __p.appendChild(__t2());
             });
-            fine.listAt(_e5.firstChild! as Comment, () => this.items, [(it: string) => it], (__p) => {
+            dom.listAt(_e5.firstChild! as Comment, () => this.items, [(it: string) => it], (__p) => {
               const _e8 = __t3() as HTMLLIElement;
-              fine.textItem(_e8.firstChild! as Text, 0);
+              dom.textItem(_e8.firstChild! as Text, 0);
               __p.appendChild(_e8);
             });
             __p.appendChild(_e2);
@@ -436,18 +436,18 @@ test("nested regions and lists in a region change alone: the outer block keeps i
 });
 
 test("a list's else shows while it has no rows, and leaves with the first one", async () => {
-  class Page extends FineComponent {
-    #items: string[] = []; get items(): string[] { FineComponent.$reader?.(this, 0); return this.#items; } set items(v: string[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["items"]); }
+  class Page extends ComponentBase {
+    #items: string[] = []; get items(): string[] { ComponentBase.$reader?.(this, 0); return this.#items; } set items(v: string[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["items"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const ul = fine.el(__p, "ul");
+        const ul = dom.el(__p, "ul");
         const end = ul.appendChild(document.createComment(""));
-        fine.listAt(end, () => this.items, [(it: string) => it], (__p) => {
+        dom.listAt(end, () => this.items, [(it: string) => it], (__p) => {
           const li = __p.appendChild(document.createElement("li"));
-          fine.textItem(li.appendChild(document.createTextNode("")), 0);
+          dom.textItem(li.appendChild(document.createTextNode("")), 0);
         }, (__p) => {
-          fine.textAt(__p.appendChild(document.createElement("p")).appendChild(document.createTextNode("")), () => `none ${this.items.length}`);
+          dom.textAt(__p.appendChild(document.createElement("p")).appendChild(document.createTextNode("")), () => `none ${this.items.length}`);
         });
       });
     }
@@ -464,20 +464,20 @@ test("a list's else shows while it has no rows, and leaves with the first one", 
 });
 
 test("@attr: in a region sets its element while the branch shows, and comes off when it goes", async () => {
-  class Stock extends FineComponent {
-    #n = 0; get n(): number { FineComponent.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["n"]); }
+  class Stock extends ComponentBase {
+    #n = 0; get n(): number { ComponentBase.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["n"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const span = fine.el(__p, "span");
+        const span = dom.el(__p, "span");
         span.setAttribute("class", "cell");
         span.setAttribute("title", "stock");
-        fine.region(span, (__p) => {
-          if (this.n > 0) fine.text(__p, () => this.n);
+        dom.region(span, (__p) => {
+          if (this.n > 0) dom.text(__p, () => this.n);
           else {
-            fine.attrOf(span, "class", () => "error-text cell");
-            fine.attrOf(span, "title", () => `none ${this.n}`);
-            fine.t(__p, "Agotado");
+            dom.attrOf(span, "class", () => "error-text cell");
+            dom.attrOf(span, "title", () => `none ${this.n}`);
+            dom.t(__p, "Agotado");
           }
         });
       });
@@ -497,13 +497,13 @@ test("@attr: in a region sets its element while the branch shows, and comes off 
 
 test("keyed passes keep their rows: same key and values keep the nodes, changed values rebuild only that row", async () => {
   let builds = 0;
-  class Page extends FineComponent {
-    #team: Record<string, number> = { a: 1, b: 2, c: 3 }; get team(): Record<string, number> { FineComponent.$reader?.(this, 0); return this.#team; } set team(v: Record<string, number>) { const p = this.#team; if (FineComponent.same(p, v)) return; this.#team = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["team"]); }
+  class Page extends ComponentBase {
+    #team: Record<string, number> = { a: 1, b: 2, c: 3 }; get team(): Record<string, number> { ComponentBase.$reader?.(this, 0); return this.#team; } set team(v: Record<string, number>) { const p = this.#team; if (ComponentBase.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["team"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const ul = fine.el(__p, "ul");
-        fine.keyedAt(ul.appendChild(document.createComment("")), (__pass) => {
+        const ul = dom.el(__p, "ul");
+        dom.keyedAt(ul.appendChild(document.createComment("")), (__pass) => {
           for (const [k, v] of Object.entries(this.team)) {
             const __p = __pass(k, [k, v]);
             if (__p !== undefined) {
@@ -535,10 +535,10 @@ test("keyed passes keep their rows: same key and values keep the nodes, changed 
 });
 
 test("a keyed run with a duplicate key throws, naming it", () => {
-  class Page extends FineComponent {
+  class Page extends ComponentBase {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.keyedAt(__p.appendChild(document.createComment("")), (__pass) => {
+        dom.keyedAt(__p.appendChild(document.createComment("")), (__pass) => {
           for (const x of [1, 2, 1]) __pass(x, [x]);
         });
       });
@@ -549,14 +549,14 @@ test("a keyed run with a duplicate key throws, naming it", () => {
 
 test("a list keyed by a function keeps a row whose item is replaced by one with the same key", async () => {
   type Row = { id: number; name: string };
-  class Page extends FineComponent {
-    #rows: Row[] = [{ id: 1, name: "a" }, { id: 2, name: "b" }]; get rows(): Row[] { FineComponent.$reader?.(this, 0); return this.#rows; } set rows(v: Row[]) { const p = this.#rows; if (FineComponent.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["rows"]); }
+  class Page extends ComponentBase {
+    #rows: Row[] = [{ id: 1, name: "a" }, { id: 2, name: "b" }]; get rows(): Row[] { ComponentBase.$reader?.(this, 0); return this.#rows; } set rows(v: Row[]) { const p = this.#rows; if (ComponentBase.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["rows"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const ul = fine.el(__p, "ul");
-        fine.listAt(ul.appendChild(document.createComment("")), () => this.rows, [(r: Row) => r.name], (__p) => {
-          fine.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
+        const ul = dom.el(__p, "ul");
+        dom.listAt(ul.appendChild(document.createComment("")), () => this.rows, [(r: Row) => r.name], (__p) => {
+          dom.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
         }, undefined, (r) => r.id);
       });
     }
@@ -577,12 +577,12 @@ test("a list of models matches rows by the model's @Key", async () => {
   class Item extends Model { constructor(data?: object) { super(data); this.assign(data); }
     #id = 0; @Key get id(): number { Model.$reader?.(this, 0); return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(0, p); }
   static { Model.$define(this, ["id"]); } }
-  class Page extends FineComponent {
-    #items: Item[] = [new Item({ id: 1 }), new Item({ id: 2 })]; get items(): Item[] { FineComponent.$reader?.(this, 0); return this.#items; } set items(v: Item[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["items"]); }
+  class Page extends ComponentBase {
+    #items: Item[] = [new Item({ id: 1 }), new Item({ id: 2 })]; get items(): Item[] { ComponentBase.$reader?.(this, 0); return this.#items; } set items(v: Item[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["items"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.listAt(__p.appendChild(document.createComment("")), () => this.items, [], (__p, it: Item) => {
+        dom.listAt(__p.appendChild(document.createComment("")), () => this.items, [], (__p, it: Item) => {
           __p.appendChild(document.createElement("li")).textContent = String(it.id);
         });
       });
@@ -606,9 +606,9 @@ test("a list of models matches rows by the model's @Key", async () => {
 test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRender; tracked writes update alone", async () => {
   const log: string[] = [];
   const outside = { n: 1 };
-  class Page extends FineComponent {
-    #count = 0; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["count"]); }
+  class Page extends ComponentBase {
+    #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["count"]); }
     allow = true;
     protected override shouldRender(): boolean {
       log.push("should");
@@ -619,8 +619,8 @@ test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRen
     }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.text(fine.el(__p, "b"), () => this.count);
-        fine.text(fine.el(__p, "i"), () => outside.n);
+        dom.text(dom.el(__p, "b"), () => this.count);
+        dom.text(dom.el(__p, "i"), () => outside.n);
       });
     }
   }
@@ -645,20 +645,20 @@ test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRen
 });
 
 test("@once: read once, untracked, even inside a region", async () => {
-  class Page extends FineComponent {
-    #n = 1; get n(): number { FineComponent.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(0, p); }
-    #show = true; get show(): boolean { FineComponent.$reader?.(this, 1); return this.#show; } set show(v: boolean) { const p = this.#show; if (FineComponent.same(p, v)) return; this.#show = v; this.$changed(1, p); }
-    static { FineComponent.$define(this, ["n", "show"]); }
+  class Page extends ComponentBase {
+    #n = 1; get n(): number { ComponentBase.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    #show = true; get show(): boolean { ComponentBase.$reader?.(this, 1); return this.#show; } set show(v: boolean) { const p = this.#show; if (ComponentBase.same(p, v)) return; this.#show = v; this.$changed(1, p); }
+    static { ComponentBase.$define(this, ["n", "show"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const t = __p.appendChild(document.createTextNode(""));
-        fine.textOnce(t, () => this.n);
-        fine.region(__p, (__p) => {
+        dom.textOnce(t, () => this.n);
+        dom.region(__p, (__p) => {
           if (this.show) {
-            fine.onceAt(__p.appendChild(document.createComment("")), (__p) => {
+            dom.onceAt(__p.appendChild(document.createComment("")), (__p) => {
               const b = __p.appendChild(document.createElement("b"));
-              fine.set(b, "title", this.n);
-              fine.setText(b.appendChild(document.createTextNode("")), this.n);
+              dom.set(b, "title", this.n);
+              dom.setText(b.appendChild(document.createTextNode("")), this.n);
             });
           }
         });
@@ -686,9 +686,9 @@ test("@once: read once, untracked, even inside a region", async () => {
 test("a cached getter runs once per change for all its readers, and is never stale", async () => {
   let runs = 0;
   const outside = { n: 1 };
-  class Page extends FineComponent {
-    #a = 1; get a(): number { FineComponent.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (FineComponent.same(p, v)) return; this.#a = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["a"]); }
+  class Page extends ComponentBase {
+    #a = 1; get a(): number { ComponentBase.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (ComponentBase.same(p, v)) return; this.#a = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["a"]); }
     get total(): number {
       runs++;
       return this.a * 10;
@@ -696,12 +696,12 @@ test("a cached getter runs once per change for all its readers, and is never sta
     get loose(): number {
       return outside.n;
     }
-    static { fine.memo(this, ["total", "loose"]); }
+    static { dom.memo(this, ["total", "loose"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.text(fine.el(__p, "b"), () => this.total);
-        fine.text(fine.el(__p, "i"), () => this.total + 1);
-        fine.text(fine.el(__p, "u"), () => `${this.total}/${this.loose}`);
+        dom.text(dom.el(__p, "b"), () => this.total);
+        dom.text(dom.el(__p, "i"), () => this.total + 1);
+        dom.text(dom.el(__p, "u"), () => `${this.total}/${this.loose}`);
       });
     }
   }
@@ -725,21 +725,21 @@ test("a cached getter runs once per change for all its readers, and is never sta
 
 test("a getter with one reader, or read outside bindings, gets no cache", async () => {
   let runs = 0;
-  class Page extends FineComponent {
-    #a = 1; get a(): number { FineComponent.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (FineComponent.same(p, v)) return; this.#a = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["a"]); }
+  class Page extends ComponentBase {
+    #a = 1; get a(): number { ComponentBase.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (ComponentBase.same(p, v)) return; this.#a = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["a"]); }
     get total(): number {
       runs++;
       return this.a * 10;
     }
-    static { fine.memo(this, ["total"]); }
+    static { dom.memo(this, ["total"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.text(fine.el(__p, "b"), () => this.total);
+        dom.text(dom.el(__p, "b"), () => this.total);
       });
     }
   }
-  const memos = (o: object) => Object.getOwnPropertySymbols(o).filter((s) => s.description === "xzor.fine.memos").length;
+  const memos = (o: object) => Object.getOwnPropertySymbols(o).filter((s) => s.description === "xzor.dom.memos").length;
   const loose = new Page();
   expect(loose.total).toBe(10);
   expect(memos(loose)).toBe(0);
@@ -754,10 +754,10 @@ test("a getter with one reader, or read outside bindings, gets no cache", async 
 
 test("@await of a call requests again only when an argument changes, or what the call itself reads", async () => {
   const requests: string[] = [];
-  class Page extends FineComponent {
-    #q = "Ab"; get q(): string { FineComponent.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (FineComponent.same(p, v)) return; this.#q = v; this.$changed(0, p); }
-    #lang = "en"; get lang(): string { FineComponent.$reader?.(this, 1); return this.#lang; } set lang(v: string) { const p = this.#lang; if (FineComponent.same(p, v)) return; this.#lang = v; this.$changed(1, p); }
-    static { FineComponent.$define(this, ["q", "lang"]); }
+  class Page extends ComponentBase {
+    #q = "Ab"; get q(): string { ComponentBase.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (ComponentBase.same(p, v)) return; this.#q = v; this.$changed(0, p); }
+    #lang = "en"; get lang(): string { ComponentBase.$reader?.(this, 1); return this.#lang; } set lang(v: string) { const p = this.#lang; if (ComponentBase.same(p, v)) return; this.#lang = v; this.$changed(1, p); }
+    static { ComponentBase.$define(this, ["q", "lang"]); }
     get key(): string {
       return this.q.toLowerCase();
     }
@@ -767,9 +767,9 @@ test("@await of a call requests again only when an argument changes, or what the
     }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const end = fine.anchors(__p);
-        fine.awaitCallAt(end, () => [this.key], (__a0) => this.load(__a0), undefined, (__p, v) => {
-          fine.textAt(__p.appendChild(document.createTextNode("")), () => v);
+        const end = dom.anchors(__p);
+        dom.awaitCallAt(end, () => [this.key], (__a0) => this.load(__a0), undefined, (__p, v) => {
+          dom.textAt(__p.appendChild(document.createTextNode("")), () => v);
         }, undefined);
       });
     }
@@ -794,21 +794,21 @@ test("@await of a call requests again only when an argument changes, or what the
 test("@await: pending, then the value; a newer promise wins; what then reads re-renders it without a new request", async () => {
   const gates: ((v: string[]) => void)[] = [];
   let requests = 0;
-  class Page extends FineComponent {
-    #q = "a"; get q(): string { FineComponent.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (FineComponent.same(p, v)) return; this.#q = v; this.$changed(0, p); }
-    #suffix = "!"; get suffix(): string { FineComponent.$reader?.(this, 1); return this.#suffix; } set suffix(v: string) { const p = this.#suffix; if (FineComponent.same(p, v)) return; this.#suffix = v; this.$changed(1, p); }
-    static { FineComponent.$define(this, ["q", "suffix"]); }
+  class Page extends ComponentBase {
+    #q = "a"; get q(): string { ComponentBase.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (ComponentBase.same(p, v)) return; this.#q = v; this.$changed(0, p); }
+    #suffix = "!"; get suffix(): string { ComponentBase.$reader?.(this, 1); return this.#suffix; } set suffix(v: string) { const p = this.#suffix; if (ComponentBase.same(p, v)) return; this.#suffix = v; this.$changed(1, p); }
+    static { ComponentBase.$define(this, ["q", "suffix"]); }
     load(q: string): Promise<string[]> {
       requests++;
       return new Promise((r) => gates.push(() => r([q])));
     }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const end = fine.anchors(__p);
-        fine.awaitAt(end, () => this.load(this.q), (__p) => {
+        const end = dom.anchors(__p);
+        dom.awaitAt(end, () => this.load(this.q), (__p) => {
           __p.appendChild(document.createTextNode("wait"));
         }, (__p, rows) => {
-          fine.text(__p, () => rows.join() + this.suffix);
+          dom.text(__p, () => rows.join() + this.suffix);
         }, undefined);
       });
     }
@@ -833,13 +833,13 @@ test("@await: pending, then the value; a newer promise wins; what then reads re-
 });
 
 test("@await: a rejection shows catch; a plain value shows then at once", async () => {
-  class Page extends FineComponent {
+  class Page extends ComponentBase {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.awaitAt(fine.anchors(__p), () => Promise.reject(new Error("no")), undefined, undefined, (__p, e) => {
+        dom.awaitAt(dom.anchors(__p), () => Promise.reject(new Error("no")), undefined, undefined, (__p, e) => {
           __p.appendChild(document.createTextNode(String((e as Error).message)));
         });
-        fine.awaitAt(fine.anchors(__p), () => 5, undefined, (__p, n) => {
+        dom.awaitAt(dom.anchors(__p), () => 5, undefined, (__p, n) => {
           __p.appendChild(document.createTextNode(String(n + 1)));
         }, undefined);
       });
@@ -853,19 +853,19 @@ test("@await: a rejection shows catch; a plain value shows then at once", async 
 });
 
 test("a branch region keeps its branch's DOM while the chosen branch stays the same (#3)", async () => {
-  class Page extends FineComponent {
-    #count = 3; get count(): number { FineComponent.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (FineComponent.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["count"]); }
+  class Page extends ComponentBase {
+    #count = 3; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["count"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const end = fine.anchors(__p);
-        fine.branchAt(end, (__p) => {
+        const end = dom.anchors(__p);
+        dom.branchAt(end, (__p) => {
           if (!this.count) {
             if (!__p) return 0;
             __p.appendChild(document.createElement("p")).textContent = "none";
           } else {
             if (!__p) return 1;
-            fine.textAt(__p.appendChild(document.createElement("ul")).appendChild(document.createTextNode("")), () => this.count);
+            dom.textAt(__p.appendChild(document.createElement("ul")).appendChild(document.createTextNode("")), () => this.count);
           }
           return 2;
         });
@@ -892,31 +892,31 @@ test("@show: a chosen branch is built once and kept, the others hidden; hidden o
   let builds = 0;
   let liveRuns = 0;
   let pausedRuns = 0;
-  class Page extends FineComponent {
-    #tab = "a"; get tab(): string { FineComponent.$reader?.(this, 0); return this.#tab; } set tab(v: string) { const p = this.#tab; if (FineComponent.same(p, v)) return; this.#tab = v; this.$changed(0, p); }
-    #n = 1; get n(): number { FineComponent.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (FineComponent.same(p, v)) return; this.#n = v; this.$changed(1, p); }
-    #on = true; get on(): boolean { FineComponent.$reader?.(this, 2); return this.#on; } set on(v: boolean) { const p = this.#on; if (FineComponent.same(p, v)) return; this.#on = v; this.$changed(2, p); }
-    static { FineComponent.$define(this, ["tab", "n", "on"]); }
+  class Page extends ComponentBase {
+    #tab = "a"; get tab(): string { ComponentBase.$reader?.(this, 0); return this.#tab; } set tab(v: string) { const p = this.#tab; if (ComponentBase.same(p, v)) return; this.#tab = v; this.$changed(0, p); }
+    #n = 1; get n(): number { ComponentBase.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+    #on = true; get on(): boolean { ComponentBase.$reader?.(this, 2); return this.#on; } set on(v: boolean) { const p = this.#on; if (ComponentBase.same(p, v)) return; this.#on = v; this.$changed(2, p); }
+    static { ComponentBase.$define(this, ["tab", "n", "on"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.branchAt(fine.anchors(__p), (__p) => {
+        dom.branchAt(dom.anchors(__p), (__p) => {
           if (this.on) {
             if (!__p) return 0;
-            fine.showAt(fine.anchors(__p), (__p) => {
+            dom.showAt(dom.anchors(__p), (__p) => {
               if (this.tab === "a") {
                 if (!__p) return 0;
                 builds++;
                 const a = __p.appendChild(document.createElement("section"));
                 a.className = "a";
                 a.setAttribute("style", "display: flex");
-                fine.textAt(a.appendChild(document.createTextNode("")), () => (liveRuns++, this.n));
+                dom.textAt(a.appendChild(document.createTextNode("")), () => (liveRuns++, this.n));
               } else {
                 if (!__p) return 1;
                 builds++;
                 const b = __p.appendChild(document.createElement("section"));
                 b.className = "b";
-                fine.pauseAt(fine.anchors(b), (__p) => {
-                  fine.textAt(__p.appendChild(document.createTextNode("")), () => (pausedRuns++, this.n));
+                dom.pauseAt(dom.anchors(b), (__p) => {
+                  dom.textAt(__p.appendChild(document.createTextNode("")), () => (pausedRuns++, this.n));
                 });
               }
               return 2;
@@ -974,12 +974,12 @@ test("@show: a chosen branch is built once and kept, the others hidden; hidden o
 test("a keyed row whose item is a new object keeps its nodes and takes the new item (#5)", async () => {
   type Line = { id: number; qty: number };
   let clicked: Line | undefined;
-  class Page extends FineComponent {
-    #lines: Line[] = [{ id: 1, qty: 1 }, { id: 2, qty: 1 }]; get lines(): Line[] { FineComponent.$reader?.(this, 0); return this.#lines; } set lines(v: Line[]) { const p = this.#lines; if (FineComponent.same(p, v)) return; this.#lines = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["lines"]); }
+  class Page extends ComponentBase {
+    #lines: Line[] = [{ id: 1, qty: 1 }, { id: 2, qty: 1 }]; get lines(): Line[] { ComponentBase.$reader?.(this, 0); return this.#lines; } set lines(v: Line[]) { const p = this.#lines; if (ComponentBase.same(p, v)) return; this.#lines = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["lines"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.listAt(fine.anchors(__p), () => this.lines, [
+        dom.listAt(dom.anchors(__p), () => this.lines, [
           (l: Line) => l.qty,
           (l: Line) => () => (clicked = l),
           (l: Line, __p?: Node) => {
@@ -994,9 +994,9 @@ test("a keyed row whose item is a new object keeps its nodes and takes the new i
           },
         ], (__p) => {
           const li = __p.appendChild(document.createElement("li"));
-          fine.textItem(li.appendChild(document.createTextNode("")), 0);
-          fine.onItem(li.appendChild(document.createElement("button")), "click", 1);
-          fine.branchItem(fine.anchors(li), 2);
+          dom.textItem(li.appendChild(document.createTextNode("")), 0);
+          dom.onItem(li.appendChild(document.createElement("button")), "click", 1);
+          dom.branchItem(dom.anchors(li), 2);
         }, undefined, (l: Line) => l.id);
       });
     }
@@ -1024,13 +1024,13 @@ test("rows dropped outside a handler leave nothing in the component's loose list
   type Row = { id: number; name: string };
   let next = 0;
   const rows = (): Row[] => Array.from({ length: 20 }, () => ({ id: ++next, name: "r" }));
-  class Page extends FineComponent {
-    #items: Row[] = rows(); get items(): Row[] { FineComponent.$reader?.(this, 0); return this.#items; } set items(v: Row[]) { const p = this.#items; if (FineComponent.same(p, v)) return; this.#items = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["items"]); }
+  class Page extends ComponentBase {
+    #items: Row[] = rows(); get items(): Row[] { ComponentBase.$reader?.(this, 0); return this.#items; } set items(v: Row[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["items"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.listAt(fine.anchors(__p), () => this.items, [(r: Row) => r.name], (__p) => {
-          fine.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
+        dom.listAt(dom.anchors(__p), () => this.items, [(r: Row) => r.name], (__p) => {
+          dom.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
         }, undefined, (r: Row) => r.id);
       });
     }
@@ -1063,18 +1063,18 @@ test("a keyed row that closes over its item keeps its nodes, nested rows and chi
       b.closeElement();
     }
   }
-  class Page extends FineComponent {
-    #people: Person[] = [{ id: 1, name: "Ana", roles: ["a"] }, { id: 2, name: "Luis", roles: [] }]; get people(): Person[] { FineComponent.$reader?.(this, 0); return this.#people; } set people(v: Person[]) { const p = this.#people; if (FineComponent.same(p, v)) return; this.#people = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["people"]); }
+  class Page extends ComponentBase {
+    #people: Person[] = [{ id: 1, name: "Ana", roles: ["a"] }, { id: 2, name: "Luis", roles: [] }]; get people(): Person[] { ComponentBase.$reader?.(this, 0); return this.#people; } set people(v: Person[]) { const p = this.#people; if (ComponentBase.same(p, v)) return; this.#people = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["people"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.listAt(fine.anchors(__p), () => this.people, [], (__p, p: Person) => {
-          fine.rowItem((__v: typeof p) => { p = __v; });
+        dom.listAt(dom.anchors(__p), () => this.people, [], (__p, p: Person) => {
+          dom.rowItem((__v: typeof p) => { p = __v; });
           const li = __p.appendChild(document.createElement("li"));
-          fine.listAt(fine.anchors(li), () => ROLES, [(r: string) => (p.roles.includes(r) ? r : "-")], (__p) => {
-            fine.textItem(__p.appendChild(document.createElement("b")).appendChild(document.createTextNode("")), 0);
+          dom.listAt(dom.anchors(li), () => ROLES, [(r: string) => (p.roles.includes(r) ? r : "-")], (__p) => {
+            dom.textItem(__p.appendChild(document.createElement("b")).appendChild(document.createTextNode("")), 0);
           }, undefined, (r: string) => r);
-          fine.islandAt(fine.anchor(li), (__b) => __b.addComponent(Card, { person: p }));
+          dom.islandAt(dom.anchor(li), (__b) => __b.addComponent(Card, { person: p }));
         }, undefined, (p: Person) => p.id);
       });
     }
@@ -1097,12 +1097,12 @@ test("a data-leave element removed by its region stays, data-leaving, until its 
   ComponentBase.$leaves = true;
   let finish!: () => void;
   const finished = new Promise<void>((r) => (finish = r));
-  class Page extends FineComponent {
-    #open = true; get open(): boolean { FineComponent.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (FineComponent.same(p, v)) return; this.#open = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["open"]); }
+  class Page extends ComponentBase {
+    #open = true; get open(): boolean { ComponentBase.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (ComponentBase.same(p, v)) return; this.#open = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["open"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        fine.region(__p, (__p) => {
+        dom.region(__p, (__p) => {
           if (this.open) {
             const d = __p.appendChild(document.createElement("dialog"));
             d.setAttribute("data-leave", "");
@@ -1126,14 +1126,14 @@ test("a data-leave element removed by its region stays, data-leaving, until its 
 });
 
 test("class:name toggles one class, leaving the element's others", async () => {
-  class Page extends FineComponent {
-    #err = ""; get err(): string { FineComponent.$reader?.(this, 0); return this.#err; } set err(v: string) { const p = this.#err; if (FineComponent.same(p, v)) return; this.#err = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["err"]); }
+  class Page extends ComponentBase {
+    #err = ""; get err(): string { ComponentBase.$reader?.(this, 0); return this.#err; } set err(v: string) { const p = this.#err; if (ComponentBase.same(p, v)) return; this.#err = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["err"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const d = fine.el(__p, "div");
+        const d = dom.el(__p, "div");
         d.setAttribute("class", "field");
-        fine.attr(d, "class:invalid", () => this.err);
+        dom.attr(d, "class:invalid", () => this.err);
       });
     }
   }
@@ -1150,14 +1150,14 @@ test("class:name toggles one class, leaving the element's others", async () => {
 });
 
 test("aria-* attributes write booleans as true and false", async () => {
-  class Page extends FineComponent {
-    #on = false; get on(): boolean { FineComponent.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (FineComponent.same(p, v)) return; this.#on = v; this.$changed(0, p); }
-    static { FineComponent.$define(this, ["on"]); }
+  class Page extends ComponentBase {
+    #on = false; get on(): boolean { ComponentBase.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (ComponentBase.same(p, v)) return; this.#on = v; this.$changed(0, p); }
+    static { ComponentBase.$define(this, ["on"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
-        const b = fine.el(__p, "button");
-        fine.attr(b, "aria-pressed", () => this.on);
-        fine.attr(b, "disabled", () => this.on);
+        const b = dom.el(__p, "button");
+        dom.attr(b, "aria-pressed", () => this.on);
+        dom.attr(b, "disabled", () => this.on);
       });
     }
   }
@@ -1175,9 +1175,9 @@ test("aria-* attributes write booleans as true and false", async () => {
 test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
-  class One extends FineComponent {
+  class One extends ComponentBase {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => fine.text(fine.el(__p, "i"), () => worker.hours));
+      __b.addFine((__p) => dom.text(dom.el(__p, "i"), () => worker.hours));
     }
   }
   class Parent extends ComponentBase {
@@ -1202,12 +1202,12 @@ test("a fine child removed by a vdom parent stops writing", async () => {
 });
 
 // As codegen emits a list: a template per run, and rows whose bindings and handlers share the list's reads.
-const __row = fine.template([["li", ["class", "row"], ["input", 0], ["span", 0, ""], null, null, ["button", 0, "x"]]]);
-const __ul = fine.template([["ul", 0, null], ["p", 0, ""]]);
+const __row = dom.template([["li", ["class", "row"], ["input", 0], ["span", 0, ""], null, null, ["button", 0, "x"]]]);
+const __ul = dom.template([["ul", 0, null], ["p", 0, ""]]);
 let picked: Worker[] = [];
-class Rows extends FineComponent {
-  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { FineComponent.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (FineComponent.same(p, v)) return; this.#team = v; this.$changed(0, p); }
-  static { FineComponent.$define(this, ["team"]); }
+class Rows extends ComponentBase {
+  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { ComponentBase.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (ComponentBase.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+  static { ComponentBase.$define(this, ["team"]); }
   outer = 0;
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     __b.addFine((__p) => {
@@ -1215,13 +1215,13 @@ class Rows extends FineComponent {
       const _e1 = _e0.firstChild! as HTMLElement;
       const _e2 = _e1.firstChild! as Comment;
       const _e3 = _e1.nextSibling!.firstChild! as Text;
-      fine.on(_e1, "click", () => this.outer++);
-      fine.listAt(_e2, () => this.team.view, [
+      dom.on(_e1, "click", () => this.outer++);
+      dom.listAt(_e2, () => this.team.view, [
         (w) => w.hours,
         (w) => (__e: Event) => { w.hours = ComponentBase.bindValue(__e, w.hours); },
         (w) => w.payment.toFixed(2),
         (w, __p) => {
-          if (w.hours > 24) fine.t(fine.el(__p, "small"), "too many");
+          if (w.hours > 24) dom.t(dom.el(__p, "small"), "too many");
         },
         (w) => (__e: Event) => { picked.push(w); __e.stopPropagation(); },
       ], (__p) => {
@@ -1230,14 +1230,14 @@ class Rows extends FineComponent {
         const _e6 = _e5.nextSibling!.firstChild! as Text;
         const _e7 = _e5.nextSibling!.nextSibling!.nextSibling! as Comment;
         const _e8 = _e7.nextSibling! as HTMLButtonElement;
-        fine.attrItem(_e5, "value", 0);
-        fine.onItem(_e5, "input", 1);
-        fine.textItem(_e6, 2);
-        fine.regionItem(_e7, 3);
-        fine.onItem(_e8, "click", 4);
+        dom.attrItem(_e5, "value", 0);
+        dom.onItem(_e5, "input", 1);
+        dom.textItem(_e6, 2);
+        dom.regionItem(_e7, 3);
+        dom.onItem(_e8, "click", 4);
         __p.appendChild(_e4);
       });
-      fine.textAt(_e3, () => this.team.view.length);
+      dom.textAt(_e3, () => this.team.view.length);
       __p.appendChild(_e0);
     });
   }
@@ -1282,7 +1282,7 @@ test("template rows: shared reads bind each row's item, and delegated handlers g
 
 test("templates create <svg> and its children in the SVG namespace", () => {
   const SVG = "http://www.w3.org/2000/svg";
-  const icon = fine.template([["svg", ["viewBox", "0 0 24 24"], ["path", ["d", "M0 0"]]], ["p", 0, "x"]]);
+  const icon = dom.template([["svg", ["viewBox", "0 0 24 24"], ["path", ["d", "M0 0"]]], ["p", 0, "x"]]);
   const frag = icon() as DocumentFragment;
   const svg = frag.firstChild as Element;
   expect(svg.namespaceURI).toBe(SVG);
@@ -1290,5 +1290,18 @@ test("templates create <svg> and its children in the SVG namespace", () => {
   expect(svg.getAttribute("viewBox")).toBe("0 0 24 24");
   expect((frag.lastChild as Element).namespaceURI).toBe("http://www.w3.org/1999/xhtml");
   const parent = document.createElementNS(SVG, "svg");
-  expect(fine.el(parent, "path").namespaceURI).toBe(SVG);
+  expect(dom.el(parent, "path").namespaceURI).toBe(SVG);
+});
+
+test("the core works without the model entry: one reader slot, same, queue", () => {
+  const read = (): void => {};
+  Model.$reader = read;
+  expect(ComponentBase.$reader).toBe(read);
+  ComponentBase.$reader = undefined;
+  expect(Model.$reader).toBeUndefined();
+  expect(ComponentBase.same([1, { a: 2 }], [1, { a: 2 }])).toBe(true);
+  expect(ComponentBase.same(new Date(5), new Date(5))).toBe(true);
+  expect(ComponentBase.same([1], [2])).toBe(false);
+  expect(ComponentBase.same(new Worker(), new Worker())).toBe(false);
+  expect(Model.same).toBe(ComponentBase.same);
 });

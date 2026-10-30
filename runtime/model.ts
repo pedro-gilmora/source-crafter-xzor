@@ -11,10 +11,10 @@
 // Importing this module also makes the components that read a model re-render when it changes.
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
 
-import { setRenderObserver, setTracking, type ComponentBase } from "./index";
+import { ComponentBase, setRenderObserver } from "./index";
+import { META as meta, MODEL, bitOf, changed, same } from "./track";
 
 export { EntitySet } from "./entity-set";
-export { FineComponent, fine, type El } from "./fine";
 
 export enum State {
   /** Created on the client and never sent. */
@@ -72,7 +72,6 @@ const stateIndex = -1;
 /** Key of the model's state: not an own property, so it never shows in `Object.keys` or a spread. */
 export const StateKey = Symbol("xzor.state");
 
-const meta = Symbol("xzor.model.meta");
 const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), validators: [], serialized: [] };
 
 // A class's member decorators all run before its `$define`, which takes these over.
@@ -98,8 +97,18 @@ function captureOf(options: AddEventListenerOptions | EventListenerOptions | boo
 }
 
 export abstract class Model extends EventTarget {
-  /** @internal Set only while a component renders, so a tracked getter can report what it read. */
-  static $reader: ((model: Model, index: number) => void) | undefined;
+  /** @internal Set only while a binding or a render runs, so a tracked getter can report what it read: the component's slot. */
+  static get $reader(): ((model: Model, index: number) => void) | undefined {
+    return ComponentBase.$reader;
+  }
+
+  static set $reader(reader: ((model: Model, index: number) => void) | undefined) {
+    ComponentBase.$reader = reader as typeof ComponentBase.$reader;
+  }
+
+  static {
+    Object.defineProperty(Model.prototype, MODEL, { value: true });
+  }
 
   #state: State;
   #originals: Record<string, unknown> | undefined;
@@ -148,22 +157,7 @@ export abstract class Model extends EventTarget {
   }
 
   /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */
-  static same(a: unknown, b: unknown): boolean {
-    if (Object.is(a, b)) return true;
-    if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
-    if (a instanceof Date || b instanceof Date)
-      return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
-    if (a instanceof Model || b instanceof Model || "$own" in a || "$own" in b) return false;
-    if (Array.isArray(a) || Array.isArray(b)) {
-      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-      return a.every((value, i) => Model.same(value, b[i]));
-    }
-    const left = a as Record<string, unknown>;
-    const right = b as Record<string, unknown>;
-    const names = Object.keys(left);
-    if (names.length !== Object.keys(right).length) return false;
-    return names.every((name) => Model.same(left[name], right[name]));
-  }
+  static readonly same: (a: unknown, b: unknown) => boolean = same;
 
   get [StateKey](): State {
     Model.$reader?.(this, stateIndex);
@@ -351,8 +345,8 @@ export abstract class Model extends EventTarget {
       }
     }
     // Reading the fields back must not subscribe a component that is rendering.
-    const reader = Model.$reader;
-    Model.$reader = undefined;
+    const reader = ComponentBase.$reader;
+    ComponentBase.$reader = undefined;
     try {
       for (let i = 0; i < names.length; i++)
         try {
@@ -361,7 +355,7 @@ export abstract class Model extends EventTarget {
           if (!(error instanceof TypeError)) throw error;
         }
     } finally {
-      Model.$reader = reader;
+      ComponentBase.$reader = reader;
     }
     return this;
   }
@@ -423,10 +417,10 @@ export abstract class Model extends EventTarget {
     if ((this.#state & State.Detached) !== 0) this[StateKey] = State.Added;
     else if ((this.#state & State.Unchanged) !== 0) this[StateKey] = State.Modified;
     // The event needs the value, but a write made during a render must not subscribe the renderer.
-    const reader = Model.$reader;
-    Model.$reader = undefined;
+    const reader = ComponentBase.$reader;
+    ComponentBase.$reader = undefined;
     const value = (this as unknown as Record<string, unknown>)[name];
-    Model.$reader = reader;
+    ComponentBase.$reader = reader;
     attach(value, this, index);
     this.#emit(name, value, previous, index);
   }
@@ -434,10 +428,10 @@ export abstract class Model extends EventTarget {
   /** @internal A set on a tracked field was mutated: it keeps its own state, the model only tells its listeners. */
   $touched(index: number): void {
     const name = metaOf(this).names[index]!;
-    const reader = Model.$reader;
-    Model.$reader = undefined;
+    const reader = ComponentBase.$reader;
+    ComponentBase.$reader = undefined;
     const value = (this as unknown as Record<string, unknown>)[name];
-    Model.$reader = reader;
+    ComponentBase.$reader = reader;
     this.#emit(name, value, value, index);
   }
 
@@ -671,12 +665,8 @@ type Reader = Record<symbol, Reads | undefined>;
 const readsOf = (c: ComponentBase): Reads | undefined => (c as unknown as Reader)[reads];
 
 const stack: ComponentBase[] = [];
-const queued: Reads[] = [];
 let current: ComponentBase | undefined;
 let currentReads: Reads | undefined;
-
-// Fields from the 30th on share bit 30: they re-render each other's readers, nobody else's. Bit 31 is `state`.
-const bitOf = (index: number): number => (index === stateIndex ? 1 << 31 : index < 30 ? 1 << index : 1 << 30);
 
 function subscribe(own: Reads, model: Model): Dep {
   const dep: Dep = { model, owner: own, mask: 0, epoch: own.epoch, slot: 0 };
@@ -718,33 +708,6 @@ function read(model: Model, index: number): void {
   dep.mask |= bitOf(index);
 }
 
-function changed(dep: Dep, index: number): void {
-  if ((dep.mask & bitOf(index)) === 0) return;
-  const own = dep.owner;
-  if (own.at < 0) {
-    queued.push(own);
-    if (queued.length === 1) queueMicrotask(flush);
-  }
-  // Marking again moves the render this change waits for past one that already happened.
-  own.at = own.renders;
-}
-
-// A component that already rendered after it was queued (its own event handler did it) is skipped.
-function flush(): void {
-  for (const own of queued.splice(0)) {
-    const at = own.at;
-    own.at = -1;
-    if (own.renders === at) own.component.stateHasChanged();
-  }
-}
-
-/** @internal The queue models and fine bindings share: queues `dep`'s owner when `index` is in its mask. */
-export const $notify = changed as (dep: object, index: number) => void;
-/** @internal Runs what is queued now instead of in a microtask. */
-export const $flush = flush;
-
-setTracking({ model: Model, notify: $notify });
-
 // Drops the deps the render that just ended did not read again.
 function sweep(own: Reads): void {
   const more = own.more;
@@ -784,7 +747,7 @@ setRenderObserver({
       own.renders++;
       own.seen = 0;
     }
-    Model.$reader = read;
+    ComponentBase.$reader = read as typeof ComponentBase.$reader;
   },
 
   end(_component: ComponentBase): void {
@@ -793,7 +756,7 @@ setRenderObserver({
     stack.pop();
     current = stack[stack.length - 1];
     currentReads = current === undefined ? undefined : readsOf(current);
-    if (current === undefined) Model.$reader = undefined;
+    if (current === undefined) ComponentBase.$reader = undefined;
   },
 
   dispose(component: ComponentBase): void {

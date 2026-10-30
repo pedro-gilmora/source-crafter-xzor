@@ -5,7 +5,8 @@
 // only the last one. `new EntitySet(n)` (holes) is not supported: use `EntitySet.track`. Its membership is
 // tracked like a field: `view` and `for...of` report a read, every mutation above notifies those readers.
 
-import { $notify, Model, State } from "./model";
+import { Model, State } from "./model";
+import { changed } from "./track";
 
 export class EntitySet<T extends Model> extends Array<T> {
   static override get [Symbol.species](): ArrayConstructor {
@@ -227,6 +228,6 @@ export class EntitySet<T extends Model> extends Array<T> {
   #notify(): void {
     this.#owner?.$touched(this.#index);
     const subs = this.#subs;
-    if (subs !== undefined) for (let i = 0; i < subs.length; i++) $notify(subs[i]!, 0);
+    if (subs !== undefined) for (let i = 0; i < subs.length; i++) changed(subs[i]!, 0);
   }
 }
