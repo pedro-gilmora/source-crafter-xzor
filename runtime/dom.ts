@@ -82,7 +82,9 @@ const shows = (value: unknown): number => (isMarkup(value) ? 1 : value === null 
 type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; scope: unknown; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
-type Keyed = { ctx: Ctx; scope: unknown; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
+/** `at`: the holder it was built in (its context and scope); `rows` comes with the first row. 4 fields: a 48-byte cell. */
+type Keyed = { at: Holder; rows: Map<unknown, Row> | undefined; order: Row[]; empty: Build | undefined };
+const NO_ROWS: Row[] = [];
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.dom.empty");
 
@@ -783,7 +785,8 @@ function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
       finish();
       if (seen.has(key)) throw duplicate(key);
       seen.add(key);
-      let row = s.rows.get(key);
+      const rows = (s.rows ??= new Map());
+      let row = rows.get(key);
       if (row !== undefined && !sameValues(row.item as unknown[], values)) {
         dropRow(row);
         row = undefined;
@@ -793,8 +796,8 @@ function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
         return undefined;
       }
       const frag = document.createDocumentFragment();
-      row = { $bindings: undefined, $ctx: s.ctx, $scope: s.scope, head: frag, tail: frag, item: values, reads: undefined, set: undefined };
-      s.rows.set(key, row);
+      row = { $bindings: undefined, $ctx: s.at.$ctx, $scope: s.at.$scope, head: frag, tail: frag, item: values, reads: undefined, set: undefined };
+      rows.set(key, row);
       order.push(row);
       building = row;
       holder = row;
@@ -805,16 +808,19 @@ function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
     holder = outer;
   }
   if (order.length === 0 && s.empty !== undefined) {
-    let row = s.rows.get(EMPTY);
-    if (row === undefined) s.rows.set(EMPTY, (row = newRow(s.ctx, s.scope, EMPTY, undefined, s.empty)));
+    const rows = (s.rows ??= new Map());
+    let row = rows.get(EMPTY);
+    if (row === undefined) rows.set(EMPTY, (row = newRow(s.at.$ctx, s.at.$scope, EMPTY, undefined, s.empty)));
     order.push(row);
     seen.add(EMPTY);
   }
-  for (const [key, row] of s.rows)
-    if (!seen.has(key)) {
-      dropRow(row);
-      s.rows.delete(key);
-    }
+  if (s.rows !== undefined)
+    for (const [key, row] of s.rows)
+      if (!seen.has(key)) {
+        dropRow(row);
+        s.rows.delete(key);
+      }
+  if (order.length === 0) return NO_ROWS;
   place(end, s.order, order);
   return order;
 }
@@ -1179,7 +1185,7 @@ export const dom = {
 
   /** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
   keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
-    const state: Keyed = { ctx: holder!.$ctx, scope: holder!.$scope, rows: new Map(), order: [], empty };
+    const state: Keyed = { at: holder!, rows: undefined, order: NO_ROWS, empty };
     track(new Binding(KEYED, end, () => runKeyed(state, end, run), state));
   },
 
