@@ -1405,12 +1405,23 @@ test("a child given slots gets a pass on every parent pass", () => {
   const el = host();
   const s = mount(Slotted, el);
   expect(s.kid!.slots).toEqual({ default: "x" });
-  // Unchanged props are not assigned again: the child's own value shows after the pass.
+  // Every prop is assigned on each re-run: a child's local write to a prop gives way to the parent's value.
   s.kid!.count = 9;
   childRuns = 0;
   s.stateHasChanged();
   expect(childRuns).toBe(1);
-  expect(el.querySelector("span")!.textContent).toBe("a:9:-");
+  expect(el.querySelector("span")!.textContent).toBe("a:1:-");
+});
+
+test("a re-run with no changed prop assigns them all, but calls no onParametersSet", () => {
+  const el = host();
+  const h = mount(Host, el);
+  h.kid!.count = 7;
+  log = [];
+  // Host's one binding is the child's: re-run it with the same props.
+  (h as unknown as { $bindings: { stateHasChanged(): void } }).$bindings.stateHasChanged();
+  expect(log).toEqual([]);
+  expect(h.kid!.count).toBe(1);
 });
 
 test("the default slots object is shared and frozen", () => {

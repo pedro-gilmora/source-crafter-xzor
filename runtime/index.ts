@@ -1524,7 +1524,7 @@ function build(c: Component, app: IApplication | undefined, scope: unknown, end:
   return frag;
 }
 
-/** @internal A child binding ran: mounts its component the first time, then gives it the props that changed. */
+/** @internal A child binding ran: mounts its component the first time, then gives it its props again. */
 export function $child(s: Child, props: Record<string, unknown>): void {
   if (s.tree !== undefined) return bridge(s, props);
   const c = s.instance;
@@ -1533,15 +1533,14 @@ export function $child(s: Child, props: Record<string, unknown>): void {
     else if (s.phase === NEW) createChild(s, props);
     return;
   }
-  // As `patch`: an object may have been mutated, so it always counts as changed; a child with slots always gets a pass.
+  // As `patch`: all assigned (a child's own write gives way); an object counts as changed; slots always give a pass.
   let changed = s.slots !== undefined;
   const old = s.props!;
   s.props = props;
   for (const key in props) {
     const value = props[key];
-    if (Object.is(old[key], value) && (typeof value !== "object" || value === null)) continue;
+    if (!changed && (!Object.is(old[key], value) || (typeof value === "object" && value !== null))) changed = true;
     fields(c)[key] = value;
-    changed = true;
   }
   s.ref?.(c);
   if (!changed) return;
