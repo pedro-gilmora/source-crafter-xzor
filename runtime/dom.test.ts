@@ -2131,7 +2131,8 @@ test("@attributes sets the bag's values, and removes the keys a new bag lacks", 
   expect(input.outerHTML).toBe('<input name="n" title="back">');
 });
 
-// Later attributes override the bag, earlier ones are overridden by it: codegen lists the names written after `@attributes`.
+// Later attributes override the bag, earlier ones are overridden by it: codegen lists the names written after `@attributes`
+// and the (name, value | read) pairs written before it.
 class BagOrder extends Component {
   #bag: Record<string, unknown> | null | undefined = { class: "bag", id: "bag", title: "bag" };
   get bag(): Record<string, unknown> | null | undefined { Component.$reader?.(this, 0); return this.#bag; } set bag(v: Record<string, unknown> | null | undefined) { const p = this.#bag; if (Component.same(p, v)) return; this.#bag = v; this.$changed(0, p); }
@@ -2140,11 +2141,11 @@ class BagOrder extends Component {
     const _e0 = dom.el(__p, "p");
     _e0.setAttribute("id", "before");
     _e0.setAttribute("class", "after");
-    dom.attrs(_e0, () => this.bag, ["class"]);
+    dom.attrs(_e0, () => this.bag, ["class"], ["id", "before"]);
   }
 }
 
-test("@attributes: a static written after it wins, one written before it loses, on every run", async () => {
+test("@attributes: a static written after it wins, one written before it loses while the bag has the key and comes back", async () => {
   const el = host();
   const b = mount(BagOrder, el);
   const p = el.querySelector("p")!;
@@ -2154,7 +2155,84 @@ test("@attributes: a static written after it wins, one written before it loses, 
   expect(p.outerHTML).toBe('<p id="other" class="after"></p>');
   b.bag = null;
   await tick();
-  expect(p.outerHTML).toBe('<p class="after"></p>');
+  expect(p.outerHTML).toBe('<p id="before" class="after"></p>');
+  b.bag = { id: "again", title: "t" };
+  await tick();
+  expect(p.outerHTML).toBe('<p id="again" class="after" title="t"></p>');
+});
+
+class BagDynamic extends Component {
+  #bag: Record<string, unknown> | null | undefined = { title: "bag" };
+  get bag(): Record<string, unknown> | null | undefined { Component.$reader?.(this, 0); return this.#bag; } set bag(v: Record<string, unknown> | null | undefined) { const p = this.#bag; if (Component.same(p, v)) return; this.#bag = v; this.$changed(0, p); }
+  #before = "b1";
+  get before(): string { Component.$reader?.(this, 1); return this.#before; } set before(v: string) { const p = this.#before; if (Component.same(p, v)) return; this.#before = v; this.$changed(1, p); }
+  #after = "a1";
+  get after(): string { Component.$reader?.(this, 2); return this.#after; } set after(v: string) { const p = this.#after; if (Component.same(p, v)) return; this.#after = v; this.$changed(2, p); }
+  static { Component.$define(this, ["bag", "before", "after"]); }
+  protected override render(__p: Node): void {
+    const _e0 = dom.el(__p, "p");
+    dom.attrs(_e0, () => this.bag, ["id"], ["title", () => this.before]);
+    dom.attr(_e0, "id", () => this.after);
+  }
+}
+
+test("@attributes: a dynamic attribute before it is overridden by the bag while it has the key, and follows its own reads otherwise", async () => {
+  const el = host();
+  const b = mount(BagDynamic, el);
+  const p = el.querySelector("p")!;
+  expect(p.outerHTML).toBe('<p title="bag" id="a1"></p>');
+  b.before = "b2";
+  await tick();
+  expect(p.getAttribute("title")).toBe("bag");
+  b.bag = {};
+  await tick();
+  expect(p.getAttribute("title")).toBe("b2");
+  b.before = "b3";
+  await tick();
+  expect(p.getAttribute("title")).toBe("b3");
+  b.bag = { title: "again", id: "bag-id" };
+  await tick();
+  expect(p.getAttribute("title")).toBe("again");
+  b.before = "b4";
+  await tick();
+  expect(p.getAttribute("title")).toBe("again");
+  // One written after it wins over the bag's key.
+  expect(p.getAttribute("id")).toBe("a1");
+  b.after = "a2";
+  await tick();
+  expect(p.getAttribute("id")).toBe("a2");
+});
+
+class BagClass extends Component {
+  #bag: Record<string, unknown> | null | undefined = { class: "a" };
+  get bag(): Record<string, unknown> | null | undefined { Component.$reader?.(this, 0); return this.#bag; } set bag(v: Record<string, unknown> | null | undefined) { const p = this.#bag; if (Component.same(p, v)) return; this.#bag = v; this.$changed(0, p); }
+  #on = true;
+  get on(): boolean { Component.$reader?.(this, 1); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(1, p); }
+  static { Component.$define(this, ["bag", "on"]); }
+  protected override render(__p: Node): void {
+    const _e0 = dom.el(__p, "p");
+    dom.attrs(_e0, () => this.bag, undefined, ["class:x", () => this.on]);
+  }
+}
+
+test("@attributes: class:x toggles stay on top of a changing bag class", async () => {
+  const el = host();
+  const b = mount(BagClass, el);
+  const p = el.querySelector("p")!;
+  expect(p.className).toBe("a x");
+  b.bag = { class: "b" };
+  await tick();
+  expect(p.className).toBe("b x");
+  b.on = false;
+  await tick();
+  expect(p.className).toBe("b");
+  b.bag = { class: "c" };
+  await tick();
+  expect(p.className).toBe("c");
+  b.on = true;
+  b.bag = null;
+  await tick();
+  expect(p.className).toBe("x");
 });
 
 test("@attributes inside @once sets the bag once, untracked", async () => {
@@ -2166,17 +2244,17 @@ test("@attributes inside @once sets the bag once, untracked", async () => {
       dom.onceAt(__p.appendChild(document.createComment("")), (__p) => {
         const _e0 = dom.el(__p, "p");
         _e0.setAttribute("class", "after");
-        dom.setAttrs(_e0, this.bag, ["class"]);
+        dom.setAttrs(_e0, this.bag, ["class"], ["class:x", true]);
       });
     }
   }
   const el = host();
   const b = mount(OnceBag, el);
   const p = el.querySelector("p")!;
-  expect(p.outerHTML).toBe('<p class="after" id="a"></p>');
+  expect(p.outerHTML).toBe('<p class="after x" id="a"></p>');
   b.bag = { id: "b" };
   await tick();
-  expect(p.outerHTML).toBe('<p class="after" id="a"></p>');
+  expect(p.outerHTML).toBe('<p class="after x" id="a"></p>');
 });
 
 // Event modifiers: 1 = preventDefault, 2 = stopPropagation.

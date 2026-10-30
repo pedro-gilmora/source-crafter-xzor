@@ -2266,8 +2266,15 @@ impl<'p> Gen<'p> {
     /// The attributes of `el` (in `var`) that need code: bindings, handlers, `@ref`; the static ones with `all`.
     fn fine_attrs(&mut self, el: &Element, var: &str, all: bool) -> Result<(), String> {
         let directive = |n: &str| el.attrs.iter().find(|a| &*a.name.text == n).map(|a| &a.value);
-        for a in &el.attrs {
+        let bag_at = el.attrs.iter().position(|a| &*a.name.text == "@attributes");
+        let plain = |n: &str| !n.starts_with('@') && !n.contains(':');
+        for (i, a) in el.attrs.iter().enumerate() {
             let name = &*a.name.text;
+            // Given to the bag's binding, which keeps them in order with the bag: `class:` toggles, and dynamic plain
+            // attributes written before it.
+            if bag_at.is_some_and(|b| name.starts_with("class:") || (!self.once && i < b && plain(name) && matches!(a.value, AttrValue::Expr(_) | AttrValue::Interp(_)))) {
+                continue;
+            }
             match name {
                 name @ ("@bind" | "@bind:input") => self.fine_bind(el, var, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
                 "@bind:event" | "@bind:after" | "@bind:debounce" => {}
@@ -2285,10 +2292,42 @@ impl<'p> Gen<'p> {
                     let later = el.attrs.iter().skip_while(|x| !std::ptr::eq(*x, a)).skip(1);
                     let names: Vec<String> = later.map(|x| &*x.name.text).filter(|n| !n.starts_with('@') && !n.contains(':')).map(js_string).collect();
                     let skip = if names.is_empty() { String::new() } else { format!(", [{}]", names.join(", ")) };
-                    if self.once {
-                        self.emit(M::lit(&format!("__dom.setAttrs({var}, ")).add(bag).lit_then(&format!("{skip});")));
+                    // What the bag restores or sits under: plain attributes before it (not in @once, which sets them in order),
+                    // and the `class:` toggles, as `name, value | read` pairs.
+                    let mut pre = Vec::new();
+                    for (j, x) in el.attrs.iter().enumerate() {
+                        let n = &*x.name.text;
+                        let toggle = n.starts_with("class:");
+                        if !(toggle || (!self.once && j < i && plain(n))) {
+                            continue;
+                        }
+                        let value = match &x.value {
+                            AttrValue::Empty if toggle => M::lit("true"),
+                            AttrValue::Empty => M::lit("\"\""),
+                            v @ (AttrValue::Expr(_) | AttrValue::Interp(_)) if !self.once => M::lit("() => ").add(self.value(v)),
+                            v => self.value(v),
+                        };
+                        pre.push(M::lit(&format!("{}, ", js_string(n))).add(value));
+                    }
+                    let skip = if pre.is_empty() {
+                        skip
+                    } else if skip.is_empty() {
+                        ", undefined".to_string()
                     } else {
-                        self.emit(M::lit(&format!("__dom.attrs({var}, () => ")).add(bag).lit_then(&format!("{skip});")));
+                        skip
+                    };
+                    let mut tail = M::lit(&skip);
+                    if !pre.is_empty() {
+                        tail = tail.lit_then(", [");
+                        for (k, p) in pre.into_iter().enumerate() {
+                            tail = tail.lit_then(if k == 0 { "" } else { ", " }).add(p);
+                        }
+                        tail = tail.lit_then("]");
+                    }
+                    if self.once {
+                        self.emit(M::lit(&format!("__dom.setAttrs({var}, ")).add(bag).add(tail).lit_then(");"));
+                    } else {
+                        self.emit(M::lit(&format!("__dom.attrs({var}, () => ")).add(bag).add(tail).lit_then(");"));
                     }
                 }
                 _ if name.starts_with("@on") => {
@@ -4510,12 +4549,30 @@ mod tests {
         let src = "@code { bag = {}; n = 1; }\n<p class=\"a\" @attributes=\"bag\" id=\"b\" data-x=\"@n\" @onclick=\"() => n++\" aria:x=\"y\">t</p>\n<Card title=\"t\" @attributes=\"bag\" size=\"s\" />";
         let g = gen_with(src, &[("Card", "@code { title = \"\"; size = \"\"; }")]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        // Only plain names after the bag are skipped: not `class` (before), `@onclick` or the `:` one.
-        has("__dom.attrs(_e1, () => this.bag, [\"id\", \"data-x\"]);");
+        // Only plain names after the bag are skipped: not `class` (before), `@onclick` or the `:` one; what is
+        // written before it is given as pairs, so the bag can restore it.
+        has("__dom.attrs(_e1, () => this.bag, [\"id\", \"data-x\"], [\"class\", \"a\"]);");
         // On a component the bag spreads in written order, so the later `size` wins.
         has("__dom.component(_e2, Card, (): Partial<Card> => ({ title: \"t\", ...this.bag, size: \"s\" }));");
         let last = gen_with("@code { bag = {}; }\n<p id=\"b\" @attributes=\"bag\"></p>", &[]);
-        assert!(last.code.contains("__dom.attrs(_e0, () => this.bag);"), "{}", last.code);
+        assert!(last.code.contains("__dom.attrs(_e0, () => this.bag, undefined, [\"id\", \"b\"]);"), "{}", last.code);
+        let alone = gen_with("@code { bag = {}; }\n<p @attributes=\"bag\"></p>", &[]);
+        assert!(alone.code.contains("__dom.attrs(_e0, () => this.bag);"), "{}", alone.code);
+    }
+
+    #[test]
+    fn attributes_bag_takes_what_is_written_before_it_and_the_class_toggles() {
+        let src = "@code { bag = {}; n = 1; on = true; }\n<p id=\"s\" title=\"@n\" class:x=\"@on\" @attributes=\"bag\" class:y data-z=\"@n\"></p>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // Static and dynamic ones before the bag, and every `class:` toggle wherever written, go through the bag's binding.
+        has("__dom.attrs(_e0, () => this.bag, [\"data-z\"], [\"id\", \"s\", \"title\", () => this.n, \"class:x\", () => this.on, \"class:y\", true]);");
+        // They have no binding of their own; what follows the bag keeps its own.
+        assert!(!g.code.contains("__dom.attr(_e0, \"title\"") && !g.code.contains("__dom.attr(_e0, \"class:"), "{}", g.code);
+        has("__dom.attr(_e0, \"data-z\", () => this.n);");
+        // In @once only the toggles are given: the rest is set once, in order.
+        let once = gen_with("@code { bag = {}; on = true; }\n@once { <p title=\"@(on)\" @attributes=\"bag\" class:x=\"@on\" /> }", &[]);
+        assert!(once.code.contains("__dom.setAttrs(_e1, this.bag, undefined, [\"class:x\", this.on]);"), "{}", once.code);
     }
 
     #[test]

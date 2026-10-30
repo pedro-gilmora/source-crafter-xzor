@@ -264,7 +264,7 @@ class Binding {
         return;
       }
       case ATTR:
-        if ((flags & BAG) !== 0) return setBag(this, this.#run() as Record<string, unknown> | null | undefined);
+        if ((flags & BAG) !== 0) return void this.#run();
         if ((flags & OWNED) !== 0) return ownAttr(this.node as Element, this.data as Owned, this.#run());
         return setAttr(this.node as Element, (flags & ITEM) !== 0 ? (this.read as unknown as Named).$n : this.data, this.#run());
       case REGION: {
@@ -628,21 +628,32 @@ function undoAttr(el: Element, s: Owned): void {
   else if (s.prev !== undefined) setAttr(el, s.name, s.prev);
 }
 
-/** A bag read that lists the attribute names written after `@attributes`: the bag leaves them alone. */
-type Skipping = { $skip?: readonly string[] };
+/** `skip` names are written after the bag (they win); `pre` is `name, value | read, ...` written before it (the bag wins while it has the key). `class:x` entries are toggles, applied after everything. */
+type BagPre = readonly (string | boolean | (() => unknown))[];
+
+const valueOf = (v: unknown): unknown => (typeof v === "function" ? v() : v);
+
+const hasPre = (pre: BagPre, name: string): boolean => {
+  for (let i = 0; i < pre.length; i += 2) if (pre[i] === name) return true;
+  return false;
+};
 
 // ponytail: the same bag object, mutated and given again, can't show which keys it lost.
-function setBag(b: Binding, bag: Record<string, unknown> | null | undefined): void {
-  const el = b.node as Element;
-  const prev = b.data as Record<string, unknown> | null | undefined;
-  const skip = (b.read as Skipping).$skip;
-  if (prev != null) for (const name in prev) if ((bag == null || !(name in bag)) && !(skip?.includes(name))) setAttr(el, name, null);
-  applyBag(el, bag, skip);
-  b.data = bag;
-}
-
-function applyBag(el: Element, bag: Record<string, unknown> | null | undefined, skip: readonly string[] | undefined): void {
-  if (bag != null) for (const name in bag) if (!(skip?.includes(name))) setAttr(el, name, bag[name]);
+// Runs inside the binding's read, so what `pre` reads is tracked with the bag.
+function writeBag(el: Element, prev: Record<string, unknown> | null | undefined, bag: Record<string, unknown> | null | undefined, skip: readonly string[] | undefined, pre: BagPre | undefined): void {
+  if (prev != null)
+    for (const name in prev) if ((bag == null || !(name in bag)) && !skip?.includes(name) && !(pre !== undefined && hasPre(pre, name))) setAttr(el, name, null);
+  if (pre !== undefined)
+    for (let i = 0; i < pre.length; i += 2) {
+      const name = pre[i] as string;
+      if (name.startsWith("class:")) continue;
+      const value = valueOf(pre[i + 1]);
+      if (skip?.includes(name) || (bag != null && name in bag)) continue;
+      if (typeof pre[i + 1] === "function" || (prev != null && name in prev)) setAttr(el, name, value);
+    }
+  if (bag != null) for (const name in bag) if (!skip?.includes(name)) setAttr(el, name, bag[name]);
+  if (pre !== undefined)
+    for (let i = 0; i < pre.length; i += 2) if ((pre[i] as string).startsWith("class:")) setAttr(el, pre[i] as string, valueOf(pre[i + 1]));
 }
 
 function removeRange(head: Node, tail: Node): void {
@@ -1053,15 +1064,22 @@ export const dom = {
     track(new Binding(ATTR | ITEM, el, read, row));
   },
 
-  /** `@attributes="bag"` on `el`: the bag's values set as `attr`'s; keys the next bag lacks are removed. `skip` names the attributes written after it, which win. */
-  attrs(el: Element, read: () => Record<string, unknown> | null | undefined, skip?: readonly string[]): void {
-    if (skip !== undefined) (read as Skipping).$skip = skip;
-    track(new Binding(ATTR | BAG, el, read, undefined));
+  /** `@attributes="bag"` on `el`: the bag's values set as `attr`'s; keys the next bag lacks are removed. `skip` names the attributes written after it, which win; `pre` the ones written before it as `name, value | read` pairs (restored when the bag drops the key), plus every `class:x` as `"class:x", on | read`. */
+  attrs(el: Element, read: () => Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
+    let prev: Record<string, unknown> | null | undefined;
+    track(
+      new Binding(ATTR | BAG, el, () => {
+        const bag = read();
+        writeBag(el, prev, bag, skip, pre);
+        prev = bag;
+        return bag;
+      }, undefined),
+    );
   },
 
-  /** `@attributes` inside `@once`: the bag set once. */
-  setAttrs(el: Element, bag: Record<string, unknown> | null | undefined, skip?: readonly string[]): void {
-    applyBag(el, bag, skip);
+  /** `@attributes` inside `@once`: the bag set once, then the `class:x` toggles of `pre`. */
+  setAttrs(el: Element, bag: Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
+    writeBag(el, undefined, bag, skip, pre);
   },
 
   /** `@attr:name` on the enclosing `el`, taken back off when the region or row holding it goes. */
