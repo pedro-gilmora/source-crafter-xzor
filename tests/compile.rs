@@ -6,12 +6,12 @@ fn example_components_compile() {
     let app = std::fs::read_to_string(dir.join("Home.xzor")).unwrap();
     let ts = xzor::compile(&app, &dir.join("Home.xzor")).unwrap();
     assert!(ts.contains("import Counter from \"../Counter.xzor\";"));
-    assert!(ts.contains("export default class Home extends Component {"));
+    assert!(ts.contains("export default class Home extends __Component {"));
     assert!(ts.contains("static readonly route = \"/\";"));
-    assert!(ts.contains("__b.addComponent(Counter, { label: \"Fives\", step: 5 });"));
+    assert!(ts.contains("__dom.component(_e4, Counter, (): Partial<Counter> => ({ label: \"Fives\", step: 5 }));"), "{ts}");
     assert!(app.contains("step=\"5\""));
     assert!(ts.contains("for (const step of this.steps) {"));
-    assert!(ts.contains("__b.addContent(step);"));
+    assert!(ts.contains("__dom.textAt("), "{ts}");
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn example_switch_compiles() {
     let src = std::fs::read_to_string(dir.join("Counter.xzor")).unwrap();
     let ts = xzor::compile(&src, &dir.join("Counter.xzor")).unwrap();
     assert!(ts.contains("switch (this.count % 3) {"));
-    assert!(ts.contains("case 1:\n          case 2: {"));
+    assert!(ts.contains("case 1:\n        case 2: {"));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn non_string_component_props_take_expressions() {
     let ts = xzor::compile(app, &dir.join("App.xzor")).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(
-        ts.contains(r#"__b.addComponent(Child, { label: "5", step: 5, mode: "b", count: this.n + 1, title: "x", on: () => this.n++ });"#),
+        ts.contains(r#"__dom.component(_e0, Child, (): Partial<Child> => ({ label: "5", step: 5, mode: "b", count: this.n + 1, title: "x" }), { on: () => this.n++ });"#),
         "{ts}"
     );
 }

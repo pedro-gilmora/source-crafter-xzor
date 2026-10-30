@@ -173,7 +173,7 @@ fn decode_mappings(mappings: &str) -> Vec<(usize, usize, Option<(usize, usize)>)
 }
 
 /// Generated text with mappings relative to its own start.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct M {
     text: String,
     maps: Vec<Mapping>,
@@ -293,7 +293,7 @@ pub fn generate_in(
             }
             let before = code[..m.offset].trim_end();
             let getter = before.ends_with("get") && !before[..before.len() - 3].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$');
-            if doc.fine && getter && !volatile && !m.is_static && !m.name.starts_with('#') && !memos.contains(&m.name) {
+            if getter && !volatile && !m.is_static && !m.name.starts_with('#') && !memos.contains(&m.name) {
                 memos.push(m.name.clone());
             }
             if m.is_static {
@@ -343,7 +343,7 @@ pub fn generate_in(
         if let Some(spec) = spec.filter(|_| components.get(name).is_some_and(|c| c.lazy)) {
             uses_lazy = true;
             g.emit(M::lit("import type ").add(M::src(import, import.at)).lit_then(";"));
-            g.line(&format!("const __lazy_{name} = lazy<typeof {name}>(() => import({}));", js_string(spec)));
+            g.line(&format!("const __lazy_{name} = __lazy<typeof {name}>(() => import({}));", js_string(spec)));
             continue;
         }
         g.emit(M::lit("import ").add(M::src(import, import.at)).lit_then(";"));
@@ -374,7 +374,7 @@ pub fn generate_in(
     }
     let base = match &doc.inherits {
         Some(b) => M::src(b, b.at),
-        None => M::lit("Component"),
+        None => M::lit("__Component"),
     };
     let mut header = M::lit(&format!("export default class {class_name}")).add(generics).lit_then(" extends ").add(base);
     for (i, interface) in doc.implements.iter().enumerate() {
@@ -390,7 +390,7 @@ pub fn generate_in(
     }
     if !memos.is_empty() {
         let names: Vec<String> = memos.iter().map(|n| js_string(n)).collect();
-        g.line(&format!("static {{ dom.memo(this, [{}]); }}", names.join(", ")));
+        g.line(&format!("static {{ __dom.memo(this, [{}]); }}", names.join(", ")));
     }
     if let Some(Node::Routes { sections, .. }) = block {
         for (i, section) in sections.iter().enumerate() {
@@ -454,17 +454,9 @@ pub fn generate_in(
         g.emit_block(block);
         g.line("");
     }
-    g.line("protected override buildRenderTree(__b: RenderTreeBuilder): void {");
+    g.line("protected override render(__p: Node): void {");
     g.depth = 2;
-    if doc.fine {
-        g.line("__b.addFine((__p) => {");
-        g.depth = 3;
-        g.fine_nodes(&doc.nodes, "__p")?;
-        g.depth = 2;
-        g.line("});");
-    } else {
-        g.nodes(&doc.nodes)?;
-    }
+    g.fine_nodes(&doc.nodes, "__p")?;
     g.depth = 1;
     g.line("}");
     g.depth = 0;
@@ -472,35 +464,31 @@ pub fn generate_in(
     if !g.templates.is_empty() {
         g.line("");
         for (i, spec) in std::mem::take(&mut g.templates).iter().enumerate() {
-            g.line(&format!("const __t{i} = dom.template([{spec}]);"));
+            g.line(&format!("const __t{i} = __dom.template([{spec}]);"));
         }
     }
     // Removal looks for `data-leave` only once a component that sets it is loaded.
     if g.out[head_at..].contains("data-leave") {
-        g.line("Component.$leaves = true;");
+        g.line("__Component.$leaves = true;");
     }
     let types = g.route_types.get();
-    let mut head = String::from("import { Component, ");
-    if doc.fine {
-        head.push_str("dom, ");
-    }
+    let mut names = vec!["Component as __Component", "dom as __dom"];
     if uses_lazy {
-        head.push_str("lazy, ");
+        names.push("lazy as __lazy");
     }
-    if doc.fine && g.uses_el {
-        head.push_str("type El, ");
+    if g.uses_el {
+        names.push("type El");
     }
-    head.push_str("type RenderTreeBuilder");
     if !remotes.is_empty() {
-        head.push_str(", type Remote");
+        names.push("type Remote");
     }
     if !slots.is_empty() || types & ROUTE_FRAGMENT != 0 {
-        head.push_str(", type RenderFragment");
+        names.push("type RenderFragment");
     }
     if types & ROUTE_TYPE != 0 {
-        head.push_str(", type Route");
+        names.push("type Route");
     }
-    head.push_str(" } from \"@source-crafter/xzor-runtime\";\n");
+    let mut head = format!("import {{ {} }} from \"@source-crafter/xzor-runtime\";\n", names.join(", "));
     if block.is_some() {
         let params = if types & ROUTE_PARAMS != 0 { ", type RouteParams as __RouteParams" } else { "" };
         let app = if types & ROUTE_APP != 0 { ", type AppRoute as __AppRoute" } else { "" };
@@ -739,6 +727,8 @@ enum FinePart<'n> {
     Code(&'n [CodePart], &'n [Node]),
     List(&'n Node),
     Island(&'n [Node]),
+    /// A child component, before its one anchor.
+    Component(&'n Element),
     /// `@attr:`, bound to the element that holds it.
     ParentAttr(&'n Attr),
     /// An `@if`/`@switch` of a keyed pass's row that reads only the pass's values, appended to its element.
@@ -753,6 +743,49 @@ enum FinePart<'n> {
     Show(&'n Node),
     /// `@pause { }`, between its two anchors.
     Pause(&'n [Node]),
+}
+
+/// A child component tag taken apart; see `Gen::component_parts`.
+struct ChildParts {
+    name: M,
+    /// The explicit type arguments' text.
+    type_args: Option<String>,
+    /// A generic component whose type arguments come from its props.
+    infer: bool,
+    type_names: Vec<String>,
+    /// Each prop, and whether it is set once (a callback) rather than read.
+    props: Vec<(M, bool)>,
+    /// `@key` (true) and `@ref` expressions.
+    extra: Vec<(bool, M)>,
+    fills: Vec<(String, M)>,
+}
+
+/// Whether `text` is an arrow or function expression.
+fn is_lambda(text: &str) -> bool {
+    fn word<'a>(s: &'a str, w: &str) -> Option<&'a str> {
+        s.strip_prefix(w).filter(|r| !r.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$'))
+    }
+    let t = text.trim_start();
+    let t = word(t, "async").map_or(t, str::trim_start);
+    if word(t, "function").is_some() {
+        return true;
+    }
+    let name = t.len() - t.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '$').len();
+    let rest = if t.starts_with('(') {
+        let mut depth = 0;
+        let Some(end) = t.char_indices().find_map(|(i, c)| {
+            depth += i32::from(c == '(') - i32::from(c == ')');
+            (depth == 0).then_some(i)
+        }) else {
+            return false;
+        };
+        let rest = t[end + 1..].trim_start();
+        // A return type annotation sits between the parameters and the arrow.
+        return rest.starts_with("=>") || (rest.starts_with(':') && rest.contains("=>"));
+    } else {
+        &t[name..]
+    };
+    name > 0 && rest.trim_start().starts_with("=>")
 }
 
 struct Reads {
@@ -783,9 +816,9 @@ fn is_plain_code(parts: &[CodePart]) -> bool {
     parts.iter().all(|p| matches!(p, CodePart::Ts(_)))
 }
 
-/// An element `@fine` leaves to the virtual DOM: a component, or `@attributes` and event modifiers.
+/// An element the renderer leaves to the virtual DOM: `@attributes` and event modifiers.
 fn is_island(el: &Element) -> bool {
-    el.is_component() || el.attrs.iter().any(|a| &*a.name.text == "@attributes" || (a.name.starts_with("@on") && a.name.contains(':')))
+    !el.is_component() && el.attrs.iter().any(|a| &*a.name.text == "@attributes" || (a.name.starts_with("@on") && a.name.contains(':')))
 }
 
 fn is_plain_code_node(node: &Node) -> bool {
@@ -958,7 +991,7 @@ fn is_flow(node: &Node) -> bool {
     match node {
         Node::Code(parts) => is_plain_code(parts),
         Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => true,
-        Node::Element(el) => !is_island(el) && el.children.iter().any(is_flow),
+        Node::Element(el) => !el.is_component() && !is_island(el) && el.children.iter().any(is_flow),
         _ => false,
     }
 }
@@ -993,32 +1026,28 @@ impl Gen<'_> {
 
     /// A `@code` block with its markup values compiled to `RenderFragment`s and its `@Cascade`
     /// decorators (`blanks`) blanked out.
-    fn code_block(&self, parts: &[CodePart], blanks: &[(usize, usize)]) -> Result<M, String> {
+    fn code_block(&mut self, parts: &[CodePart], blanks: &[(usize, usize)]) -> Result<M, String> {
         let mut out = M::default();
         for part in parts {
             out = match part {
                 CodePart::Ts(s) => out.add(blanked(s, blanks)),
-                CodePart::Markup(el) => out.add(self.fragment(el)?),
+                // Markup in `@code` is plain TypeScript scope: no `this.` rewriting.
+                CodePart::Markup(el) => out.add(self.fragment_of(std::slice::from_ref(&Node::Element(el.clone())), false, &[])?),
                 CodePart::Render(_) => return Err("markup statements and `@:` lines belong in `@{ }`, not `@code`".into()),
             };
         }
         Ok(out)
     }
 
-    /// Markup in `@code` is plain TypeScript scope: no `this.` rewriting.
-    fn fragment(&self, el: &Element) -> Result<M, String> {
-        self.fragment_of(std::slice::from_ref(&Node::Element(el.clone())), false, &[])
-    }
-
-    /// `Component.fragment((__b) => { ... })` for `nodes`, emitted on one line.
+    /// `__Component.fragment((__b) => { ... })` for `nodes`, emitted on one line.
     /// `locals` are extra names in scope (slot parameters) that must not get `this.`.
-    fn fragment_of(&self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
+    fn fragment_of(&mut self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
         let body = self.inline_nodes(nodes, rewrite, locals)?;
-        Ok(M::lit("Component.fragment((__b) => { ").add(body).lit_then(" })"))
+        Ok(M::lit("__Component.fragment((__b) => { ").add(body).lit_then(" })"))
     }
 
     /// Builder calls for `nodes` on one line.
-    fn inline_nodes(&self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
+    fn inline_nodes(&mut self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
         let mut sub = Gen {
             out: String::new(),
             mappings: Vec::new(),
@@ -1026,13 +1055,13 @@ impl Gen<'_> {
             statics: if rewrite { self.statics.clone() } else { HashSet::new() },
             static_prefix: self.static_prefix.clone(),
             locals: self.locals.iter().chain(locals).cloned().collect(),
-            depth: 0,
+            depth: self.depth,
             components: self.components,
             inline: true,
             raw_text: self.raw_text,
             props_ids: std::cell::Cell::new(self.props_ids.get()),
             route_types: std::cell::Cell::new(self.route_types.get()),
-            fine_ids: 0,
+            fine_ids: self.fine_ids,
             in_region: false,
             in_loop: false,
             owner: None,
@@ -1041,7 +1070,7 @@ impl Gen<'_> {
             once: false,
             branching: false,
             in_show: 0,
-            templates: Vec::new(),
+            templates: std::mem::take(&mut self.templates),
             reads: None,
             uses_el: false,
             row_roots: Vec::new(),
@@ -1049,13 +1078,16 @@ impl Gen<'_> {
         let done = sub.nodes(nodes);
         self.props_ids.set(sub.props_ids.get());
         self.route_types.set(sub.route_types.get());
+        self.fine_ids = sub.fine_ids;
+        self.templates = sub.templates;
+        self.uses_el |= sub.uses_el;
         done?;
         Ok(M { text: sub.out.trim_end().to_string(), maps: sub.mappings })
     }
 
     /// One section of a routes block as its `RouteSection` descriptor. `RouteSection.render` takes a
     /// plain `Route`, so a section that reads `route` casts it to the project's `AppRoute` in a local.
-    fn route_section(&self, i: usize, var: &Src, section: &RouteSectionNode) -> Result<M, String> {
+    fn route_section(&mut self, i: usize, var: &Src, section: &RouteSectionNode) -> Result<M, String> {
         let app = "__AppRoute".to_string();
         let (head, narrowed) = match &section.kind {
             RouteSectionKind::Tag { tag, .. } => (
@@ -1128,7 +1160,7 @@ impl Gen<'_> {
     }
 
     /// `(params) => fragment` passed to a child for one of its slots.
-    fn slot_lambda(&self, params: Option<&Src>, body: &[Node]) -> Result<M, String> {
+    fn slot_lambda(&mut self, params: Option<&Src>, body: &[Node]) -> Result<M, String> {
         let head = match params {
             Some(p) => M::lit("(").add(M::src(p, p.at)).lit_then(") => "),
             None => M::lit("() => "),
@@ -1536,7 +1568,7 @@ impl Gen<'_> {
     /// An element whose children hold control flow, in a plain loop: created on its own.
     fn fine_element(&mut self, el: &Element, parent: &str) -> Result<(), String> {
         let var = self.fine_var();
-        self.line(&format!("const {var} = dom.el({parent}, {});", js_string(&el.name)));
+        self.line(&format!("const {var} = __dom.el({parent}, {});", js_string(&el.name)));
         self.fine_attrs(el, &var, true)?;
         let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
         let owner = self.owner.replace(var.clone());
@@ -1570,7 +1602,7 @@ impl Gen<'_> {
             }
             let var = self.fine_var();
             let call = if kids.len() == 2 { "anchors" } else { "anchor" };
-            self.line(&format!("const {var} = dom.{call}({parent});"));
+            self.line(&format!("const {var} = __dom.{call}({parent});"));
             return self.fine_part(part, &var);
         }
         let t = self.templates.len();
@@ -1650,6 +1682,10 @@ impl Gen<'_> {
                     kids.push(Tpl::Hole);
                 }
                 Node::Element(el) if &*el.name.text == "text" => self.tpl_nodes(&el.children, path, raw, kids, parts)?,
+                Node::Element(el) if el.is_component() => {
+                    parts.push((at(kids), FinePart::Component(el)));
+                    kids.push(Tpl::Anchor);
+                }
                 Node::Element(el) if is_island(el) => {
                     parts.push((at(kids), FinePart::Island(std::slice::from_ref(node))));
                     kids.push(Tpl::Anchor);
@@ -1799,7 +1835,7 @@ impl Gen<'_> {
             }
             FinePart::Region(node) if keyable(node) => self.fine_keyed(node, var)?,
             FinePart::Region(node) if !self.row_level() && branchable(node) => {
-                self.line(&format!("dom.branchAt({var}, (__p) => {{"));
+                self.line(&format!("__dom.branchAt({var}, (__p) => {{"));
                 let outer = std::mem::replace(&mut self.in_region, true);
                 let pass = self.pass_locals.take();
                 self.depth += 1;
@@ -1827,10 +1863,11 @@ impl Gen<'_> {
                 r?;
             }
             FinePart::List(node) => self.fine_list(node, var)?,
+            FinePart::Component(el) => self.fine_component(el, var)?,
             FinePart::Await(node) => self.fine_await(node, var)?,
             FinePart::Show(node) => {
                 let node = show_branches(node)?;
-                self.line(&format!("dom.showAt({var}, (__p) => {{"));
+                self.line(&format!("__dom.showAt({var}, (__p) => {{"));
                 let outer = std::mem::replace(&mut self.in_region, true);
                 let pass = self.pass_locals.take();
                 self.depth += 1;
@@ -1845,7 +1882,7 @@ impl Gen<'_> {
                 self.line("});");
             }
             FinePart::Pause(body) => {
-                self.line(&format!("dom.pauseAt({var}, (__p) => {{"));
+                self.line(&format!("__dom.pauseAt({var}, (__p) => {{"));
                 let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
                 let pass = self.pass_locals.take();
                 let r = self.fine_block(body, "__p");
@@ -1857,10 +1894,10 @@ impl Gen<'_> {
             FinePart::Flow(node) => self.fine_flow(node, var)?,
             FinePart::OnceText(e) => {
                 let read = self.expr(e);
-                self.emit(M::lit(&format!("dom.textOnce({var}, () => ")).add(read).lit_then(");"));
+                self.emit(M::lit(&format!("__dom.textOnce({var}, () => ")).add(read).lit_then(");"));
             }
             FinePart::Once(body) => {
-                self.line(&format!("dom.onceAt({var}, (__p) => {{"));
+                self.line(&format!("__dom.onceAt({var}, (__p) => {{"));
                 // Plain control flow, and values set rather than bound.
                 let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, true), std::mem::replace(&mut self.once, true));
                 let pass = self.pass_locals.take();
@@ -1872,12 +1909,12 @@ impl Gen<'_> {
             }
             FinePart::ParentAttr(a) => {
                 let read = self.value(&a.value);
-                self.emit(M::lit(&format!("dom.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
+                self.emit(M::lit(&format!("__dom.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
             }
             // Virtual-DOM builder calls, in a binding that patches them when what they read changes.
             FinePart::Island(nodes) => {
                 let body = self.inline_nodes(nodes, true, &[])?;
-                self.emit(M::lit(&format!("dom.islandAt({var}, (__b) => {{ ")).add(body).lit_then(" });"));
+                self.emit(M::lit(&format!("__dom.islandAt({var}, (__b) => {{ ")).add(body).lit_then(" });"));
             }
         }
         Ok(())
@@ -1901,13 +1938,13 @@ impl Gen<'_> {
     fn fine_bound(&mut self, call: &str, args: &str, read: M) {
         if self.once {
             let call = if call == "text" { "setText" } else { "set" };
-            self.emit(M::lit(&format!("dom.{call}({args}, ")).add(read).lit_then(");"));
+            self.emit(M::lit(&format!("__dom.{call}({args}, ")).add(read).lit_then(");"));
         } else if self.row_level() {
             let i = self.push_read("", read);
-            self.line(&format!("dom.{call}Item({args}, {i});"));
+            self.line(&format!("__dom.{call}Item({args}, {i});"));
         } else {
             let call = if call == "text" { "textAt" } else { call };
-            self.emit(M::lit(&format!("dom.{call}({args}, () => ")).add(read).lit_then(");"));
+            self.emit(M::lit(&format!("__dom.{call}({args}, () => ")).add(read).lit_then(");"));
         }
     }
 
@@ -1915,9 +1952,9 @@ impl Gen<'_> {
         if self.row_level() {
             // The return type types the handler's event, as `dom.on` does.
             let i = self.push_read("): ((e: any) => unknown", handler);
-            self.line(&format!("dom.onItem({var}, {}, {i});", js_string(event)));
+            self.line(&format!("__dom.onItem({var}, {}, {i});", js_string(event)));
         } else {
-            self.emit(M::lit(&format!("dom.on({var}, {}, ", js_string(event))).add(handler).lit_then(");"));
+            self.emit(M::lit(&format!("__dom.on({var}, {}, ", js_string(event))).add(handler).lit_then(");"));
         }
     }
 
@@ -1939,9 +1976,9 @@ impl Gen<'_> {
         if row {
             let close = format!("{}}}", "  ".repeat(self.depth));
             let i = self.push_read(", __p", M::lit("{\n").add(code).lit_then(&close));
-            self.line(&format!("dom.{}({end}, {i});", if branch { "branchItem" } else { "regionItem" }));
+            self.line(&format!("__dom.{}({end}, {i});", if branch { "branchItem" } else { "regionItem" }));
         } else {
-            self.line(&format!("dom.{}({end}, (__p) => {{", if branch { "branchAt" } else { "regionAt" }));
+            self.line(&format!("__dom.{}({end}, (__p) => {{", if branch { "branchAt" } else { "regionAt" }));
             self.splice(code);
             self.line("});");
         }
@@ -1985,7 +2022,7 @@ impl Gen<'_> {
             }
             None => None,
         };
-        self.emit(M::lit(&format!("dom.listAt({end}, () => ")).add(items).lit_then(", ["));
+        self.emit(M::lit(&format!("__dom.listAt({end}, () => ")).add(items).lit_then(", ["));
         self.depth += 1;
         for read in reads.list {
             self.emit(read.lit_then(","));
@@ -1997,7 +2034,7 @@ impl Gen<'_> {
         if takes_item {
             // What closes over the item gets the one that replaces it under the same key: the row is kept.
             self.depth += 1;
-            self.line(&format!("dom.rowItem((__v: typeof {0}) => {{ {0} = __v; }});", reads.name));
+            self.line(&format!("__dom.rowItem((__v: typeof {0}) => {{ {0} = __v; }});", reads.name));
             self.depth -= 1;
         }
         self.splice(row);
@@ -2053,7 +2090,7 @@ impl Gen<'_> {
             _ => unreachable!("only loops are keyed"),
         };
         let (key, root) = loop_key(key, body)?;
-        self.line(&format!("dom.keyedAt({end}, (__pass) => {{"));
+        self.line(&format!("__dom.keyedAt({end}, (__pass) => {{"));
         self.depth += 1;
         if key.is_none() {
             self.line("let __i = 0;");
@@ -2105,7 +2142,7 @@ impl Gen<'_> {
             Some((callee, args)) => {
                 let part = |(a, b): (usize, usize)| Src::new(&promise.text[a..b], if promise.at == Src::UNMAPPED { Src::UNMAPPED } else { promise.at + a });
                 let params = (0..args.len()).map(|i| format!("__a{i}")).collect::<Vec<_>>().join(", ");
-                let mut m = M::lit(&format!("dom.awaitCallAt({end}, () => ["));
+                let mut m = M::lit(&format!("__dom.awaitCallAt({end}, () => ["));
                 for (i, &range) in args.iter().enumerate() {
                     if i > 0 {
                         m = m.lit_then(", ");
@@ -2114,7 +2151,7 @@ impl Gen<'_> {
                 }
                 m.lit_then(&format!("], ({params}) => ")).add(self.expr(&part(callee))).lit_then(&format!("({params}), (__p) => {{"))
             }
-            None => M::lit(&format!("dom.awaitAt({end}, () => ")).add(self.expr(promise)).lit_then(", (__p) => {"),
+            None => M::lit(&format!("__dom.awaitAt({end}, () => ")).add(self.expr(promise)).lit_then(", (__p) => {"),
         };
         self.emit(head);
         let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
@@ -2360,13 +2397,13 @@ impl Gen<'_> {
 
     /// The handler writing a bound input back: at once, or after a `@bind:debounce` pause.
     fn bind_handler(&self, el: &Element, target: &Src, after: Option<&AttrValue>) -> Result<M, String> {
-        let write = self.expr(target).lit_then(" = Component.bindValue(__e, ").add(self.expr(target)).lit_then(");").add(self.after_call(after)?);
+        let write = self.expr(target).lit_then(" = __Component.bindValue(__e, ").add(self.expr(target)).lit_then(");").add(self.after_call(after)?);
         let debounce = el.attrs.iter().find(|a| &*a.name.text == "@bind:debounce").map(|a| match &a.value {
             AttrValue::Expr(ms) | AttrValue::Static(ms) if !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()) => Ok(ms.text.clone()),
             _ => Err("@bind:debounce requires milliseconds, e.g. @bind:debounce=\"300\"".to_string()),
         });
         Ok(match debounce.transpose()? {
-            Some(ms) => M::lit(&format!("(__e) => Component.debounce(__e, {ms}, () => {{ ")).add(write).lit_then(" })"),
+            Some(ms) => M::lit(&format!("(__e) => __Component.debounce(__e, {ms}, () => {{ ")).add(write).lit_then(" })"),
             None => M::lit("(__e) => { ").add(write).lit_then(" }"),
         })
     }
@@ -2441,17 +2478,21 @@ impl Gen<'_> {
         Ok(())
     }
 
-    fn component(&mut self, el: &Element) -> Result<(), String> {
+    /// A child component's tag as its parts: the type (with type arguments), props (flagged static when they are
+    /// callbacks, which are set once), `@key`/`@ref`, and slot fills. `dom` makes callbacks `__dom.callback`s.
+    fn component_parts(&mut self, el: &Element, dom: bool) -> Result<ChildParts, String> {
         let empty = ComponentInfo::default();
         let info = self.components.get(&*el.name.text).unwrap_or(&empty);
         let attr = |n: &str| el.attrs.iter().find(|a| &*a.name.text == n);
 
         // Generic components take their type arguments as attributes (Blazor's `TItem="..."`).
-        let type_names: Vec<&str> = info.type_params.iter().map(String::as_str).collect();
+        let type_names: Vec<String> = info.type_params.clone();
         let mut name = if info.lazy { M::lit("__lazy_").add(M::src(&el.name, el.name.at)) } else { M::src(&el.name, el.name.at) };
         let infer = !type_names.is_empty() && !type_names.iter().all(|t| attr(t).is_some());
+        let mut type_args = None;
         if !type_names.is_empty() && !infer {
             name = name.lit_then("<");
+            let mut texts = Vec::new();
             for (i, t) in type_names.iter().enumerate() {
                 let arg = match &attr(t).expect("checked above").value {
                     AttrValue::Static(s) if s.at != Src::UNMAPPED => M::src(s, s.at),
@@ -2459,28 +2500,31 @@ impl Gen<'_> {
                     AttrValue::Expr(e) => M::src(e, e.at),
                     _ => return Err(format!("<{}>: type argument {t} must be a type", el.name)),
                 };
+                texts.push(arg.text.clone());
                 name = name.lit_then(if i == 0 { "" } else { ", " }).add(arg);
             }
             name = name.lit_then(">");
+            type_args = Some(texts.join(", "));
         }
 
-        let mut props: Vec<M> = Vec::new();
-        let mut extra: Vec<M> = Vec::new();
+        let owner = if dom { "__dom.callback(this, " } else { "__b.callback(" };
+        let mut props: Vec<(M, bool)> = Vec::new();
+        let mut extra: Vec<(bool, M)> = Vec::new();
         for a in &el.attrs {
-            if type_names.contains(&&*a.name.text) {
+            if type_names.iter().any(|t| **t == *a.name.text) {
                 continue;
             }
             match &*a.name.text {
                 "@key" => {
-                    extra.push(M::lit("key: ").add(self.directive_expr(a)?));
+                    extra.push((true, self.directive_expr(a)?));
                     continue;
                 }
                 "@ref" => {
-                    extra.push(M::lit("ref: (__c) => { ").add(self.directive_expr(a)?).lit_then(" = __c; }"));
+                    extra.push((false, self.directive_expr(a)?));
                     continue;
                 }
                 "@attributes" => {
-                    props.push(M::lit("...").add(self.directive_expr(a)?));
+                    props.push((M::lit("...").add(self.directive_expr(a)?), false));
                     continue;
                 }
                 _ => {}
@@ -2491,14 +2535,15 @@ impl Gen<'_> {
                 }
                 let AttrValue::Expr(target) = &a.value else { return Err(format!("{} requires an expression", a.name)) };
                 let after = attr(&format!("{}:after", a.name)).map(|x| &x.value);
-                props.push(M::lit(&format!("{bound}: ")).add(self.expr(target)));
-                props.push(
-                    M::lit(&format!("{bound}Changed: __b.callback((__v) => {{ "))
+                props.push((M::lit(&format!("{bound}: ")).add(self.expr(target)), false));
+                props.push((
+                    M::lit(&format!("{bound}Changed: {owner}(__v) => {{ "))
                         .add(self.expr(target))
                         .lit_then(" = __v;")
                         .add(self.after_call(after)?)
                         .lit_then(" })"),
-                );
+                    true,
+                ));
                 continue;
             }
             // `@onclick` on a component sets its `onClick` EventCallback, like on an element.
@@ -2527,14 +2572,19 @@ impl Gen<'_> {
                 AttrValue::Expr(e) => Some(e.clone()),
                 _ => None,
             };
+            let mut set_once = kind == PropKind::Callback;
             let value = match (kind, code) {
-                (PropKind::Callback, Some(e)) => M::lit("__b.callback(").add(self.handler(&e)).lit_then(")"),
+                (PropKind::Callback, Some(e)) => M::lit(owner).add(self.handler(&e)).lit_then(")"),
                 // Hoisted, a string literal would widen to `string` and fail a literal-typed prop's inference.
                 (PropKind::Text, _) | (_, None) if infer && matches!(a.value, AttrValue::Static(_)) => self.value(&a.value).lit_then(" as const"),
                 (PropKind::Text, _) | (_, None) => self.value(&a.value),
-                (_, Some(e)) => self.expr(&e),
+                // A lambda is new on every read: set once, not diffed.
+                (_, Some(e)) => {
+                    set_once |= is_lambda(&e);
+                    self.expr(&e)
+                }
             };
-            props.push(key.lit_then(": ").add(value));
+            props.push((key.lit_then(": ").add(value), set_once));
         }
 
         // Explicit `@slot` fills, plus any other content as the default slot.
@@ -2560,13 +2610,24 @@ impl Gen<'_> {
             }
             fills.push(("default".into(), M::lit("default: ").add(self.slot_lambda(None, &loose)?)));
         }
+        Ok(ChildParts { name, type_args, infer, type_names, props, extra, fills })
+    }
 
-        let empty_props = props.is_empty();
+    /// `{ a: 1, b: 2 }` from `entries`.
+    fn object_of(entries: impl IntoIterator<Item = M>) -> M {
         let mut object = M::lit("{");
-        for (i, p) in props.into_iter().enumerate() {
-            object = object.lit_then(if i == 0 { " " } else { ", " }).add(p);
+        let mut any = false;
+        for p in entries {
+            object = object.lit_then(if any { ", " } else { " " }).add(p);
+            any = true;
         }
-        let object = object.lit_then(if empty_props { "}" } else { " }" });
+        object.lit_then(if any { " }" } else { "}" })
+    }
+
+    /// A child component of the virtual DOM, as builder calls.
+    fn component(&mut self, el: &Element) -> Result<(), String> {
+        let ChildParts { name, infer, type_names, props, extra, fills, .. } = self.component_parts(el, false)?;
+        let object = Self::object_of(props.into_iter().map(|(p, _)| p));
         let mut line = M::lit("__b.addComponent(");
         if infer {
             // Hoisted so each type parameter is inferred from the props (`addComponent` alone infers the base class).
@@ -2594,12 +2655,79 @@ impl Gen<'_> {
         }
         if !extra.is_empty() {
             line = line.lit_then(", {");
-            for (i, x) in extra.into_iter().enumerate() {
+            for (i, (is_key, x)) in extra.into_iter().enumerate() {
+                let x = if is_key { M::lit("key: ").add(x) } else { M::lit("ref: (__c) => { ").add(x).lit_then(" = __c; }") };
                 line = line.lit_then(if i == 0 { " " } else { ", " }).add(x);
             }
             line = line.lit_then(" }");
         }
         self.emit(line.lit_then(");"));
+        Ok(())
+    }
+
+    /// A child component before comment `end`: `__dom.component` with its props as a read, callbacks as statics and
+    /// slot fills, or in a list row `__dom.componentItem` with those as the list's shared reads.
+    fn fine_component(&mut self, el: &Element, end: &str) -> Result<(), String> {
+        let ChildParts { name, type_args, infer, type_names, props, extra, fills } = self.component_parts(el, true)?;
+        let row = self.row_level();
+        let (values, statics): (Vec<_>, Vec<_>) = props.into_iter().partition(|(_, once)| !once);
+        let values = Self::object_of(values.into_iter().map(|(p, _)| p));
+        // The type the checks run against: a row's reads are typed by hand, a hoisted read by its inference.
+        let class = &*el.name.text;
+        let ty = match (&type_args, infer) {
+            (Some(args), _) => format!("{class}<{args}>"),
+            (None, true) => format!("{class}<{}>", vec!["any"; type_names.len()].join(", ")),
+            (None, false) => class.to_string(),
+        };
+        let mut head = name;
+        let (mut key, mut target) = (None, None);
+        for (is_key, x) in extra {
+            if is_key { key = Some(x) } else { target = Some(x) }
+        }
+        let call = if row { "componentItem" } else { "component" };
+        let mut args = M::lit(&format!("__dom.{call}({end}, "));
+        if infer && !row {
+            // Hoisted so each type parameter is inferred from the props, as the read's own result.
+            let id = self.props_ids.get();
+            self.props_ids.set(id + 1);
+            let var = format!("__p{id}");
+            self.emit(M::lit(&format!("const {var} = () => (")).add(values).lit_then(");"));
+            let infers = type_names.iter().map(|n| format!("infer {n}")).collect::<Vec<_>>().join(", ");
+            let types: Vec<String> = type_names
+                .iter()
+                .map(|t| format!("ReturnType<typeof {var}> extends Partial<{class}<{infers}>> ? {t} : unknown"))
+                .collect();
+            head = head.lit_then(&format!("<{}>", types.join(", ")));
+            args = args.add(head).lit_then(&format!(", {var}"));
+        } else if row {
+            let i = self.push_read(&format!("): (Partial<{ty}>"), M::lit("(").add(values).lit_then(")"));
+            args = args.add(head).lit_then(&format!(", {i}"));
+        } else {
+            // Typed here: inferred through the call, a literal would widen to `string`.
+            args = args.add(head).lit_then(&format!(", (): Partial<{ty}> => (")).add(values).lit_then(")");
+        }
+        let statics = (!statics.is_empty()).then(|| Self::object_of(statics.into_iter().map(|(p, _)| p)));
+        let slots = (!fills.is_empty()).then(|| Self::object_of(fills.into_iter().map(|(_, f)| f)));
+        // Trailing arguments left out; a gap is `undefined`.
+        let mut rest: Vec<Option<M>> = Vec::new();
+        if row {
+            let statics = statics.map(|s| self.push_read(&format!("): (Partial<{ty}>"), M::lit("(").add(s).lit_then(")")));
+            let slots = slots.map(|s| self.push_read(&format!("): ({ty}[\"slots\"]"), M::lit("(").add(s).lit_then(")")));
+            rest.push(statics.map(|i| M::lit(&i.to_string())));
+            rest.push(slots.map(|i| M::lit(&i.to_string())));
+        } else {
+            rest.push(statics);
+            rest.push(slots);
+        }
+        rest.push(target.map(|t| M::lit("(__c) => { ").add(t).lit_then(" = __c; }")));
+        rest.push(key);
+        while rest.last().is_some_and(Option::is_none) {
+            rest.pop();
+        }
+        for x in rest {
+            args = args.lit_then(", ").add(x.unwrap_or_else(|| M::lit("undefined")));
+        }
+        self.emit(args.lit_then(");"));
         Ok(())
     }
 }
@@ -3454,15 +3582,10 @@ pub fn class_name(stem: &str) -> String {
 mod tests {
     use super::*;
 
-    /// These tests cover the virtual-DOM emitter (what islands use) unless the source asks for `@fine`; a leading
-    /// `@render` (removed from the language) is blanked out for them.
+    /// Every test runs the one emitter; a leading `@render` (removed from the language) is blanked out.
     fn parse(src: &str) -> Result<(Document, Vec<crate::parser::Token>), crate::parser::ParseError> {
-        let fine = src.contains("@fine");
         let src = src.strip_prefix("@render\n").map(|s| format!("{}{s}", " ".repeat("@render\n".len()))).unwrap_or_else(|| src.to_string());
-        crate::parser::parse(&src).map(|(mut doc, tokens)| {
-            doc.fine = fine;
-            (doc, tokens)
-        })
+        crate::parser::parse(&src)
     }
 
     fn rw(src: &str, members: &[&str]) -> String {
