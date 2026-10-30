@@ -989,9 +989,19 @@ export const dom = {
   onItem(el: Element, event: string, i: number, mods = 0): void {
     const row = holder as Row;
     const given = row.reads![i]!;
-    const read = mods === 0 ? given : (item: unknown) => modified(given(item), mods);
-    if (DELEGATED.has(event)) on(el, event, read, row);
-    else el.addEventListener(event, (e) => afterHandler(row.$ctx, read(row.item)(e)));
+    if (mods === 0) {
+      if (DELEGATED.has(event)) on(el, event, given, row);
+      else el.addEventListener(event, (e) => afterHandler(row.$ctx, given(row.item)(e)));
+      return;
+    }
+    // Built once per element: the modifiers apply in it, not in a closure made per event.
+    const run = (e: Event): unknown => {
+      if ((mods & 1) !== 0) e.preventDefault();
+      if ((mods & 2) !== 0) e.stopPropagation();
+      return given(row.item)?.(e);
+    };
+    if (DELEGATED.has(event)) on(el, event, () => run, row);
+    else el.addEventListener(event, (e) => afterHandler(row.$ctx, run(e)));
   },
 
   /** Static text. */

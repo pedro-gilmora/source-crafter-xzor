@@ -1668,9 +1668,9 @@ test("leak check: 1000 children mounted and removed leave the heap and the subsc
   Bun.gc(true);
   Bun.gc(true);
   const after = heapSize();
-  console.log(`leak check: before ${before} B, after ${after} B, delta ${after - before} B, subscribers ${subs}`);
-  expect(subs).toBe(0);
-  expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+  const msg = `leak check: before ${before} B, after ${after} B, delta ${after - before} B, subscribers ${subs}`;
+  expect(subs, msg).toBe(0);
+  expect(after - before, msg).toBeLessThan(0.1 * 1024 * 1024);
 });
 
 // Markup values, content regions and slots, as codegen will emit them.
@@ -1764,8 +1764,8 @@ test("perf: an @expr giving the same fragment, re-run 10k times, builds no DOM",
   } finally {
     names.forEach((n, i) => (d[n] = saved[i]!));
   }
-  console.log(`same fragment x10k: ${(performance.now() - t0).toFixed(2)} ms, nodes created ${created}`);
-  expect(created).toBe(0);
+  const msg = `same fragment x10k: ${(performance.now() - t0).toFixed(2)} ms, nodes created ${created}`;
+  expect(created, msg).toBe(0);
   expect(s.builds).toBe(1);
   expect(el.querySelector("b")).toBe(b);
 });
@@ -2040,9 +2040,9 @@ test("leak check: 1000 consumers under a cascade mounted and removed leave the h
   Bun.gc(true);
   Bun.gc(true);
   const after = heapSize();
-  console.log(`cascade leak check: before ${before} B, after ${after} B, delta ${after - before} B, consumers ${scope.consumers!.size - 1}`);
-  expect(scope.consumers!.size - 1).toBe(0);
-  expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+  const msg = `cascade leak check: before ${before} B, after ${after} B, delta ${after - before} B, consumers ${scope.consumers!.size - 1}`;
+  expect(scope.consumers!.size - 1, msg).toBe(0);
+  expect(after - before, msg).toBeLessThan(0.1 * 1024 * 1024);
 });
 
 // `@attributes="bag"`, as codegen will emit it.
@@ -2562,10 +2562,10 @@ test("leak check: a routes block navigated 200 times and unmounted leaves the he
     const after = heapSize();
     // happy-dom's `document.body` keeps one record per mount; a leak per navigation would be 1000.
     const grown = heapStats().objectTypeCounts.Object! - objects;
-    console.log(`routes leak check: before ${before} B, after ${after} B, delta ${after - before} B, objects ${grown}, subscribers ${m.subs.size}`);
-    expect(m.subs.size).toBe(0);
-    expect(grown).toBeLessThan(50);
-    expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+    const msg = `routes leak check: before ${before} B, after ${after} B, delta ${after - before} B, objects ${grown}, subscribers ${m.subs.size}`;
+    expect(m.subs.size, msg).toBe(0);
+    expect(grown, msg).toBeLessThan(50);
+    expect(after - before, msg).toBeLessThan(0.1 * 1024 * 1024);
   } finally {
     delete (document as { baseURI?: string }).baseURI;
     setNavigationForTests(undefined);
