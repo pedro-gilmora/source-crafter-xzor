@@ -2571,3 +2571,50 @@ test("leak check: a routes block navigated 200 times and unmounted leaves the he
     setNavigationForTests(undefined);
   }
 });
+
+test("a child whose props read nothing tracked follows the handler that changed them", () => {
+  class PlainHost extends Component {
+    plain = { name: "a" };
+    protected override render(__p: Node): void {
+      dom.on(dom.el(__p, "button"), "click", () => (this.plain.name = "b"));
+      dom.component(dom.anchor(__p), Kid, () => ({ title: this.plain.name }));
+    }
+  }
+  const el = host();
+  mount(PlainHost, el);
+  expect(el.querySelector("span")!.textContent).toBe("a:0:-");
+  el.querySelector("button")!.click();
+  expect(el.querySelector("span")!.textContent).toBe("b:0:-");
+});
+
+test("@cascade: what a consumer's hooks read does not re-run the provider", async () => {
+  let provided = 0;
+  class Own extends Component {
+    static cascades = [["theme", "theme"]] as const;
+    #own = 0; get own(): number { Component.$reader?.(this, 0); return this.#own; } set own(v: number) { const p = this.#own; if (Component.same(p, v)) return; this.#own = v; this.$changed(0, p); }
+    static { Component.$define(this, ["own"]); }
+    theme = "";
+    seen = 0;
+    protected override onParametersSet(): void { this.seen = this.own; }
+    protected override shouldRender(): boolean { return this.own >= 0; }
+    protected override onAfterRender(): void { void this.own; }
+    protected override render(__p: Node): void { dom.text(__p, () => this.theme); }
+  }
+  class Prov extends Component {
+    #theme = "dark"; get theme(): string { Component.$reader?.(this, 0); return this.#theme; } set theme(v: string) { const p = this.#theme; if (Component.same(p, v)) return; this.#theme = v; this.$changed(0, p); }
+    static { Component.$define(this, ["theme"]); }
+    kid: Own | undefined;
+    protected override render(__p: Node): void {
+      dom.cascadeAt(dom.anchors(__p), "theme", () => (provided++, this.theme), false, (__p) => dom.component(dom.anchor(__p), Own, () => ({}), undefined, undefined, (c) => (this.kid = c as Own)));
+    }
+  }
+  const el = host();
+  const p = mount(Prov, el);
+  p.theme = "light";
+  await tick();
+  expect(el.textContent).toBe("light");
+  const runs = provided;
+  p.kid!.own = 5;
+  await tick();
+  expect(provided, `provider runs ${provided - runs} after a consumer's own field changed`).toBe(runs);
+});

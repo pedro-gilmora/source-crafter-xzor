@@ -216,7 +216,8 @@ class Binding {
 
   // Nothing tracked tells it about changes: its component re-runs it after each of its handlers.
   #loose(): void {
-    if ((this.flags & (LOOSE | DEAD | PAUSE)) !== 0 || (this.flags & KIND) >= EFFECT || holder === undefined) return;
+    const kind = this.flags & KIND;
+    if ((this.flags & (LOOSE | DEAD | PAUSE)) !== 0 || kind === EFFECT || kind === MEMO || holder === undefined) return;
     this.flags |= LOOSE;
     ((holder.$ctx.$loose ??= []) as Binding[]).push(this);
   }
@@ -1233,7 +1234,11 @@ export const dom = {
     const h = holder!;
     const record: CascadeRecord = { name, value: undefined, fixed, consumers: undefined, parent: h.$scope as CascadeRecord | undefined };
     if (fixed) record.value = untracked(value);
-    else track(new Binding(EFFECT, end, () => $cascade(record, value()), undefined));
+    // Untracked: what the consumers' hooks read is theirs, not the provider's.
+    else track(new Binding(EFFECT, end, () => {
+      const v = value();
+      untracked(() => $cascade(record, v));
+    }, undefined));
     const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: build, index: -1 };
     track(new Binding(REGION, end, zero, region));
   },
