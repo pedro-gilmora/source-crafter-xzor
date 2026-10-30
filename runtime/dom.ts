@@ -3,7 +3,7 @@
 // them changes. A binding is its own dep for the first source it reads.
 
 import { $inSvg as inSvg, $isFragment, $leave as leave, ComponentBase, disposeIsland, FINE, patchIsland, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
-import { META, bitOf, flush } from "./track";
+import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
 const ATTR = 1;
@@ -587,10 +587,6 @@ function place(end: Node, old: Row[], order: Row[]): void {
 }
 
 const duplicate = (key: unknown): Error => new Error(`xzor: duplicate @key ${String(key)}`);
-
-// The `@Key` member of a model's class, from the class's tracked-field record.
-const keyName = (item: unknown): string | undefined =>
-  ((item as object | null | undefined)?.constructor as Record<symbol, { key?: string } | undefined> | undefined)?.[META]?.key;
 
 // Rows are matched by key (the list's, the models' `@Key`, else the item itself). A key whose item is a new object
 // keeps its row, which takes the item, unless its build closes over the item (it is rebuilt then).

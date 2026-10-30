@@ -12,7 +12,7 @@
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
 
 import { ComponentBase, setRenderObserver } from "./index";
-import { META as meta, MODEL, bitOf, changed, same } from "./track";
+import { META as meta, MODEL, bitOf, changed, keyName, same } from "./track";
 
 export { EntitySet } from "./entity-set";
 
@@ -535,9 +535,7 @@ export function Key(_member: unknown, context: ClassGetterDecoratorContext | Cla
 }
 
 /** @internal The `@Key` member of `item`'s class, if it is a model with one. */
-export function $keyName(item: unknown): string | undefined {
-  return item instanceof Model ? metaOf(item).key : undefined;
-}
+export const $keyName = keyName;
 
 /** @see Model.same */
 export function isLike(a: unknown, b: unknown): boolean {

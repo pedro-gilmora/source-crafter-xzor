@@ -1293,7 +1293,7 @@ test("templates create <svg> and its children in the SVG namespace", () => {
   expect(dom.el(parent, "path").namespaceURI).toBe(SVG);
 });
 
-test("the core works without the model entry: one reader slot, same, queue", () => {
+test("Model and ComponentBase share one reader slot and the same `same`", () => {
   const read = (): void => {};
   Model.$reader = read;
   expect(ComponentBase.$reader).toBe(read);

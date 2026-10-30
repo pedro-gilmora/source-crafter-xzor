@@ -73,11 +73,12 @@ test("a component's fields are tracked like a model's, with no generated constru
   expect(out).not.toContain("this.assign(");
 });
 
-test("a component extending ComponentBase gets tracked fields too, with no generated constructor", () => {
-  const src = FINE.replace(`import { FineComponent, fine }`, `import { fine }`).replace("extends FineComponent", "extends ComponentBase");
+test("a component extending an aliased ComponentBase gets tracked fields too", () => {
+  const src = FINE.replace(`import { ComponentBase, dom,`, `import { ComponentBase as Base, dom,`).replace("extends ComponentBase", "extends Base");
+  expect(src).toContain("extends Base {");
   const out = trackModelFields(src);
-  expect(out).toContain(`get count() { ComponentBase.$reader?.(this, 0); return this.#count; }`);
-  expect(out).toContain(`static { ComponentBase.$define(this, ["count"]); } }`);
+  expect(out).toContain(`get count() { Base.$reader?.(this, 0); return this.#count; }`);
+  expect(out).toContain(`static { Base.$define(this, ["count"]); } }`);
   expect(out).not.toContain("constructor(");
 });
 
@@ -283,6 +284,12 @@ test("a model class that is not rewritten says so on stderr", () => {
     const packaged = `${IMPORT}import { Base } from "@acme/models";\nexport class Manager extends Base {\n  team = 0;\n}\n`;
     expect(trackModelFields(packaged, "src/manager.ts")).toBe(packaged);
     expect(errors).toEqual([`xzor: src/manager.ts:3: Manager is not tracked: its base Base comes from "@acme/models" and could not be followed`]);
+
+    // A generated component source (no model import) warns about a package base it cannot follow.
+    errors.length = 0;
+    const component = `import { ComponentBase } from "@source-crafter/xzor-runtime";\nimport { Base } from "@acme/ui";\nexport class Card extends Base {\n  x = 1;\n}\nexport class Panel extends ComponentBase {\n  n = 0;\n}\n`;
+    trackModelFields(component, "src/Card.xzor.ts");
+    expect(errors).toEqual([`xzor: src/Card.xzor.ts:3: Card is not tracked: its base Base comes from "@acme/ui" and could not be followed`]);
 
     errors.length = 0;
     const anon = `${IMPORT}export class Worker extends Model {\n  x = 1;\n}\nexport default class extends Worker {\n  y = 2;\n}\n`;

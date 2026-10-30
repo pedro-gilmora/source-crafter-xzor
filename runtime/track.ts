@@ -54,3 +54,7 @@ export function same(a: unknown, b: unknown): boolean {
   if (names.length !== Object.keys(right).length) return false;
   return names.every((name) => same(left[name], right[name]));
 }
+
+/** The `@Key` member of `item`'s class, from the class's tracked-field record. */
+export const keyName = (item: unknown): string | undefined =>
+  ((item as object | null | undefined)?.constructor as Record<symbol, { key?: string } | undefined> | undefined)?.[META]?.key;

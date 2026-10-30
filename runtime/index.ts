@@ -64,7 +64,7 @@ export type VComponent = {
 
 export type VNode = VText | VElement | VRegion | VComponent | VFine;
 
-/** A `@fine` component's DOM: built once by `fine.ts`, between two comments; patches only refresh it. */
+/** A `@fine` component's DOM: built once by `dom.ts`, between two comments; patches only refresh it. */
 export type VFine = { kind: "fine"; build: (parent: Node) => void; root?: FineRoot };
 
 /** @internal What `dom.ts` keeps for one fine vnode. */
