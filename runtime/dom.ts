@@ -1023,11 +1023,11 @@ export const dom = {
     else el.addEventListener(event, (e) => afterHandler(row.$ctx, run(e)));
   },
 
-  /** A callback passed to a child: runs `handler`, then `owner`'s after-handler pass (else the context building it). */
+  /** A callback passed to a child: runs `handler` (with `owner` as `this`), then `owner`'s after-handler pass (else the context building it). */
   callback<T = void>(owner: Component | undefined, handler: (arg: T) => unknown): EventCallback<T> {
     const ctx = owner ?? holder!.$ctx;
     return (arg: T) => {
-      const result = handler(arg);
+      const result = handler.call(owner, arg);
       afterHandler(ctx, result);
       return result;
     };

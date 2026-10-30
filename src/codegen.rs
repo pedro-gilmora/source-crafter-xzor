@@ -1286,6 +1286,12 @@ impl<'p> Gen<'p> {
         self.line("}");
     }
 
+    /// Whether `e` is only a member's name (`save`, `this.save`): the same function on every read.
+    fn is_member_ref(&self, e: &Src) -> bool {
+        let t = e.trim();
+        is_identifier(t) && self.is_member(t) || t.strip_prefix("this.").is_some_and(is_identifier)
+    }
+
     /// `this.m.bind(this)` for a bare member name, else the rewritten expression.
     fn handler(&self, e: &Src) -> M {
         if let Some(prefix) = self.member_prefix(e).filter(|_| is_identifier(e)) {
@@ -2502,7 +2508,11 @@ impl<'p> Gen<'p> {
             };
             let mut set_once = kind == PropKind::Callback;
             let value = match (kind, code) {
-                (PropKind::Callback, Some(e)) => M::lit(owner).add(self.handler(&e)).lit_then(")"),
+                (PropKind::Callback, Some(e)) => {
+                    // Set once only when the expression stays the same function; any other is read on each pass.
+                    set_once = is_lambda(&e) || self.is_member_ref(&e);
+                    M::lit(owner).add(self.handler(&e)).lit_then(")")
+                }
                 // Hoisted, a string literal would widen to `string` and fail a literal-typed prop's inference.
                 (PropKind::Text, _) | (_, None) if infer && matches!(a.value, AttrValue::Static(_)) => self.value(&a.value).lit_then(" as const"),
                 (PropKind::Text, _) | (_, None) => self.value(&a.value),
@@ -4573,6 +4583,24 @@ mod tests {
         // In @once only the toggles are given: the rest is set once, in order.
         let once = gen_with("@code { bag = {}; on = true; }\n@once { <p title=\"@(on)\" @attributes=\"bag\" class:x=\"@on\" /> }", &[]);
         assert!(once.code.contains("__dom.setAttrs(_e1, this.bag, undefined, [\"class:x\", this.on]);"), "{}", once.code);
+    }
+
+    #[test]
+    fn callback_props_are_set_once_only_for_a_lambda_or_a_member_name() {
+        let card = [("Card", "@code { onPick?: EventCallback<number>; header?: RenderFragment; }")];
+        let one = |tag: &str| gen_with(&format!("@code {{ editing = false; frag = <b/>; save() {{}} cancel() {{}} handlerFor(m: string) {{ return () => {{}}; }} }}\n{tag}"), &card).code;
+        // Set once: a lambda, a bare member, `this.member`.
+        assert!(one("<Card onPick=\"@(() => editing = true)\" />").contains("({}), { onPick: __dom.callback(this, () => this.editing = true) });"));
+        assert!(one("<Card onPick=\"@save\" />").contains("({}), { onPick: __dom.callback(this, this.save.bind(this)) });"));
+        assert!(one("<Card @onpick=\"this.save\" />").contains("({}), { onPick: __dom.callback(this, this.save) });"));
+        // Read again on each pass, so what it gives is current: a conditional, a factory call.
+        let cond = one("<Card onPick=\"@(editing ? save : cancel)\" />");
+        assert!(cond.contains("(): Partial<Card> => ({ onPick: __dom.callback(this, this.editing ? this.save : this.cancel) }));"), "{cond}");
+        let call = one("<Card onPick=\"@handlerFor('a')\" />");
+        assert!(call.contains("(): Partial<Card> => ({ onPick: __dom.callback(this, this.handlerFor('a')) }));"), "{call}");
+        // A markup value held in a member is an expression: it is read, not set once.
+        let held = one("<Card header=\"@frag\" />");
+        assert!(held.contains("(): Partial<Card> => ({ header: this.frag }));"), "{held}");
     }
 
     #[test]

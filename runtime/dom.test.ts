@@ -1916,6 +1916,27 @@ test("a callback made with dom.callback runs its owner's after-handler pass", ()
   expect(el.textContent).toBe("p1");
 });
 
+// `onPick="@(editing ? save : cancel)"`: read with the props, called with the owner as `this` (a member is not bound).
+test("a callback prop that is a conditional follows the condition and runs with its owner as this", async () => {
+  class Owner extends Component {
+    #editing = false; get editing(): boolean { Component.$reader?.(this, 0); return this.#editing; } set editing(v: boolean) { const p = this.#editing; if (Component.same(p, v)) return; this.#editing = v; this.$changed(0, p); }
+    static { Component.$define(this, ["editing"]); }
+    log: string[] = [];
+    save(): void { this.log.push("save"); }
+    cancel(): void { this.log.push("cancel"); }
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Pick, (): Partial<Pick> => ({ name: "p", onPick: dom.callback(this, this.editing ? this.save : this.cancel) }));
+    }
+  }
+  const el = host();
+  const o = mount(Owner, el);
+  el.querySelector("button")!.click();
+  o.editing = true;
+  await tick();
+  el.querySelector("button")!.click();
+  expect(o.log).toEqual(["cancel", "save"]);
+});
+
 test("dom.component and componentItem type their props against the component", () => {
   class Owner extends Component {
     protected override render(__p: Node): void {
