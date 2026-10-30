@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Component, dom, lazy, mount, type RenderTreeBuilder } from "./index";
+import { Component, dom, lazy, mount, type Markup, type RenderTreeBuilder } from "./index";
 import { EntitySet, Key, Model } from "./model";
 
 // Models and components are written the way the bundle and codegen emit them.
@@ -1671,4 +1671,232 @@ test("leak check: 1000 children mounted and removed leave the heap and the subsc
   console.log(`leak check: before ${before} B, after ${after} B, delta ${after - before} B, subscribers ${subs}`);
   expect(subs).toBe(0);
   expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+});
+
+// Markup values, content regions and slots, as codegen will emit them.
+const __bold = dom.template([["b", 0, ""]]);
+class Shows extends Component {
+  #view: unknown = "t"; get view(): unknown { Component.$reader?.(this, 0); return this.#view; } set view(v: unknown) { const p = this.#view; if (Component.same(p, v)) return; this.#view = v; this.$changed(0, p); }
+  #n = 0; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+  static { Component.$define(this, ["view", "n"]); }
+  loose = 0;
+  builds = 0;
+  bold: Markup = Component.$fragment((__p) => {
+    this.builds++;
+    const _e0 = __bold() as HTMLElement;
+    dom.textAt(_e0.firstChild as Text, () => this.n);
+    dom.on(_e0, "click", () => this.loose++);
+    __p.appendChild(_e0);
+  }, this);
+  protected override render(__p: Node): void {
+    dom.text(__p, () => this.view);
+    dom.text(__p, () => this.loose);
+  }
+}
+
+test("a markup value in @expr builds through a content region in its creator's context", async () => {
+  const el = host();
+  const s = mount(Shows, el);
+  expect(el.textContent).toBe("t0");
+  s.view = s.bold;
+  await tick();
+  expect(el.querySelector("b")!.textContent).toBe("0");
+  s.n = 3;
+  await tick();
+  expect(el.querySelector("b")!.textContent).toBe("3");
+  expect(s.builds).toBe(1);
+  // The handler inside the fragment runs its creator's after-handler pass: the loose text follows.
+  el.querySelector("b")!.click();
+  expect(el.textContent).toBe("31");
+});
+
+test("a content region switches between markup and text, and back", async () => {
+  const el = host();
+  const s = mount(Shows, el);
+  s.view = s.bold;
+  await tick();
+  s.view = "x";
+  await tick();
+  expect(el.querySelector("b")).toBeNull();
+  expect(el.textContent).toBe("x0");
+  const text = [...el.childNodes].find((n) => n.nodeType === 3 && n.textContent === "x")!;
+  s.view = "y";
+  await tick();
+  expect(text.textContent).toBe("y");
+  s.view = null;
+  await tick();
+  expect(el.textContent).toBe("0");
+  s.view = s.bold;
+  await tick();
+  expect(el.querySelector("b")!.textContent).toBe("0");
+  expect(s.builds).toBe(2);
+});
+
+test("perf: an @expr giving the same fragment, re-run 10k times, builds no DOM", async () => {
+  const el = host();
+  const s = mount(Shows, el);
+  s.view = s.bold;
+  await tick();
+  const b = el.querySelector("b");
+  const d = document as unknown as Record<string, (...a: unknown[]) => unknown>;
+  const names = ["createElement", "createElementNS", "createTextNode", "createComment", "createDocumentFragment"];
+  const saved = names.map((n) => d[n]!);
+  let created = 0;
+  names.forEach((n, i) => (d[n] = (...a: unknown[]) => (created++, saved[i]!.apply(document, a))));
+  const t0 = performance.now();
+  try {
+    for (let i = 0; i < 10_000; i++) s.stateHasChanged();
+  } finally {
+    names.forEach((n, i) => (d[n] = saved[i]!));
+  }
+  console.log(`same fragment x10k: ${(performance.now() - t0).toFixed(2)} ms, nodes created ${created}`);
+  expect(created).toBe(0);
+  expect(s.builds).toBe(1);
+  expect(el.querySelector("b")).toBe(b);
+});
+
+const __card = dom.template([["div", 0, null, null]]);
+const __it = dom.template([["i", 0, ""]]);
+class Card extends Component {
+  #k = 1; get k(): number { Component.$reader?.(this, 0); return this.#k; } set k(v: number) { const p = this.#k; if (Component.same(p, v)) return; this.#k = v; this.$changed(0, p); }
+  static { Component.$define(this, ["k"]); }
+  declare slots: { default?: () => Markup; title?: (n: number) => Markup };
+  protected override render(__p: Node): void {
+    const _e0 = __card() as HTMLDivElement;
+    dom.slotAt(_e0.lastChild as Comment, () => this.slots.default, undefined, (__p) => dom.t(__p, "empty"));
+    __p.appendChild(_e0);
+    dom.slotAt(dom.anchors(__p), () => this.slots.title, () => [this.k]);
+  }
+}
+class Deck extends Component {
+  #label = "a"; get label(): string { Component.$reader?.(this, 0); return this.#label; } set label(v: string) { const p = this.#label; if (Component.same(p, v)) return; this.#label = v; this.$changed(0, p); }
+  static { Component.$define(this, ["label"]); }
+  untracked = 0;
+  loose = 0;
+  filled = true;
+  card: Card | undefined;
+  protected override render(__p: Node): void {
+    dom.component(dom.anchor(__p), Card, () => ({}), undefined, this.filled ? {
+      default: () => Component.$fragment((__p) => {
+        const _e0 = __it() as HTMLElement;
+        dom.textAt(_e0.firstChild as Text, () => `${this.label}/${this.untracked}`);
+        dom.on(_e0, "click", () => this.loose++);
+        __p.appendChild(_e0);
+      }, this),
+      title: (n: number) => Component.$fragment((__p) => dom.t(__p, `T${n}`), this),
+    } : undefined, (c) => (this.card = c as Card));
+    dom.text(__p, () => this.loose);
+  }
+}
+
+test("@slot builds the fill, or the fallback when there is none", () => {
+  const el = host();
+  mount(Deck, el);
+  expect(el.querySelector("div")!.innerHTML).toBe("<!----><i>a/0</i><!---->");
+  expect(el.textContent).toBe("a/0T10");
+  class Bare extends Deck {
+    override filled = false;
+  }
+  const bare = host();
+  mount(Bare, bare);
+  expect(bare.querySelector("div")!.textContent).toBe("empty");
+  expect(bare.textContent).toBe("empty0");
+});
+
+test("slot content follows the parent: tracked reads alone, untracked ones on the parent's pass; changed args rebuild", async () => {
+  const el = host();
+  const d = mount(Deck, el);
+  const i = el.querySelector("i")!;
+  d.label = "b";
+  await tick();
+  expect(i.textContent).toBe("b/0");
+  d.untracked = 5;
+  d.stateHasChanged();
+  expect(i.textContent).toBe("b/5");
+  // The child's own pass keeps the fill (same fill, same args).
+  d.card!.stateHasChanged();
+  expect(el.querySelector("i")).toBe(i);
+  d.card!.k = 2;
+  await tick();
+  expect(el.textContent).toBe("b/5T20");
+  expect(el.querySelector("i")).toBe(i);
+});
+
+test("a handler inside slot content runs the parent's after-handler pass", () => {
+  const el = host();
+  mount(Deck, el);
+  el.querySelector("i")!.click();
+  expect(el.textContent).toBe("a/0T11");
+});
+
+const __pick = dom.template([["button", 0, ""]]);
+type Pickable = { id: number; name: string };
+class Pick extends Component {
+  name = "";
+  onPick: (() => void) | undefined = undefined;
+  protected override render(__p: Node): void {
+    const _e0 = __pick() as HTMLButtonElement;
+    dom.textAt(_e0.firstChild as Text, () => this.name);
+    dom.on(_e0, "click", () => this.onPick!());
+    __p.appendChild(_e0);
+  }
+}
+class Picks extends Component {
+  #items: Pickable[] = []; get items(): Pickable[] { Component.$reader?.(this, 0); return this.#items; } set items(v: Pickable[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+  static { Component.$define(this, ["items"]); }
+  picked: string[] = [];
+  protected override render(__p: Node): void {
+    dom.listAt(dom.anchor(__p), () => this.items, [
+      (it: Pickable) => ({ name: it.name }),
+      (it: Pickable) => ({ onPick: () => this.picked.push(it.name) }),
+    ], (__p) => dom.componentItem(dom.anchor(__p), Pick, 0, 1), undefined, (it) => it.id);
+  }
+}
+
+test("click after the row's item is replaced under the same key uses the new item", async () => {
+  const el = host();
+  const p = mount(Picks, el);
+  p.items = [{ id: 1, name: "a" }];
+  await tick();
+  const button = el.querySelector("button")!;
+  button.click();
+  p.items = [{ id: 1, name: "b" }];
+  await tick();
+  expect(el.querySelector("button")).toBe(button);
+  expect(button.textContent).toBe("b");
+  button.click();
+  expect(p.picked).toEqual(["a", "b"]);
+});
+
+class OldFrame extends Component {
+  declare slots: { default?: () => unknown };
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("nav");
+    b.addContent(this.slots.default?.());
+    b.closeElement();
+  }
+}
+class FrameHost extends Deck {
+  protected override render(__p: Node): void {
+    dom.component(dom.anchor(__p), OldFrame, () => ({}), undefined, {
+      default: () => Component.$fragment((__p) => {
+        const _e0 = __it() as HTMLElement;
+        dom.textAt(_e0.firstChild as Text, () => this.label);
+        dom.on(_e0, "click", () => this.loose++);
+        __p.appendChild(_e0);
+      }, this),
+    });
+    dom.text(__p, () => this.loose);
+  }
+}
+
+test("a builder-based child shows DOM markup it was given as a slot fill, in its creator's context", async () => {
+  const el = host();
+  const f = mount(FrameHost, el);
+  expect(el.querySelector("nav > i")!.textContent).toBe("a");
+  f.label = "b";
+  await tick();
+  expect(el.querySelector("nav > i")!.textContent).toBe("b");
+  el.querySelector("i")!.click();
+  expect(el.textContent).toBe("b1");
 });

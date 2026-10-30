@@ -1,11 +1,11 @@
 // xzor runtime: the RenderTreeBuilder that generated components call into, and a DOM
 // renderer that re-renders one component at a time and patches only what changed.
 
-import { fineHooks } from "./dom";
+import { fineHooks, type Markup } from "./dom";
 import { changed, same as equal } from "./track";
 
 /** @internal What generated code calls to build a component's DOM. */
-export { dom, type El } from "./dom";
+export { dom, type El, type Markup } from "./dom";
 
 type Handler = (e: Event) => unknown;
 type Modifier = "preventDefault" | "stopPropagation";
@@ -605,6 +605,11 @@ export abstract class Component {
     return Object.assign(build, { [FRAGMENT]: true as const });
   }
 
+  /** @internal Markup as a DOM build (`dom`); its handlers run in `owner`'s context (else the component building now). */
+  static $fragment(build: (parent: Node) => void, owner?: Component): Markup {
+    return fineHooks.markup(build, owner);
+  }
+
   /** Reads a bound input's new value, converted to the bound field's current type. */
   static bindValue<T>(e: Event, current: T): T {
     const input = e.target as HTMLInputElement;
@@ -889,6 +894,7 @@ export class RenderTreeBuilder {
   }
 
   addContent(value: unknown): void {
+    if (fineHooks.isMarkup(value)) return this.#append({ kind: "fine", build: value });
     if (isFragment(value)) {
       this.openRegion();
       value(this);
@@ -1459,7 +1465,7 @@ function dispose(v: VNode): void {
       disposeInstance(v.instance);
       return;
     case "fine":
-      fineHooks.dispose(v.root!);
+      fineHooks.dispose(v.root!, !fineHooks.isMarkup(v.build));
       return;
   }
 }
@@ -1485,8 +1491,9 @@ export type Child = {
   /** The parent: its application and cascade scope. */
   ctx: Component;
   props: Record<string, unknown> | undefined;
-  statics: Record<string, unknown> | undefined;
-  slots: object | undefined;
+  /** A row's (`dom.componentItem`) are given by its item. */
+  statics: Record<string, unknown> | ((item: any) => Record<string, unknown>) | undefined;
+  slots: object | ((item: any) => object) | undefined;
   ref: ((c: Component) => void) | undefined;
   key: unknown;
   onError: ((err: unknown, nav: number) => void) | undefined;
@@ -1495,6 +1502,8 @@ export type Child = {
   phase: number;
   /** A class without `render`: its virtual-DOM tree (until the virtual DOM goes). */
   tree: VNode[] | undefined;
+  /** A list row's item (`dom.componentItem`). */
+  item: unknown;
 };
 
 const NEW = 0;
@@ -1603,9 +1612,21 @@ function createChild(s: Child, props: Record<string, unknown>): void {
 }
 
 function assign(s: Child, c: Component): void {
-  if (s.statics !== undefined) Object.assign(c, s.statics);
+  if (s.statics !== undefined) Object.assign(c, staticsOf(s));
   Object.assign(c, s.props);
-  if (s.slots !== undefined) c.slots = s.slots;
+  if (s.slots !== undefined) c.slots = slotsOf(s);
+}
+
+const staticsOf = (s: Child): Record<string, unknown> | undefined => (typeof s.statics === "function" ? s.statics(s.item) : s.statics);
+const slotsOf = (s: Child): object => (typeof s.slots === "function" ? (s.slots as (item: unknown) => object)(s.item) : s.slots!);
+
+/** @internal A row child's item was replaced under the same key: its callbacks and slot fills are given again. */
+export function $childItem(s: Child, item: unknown): void {
+  s.item = item;
+  const c = s.instance;
+  if (c === undefined) return;
+  if (typeof s.statics === "function") Object.assign(c, s.statics(item));
+  if (typeof s.slots === "function") c.slots = (s.slots as (item: unknown) => object)(item);
 }
 
 function start(s: Child, c: Component): void {
@@ -1720,8 +1741,8 @@ function reviveChild(s: Child): boolean {
 // Ruling: a class without `render` (builder-based) mounts through a virtual-DOM island until the virtual DOM goes.
 function bridge(s: Child, props: Record<string, unknown>): void {
   const owner = s.ctx;
-  const all = s.statics === undefined ? props : { ...s.statics, ...props };
-  s.tree = patchIsland(owner, owner.$app, owner.$scope, s.end, s.tree!, (b) => b.addComponent(s.type, all as Partial<Component>, s.slots as Component["slots"], { key: s.key, ref: s.ref }));
+  const all = s.statics === undefined ? props : { ...staticsOf(s), ...props };
+  s.tree = patchIsland(owner, owner.$app, owner.$scope, s.end, s.tree!, (b) => b.addComponent(s.type, all as Partial<Component>, slotsOf(s) as Component["slots"], { key: s.key, ref: s.ref }));
 }
 function remove(parent: Node, v: VNode): void {
   for (const node of nodesOf(v)) $leave(node);

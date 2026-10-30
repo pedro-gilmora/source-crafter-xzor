@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $child, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type Child, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { $child, $childItem, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type Child, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -40,6 +40,8 @@ const PAUSE = 4096;
 /** Under a `@pause` of a hidden branch: changes only mark it STALE. */
 const PAUSED = 8192;
 const STALE = 16384;
+/** A REGION that shows a value (`data` is `Content`): markup builds, else text; rebuilt only when the value is another. */
+const CONTENT = 32768;
 
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
@@ -57,6 +59,15 @@ type Reads = readonly ((item: any, x?: any) => any)[];
 type Row = { $bindings: Binding | undefined; $ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
+/** `value`: what it shows; `owner`: the context of what has none (text, a slot's fallback, markup made outside a build). `branch` is a slot's fallback. */
+type Content = Region & { value: unknown; owner: Ctx };
+
+const MARKUP = Symbol("xzor.markup");
+/** Markup held as a value: builds its nodes into `parent`; its handlers run in the context it was made in. */
+export type Markup = ((parent: Node) => void) & { readonly [MARKUP]: Ctx | null };
+const isMarkup = (value: unknown): value is Markup => typeof value === "function" && MARKUP in value;
+// What a content region shows for a value: 1 markup, 2 nothing (a slot's fallback), 0 text.
+const shows = (value: unknown): number => (isMarkup(value) ? 1 : value === null || value === undefined ? 2 : 0);
 type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
@@ -221,9 +232,16 @@ class Binding {
       return;
     }
     if ((flags & SHOW) !== 0) return this.#show();
+    if ((flags & CONTENT) !== 0) {
+      const c = this.data as Content;
+      const value = this.#run();
+      if (c.index !== -1 && Object.is(value, c.value)) return;
+      return this.#fill(c, value);
+    }
     switch (flags & KIND) {
       case TEXT: {
         const value = this.#run();
+        if (isMarkup(value)) return this.#becomeContent(value);
         if ($isFragment(value)) return this.#becomeIsland();
         const text = textOf(value);
         const node = this.node as Text;
@@ -302,7 +320,51 @@ class Binding {
     before.parentNode!.insertBefore(frag, before);
   }
 
-  // `@expr` gave markup: from now on it renders through the virtual DOM, whatever it gives.
+  // `@expr` gave markup: from now on it is a content region, whatever it gives.
+  #becomeContent(value: Markup): void {
+    const text = this.node;
+    const parent = text.parentNode!;
+    const h = this.data as Holder & { item?: unknown };
+    const start = parent.insertBefore(document.createComment(""), text);
+    this.node = parent.insertBefore(document.createComment(""), text.nextSibling);
+    parent.removeChild(text);
+    this.flags = (this.flags & ~KIND) | REGION | CONTENT;
+    const c: Content = { $bindings: undefined, $ctx: h.$ctx, start, item: (this.flags & ITEM) !== 0 ? h.item : undefined, branch: undefined, index: -1, value: undefined, owner: h.$ctx };
+    this.data = c;
+    this.#fill(c, value);
+  }
+
+  // Shows `value`: text stays one node written in place; markup or a fallback is built anew.
+  #fill(c: Content, value: unknown): void {
+    const kind = shows(value);
+    const end = this.node;
+    const text = kind === 0 && c.index !== -1 && shows(c.value) === 0;
+    c.value = value;
+    if (text) {
+      const node = end.previousSibling as Text;
+      const data = textOf(value);
+      if (node.data !== data) node.data = data;
+      return;
+    }
+    // A new index: `refreshAll` leaves what was just built alone.
+    c.index++;
+    disposeAll(c);
+    for (let node = c.start.nextSibling!; node !== end; ) {
+      const next = node.nextSibling!;
+      leave(node);
+      node = next;
+    }
+    const frag = document.createDocumentFragment();
+    if (kind === 0) frag.appendChild(document.createTextNode(textOf(value)));
+    else {
+      const build = kind === 1 ? (value as Markup) : c.branch;
+      c.$ctx = (kind === 1 ? (value as Markup)[MARKUP] : null) ?? c.owner;
+      if (build !== undefined) within(c, () => untracked(() => build(frag)));
+    }
+    end.parentNode!.insertBefore(frag, end);
+  }
+
+  // `@expr` gave builder markup: from now on it renders through the virtual DOM, whatever it gives.
   #becomeIsland(): void {
     const read = this.read;
     const h = this.data as Holder & { item?: unknown };
@@ -660,6 +722,7 @@ function retake(row: Row, item: unknown): void {
   for (let b = row.$bindings; b !== undefined; b = b.next) {
     if ((b.flags & ITEM) === 0) continue;
     if ((b.flags & KIND) === REGION) (b.data as Region).item = item;
+    else if ((b.flags & KIND) === COMPONENT) $childItem(b.data as Child, item);
     if (row.set === undefined) b.stateHasChanged();
   }
   if (row.set !== undefined) refreshAll(row);
@@ -1075,8 +1138,41 @@ export const dom = {
    * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
    */
   component(end: Comment, type: abstract new (...args: any[]) => Component, props: () => Record<string, unknown>, statics?: Record<string, unknown>, slots?: object, ref?: (c: Component) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
-    const child: Child = { type: type as Child["type"], end, ctx: holder!.$ctx, props: undefined, statics, slots, ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined };
+    const child: Child = { type: type as Child["type"], end, ctx: holder!.$ctx, props: undefined, statics, slots, ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: undefined };
     track(new Binding(COMPONENT, end, props, child));
+  },
+
+  /**
+   * A list row's child component: `reads[i](item)` gives its props; `reads[statics](item)` its callbacks and
+   * `reads[slots](item)` its slot fills, given again when the row's item is replaced under the same key.
+   */
+  componentItem(end: Comment, type: abstract new (...args: any[]) => Component, i: number, statics?: number, slots?: number, ref?: (c: Component) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+    const row = holder as Row;
+    const reads = row.reads!;
+    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: row.item };
+    track(new Binding(COMPONENT | ITEM, end, reads[i]!, child));
+  },
+
+  /**
+   * `@slot` before `end` (and the comment before it): builds `fill()?.(...args())`, or `fallback` when there is no
+   * fill. Called again when what they read changes and on the component's passes; rebuilt only when the fill or an
+   * argument (`Object.is`) changed.
+   */
+  slotAt(end: Comment, fill: () => ((...args: any[]) => Markup | null | undefined) | null | undefined, args?: () => readonly unknown[], fallback?: Build): void {
+    const ctx = holder!.$ctx;
+    let last: ((...args: any[]) => unknown) | null | undefined;
+    let lastArgs: readonly unknown[] = NO_ARGS;
+    let markup: unknown;
+    const read = (): unknown => {
+      const f = fill();
+      const a = args === undefined ? NO_ARGS : args();
+      if (f === last && sameValues(a, lastArgs)) return markup;
+      last = f;
+      lastArgs = a;
+      return (markup = f?.(...a));
+    };
+    const c: Content = { $bindings: undefined, $ctx: ctx, start: end.previousSibling as Comment, item: undefined, branch: fallback, index: -1, value: undefined, owner: ctx };
+    track(new Binding(REGION | CONTENT, end, read, c));
   },
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */
@@ -1092,16 +1188,21 @@ export const dom = {
 };
 
 const noop = (): void => {};
+const NO_ARGS: readonly unknown[] = [];
 
 /** @internal What `index.ts` calls to mount, refresh and dispose a component's DOM. */
 export const fineHooks = {
   create(build: Build, owner: Component, app: IApplication | undefined, scope: unknown): FineRoot {
     const frag = document.createDocumentFragment();
     const start = frag.appendChild(document.createComment(""));
-    owner.$app = app;
-    owner.$scope = scope;
-    (owner as unknown as Record<symbol, Ctx>)[FINE] = owner;
-    const root: FineRoot & Holder = { $bindings: undefined, $ctx: owner, start, end: start };
+    // DOM markup shown by a builder component: built in its creator's context, which it leaves as it is.
+    const made = isMarkup(build) ? build[MARKUP] : null;
+    if (made === null) {
+      owner.$app = app;
+      owner.$scope = scope;
+      (owner as unknown as Record<symbol, Ctx>)[FINE] = owner;
+    }
+    const root: FineRoot & Holder = { $bindings: undefined, $ctx: made ?? owner, start, end: start };
     // Reads outside a binding subscribe nothing: a component is never re-rendered by what it reads.
     const reader = Component.$reader;
     Component.$reader = undefined;
@@ -1144,13 +1245,22 @@ export const fineHooks = {
       holder = outer;
     }
   },
-  dispose(h: FineRoot | Component): void {
+  /** `own`: the root is its context's whole DOM (not markup built in another's), so its memos go too. */
+  dispose(h: FineRoot | Component, own = true): void {
     const root = h as unknown as Holder;
     const ctx = root.$ctx;
     const memos = ctx.$memos as (Binding | undefined)[] | undefined;
-    if (memos !== undefined) for (const m of memos) m?.dispose();
-    ctx.$memos = undefined;
+    if (own && memos !== undefined) {
+      for (const m of memos) m?.dispose();
+      ctx.$memos = undefined;
+    }
     disposeAll(root);
+  },
+  isMarkup,
+  /** Brands `build` as markup made in `owner`'s context (else the one building now). */
+  markup(build: (parent: Node) => void, owner: Component | undefined): Markup {
+    (build as unknown as Record<symbol, Ctx | null>)[MARKUP] = owner ?? holder?.$ctx ?? null;
+    return build as Markup;
   },
   handled(owner: Component, result: unknown): void {
     if (owner.$end !== undefined || (owner as unknown as Record<symbol, Ctx | undefined>)[FINE] !== undefined) afterHandler(owner, result);
