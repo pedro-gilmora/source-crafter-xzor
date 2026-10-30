@@ -1744,6 +1744,8 @@ function arriveChild(s: Child, c: Component): void {
     return;
   }
   if (!rendersDom(c.constructor)) {
+    // The bridge's builder makes its own instance.
+    disposeInstance(c);
     s.phase = LIVE;
     s.tree = [];
     return bridge(s, s.props!);

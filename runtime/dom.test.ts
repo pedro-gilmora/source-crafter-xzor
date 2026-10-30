@@ -2652,11 +2652,74 @@ test("leak check: 1000 builder-based children (NavLink) through the bridge, moun
     const after = heapSize();
     const msg = `bridge leak: before ${before} B, after ${after} B, delta ${after - before} B, observers ${m.subs.size} (peak ${peak})`;
     expect(peak, msg).toBe(1000);
-    expect(msg).toBe("SHOW");
     expect(m.subs.size, msg).toBe(0);
     expect(after - before, msg).toBeLessThan(0.1 * 1024 * 1024);
   } finally {
     delete (document as { baseURI?: string }).baseURI;
     setNavigationForTests(undefined);
   }
+});
+
+test("a lazy builder-based child: the instance that arrived over the bridge leaves none undisposed", async () => {
+  let made = 0;
+  let disposed = 0;
+  class Old extends Component {
+    title = "";
+    constructor() { super(); made++; }
+    protected override dispose(): void { disposed++; }
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.openElement("i");
+      b.addContent(this.title);
+      b.closeElement();
+    }
+  }
+  let arrive!: (m: { default: typeof Old }) => void;
+  const Late = lazy(() => new Promise<{ default: typeof Old }>((r) => (arrive = r)));
+  class LateHost extends Component {
+    #on = true; get on(): boolean { Component.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(0, p); }
+    static { Component.$define(this, ["on"]); }
+    protected override render(__p: Node): void {
+      dom.region(__p, (__p) => {
+        if (this.on) dom.component(dom.anchor(__p), Late, () => ({ title: "t" }));
+      });
+    }
+  }
+  const el = host();
+  const h = mount(LateHost, el);
+  arrive({ default: Old });
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("t");
+  expect(made - disposed, `made ${made}, disposed ${disposed}`).toBe(1);
+  h.on = false;
+  await tick();
+  expect(made - disposed, `made ${made}, disposed ${disposed}`).toBe(0);
+});
+
+test("a lazy child removed before it arrives is disposed on arrival, and nothing mounts", async () => {
+  let made = 0;
+  let disposed = 0;
+  class Arrives extends Component {
+    constructor() { super(); made++; }
+    protected override dispose(): void { disposed++; }
+    protected override render(__p: Node): void { dom.t(dom.el(__p, "b"), "here"); }
+  }
+  let arrive!: (m: { default: typeof Arrives }) => void;
+  const Late = lazy(() => new Promise<{ default: typeof Arrives }>((r) => (arrive = r)));
+  class LateHost extends Component {
+    #on = true; get on(): boolean { Component.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(0, p); }
+    static { Component.$define(this, ["on"]); }
+    protected override render(__p: Node): void {
+      dom.region(__p, (__p) => {
+        if (this.on) dom.component(dom.anchor(__p), Late, () => ({}));
+      });
+    }
+  }
+  const el = host();
+  const h = mount(LateHost, el);
+  h.on = false;
+  await tick();
+  arrive({ default: Arrives });
+  await tick();
+  expect(el.querySelector("b")).toBeNull();
+  expect([made, disposed]).toEqual([1, 1]);
 });
