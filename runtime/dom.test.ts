@@ -2510,34 +2510,64 @@ test("routes through dom: a view transition waits for a lazy page's chunk, then 
   });
 });
 
+const left: string[] = [];
+class LeftView extends Component {
+  id = 0;
+  protected override dispose(): void { left.push(`page ${this.id}`); }
+  protected override render(__p: Node): void { dom.text(dom.el(__p, "u"), () => this.id); }
+}
+
+test("routes through dom: a page that leaves is disposed, a family change or a section without it too; unmounting unsubscribes and disposes the page", async () => {
+  left.length = 0;
+  const m = memoryNav("/users/1");
+  const table: RouteTable = [{ tag: "admin", pattern: "/users/:id", component: LeftView, match: (s) => (s.length === 2 && s[0] === "users" && /^\d+$/.test(s[1]!) ? { id: Number(s[1]) } : null) }, ...views];
+  const r = routing([{ kind: "tag", tag: "admin", render: around("main") }, { kind: "notFound", render: shows("p", (route) => route.path) }, { kind: "default", render: around("aside") }], table);
+  expect(r.html()).toBe("<main><u>1</u></main>");
+  m.go("/users/2");
+  expect(left).toEqual([]);
+  m.go("/docs/a");
+  expect(left).toEqual(["page 2"]);
+  expect(r.html()).toBe("<aside><d>a</d></aside>");
+  m.go("/missing");
+  expect(r.html()).toBe("<p>/missing</p>");
+  m.go("/users/3");
+  expect(m.subs.size).toBe(1);
+  await r.drop();
+  expect(left).toEqual(["page 2", "page 3"]);
+  expect(m.subs.size).toBe(0);
+  m.go("/users/4");
+  expect(left).toEqual(["page 2", "page 3"]);
+});
+
 test("leak check: a routes block navigated 200 times and unmounted leaves the heap and the subscribers as they were", async () => {
-  const { heapSize } = await import("bun:jsc");
+  const { heapSize, heapStats } = await import("bun:jsc");
+  // happy-dom's `baseURI` getter keeps one cache record per read after any DOM change (the vDOM `addRoutes` too).
+  Object.defineProperty(document, "baseURI", { configurable: true, get: () => "http://localhost/" });
   const m = memoryNav("/users/1");
   const cycle = async (): Promise<void> => {
     const r = routing([{ kind: "default", render: around("aside") }]);
-    for (let i = 0; i < Number(process.env.ROUTES_N ?? 200); i++) m.go(i % 2 === 0 ? `/docs/${i}` : `/users/${i}`);
+    for (let i = 0; i < 200; i++) m.go(i % 2 === 0 ? `/docs/${i}` : `/users/${i}`);
     expect(m.subs.size).toBe(1);
     await r.drop();
+    lastView = undefined;
+    Bun.gc(true);
+    Bun.gc(true);
   };
-  await cycle();
-  lastView = undefined;
-  Bun.gc(true);
-  Bun.gc(true);
-  const before = heapSize();
-  const base = { ...((await import("bun:jsc")).heapStats().objectTypeCounts as Record<string, number>) };
-  await cycle();
-  lastView = undefined;
-  Bun.gc(true);
-  Bun.gc(true);
-  const after = heapSize();
-  if (process.env.ROUTES_N) {
-    const { heapStats } = await import("bun:jsc");
-    const counts = heapStats().objectTypeCounts as Record<string, number>;
-    const diff = Object.entries(counts).map(([k, v]) => [k, v - (base[k] ?? 0)] as const).filter(([, d]) => d !== 0).sort((a, b) => b[1] - a[1]);
-    console.log(JSON.stringify(diff.slice(0, 20)));
+  try {
+    // Enough cycles for the JIT to settle: after one, its compiled code still grows the heap by ~50 KB a cycle.
+    for (let i = 0; i < 5; i++) await cycle();
+    const before = heapSize();
+    const objects = heapStats().objectTypeCounts.Object!;
+    for (let i = 0; i < 5; i++) await cycle();
+    const after = heapSize();
+    // happy-dom's `document.body` keeps one record per mount; a leak per navigation would be 1000.
+    const grown = heapStats().objectTypeCounts.Object! - objects;
+    console.log(`routes leak check: before ${before} B, after ${after} B, delta ${after - before} B, objects ${grown}, subscribers ${m.subs.size}`);
+    expect(m.subs.size).toBe(0);
+    expect(grown).toBeLessThan(50);
+    expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+  } finally {
+    delete (document as { baseURI?: string }).baseURI;
+    setNavigationForTests(undefined);
   }
-  console.log(`routes leak check: before ${before} B, after ${after} B, delta ${after - before} B, subscribers ${m.subs.size}`);
-  expect(m.subs.size).toBe(0);
-  expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
-  setNavigationForTests(undefined);
 });
