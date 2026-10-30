@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Component, dom, type DomRouteSection, lazy, mount, type Markup, type RenderTreeBuilder, type Route, type RouteTable, setNavigationForTests, setTransitionCapForTests, viewTransitions } from "./index";
+import { Component, dom, type DomRouteSection, lazy, mount, type Markup, NavLink, type RenderTreeBuilder, type Route, type RouteTable, setNavigationForTests, setTransitionCapForTests, viewTransitions } from "./index";
 import { EntitySet, Key, Model } from "./model";
 
 // Models and components are written the way the bundle and codegen emit them.
@@ -2617,4 +2617,46 @@ test("@cascade: what a consumer's hooks read does not re-run the provider", asyn
   p.kid!.own = 5;
   await tick();
   expect(provided, `provider runs ${provided - runs} after a consumer's own field changed`).toBe(runs);
+});
+
+test("leak check: 1000 builder-based children (NavLink) through the bridge, mounted and removed, leave the heap and the navigation observers as they were", async () => {
+  const { heapSize } = await import("bun:jsc");
+  Object.defineProperty(document, "baseURI", { configurable: true, get: () => "http://localhost/" });
+  const m = memoryNav("/docs/1");
+  class Links extends Component {
+    #n = 0; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    static { Component.$define(this, ["n"]); }
+    protected override render(__p: Node): void {
+      dom.region(__p, (__p) => {
+        for (let i = 0; i < this.n; i++) dom.component(dom.anchor(__p), NavLink, () => ({ href: `/docs/${i}` }));
+      });
+    }
+  }
+  try {
+    const el = host();
+    const l = mount(Links, el);
+    let peak = 0;
+    const cycle = async (): Promise<void> => {
+      l.n = 1000;
+      await tick();
+      peak = m.subs.size;
+      l.n = 0;
+      await tick();
+      Bun.gc(true);
+      Bun.gc(true);
+    };
+    for (let i = 0; i < 5; i++) await cycle();
+    expect(el.querySelectorAll("a").length).toBe(0);
+    const before = heapSize();
+    for (let i = 0; i < 5; i++) await cycle();
+    const after = heapSize();
+    const msg = `bridge leak: before ${before} B, after ${after} B, delta ${after - before} B, observers ${m.subs.size} (peak ${peak})`;
+    expect(peak, msg).toBe(1000);
+    expect(msg).toBe("SHOW");
+    expect(m.subs.size, msg).toBe(0);
+    expect(after - before, msg).toBeLessThan(0.1 * 1024 * 1024);
+  } finally {
+    delete (document as { baseURI?: string }).baseURI;
+    setNavigationForTests(undefined);
+  }
 });
