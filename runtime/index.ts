@@ -161,19 +161,54 @@ export class Route<P = Record<string, unknown>, Tags extends object = Record<str
   }
 }
 
-/** One section of a `@Routes` block; xzor emits these in source order. */
-export type RouteSection =
-  | { kind: "tag"; tag: string; render: (route: Route, page: RenderFragment) => RenderFragment }
-  | { kind: "regex"; re: RegExp; page: boolean; render: (route: Route, page: RenderFragment) => RenderFragment }
+/** The `route` a kept `dom.routesAt` section reads: always its block's current one. */
+class CurrentRoute {
+  readonly #router: Router;
+  constructor(router: Router) {
+    this.#router = router;
+  }
+  get path(): string {
+    return this.#router.route!.path;
+  }
+  get tag(): string | undefined {
+    return this.#router.route!.tag;
+  }
+  get params(): Record<string, unknown> {
+    return this.#router.route!.params;
+  }
+  get query(): URLSearchParams {
+    return this.#router.route!.query;
+  }
+  get match(): Record<string, string> {
+    return this.#router.route!.match;
+  }
+  navigate(url: string, opts?: { replace?: boolean }): void {
+    this.#router.route!.navigate(url, opts);
+  }
+}
+// `is` and `instanceof Route` come from Route.
+Object.setPrototypeOf(CurrentRoute.prototype, Route.prototype);
+
+/** @internal The route object a `dom.routesAt` block gives its sections. */
+export const $currentRoute = (router: Router): Route => new CurrentRoute(router) as unknown as Route;
+
+/** One section of a `@Routes` block, rendering `F`; xzor emits these in source order. */
+type Section<F> =
+  | { kind: "tag"; tag: string; render: (route: Route, page: F) => F }
+  | { kind: "regex"; re: RegExp; page: boolean; render: (route: Route, page: F) => F }
   | {
       kind: "pattern";
       match: (segments: string[]) => Record<string, string> | null;
       page: boolean;
-      render: (route: Route, page: RenderFragment) => RenderFragment;
+      render: (route: Route, page: F) => F;
     }
-  | { kind: "notFound"; render: (route: Route) => RenderFragment }
-  | { kind: "catch"; render: (route: Route, error: unknown) => RenderFragment }
-  | { kind: "default"; render: (route: Route, page: RenderFragment) => RenderFragment };
+  | { kind: "notFound"; render: (route: Route) => F }
+  | { kind: "catch"; render: (route: Route, error: unknown) => F }
+  | { kind: "default"; render: (route: Route, page: F) => F };
+
+export type RouteSection = Section<RenderFragment>;
+/** A section of a `@Routes` block rendered through `dom.routesAt`. */
+export type DomRouteSection = Section<Markup>;
 
 /** How navigation reaches the browser's history; `setNavigationForTests` swaps it. */
 export type Navigation = {
@@ -296,13 +331,15 @@ export function setNavigationForTests(nav: Navigation | undefined): void {
 
 const navigationOf = (): Navigation => testNavigation ?? browserNavigation;
 
-/** What one mounted routes block keeps between renders. */
-type Router = {
+/** @internal What one mounted routes block keeps between renders. */
+export type Router = {
   // Also what `route.navigate` uses.
   nav: Navigation;
   off: (() => void) | undefined;
   onError: ((err: unknown, nav: number) => void) | undefined;
-  caught: Extract<RouteSection, { kind: "catch" }> | undefined;
+  caught: Extract<Section<any>, { kind: "catch" }> | undefined;
+  // Renders the block again: after a navigation, or once the page failed.
+  refresh: () => void;
   href: string;
   // Counts the navigations this block has resolved; a failure stamped with an older one is stale.
   id: number;
@@ -350,8 +387,50 @@ function groupsOf(re: RegExp, pathname: string): Record<string, string> | null {
   return m ? (m.groups ?? {}) : null;
 }
 
+/** @internal A routes block's state, subscribed to navigation; `refresh` renders the block again. */
+export function $router(sections: readonly Section<any>[], refresh: () => void): Router {
+  const nav = navigationOf();
+  const router: Router = {
+    nav,
+    off: undefined,
+    onError: undefined,
+    caught: sections.find((s) => s.kind === "catch") as Router["caught"],
+    refresh,
+    href: "",
+    id: 0,
+    route: undefined,
+    section: -1,
+    page: undefined,
+    params: {},
+    error: undefined,
+    failed: false,
+  };
+  if (router.caught) {
+    // The page's own failures reach this one handler; one raised by a page we left is dropped.
+    router.onError = (err, id) => {
+      if (id !== router.id) return;
+      router.error = err;
+      router.failed = true;
+      queueMicrotask(refresh);
+    };
+  }
+  // A navigation raised while something renders (a page redirecting itself) waits for that render to end.
+  router.off = nav.subscribe(() => (depth === 0 ? refresh() : queueMicrotask(refresh)));
+  return router;
+}
+
+/** @internal Resolves the route again when the URL moved (clearing the last page's error); whether it did. */
+export function $resolve(router: Router, table: RouteTable, sections: readonly Section<any>[]): boolean {
+  const url = router.nav.current();
+  if (url.href === router.href && router.route) return false;
+  router.failed = false;
+  router.error = undefined;
+  resolveRoute(router, table, sections, url);
+  return true;
+}
+
 /** Spec order: a page route picks among the `(page)` sections, otherwise the page-less ones decide. */
-function resolveRoute(router: Router, table: RouteTable, sections: readonly RouteSection[], url: URL): void {
+function resolveRoute(router: Router, table: RouteTable, sections: readonly Section<any>[], url: URL): void {
   const path = routePath(url.pathname);
   const segments = segmentsOf(path);
   let page: RouteEntry | undefined;
@@ -405,12 +484,6 @@ function resolveRoute(router: Router, table: RouteTable, sections: readonly Rout
   router.params = params ?? {};
   router.section = section;
   router.route = new Route(path, page?.tag, router.params, url.searchParams, match, router.nav);
-}
-
-/** A navigation raised while something renders (a page redirecting itself) waits for that render to end. */
-function renavigate(owner: Component): void {
-  if (depth === 0) update(owner);
-  else queueMicrotask(() => update(owner));
 }
 
 type Ctor<C extends Component> = new (...args: any[]) => C;
@@ -759,49 +832,14 @@ export class RenderTreeBuilder {
   /** `@Routes`: renders the section that matches the current navigation. */
   addRoutes(table: RouteTable, sections: readonly RouteSection[]): void {
     const owner = this.owner as Component & Routed;
-    const nav = navigationOf();
-    let router = owner[ROUTER];
-    if (!router) {
-      router = owner[ROUTER] = {
-        nav,
-        off: undefined,
-        onError: undefined,
-        caught: sections.find((s): s is Extract<RouteSection, { kind: "catch" }> => s.kind === "catch"),
-        href: "",
-        id: 0,
-        route: undefined,
-        section: -1,
-        page: undefined,
-        params: {},
-        error: undefined,
-        failed: false,
-      };
-      const failing = router;
-      if (router.caught) {
-        // The page's own failures reach this one handler; one raised by a page we left is dropped.
-        router.onError = (err, id) => {
-          if (id !== failing.id) return;
-          failing.error = err;
-          failing.failed = true;
-          queueMicrotask(() => update(owner));
-        };
-      }
-      router.off = nav.subscribe(() => renavigate(owner));
-    }
-    const state = router;
-    const url = nav.current();
-    if (url.href !== state.href || !state.route) {
-      // A navigation clears the error the last page raised.
-      state.failed = false;
-      state.error = undefined;
-      resolveRoute(state, table, sections, url);
-    }
+    const state = (owner[ROUTER] ??= $router(sections, () => update(owner)));
+    $resolve(state, table, sections);
     const route = state.route!;
     const section = sections[state.section];
     const page = state.page;
     this.openCascade("route", route);
     if (state.failed) {
-      state.caught!.render(route, state.error)(this);
+      (state.caught!.render(route, state.error) as RenderFragment)(this);
     } else if (page) {
       const entry = page;
       const fragment = Component.fragment((b) => b.#addPage(entry, state));
@@ -1130,6 +1168,20 @@ export function $cascade(record: CascadeRecord, value: unknown): void {
   const consumers = [...record.consumers];
   assignCascade(record, consumers);
   batch(() => notifyCascade(consumers));
+}
+
+/**
+ * @internal One pass that gives `record` a new value around `run` (which rebuilds part of the cascade): the
+ * consumers are assigned first, and those `run` gave no pass are told afterwards, as a patch does.
+ */
+export function $recascade(record: CascadeRecord, value: unknown, run: () => void): void {
+  batch(() => {
+    const consumers = !Object.is(record.value, value) && record.consumers?.size ? [...record.consumers] : undefined;
+    record.value = value;
+    if (consumers !== undefined) assignCascade(record, consumers);
+    run();
+    if (consumers !== undefined) notifyCascade(consumers);
+  });
 }
 
 function queueAfterRender(component: Component, first: boolean): void {
@@ -1545,8 +1597,8 @@ function build(c: Component, app: IApplication | undefined, scope: unknown, end:
   return frag;
 }
 
-/** @internal A child binding ran: mounts its component the first time, then gives it its props again. */
-export function $child(s: Child, props: Record<string, unknown>): void {
+/** @internal A child binding ran: mounts its component the first time, then gives it its props again; `moved`: a routed page's navigation moved on. */
+export function $child(s: Child, props: Record<string, unknown>, moved = false): void {
   if (s.tree !== undefined) return bridge(s, props);
   const c = s.instance;
   if (c === undefined) {
@@ -1555,7 +1607,7 @@ export function $child(s: Child, props: Record<string, unknown>): void {
     return;
   }
   // As `patch`: all assigned (a child's own write gives way); an object counts as changed; slots always give a pass.
-  let changed = s.slots !== undefined;
+  let changed = moved || s.slots !== undefined;
   const old = s.props!;
   s.props = props;
   for (const key in props) {

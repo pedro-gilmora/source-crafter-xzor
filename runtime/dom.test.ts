@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Component, dom, lazy, mount, type Markup, type RenderTreeBuilder } from "./index";
+import { Component, dom, type DomRouteSection, lazy, mount, type Markup, type RenderTreeBuilder, type Route, type RouteTable, setNavigationForTests, setTransitionCapForTests, viewTransitions } from "./index";
 import { EntitySet, Key, Model } from "./model";
 
 // Models and components are written the way the bundle and codegen emit them.
@@ -2132,4 +2132,412 @@ test("event modifiers on a row's handler", () => {
   expect(click.defaultPrevented).toBe(true);
   expect(m.hits).toEqual([2]);
   expect(m.outer).toBe(0);
+});
+
+// `@Routes`, as codegen will emit it: a table in the shape of `.xzor/routes.ts`, sections whose renders give DOM markup.
+(window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL("http://localhost/");
+
+class MemoryNav {
+  url: URL;
+  readonly calls: [string, boolean][] = [];
+  readonly subs = new Set<() => void>();
+  constructor(start: string) {
+    this.url = new URL(start, "http://localhost");
+  }
+  current(): URL {
+    return this.url;
+  }
+  navigate(url: string, replace: boolean): void {
+    this.calls.push([url, replace]);
+    this.go(url);
+  }
+  subscribe(fn: () => void): () => void {
+    this.subs.add(fn);
+    return () => this.subs.delete(fn);
+  }
+  go(url: string): void {
+    this.url = new URL(url, "http://localhost");
+    for (const fn of [...this.subs]) fn();
+  }
+}
+
+const memoryNav = (start: string): MemoryNav => {
+  const m = new MemoryNav(start);
+  setNavigationForTests(m);
+  return m;
+};
+
+let lastView: UserView | undefined;
+class UserView extends Component {
+  id = 0;
+  renders = 0;
+  paramsSet = 0;
+  protected override onParametersSet(): void { this.paramsSet++; }
+  protected override render(__p: Node): void {
+    lastView = this;
+    dom.text(dom.el(__p, "u"), () => (this.renders++, this.id));
+  }
+}
+class NewView extends Component {
+  protected override render(__p: Node): void { dom.t(dom.el(__p, "n"), "new"); }
+}
+class DocView extends Component {
+  rest = "";
+  protected override render(__p: Node): void { dom.text(dom.el(__p, "d"), () => this.rest); }
+}
+class RootView extends Component {
+  protected override render(__p: Node): void { dom.t(dom.el(__p, "r"), "root"); }
+}
+let lastEdit: EditView | undefined;
+class EditView extends Component {
+  id = 0;
+  tab = "";
+  protected override render(__p: Node): void {
+    lastEdit = this;
+    dom.text(dom.el(__p, "e"), () => `${this.id}${this.tab}`);
+  }
+}
+
+const views: RouteTable = [
+  { tag: undefined, pattern: "/", component: RootView, match: (s) => (s.length === 0 ? {} : null) },
+  { tag: undefined, pattern: "/users/new", component: NewView, match: (s) => (s.length === 2 && s[0] === "users" && s[1] === "new" ? {} : null) },
+  { tag: "admin", pattern: "/users/:id", component: UserView, match: (s) => (s.length === 2 && s[0] === "users" && /^\d+$/.test(s[1]!) ? { id: Number(s[1]) } : null) },
+  { tag: undefined, pattern: "/docs/*", component: DocView, match: (s) => (s[0] === "docs" ? { rest: s.slice(1).join("/") } : null) },
+  { tag: undefined, pattern: "/edit/:id", component: EditView, match: (s) => (s.length === 2 && s[0] === "edit" ? { id: Number(s[1]) } : null) },
+  { tag: undefined, pattern: "/edit/:id/:tab", family: "/edit/:id", component: EditView, match: (s) => (s.length === 3 && s[0] === "edit" ? { id: Number(s[1]), tab: s[2] } : null) },
+];
+
+/** A layout section: the page inside `tag`. */
+const around =
+  (tag: string) =>
+  (_route: Route, page: Markup): Markup =>
+    Component.$fragment((__p) => dom.text(dom.el(__p, tag), () => page));
+
+/** A page-less section: one value read from `route`. */
+const shows =
+  (tag: string, read: (route: Route) => unknown) =>
+  (route: Route): Markup =>
+    Component.$fragment((__p) => dom.text(dom.el(__p, tag), () => read(route)));
+
+function routing(sections: DomRouteSection[], table: RouteTable = views) {
+  class Shell extends Component {
+    #on = true; get on(): boolean { Component.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(0, p); }
+    static { Component.$define(this, ["on"]); }
+    protected override render(__p: Node): void {
+      dom.region(__p, (__p) => {
+        if (this.on) dom.routesAt(dom.anchors(__p), table, sections);
+      });
+    }
+  }
+  const el = host();
+  const shell = mount(Shell, el);
+  return {
+    el,
+    html: () => el.innerHTML.replaceAll("<!---->", ""),
+    drop: async () => {
+      shell.on = false;
+      await tick();
+      el.remove();
+    },
+  };
+}
+
+const later = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+test("routes through dom: the first section taking the page's tag, else @default, else the bare page", async () => {
+  memoryNav("/users/7");
+  const tagged = routing([{ kind: "tag", tag: "admin", render: around("main") }, { kind: "default", render: around("aside") }]);
+  expect(tagged.html()).toBe("<main><u>7</u></main>");
+  memoryNav("/users/new");
+  const other = routing([{ kind: "tag", tag: "admin", render: around("main") }, { kind: "default", render: around("aside") }]);
+  expect(other.html()).toBe("<aside><n>new</n></aside>");
+  memoryNav("/users/7");
+  const bare = routing([{ kind: "tag", tag: "none", render: around("main") }]);
+  expect(bare.html()).toBe("<u>7</u>");
+  for (const r of [tagged, other, bare]) await r.drop();
+});
+
+test("routes through dom: regex and pattern sections give route.match; page-less ones decide without a page; @notFound", async () => {
+  memoryNav("/users/7");
+  const regex = routing([{ kind: "regex", re: /^\/users\/(?<who>\w+)/, page: true, render: shows("b", (r) => r.match.who) }, { kind: "default", render: around("aside") }]);
+  expect(regex.html()).toBe("<b>7</b>");
+  memoryNav("/docs/a/b");
+  const pattern = routing([
+    {
+      kind: "pattern",
+      match: (s) => (s[0] === "docs" ? { area: s[1] ?? "" } : null),
+      page: true,
+      render: (route: Route, page: Markup) => Component.$fragment((__p) => {
+        const _e0 = dom.el(__p, "i");
+        dom.text(_e0, () => route.match.area);
+        dom.text(_e0, () => page);
+      }),
+    },
+  ]);
+  expect(pattern.html()).toBe("<i>a<d>a/b</d></i>");
+  memoryNav("/legal/terms");
+  const pageless = routing([
+    { kind: "tag", tag: "admin", render: around("main") },
+    { kind: "regex", re: /^\/legal\//, page: true, render: shows("b", () => "wrong") },
+    { kind: "pattern", match: (s) => (s[0] === "legal" ? { doc: s[1] ?? "" } : null), page: false, render: shows("i", (r) => (r.params as { doc: string }).doc) },
+    { kind: "default", render: around("aside") },
+  ]);
+  expect(pageless.html()).toBe("<i>terms</i>");
+  const m = memoryNav("/missing");
+  const missing = routing([{ kind: "default", render: around("aside") }, { kind: "notFound", render: shows("p", (r) => r.path) }]);
+  expect(missing.html()).toBe("<p>/missing</p>");
+  // A kept section reads the new route.
+  m.go("/gone");
+  expect(missing.html()).toBe("<p>/gone</p>");
+  m.go("/users/new");
+  expect(missing.html()).toBe("<aside><n>new</n></aside>");
+  for (const r of [regex, pattern, pageless, missing]) await r.drop();
+});
+
+test("routes through dom: a params-only or query-only navigation keeps the page and sets its parameters again", async () => {
+  const m = memoryNav("/users/1?q=a");
+  const r = routing([{ kind: "default", render: around("aside") }]);
+  const page = lastView!;
+  expect(page.paramsSet).toBe(1);
+  m.go("/users/2?q=a");
+  expect(r.html()).toBe("<aside><u>2</u></aside>");
+  expect(lastView).toBe(page);
+  expect(page.paramsSet).toBe(2);
+  expect(page.renders).toBe(2);
+  // Equal params: the navigation moved on, so the page takes them again.
+  m.go("/users/2?q=b");
+  expect(lastView).toBe(page);
+  expect(page.paramsSet).toBe(3);
+  m.go("/docs/x");
+  expect(r.html()).toBe("<aside><d>x</d></aside>");
+  m.go("/users/2");
+  expect(lastView).not.toBe(page);
+  await r.drop();
+});
+
+test("routes through dom: routes of one family share the page instance", async () => {
+  const m = memoryNav("/edit/1");
+  const r = routing([{ kind: "default", render: around("aside") }]);
+  const page = lastEdit!;
+  m.go("/edit/1/tab");
+  expect(r.html()).toBe("<aside><e>1tab</e></aside>");
+  expect(lastEdit).toBe(page);
+  await r.drop();
+});
+
+let failLater: ((err: unknown) => void) | undefined;
+class SlowView extends Component {
+  protected override onInitializedAsync(): Promise<void> {
+    return new Promise<void>((_resolve, reject) => (failLater = reject));
+  }
+  protected override render(__p: Node): void { dom.t(__p, "slow"); }
+}
+class BrokenView extends Component {
+  protected override onInitialized(): void { throw new Error("init"); }
+  protected override render(__p: Node): void { dom.t(__p, "never"); }
+}
+const failing = (component: unknown): RouteTable => [{ tag: undefined, pattern: "/boom", component, match: (s) => (s.length === 1 && s[0] === "boom" ? {} : null) }, ...views];
+const catching: DomRouteSection[] = [
+  { kind: "catch", render: (route: Route, error: unknown) => shows("em", () => String(error))(route) },
+  { kind: "default", render: around("aside") },
+];
+
+test("routes through dom: @catch shows the page's failure; a navigation clears it", async () => {
+  const m = memoryNav("/boom");
+  const r = routing(catching, failing(BrokenView));
+  await tick();
+  expect(r.html()).toBe("<em>Error: init</em>");
+  m.go("/users/1");
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+  await r.drop();
+});
+
+test("routes through dom: a failure from a page we left is dropped; a page kept by a query-only navigation still reports", async () => {
+  const m = memoryNav("/boom");
+  const r = routing(catching, failing(SlowView));
+  expect(r.html()).toBe("<aside>slow</aside>");
+  m.go("/users/1");
+  failLater!(new Error("late"));
+  await tick();
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+
+  m.go("/boom");
+  m.go("/boom?x=1");
+  expect(r.html()).toBe("<aside>slow</aside>");
+  failLater!(new Error("kept"));
+  await tick();
+  expect(r.html()).toBe("<em>Error: kept</em>");
+  await r.drop();
+});
+
+class Crumbs extends Component {
+  static readonly cascades = [["route", "route"]] as const;
+  route: Route | undefined;
+  paramsSet = 0;
+  protected override onParametersSet(): void { this.paramsSet++; }
+  protected override render(__p: Node): void {
+    dom.text(dom.el(__p, "span"), () => `${this.route?.path ?? "none"}?${this.route?.query.get("q") ?? ""}`);
+  }
+}
+
+test("routes through dom: route is a cascading value; route.navigate pushes or replaces", async () => {
+  const m = memoryNav("/users/1?q=a");
+  let crumbs: Crumbs | undefined;
+  let captured: Route | undefined;
+  const r = routing([
+    {
+      kind: "default",
+      render: (route: Route, page: Markup) => {
+        captured = route;
+        return Component.$fragment((__p) => {
+          dom.component(dom.anchor(__p), Crumbs, () => ({}), undefined, undefined, (c) => (crumbs = c as Crumbs));
+          dom.text(__p, () => page);
+        });
+      },
+    },
+  ]);
+  expect(r.html()).toBe("<span>/users/1?a</span><u>1</u>");
+  const first = crumbs!;
+  expect(first.paramsSet).toBe(1);
+  m.go("/users/2?q=b");
+  expect(r.html()).toBe("<span>/users/2?b</span><u>2</u>");
+  expect(crumbs).toBe(first);
+  expect(first.paramsSet).toBe(2);
+  expect(captured!.path).toBe("/users/2");
+  captured!.navigate("/users/3");
+  captured!.navigate("/users/4", { replace: true });
+  expect(m.calls).toEqual([["/users/3", false], ["/users/4", true]]);
+  expect(r.html()).toBe("<span>/users/4?</span><u>4</u>");
+  await r.drop();
+});
+
+class Redirect extends Component {
+  static readonly cascades = [["route", "route"]] as const;
+  route: Route | undefined;
+  protected override onInitialized(): void { this.route!.navigate("/users/1", { replace: true }); }
+  protected override render(__p: Node): void { dom.t(__p, "redirect"); }
+}
+
+test("routes through dom: a navigation raised while a page builds is applied once the pass ends", async () => {
+  const m = memoryNav("/boom");
+  const r = routing([{ kind: "default", render: around("aside") }], failing(Redirect));
+  expect(m.calls).toEqual([["/users/1", true]]);
+  await tick();
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+  await r.drop();
+});
+
+class InitLoad extends Component {
+  #title = ""; get title(): string { Component.$reader?.(this, 0); return this.#title; } set title(v: string) { const p = this.#title; if (Component.same(p, v)) return; this.#title = v; this.$changed(0, p); }
+  static { Component.$define(this, ["title"]); }
+  protected override async onInitializedAsync(): Promise<void> {
+    await later(5);
+    this.title = "init";
+  }
+  protected override render(__p: Node): void { dom.text(dom.el(__p, "h1"), () => this.title); }
+}
+class ParamsLoad extends Component {
+  id = 0;
+  title = "";
+  protected override async onParametersSetAsync(): Promise<void> {
+    await later(5);
+    this.title = `p${this.id}`;
+  }
+  protected override render(__p: Node): void { dom.text(dom.el(__p, "h1"), () => this.title); }
+}
+
+async function transitions(body: (updates: unknown[]) => Promise<void>): Promise<void> {
+  setNavigationForTests(undefined);
+  const doc = document as unknown as { startViewTransition?: (cb: () => unknown) => { ready: Promise<void> } };
+  const updates: unknown[] = [];
+  doc.startViewTransition = (cb) => {
+    updates.push(cb());
+    return { ready: Promise.resolve() };
+  };
+  viewTransitions(true);
+  try {
+    await body(updates);
+  } finally {
+    viewTransitions(false);
+    setTransitionCapForTests(undefined);
+    delete doc.startViewTransition;
+    history.replaceState(null, "", "/");
+  }
+}
+
+const go = (path: string): void => {
+  history.replaceState(null, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+};
+
+test("routes through dom: a view transition waits for the new page's onInitializedAsync", async () => {
+  await transitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const r = routing([{ kind: "default", render: around("aside") }], [{ tag: undefined, pattern: "/init", component: InitLoad, match: (s) => (s[0] === "init" ? {} : null) }, ...views]);
+    go("/init");
+    expect(r.html()).toBe("<aside><h1></h1></aside>");
+    expect(updates[0]).toBeInstanceOf(Promise);
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>init</h1></aside>");
+    await r.drop();
+  });
+});
+
+test("routes through dom: a view transition waits for a lazy page's chunk, then its hooks; the cap holds", async () => {
+  await transitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const table = (load: () => Promise<{ default: typeof ParamsLoad }>): RouteTable => [
+      { tag: undefined, pattern: "/p/:id", component: lazy(load), match: (s) => (s.length === 2 && s[0] === "p" ? { id: Number(s[1]) } : null) },
+      ...views,
+    ];
+    const r = routing([{ kind: "default", render: around("aside") }], table(() => later(10).then(() => ({ default: ParamsLoad }))));
+    go("/p/7");
+    expect(r.html()).toBe("<aside></aside>");
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>p7</h1></aside>");
+    await r.drop();
+
+    setTransitionCapForTests(20);
+    go("/");
+    const hung = routing([{ kind: "default", render: around("aside") }], table(() => new Promise(() => {})));
+    go("/p/1");
+    const started = performance.now();
+    expect(updates.length).toBe(2);
+    await updates[1];
+    expect(performance.now() - started).toBeGreaterThanOrEqual(15);
+    expect(hung.html()).toBe("<aside></aside>");
+    await hung.drop();
+  });
+});
+
+test("leak check: a routes block navigated 200 times and unmounted leaves the heap and the subscribers as they were", async () => {
+  const { heapSize } = await import("bun:jsc");
+  const m = memoryNav("/users/1");
+  const cycle = async (): Promise<void> => {
+    const r = routing([{ kind: "default", render: around("aside") }]);
+    for (let i = 0; i < Number(process.env.ROUTES_N ?? 200); i++) m.go(i % 2 === 0 ? `/docs/${i}` : `/users/${i}`);
+    expect(m.subs.size).toBe(1);
+    await r.drop();
+  };
+  await cycle();
+  lastView = undefined;
+  Bun.gc(true);
+  Bun.gc(true);
+  const before = heapSize();
+  const base = { ...((await import("bun:jsc")).heapStats().objectTypeCounts as Record<string, number>) };
+  await cycle();
+  lastView = undefined;
+  Bun.gc(true);
+  Bun.gc(true);
+  const after = heapSize();
+  if (process.env.ROUTES_N) {
+    const { heapStats } = await import("bun:jsc");
+    const counts = heapStats().objectTypeCounts as Record<string, number>;
+    const diff = Object.entries(counts).map(([k, v]) => [k, v - (base[k] ?? 0)] as const).filter(([, d]) => d !== 0).sort((a, b) => b[1] - a[1]);
+    console.log(JSON.stringify(diff.slice(0, 20)));
+  }
+  console.log(`routes leak check: before ${before} B, after ${after} B, delta ${after - before} B, subscribers ${m.subs.size}`);
+  expect(m.subs.size).toBe(0);
+  expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+  setNavigationForTests(undefined);
 });

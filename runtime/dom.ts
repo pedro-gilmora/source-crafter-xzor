@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $cascade, $child, $childItem, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { $cascade, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type Router, type RouteTable, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -44,6 +44,8 @@ const STALE = 16384;
 const CONTENT = 32768;
 /** An ATTR that sets a bag (`@attributes`); `data` is the last bag. */
 const BAG = 65536;
+/** A REGION that is a `@Routes` block (`data` is `Routes`). */
+const ROUTES = 131072;
 
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
@@ -63,6 +65,13 @@ type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void }
 type Build = (parent: Node) => void;
 /** `value`: what it shows; `owner`: the context of what has none (text, a slot's fallback, markup made outside a build). `branch` is a slot's fallback. */
 type Content = Region & { value: unknown; owner: Ctx };
+/** The routed page: one child binding between two comments, kept (and moved) while its route family stays. */
+type Page = Holder & { start: Comment; end: Comment; key: unknown; child: Child; placed: boolean };
+/**
+ * A `@Routes` block: its region shows `section` (rebuilt when the section, the failure or whether there is a page
+ * changes), `markup` places the page. Its scope is the `route` cascade.
+ */
+type Routes = Region & { router: Router; table: RouteTable; sections: readonly DomRouteSection[]; route: Route; section: number; failed: boolean; paged: boolean; page: Page | undefined; markup: Markup };
 
 const MARKUP = Symbol("xzor.markup");
 /** Markup held as a value: builds its nodes into `parent`; its handlers run in the context it was made in. */
@@ -233,6 +242,7 @@ class Binding {
       if ((flags & DEAD) === 0) this.flags |= STALE;
       return;
     }
+    if ((flags & ROUTES) !== 0) return routes(this);
     if ((flags & SHOW) !== 0) return this.#show();
     if ((flags & CONTENT) !== 0) {
       const c = this.data as Content;
@@ -388,6 +398,12 @@ class Binding {
   dispose(): void {
     if ((this.flags & DEAD) !== 0) return;
     const kind = this.flags & KIND;
+    if ((this.flags & ROUTES) !== 0) {
+      const s = this.data as Routes;
+      s.router.off?.();
+      if (s.page !== undefined) disposeAll(s.page);
+      (s.$scope as CascadeRecord).consumers = undefined;
+    }
     if ((this.flags & SHOW) !== 0) for (const branch of (this.data as Show).branches) branch !== undefined && disposeAll(branch);
     else if (kind === REGION) disposeAll(this.data as Region);
     else if (kind === LIST || kind === KEYED) for (const row of (this.data as ListState | Keyed).order) disposeAll(row);
@@ -506,8 +522,10 @@ function refreshAll(h: Holder): void {
 function under(b: Binding, f: (h: Holder) => void): void {
   const kind = b.flags & KIND;
   if ((b.flags & SHOW) !== 0) for (const branch of (b.data as Show).branches) branch !== undefined && f(branch);
-  else if (kind === REGION) f(b.data as Region);
-  else if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) f(row);
+  else if (kind === REGION) {
+    f(b.data as Region);
+    if ((b.flags & ROUTES) !== 0 && (b.data as Routes).page !== undefined) f((b.data as Routes).page!);
+  } else if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) f(row);
   else if (kind === COMPONENT) {
     const child = (b.data as Child).instance;
     if (child !== undefined) f(child);
@@ -1220,6 +1238,22 @@ export const dom = {
     track(new Binding(REGION, end, zero, region));
   },
 
+  /**
+   * `@Routes` before `end` (and the comment before it): the section matching the current navigation, with the page
+   * as a child keyed by its route family; `route` is cascaded. A section is kept while it stays the matching one.
+   */
+  routesAt(end: Comment, table: RouteTable, sections: readonly DomRouteSection[]): void {
+    const h = holder!;
+    const ctx = h.$ctx;
+    const record: CascadeRecord = { name: "route", value: undefined, fixed: false, consumers: undefined, parent: h.$scope as CascadeRecord | undefined };
+    const s = { $bindings: undefined, $ctx: ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1, table, sections, section: -1, failed: false, paged: false, page: undefined } as unknown as Routes;
+    const b = new Binding(REGION | ROUTES, end, noop, s);
+    s.router = $router(sections, () => b.stateHasChanged());
+    s.route = $currentRoute(s.router);
+    s.markup = fineHooks.markup((parent) => placePage(s, parent), ctx);
+    track(b);
+  },
+
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */
   island(parent: Node, build: (b: RenderTreeBuilder) => void): void {
     dom.islandAt(anchor(parent), build);
@@ -1235,6 +1269,121 @@ export const dom = {
 const noop = (): void => {};
 const zero = (): number => 0;
 const NO_ARGS: readonly unknown[] = [];
+
+// A navigation, or the page failed: one pass that gives `route` to its consumers around the block's update.
+function routes(b: Binding): void {
+  const s = b.data as Routes;
+  const r = s.router;
+  if (!$resolve(r, s.table, s.sections) && s.index !== -1 && s.failed === r.failed) return;
+  untracked(() =>
+    $recascade(s.$scope as CascadeRecord, r.route, () => {
+      const entry = r.failed ? undefined : r.page;
+      if (s.index === -1 || r.failed !== s.failed || r.section !== s.section || (entry !== undefined) !== s.paged) return rebuild(b, s, entry);
+      if (entry !== undefined && s.page !== undefined) pageAgain(s, entry);
+      // Kept: what the section shows of `route` is read again.
+      within(s, () => refreshAll(s));
+    }),
+  );
+}
+
+const familyOf = (entry: RouteEntry): unknown => entry.family ?? entry.pattern;
+
+function rebuild(b: Binding, s: Routes, entry: RouteEntry | undefined): void {
+  const r = s.router;
+  let kept = s.page;
+  if (kept !== undefined) {
+    if (entry !== undefined && familyOf(entry) === kept.key) {
+      // Out of the old section before it goes, so a leaving element there can't take it.
+      kept.placed = false;
+      const stash = document.createDocumentFragment();
+      for (let node: Node = kept.start; ; ) {
+        const next = node.nextSibling!;
+        stash.appendChild(node);
+        if (node === kept.end) break;
+        node = next;
+      }
+    } else {
+      disposeAll(kept);
+      s.page = kept = undefined;
+    }
+  }
+  s.index++;
+  s.failed = r.failed;
+  s.section = r.section;
+  s.paged = entry !== undefined;
+  disposeAll(s);
+  const end = b.node;
+  for (let node = s.start.nextSibling!; node !== end; ) {
+    const next = node.nextSibling!;
+    leave(node);
+    node = next;
+  }
+  const frag = document.createDocumentFragment();
+  const route = s.route;
+  const section = s.sections[r.section];
+  within(s, () => {
+    if (r.failed) r.caught!.render(route, r.error)(frag);
+    else if (entry !== undefined) (section === undefined ? s.markup : (section.render as (r: Route, p: Markup) => Markup)(route, s.markup))(frag);
+    else if (section !== undefined) (section.render as (r: Route) => Markup)(route)(frag);
+  });
+  end.parentNode!.insertBefore(frag, end);
+  // The new section doesn't show the page.
+  if (kept !== undefined && !kept.placed) {
+    disposeAll(kept);
+    s.page = undefined;
+  }
+}
+
+// The page markup a section builds: the page built the first time, else moved in and given its params again.
+function placePage(s: Routes, parent: Node): void {
+  const r = s.router;
+  const page = s.page;
+  if (page === undefined) {
+    const entry = r.page!;
+    const start = parent.appendChild(document.createComment(""));
+    const end = parent.appendChild(document.createComment(""));
+    const p = { $bindings: undefined, $ctx: s.$ctx, $scope: s.$scope, start, end, key: familyOf(entry), placed: true } as Page;
+    s.page = p;
+    return mountPage(s, p, entry);
+  }
+  if (page.placed) return;
+  page.placed = true;
+  for (let node: Node = page.start; ; ) {
+    const next = node.nextSibling!;
+    parent.appendChild(node);
+    if (node === page.end) break;
+    node = next;
+  }
+  page.child.nav = r.id;
+  $child(page.child, r.params, true);
+}
+
+// A navigation that kept the section: the same family's page takes its params again, another replaces it.
+function pageAgain(s: Routes, entry: RouteEntry): void {
+  const r = s.router;
+  const page = s.page!;
+  const key = familyOf(entry);
+  if (key === page.key) {
+    page.child.nav = r.id;
+    return $child(page.child, r.params, true);
+  }
+  disposeAll(page);
+  for (let node = page.start.nextSibling!; node !== page.end; ) {
+    const next = node.nextSibling!;
+    leave(node);
+    node = next;
+  }
+  page.key = key;
+  mountPage(s, page, entry);
+}
+
+// Stamped with the navigation it belongs to, so `@catch` can drop a failure that comes after we left.
+function mountPage(s: Routes, page: Page, entry: RouteEntry): void {
+  const r = s.router;
+  const child: Child = { type: entry.component as Child["type"], end: page.end, ctx: s.$ctx, scope: s.$scope as Child["scope"], props: undefined, statics: undefined, slots: undefined, ref: undefined, key: page.key, onError: r.onError, nav: r.id, instance: undefined, phase: 0, tree: undefined, item: undefined };
+  page.child = child;
+  within(page, () => track(new Binding(COMPONENT, page.end, () => r.params, child)));
+}
 
 /** @internal What `index.ts` calls to mount, refresh and dispose a component's DOM. */
 export const fineHooks = {
