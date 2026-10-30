@@ -311,7 +311,6 @@ pub fn generate_in(
         locals: Vec::new(),
         depth: 0,
         components,
-        inline: false,
         raw_text: false,
         props_ids: std::cell::Cell::new(0),
         route_types: std::cell::Cell::new(0),
@@ -677,8 +676,6 @@ struct Gen<'p> {
     locals: Vec<String>,
     depth: usize,
     components: &'p HashMap<String, ComponentInfo>,
-    /// Emit statements on one line (for fragments spliced into `@code`).
-    inline: bool,
     /// Next `__p<N>` name for a hoisted props object; unique across nested fragments.
     props_ids: std::cell::Cell<usize>,
     /// Inside `<script>`/`<style>`: text is raw, so character references are not decoded.
@@ -720,7 +717,7 @@ enum Tpl {
     Text(String),
     /// The empty text a `@expr` binds.
     Hole,
-    /// A comment marking where a region, list or island goes.
+    /// A comment marking where a region or list goes.
     Anchor,
     El { tag: String, attrs: Vec<(String, String)>, kids: Vec<Tpl> },
 }
@@ -734,7 +731,6 @@ enum FinePart<'n> {
     /// A `@{ }` block and the siblings after it.
     Code(&'n [CodePart], &'n [Node]),
     List(&'n Node),
-    Island(&'n [Node]),
     /// `@cascade`, between its two anchors.
     Cascade(&'n Node),
     /// `@Routes`, between its two anchors.
@@ -828,11 +824,6 @@ fn spec_js(t: &Tpl) -> String {
 
 fn is_plain_code(parts: &[CodePart]) -> bool {
     parts.iter().all(|p| matches!(p, CodePart::Ts(_)))
-}
-
-/// An element the renderer leaves to the virtual DOM: `@attributes` and event modifiers.
-fn is_island(el: &Element) -> bool {
-    !el.is_component() && el.attrs.iter().any(|a| &*a.name.text == "@attributes" || (a.name.starts_with("@on") && a.name.contains(':')))
 }
 
 fn is_plain_code_node(node: &Node) -> bool {
@@ -1005,7 +996,7 @@ fn is_flow(node: &Node) -> bool {
     match node {
         Node::Code(parts) => is_plain_code(parts),
         Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => true,
-        Node::Element(el) => !el.is_component() && !is_island(el) && el.children.iter().any(is_flow),
+        Node::Element(el) => !el.is_component() && el.children.iter().any(is_flow),
         _ => false,
     }
 }
@@ -1027,7 +1018,7 @@ fn mentions(text: &str, word: &str) -> bool {
 
 impl<'p> Gen<'p> {
     fn emit(&mut self, m: M) {
-        if !self.inline && !m.text.is_empty() {
+        if !m.text.is_empty() {
             for _ in 0..self.depth {
                 self.out.push_str("  ");
             }
@@ -1035,7 +1026,7 @@ impl<'p> Gen<'p> {
         let base = self.out.len();
         self.mappings.extend(m.maps.into_iter().map(|x| Mapping { out: x.out + base, ..x }));
         self.out.push_str(&m.text);
-        self.out.push(if self.inline { ' ' } else { '\n' });
+        self.out.push('\n');
     }
 
     /// A `@code` block with its markup values compiled to markup values and its `@Cascade`
@@ -1053,26 +1044,10 @@ impl<'p> Gen<'p> {
         Ok(out)
     }
 
-    /// `__Component.fragment((__b) => { ... })` for `nodes`, emitted on one line.
-    /// `locals` are extra names in scope (slot parameters) that must not get `this.`.
-    fn fragment_of(&mut self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
-        let body = self.inline_nodes(nodes, rewrite, locals)?;
-        Ok(M::lit("__Component.fragment((__b) => { ").add(body).lit_then(" })"))
-    }
-
-    /// Builder calls for `nodes` on one line.
-    fn inline_nodes(&mut self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
-        let mut sub = self.sub_gen(rewrite, locals, true);
-        let done = sub.nodes(nodes);
-        self.absorb(&mut sub);
-        done?;
-        Ok(M { text: sub.out.trim_end().to_string(), maps: sub.mappings })
-    }
-
     /// `__Component.$fragment((__p) => { ... }, this)` for `nodes`, built by the fine emitter. `locals` are extra
     /// names in scope (slot parameters) that must not get `this.`.
     fn dom_fragment(&mut self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
-        let mut sub = self.sub_gen(rewrite, locals, false);
+        let mut sub = self.sub_gen(rewrite, locals);
         sub.depth += 1;
         let done = sub.fine_nodes(nodes, "__p");
         self.absorb(&mut sub);
@@ -1082,7 +1057,7 @@ impl<'p> Gen<'p> {
     }
 
     /// A generator for markup inside this one's scope; `absorb` takes back its counters.
-    fn sub_gen(&mut self, rewrite: bool, locals: &[String], inline: bool) -> Gen<'p> {
+    fn sub_gen(&mut self, rewrite: bool, locals: &[String]) -> Gen<'p> {
         Gen {
             out: String::new(),
             mappings: Vec::new(),
@@ -1092,7 +1067,6 @@ impl<'p> Gen<'p> {
             locals: self.locals.iter().chain(locals).cloned().collect(),
             depth: self.depth,
             components: self.components,
-            inline,
             raw_text: self.raw_text,
             props_ids: std::cell::Cell::new(self.props_ids.get()),
             route_types: std::cell::Cell::new(self.route_types.get()),
@@ -1100,7 +1074,7 @@ impl<'p> Gen<'p> {
             in_region: false,
             in_loop: false,
             owner: None,
-            list_keys: if rewrite && !inline { self.list_keys.clone() } else { HashMap::new() },
+            list_keys: if rewrite { self.list_keys.clone() } else { HashMap::new() },
             pass_locals: None,
             once: false,
             branching: false,
@@ -1292,226 +1266,6 @@ impl<'p> Gen<'p> {
         }
     }
 
-    fn nodes(&mut self, nodes: &[Node]) -> Result<(), String> {
-        nodes.iter().try_for_each(|n| self.node(n))
-    }
-
-    fn block(&mut self, nodes: &[Node]) -> Result<(), String> {
-        self.depth += 1;
-        let scope = self.locals.len();
-        let r = self.nodes(nodes);
-        self.locals.truncate(scope);
-        self.depth -= 1;
-        r
-    }
-
-    fn node(&mut self, node: &Node) -> Result<(), String> {
-        // A region keeps a block's variable output from shifting its static siblings in the diff.
-        let region = matches!(node, Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. });
-        if region {
-            self.line("__b.openRegion();");
-        }
-        match node {
-            Node::Text(t) if self.raw_text => self.line(&format!("__b.addText({});", js_string(t))),
-            Node::Text(t) => self.line(&format!("__b.addText({});", js_string(&crate::entities::decode(t)))),
-            Node::Expr(e) => {
-                let line = M::lit("__b.addContent(").add(self.expr(e)).lit_then(");");
-                self.emit(line);
-            }
-            Node::Code(parts) => {
-                for part in parts {
-                    if let CodePart::Ts(s) = part {
-                        self.locals.extend(declared_names(s));
-                    }
-                }
-                let mut block = M::default();
-                for part in parts {
-                    block = match part {
-                        CodePart::Ts(s) => block.add(self.expr(s)),
-                        CodePart::Markup(el) => block.add(self.fragment_of(std::slice::from_ref(&Node::Element(el.clone())), true, &[])?),
-                        CodePart::Render(nodes) => block.add(self.inline_nodes(nodes, true, &[])?),
-                    };
-                }
-                if self.inline {
-                    self.emit(block);
-                } else {
-                    self.emit_block(block);
-                }
-            }
-            Node::While { cond, body, otherwise, .. } => {
-                if otherwise.is_some() {
-                    self.open_none();
-                }
-                let line = M::lit("while (").add(self.expr(cond)).lit_then(") {");
-                self.emit(line);
-                if otherwise.is_some() {
-                    self.mark_pass();
-                }
-                self.block(body)?;
-                self.line("}");
-                if let Some(body) = otherwise {
-                    self.line("if (__none) {");
-                    self.block(body)?;
-                    self.close_none();
-                }
-            }
-            Node::Element(el) if &*el.name.text == "text" => self.nodes(&el.children)?,
-            Node::Slot(slot) => {
-                let name = match &slot.name {
-                    Some(n) => M::src(n, n.at),
-                    None => M::lit("default"),
-                };
-                let mut line = M::lit("__b.addContent(this.slots.").add(name).lit_then("?.(");
-                for (i, arg) in slot.args.iter().flatten().enumerate() {
-                    let value = match arg {
-                        SlotArg::Expr(e) => self.expr(e),
-                        SlotArg::Markup(el) => self.fragment_of(std::slice::from_ref(&Node::Element(el.clone())), true, &[])?,
-                    };
-                    line = line.lit_then(if i == 0 { "" } else { ", " }).add(value);
-                }
-                let fallback = match &slot.fallback {
-                    Some(body) => self.fragment_of(body, true, &[])?,
-                    None => M::lit("null"),
-                };
-                self.emit(line.lit_then(") ?? ").add(fallback).lit_then(");"));
-            }
-            Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
-            Node::ParentAttr(a) => {
-                let line = M::lit(&format!("__b.addParentAttribute({}, ", js_string(&a.name))).add(self.value(&a.value)).lit_then(");");
-                self.emit(line);
-            }
-            // A render pass has no "once": it renders as usual.
-            Node::Once(body) => self.nodes(body)?,
-            Node::Await { .. } => return Err("@await can't go inside a component's content, a routes block, @cascade or markup in @{ }: put it around them, or inside the child component".into()),
-            Node::Show(_) | Node::Pause(_) => return Err("@show:if, @show:switch and @pause can't go inside a component's content, a routes block, @cascade or markup in @{ }: put them around them, or inside the child component".into()),
-            Node::Cascade { name, value, fixed, body } => {
-                let quoted = js_string(name);
-                // The mapping stays on the name only while the literal is a straight copy of it.
-                let literal = if quoted[1..quoted.len() - 1] == *name.text {
-                    M::lit("\"").add(M::src(name, name.at)).lit_then("\"")
-                } else {
-                    M::lit(&quoted)
-                };
-                let open = M::lit("__b.openCascade(").add(literal).lit_then(", ").add(self.expr(value));
-                self.emit(open.lit_then(if *fixed { ", true);" } else { ");" }));
-                // The body is a block so that sibling providers can declare the same `@{ const }` names.
-                self.line("{");
-                self.block(body)?;
-                self.line("}");
-                self.line("__b.closeRegion();");
-            }
-            Node::Routes { var, sections } => {
-                self.line("__b.addRoutes(__routes, [");
-                self.depth += 1;
-                for (i, section) in sections.iter().enumerate() {
-                    let m = self.route_section(i, var, section)?;
-                    self.emit(m);
-                }
-                self.depth -= 1;
-                self.line("]);");
-            }
-            Node::Element(el) if el.is_component() => self.component(el)?,
-            Node::Element(el) => {
-                self.line(&format!("__b.openElement({});", js_string(&el.name)));
-                let directive = |n: &str| el.attrs.iter().find(|a| &*a.name.text == n).map(|a| &a.value);
-                for a in &el.attrs {
-                    match &*a.name.text {
-                        name @ ("@bind" | "@bind:input") => self.bind_element(el, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
-                        "@bind:event" | "@bind:after" | "@bind:debounce" => {}
-                        n if n.starts_with("class:") => {}
-                        "@leave" => self.line("__b.addAttribute(\"data-leave\", \"\");"),
-                        "@key" => {
-                            let line = M::lit("__b.setKey(").add(self.directive_expr(a)?).lit_then(");");
-                            self.emit(line);
-                        }
-                        "@ref" => {
-                            let target = self.directive_expr(a)?;
-                            let line = M::lit(&format!("__b.setRef({}, (__e) => {{ ", js_string(&el.name)))
-                                .add(target)
-                                .lit_then(" = __e; });");
-                            self.emit(line);
-                        }
-                        _ => self.attribute(a)?,
-                    }
-                }
-                // After the element's own class, whatever the order they were written in.
-                for a in el.attrs.iter().filter(|a| a.name.starts_with("class:")) {
-                    let on = match &a.value {
-                        AttrValue::Empty => M::lit("true"),
-                        v => self.value(v),
-                    };
-                    self.emit(M::lit(&format!("__b.toggleClass({}, ", js_string(&a.name[6..]))).add(on).lit_then(");"));
-                }
-                let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
-                self.nodes(&el.children)?;
-                self.raw_text = raw;
-                self.line("__b.closeElement();");
-            }
-            Node::If {
-                branches,
-                otherwise,
-            } => {
-                for (i, (cond, body)) in branches.iter().enumerate() {
-                    let kw = if i == 0 { "if (" } else { "} else if (" };
-                    let line = M::lit(kw).add(self.expr(cond)).lit_then(") {");
-                    self.emit(line);
-                    self.block(body)?;
-                }
-                if let Some(body) = otherwise {
-                    self.line("} else {");
-                    self.block(body)?;
-                }
-                self.line("}");
-            }
-            Node::For { head, body, otherwise, .. } => {
-                if otherwise.is_some() {
-                    self.open_none();
-                }
-                let scope = self.locals.len();
-                self.locals.extend(loop_locals(head));
-                let line = M::lit("for (").add(self.expr(head)).lit_then(") {");
-                self.emit(line);
-                if otherwise.is_some() {
-                    self.mark_pass();
-                }
-                self.block(body)?;
-                self.line("}");
-                self.locals.truncate(scope);
-                if let Some(body) = otherwise {
-                    self.line("if (__none) {");
-                    self.block(body)?;
-                    self.close_none();
-                }
-            }
-            Node::Switch { subject, cases } => {
-                let line = M::lit("switch (").add(self.expr(subject)).lit_then(") {");
-                self.emit(line);
-                self.depth += 1;
-                for case in cases {
-                    let count = case.labels.len();
-                    for (i, label) in case.labels.iter().enumerate() {
-                        let label = match label {
-                            Some(e) => M::lit("case ").add(self.expr(e)),
-                            None => M::lit("default"),
-                        };
-                        self.emit(label.lit_then(if i + 1 == count { ": {" } else { ":" }));
-                    }
-                    self.block(&case.body)?;
-                    self.depth += 1;
-                    self.line("break;");
-                    self.depth -= 1;
-                    self.line("}");
-                }
-                self.depth -= 1;
-                self.line("}");
-            }
-        }
-        if region {
-            self.line("__b.closeRegion();");
-        }
-        Ok(())
-    }
-
     /// A loop with an `else` is in a block whose `__none` stays true unless a pass runs.
     fn open_none(&mut self) {
         self.line("{");
@@ -1586,7 +1340,7 @@ impl<'p> Gen<'p> {
                 Node::Element(el) if is_flow(node) && &*el.name.text == "text" => self.fine_inline(&el.children, parent)?,
                 Node::Element(el) if is_flow(node) => self.fine_element(el, parent)?,
                 _ => {
-                    // Markup inside `@{ }` is an island holding the rest, so the run takes it all.
+                    // A `@{ }` block holds the rest of the run in its region, so the run takes it all.
                     let end = match nodes[i..].iter().position(|n| is_flow(n) || matches!(n, Node::Code(_))) {
                         Some(n) if is_flow(&nodes[i + n]) => i + n,
                         _ => nodes.len(),
@@ -1649,7 +1403,7 @@ impl<'p> Gen<'p> {
         let cast = if alone { self.cast(&kids[0]) } else { String::new() };
         self.line(&format!("const {root} = __t{t}(){cast};"));
         let mut vars = vec![(if alone { vec![0] } else { vec![] }, root.clone())];
-        // Every node a part binds gets its variable first: regions, lists and islands insert nodes.
+        // Every node a part binds gets its variable first: regions and lists insert nodes.
         let mut targets = Vec::with_capacity(parts.len());
         for (path, part) in &parts {
             // A part's `@attr:`s set the element holding it: the run's own owner at its top level.
@@ -1701,11 +1455,6 @@ impl<'p> Gen<'p> {
         let at = |kids: &Vec<Tpl>| [path, &[kids.len()]].concat();
         for (i, node) in nodes.iter().enumerate() {
             match node {
-                Node::Code(code) if !is_plain_code(code) => {
-                    parts.push((at(kids), FinePart::Island(&nodes[i..])));
-                    kids.push(Tpl::Anchor);
-                    return Ok(());
-                }
                 Node::Code(code) => {
                     kids.push(Tpl::Anchor);
                     parts.push((at(kids), FinePart::Code(code, &nodes[i + 1..])));
@@ -1720,10 +1469,6 @@ impl<'p> Gen<'p> {
                 Node::Element(el) if &*el.name.text == "text" => self.tpl_nodes(&el.children, path, raw, kids, parts)?,
                 Node::Element(el) if el.is_component() => {
                     parts.push((at(kids), FinePart::Component(el)));
-                    kids.push(Tpl::Anchor);
-                }
-                Node::Element(el) if is_island(el) => {
-                    parts.push((at(kids), FinePart::Island(std::slice::from_ref(node))));
                     kids.push(Tpl::Anchor);
                 }
                 Node::Element(el) => {
@@ -1987,7 +1732,7 @@ impl<'p> Gen<'p> {
                 self.line("]);");
             }
             FinePart::Cascade(_) | FinePart::Routes(_) => unreachable!("built from their own nodes"),
-            // Virtual-DOM builder calls, in a binding that patches them when what they read changes.
+            // The slot's fallback is built by a binding that patches it when what it reads changes.
             FinePart::Slot(slot) => {
                 let name = match &slot.name {
                     Some(n) => M::src(n, n.at),
@@ -2019,11 +1764,6 @@ impl<'p> Gen<'p> {
                     }
                     None => self.emit(head.lit_then(");")),
                 }
-            }
-            // Virtual-DOM builder calls, in a binding that patches them when what they read changes.
-            FinePart::Island(nodes) => {
-                let body = self.inline_nodes(nodes, true, &[])?;
-                self.emit(M::lit(&format!("__dom.islandAt({var}, (__b) => {{ ")).add(body).lit_then(" });"));
             }
         }
         Ok(())
@@ -2057,14 +1797,74 @@ impl<'p> Gen<'p> {
         }
     }
 
-    fn fine_on(&mut self, var: &str, event: &str, handler: M) {
-        if self.row_level() {
-            // The return type types the handler's event, as `dom.on` does.
-            let i = self.push_read("): ((e: any) => unknown", handler);
-            self.line(&format!("__dom.onItem({var}, {}, {i});", js_string(event)));
-        } else {
-            self.emit(M::lit(&format!("__dom.on({var}, {}, ", js_string(event))).add(handler).lit_then(");"));
+    /// A handler (or none, for modifiers alone) with `mods` (1 preventDefault, 2 stopPropagation).
+    fn fine_on(&mut self, var: &str, event: &str, handler: Option<M>, mods: u8) {
+        let tail = if mods == 0 { String::new() } else { format!(", {mods}") };
+        match handler {
+            Some(handler) if self.row_level() => {
+                // The return type types the handler's event, as `dom.on` does.
+                let i = self.push_read("): ((e: any) => unknown", handler);
+                self.line(&format!("__dom.onItem({var}, {}, {i}{tail});", js_string(event)));
+            }
+            Some(handler) => self.emit(M::lit(&format!("__dom.on({var}, {}, ", js_string(event))).add(handler).lit_then(&format!("{tail});"))),
+            None => self.line(&format!("__dom.on({var}, {}, undefined{tail});", js_string(event))),
         }
+    }
+
+    /// The modifiers `@on<event>:name` of `el`: the bits that always apply, and the conditions of the others,
+    /// which the handler checks when the event fires.
+    fn event_modifiers(&self, el: &Element, event: &str) -> Result<(u8, Vec<(u8, M)>), String> {
+        let (mut mods, mut when) = (0, Vec::new());
+        for a in &el.attrs {
+            let Some((e, modifier)) = a.name.strip_prefix("@on").and_then(|r| r.split_once(':')) else { continue };
+            if e != event {
+                continue;
+            }
+            let bit = match modifier {
+                "preventDefault" => 1,
+                "stopPropagation" => 2,
+                _ => return Err(format!("unknown event modifier {}", a.name)),
+            };
+            match &a.value {
+                AttrValue::Empty => mods |= bit,
+                AttrValue::Expr(e) if e.trim() == "true" => mods |= bit,
+                AttrValue::Expr(e) if e.trim() == "false" => {}
+                AttrValue::Expr(e) => when.push((bit, self.expr(e))),
+                _ => return Err(format!("{} takes a boolean expression", a.name)),
+            }
+        }
+        Ok((mods, when))
+    }
+
+    /// `@on<event>`, with its modifiers, or the modifiers of an event that has no handler.
+    fn fine_event(&mut self, el: &Element, var: &str, a: &Attr, event: &str) -> Result<(), String> {
+        let modifier = |x: &Attr| x.name.strip_prefix("@on").and_then(|r| r.split_once(':')).is_some_and(|(e, _)| e == event);
+        let handler = el.attrs.iter().find(|x| x.name.strip_prefix("@on") == Some(event));
+        // The handler's attribute emits them all; without one, the first modifier does.
+        if modifier(a) && (handler.is_some() || !std::ptr::eq(a, el.attrs.iter().find(|x| modifier(x)).expect("a is one"))) {
+            return Ok(());
+        }
+        let (mods, when) = self.event_modifiers(el, event)?;
+        let mut run = match handler {
+            Some(h) => {
+                let AttrValue::Expr(e) = &h.value else { return Err(format!("{} requires a handler expression", h.name)) };
+                Some(self.handler(e))
+            }
+            None => None,
+        };
+        if !when.is_empty() {
+            let mut wrapped = M::lit("(__e: any) => { ");
+            for (bit, cond) in when {
+                let call = if bit == 1 { "preventDefault" } else { "stopPropagation" };
+                wrapped = wrapped.lit_then("if (").add(cond).lit_then(&format!(") __e.{call}(); "));
+            }
+            run = Some(match run {
+                Some(h) => wrapped.lit_then("return ((").add(h).lit_then(") as (e: any) => unknown)(__e); }"),
+                None => wrapped.lit_then("}"),
+            });
+        }
+        self.fine_on(var, event, run, mods);
+        Ok(())
     }
 
     /// A region before comment `end` (after the comment before it), whose `body` is plain control flow; with
@@ -2316,17 +2116,36 @@ impl<'p> Gen<'p> {
         self.out.push_str(&m.text);
     }
 
-    /// The statements of a `@{ }` block; its declarations become locals of the enclosing scope.
+    /// The statements of a `@{ }` block; its declarations become locals of the enclosing scope. Markup
+    /// statements append to the region's `__p` as a plain loop's body does, markup values are fragments.
     fn fine_code_block(&mut self, parts: &[CodePart]) -> Result<M, String> {
         let mut block = M::default();
         for part in parts {
-            match part {
+            block = match part {
                 CodePart::Ts(s) => {
                     self.locals.extend(declared_names(s));
-                    block = block.add(self.expr(s));
+                    block.add(self.expr(s))
                 }
-                _ => return Err("@fine components cannot hold markup inside @{ } yet".into()),
-            }
+                CodePart::Markup(el) => block.add(self.dom_fragment(std::slice::from_ref(&Node::Element(el.clone())), true, &[])?),
+                CodePart::Render(nodes) => {
+                    // Lines indented as the statement's own, the first one continuing the code's line.
+                    let indent = block.text.rsplit('\n').next().map_or(0, |l| l.len() - l.trim_start().len());
+                    let depth = std::mem::replace(&mut self.depth, indent / 2);
+                    let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, true));
+                    let pass = self.pass_locals.take();
+                    let scope = self.locals.len();
+                    let r = self.capture(|g| g.fine_nodes(nodes, "__p"));
+                    self.locals.truncate(scope);
+                    self.pass_locals = pass;
+                    (self.in_region, self.in_loop) = flags;
+                    self.depth = depth;
+                    let code = r?;
+                    let lead = code.text.len() - code.text.trim_start().len();
+                    let text = code.text[lead..].trim_end().to_string();
+                    let maps = code.maps.into_iter().map(|m| Mapping { out: m.out - lead, ..m }).collect();
+                    block.add(M { text, maps })
+                }
+            };
         }
         Ok(block)
     }
@@ -2460,10 +2279,13 @@ impl<'p> Gen<'p> {
                     let line = self.directive_expr(a)?.lit_then(&format!(" = {var};"));
                     self.emit(line);
                 }
+                "@attributes" => {
+                    let bag = self.directive_expr(a)?;
+                    self.emit(M::lit(&format!("__dom.attrs({var}, () => ")).add(bag).lit_then(");"));
+                }
                 _ if name.starts_with("@on") => {
-                    let AttrValue::Expr(e) = &a.value else { return Err(format!("{name} requires a handler expression")) };
-                    let handler = self.handler(e);
-                    self.fine_on(var, &name[3..], handler);
+                    let event = name[3..].split(':').next().unwrap_or_default();
+                    self.fine_event(el, var, a, event)?;
                 }
                 _ if name.starts_with('@') => return Err(format!("unknown directive attribute {name}")),
                 _ if name.starts_with("class:") => {
@@ -2500,7 +2322,7 @@ impl<'p> Gen<'p> {
         let read = self.expr(target);
         self.fine_bound("attr", &format!("{var}, \"{prop}\""), read);
         let handler = self.bind_handler(el, target, after)?;
-        self.fine_on(var, &event, handler);
+        self.fine_on(var, &event, Some(handler), 0);
         Ok(())
     }
 
@@ -2529,19 +2351,6 @@ impl<'p> Gen<'p> {
         }
     }
 
-    /// `@bind="x"` on an element: a value (or checked) attribute plus a change handler.
-    fn bind_element(&mut self, el: &Element, a: &Attr, event: String, after: Option<&AttrValue>) -> Result<(), String> {
-        let AttrValue::Expr(target) = &a.value else { return Err("@bind requires an expression".into()) };
-        let is_check = el.attrs.iter().any(|x| {
-            &*x.name.text == "type" && matches!(&x.value, AttrValue::Static(s) if matches!(&*s.text, "checkbox" | "radio"))
-        });
-        let prop = if is_check { "checked" } else { "value" };
-        self.emit(M::lit(&format!("__b.addAttribute(\"{prop}\", ")).add(self.expr(target)).lit_then(");"));
-        let line = M::lit(&format!("__b.addEventHandler({}, ", js_string(&event))).add(self.bind_handler(el, target, after)?).lit_then(");");
-        self.emit(line);
-        Ok(())
-    }
-
     /// The expression value of a directive attribute like `@key="x"`.
     fn directive_expr(&self, a: &Attr) -> Result<M, String> {
         match &a.value {
@@ -2550,46 +2359,9 @@ impl<'p> Gen<'p> {
         }
     }
 
-    fn attribute(&mut self, a: &Attr) -> Result<(), String> {
-        if &*a.name.text == "@attributes" {
-            let line = M::lit("__b.addAttributes(").add(self.directive_expr(a)?).lit_then(");");
-            self.emit(line);
-            return Ok(());
-        }
-        if let Some((event, modifier)) = a.name.strip_prefix("@on").and_then(|r| r.split_once(':')) {
-            if !matches!(modifier, "preventDefault" | "stopPropagation") {
-                return Err(format!("unknown event modifier {}", a.name));
-            }
-            let enabled = match &a.value {
-                AttrValue::Empty => M::lit("true"),
-                AttrValue::Expr(e) => self.expr(e),
-                _ => return Err(format!("{} takes a boolean expression", a.name)),
-            };
-            let line = M::lit(&format!("__b.addEventModifier({}, {}, ", js_string(event), js_string(modifier)))
-                .add(enabled)
-                .lit_then(");");
-            self.emit(line);
-            return Ok(());
-        }
-        if let Some(event) = a.name.strip_prefix("@on") {
-            let AttrValue::Expr(e) = &a.value else {
-                return Err(format!("{} requires a handler expression", a.name));
-            };
-            let handler = self.handler(e);
-            let line = M::lit(&format!("__b.addEventHandler({}, ", js_string(event))).add(handler).lit_then(");");
-            self.emit(line);
-        } else if a.name.starts_with('@') {
-            return Err(format!("unknown directive attribute {}", a.name));
-        } else {
-            let line = M::lit(&format!("__b.addAttribute({}, ", js_string(&a.name))).add(self.value(&a.value)).lit_then(");");
-            self.emit(line);
-        }
-        Ok(())
-    }
-
     /// A child component's tag as its parts: the type (with type arguments), props (flagged static when they are
-    /// callbacks, which are set once), `@key`/`@ref`, and slot fills. `dom` makes callbacks `__dom.callback`s.
-    fn component_parts(&mut self, el: &Element, dom: bool) -> Result<ChildParts, String> {
+    /// callbacks, which are set once), `@key`/`@ref`, and slot fills.
+    fn component_parts(&mut self, el: &Element) -> Result<ChildParts, String> {
         let empty = ComponentInfo::default();
         let info = self.components.get(&*el.name.text).unwrap_or(&empty);
         let attr = |n: &str| el.attrs.iter().find(|a| &*a.name.text == n);
@@ -2616,11 +2388,7 @@ impl<'p> Gen<'p> {
             type_args = Some(texts.join(", "));
         }
 
-        let owner = match (dom, self.ownerless) {
-            (true, true) => "__dom.callback(undefined, ",
-            (true, false) => "__dom.callback(this, ",
-            _ => "__b.callback(",
-        };
+        let owner = if self.ownerless { "__dom.callback(undefined, " } else { "__dom.callback(this, " };
         let mut props: Vec<(M, bool)> = Vec::new();
         let mut extra: Vec<(bool, M)> = Vec::new();
         for a in &el.attrs {
@@ -2737,51 +2505,10 @@ impl<'p> Gen<'p> {
         object.lit_then(if any { " }" } else { "}" })
     }
 
-    /// A child component of the virtual DOM, as builder calls.
-    fn component(&mut self, el: &Element) -> Result<(), String> {
-        let ChildParts { name, infer, type_names, props, extra, fills, .. } = self.component_parts(el, false)?;
-        let object = Self::object_of(props.into_iter().map(|(p, _)| p));
-        let mut line = M::lit("__b.addComponent(");
-        if infer {
-            // Hoisted so each type parameter is inferred from the props (`addComponent` alone infers the base class).
-            let id = self.props_ids.get();
-            self.props_ids.set(id + 1);
-            let var = format!("__p{id}");
-            self.emit(M::lit(&format!("const {var} = ")).add(object).lit_then(";"));
-            let infers = type_names.iter().map(|n| format!("infer {n}")).collect::<Vec<_>>().join(", ");
-            let args: Vec<String> = type_names
-                .iter()
-                .map(|t| format!("typeof {var} extends Partial<{}<{infers}>> ? {t} : unknown", &*el.name.text))
-                .collect();
-            line = line.add(name).lit_then(&format!("<{}>, {var}", args.join(", ")));
-        } else {
-            line = line.add(name).lit_then(", ").add(object);
-        }
-        if !fills.is_empty() {
-            line = line.lit_then(", {");
-            for (i, (_, fill)) in fills.into_iter().enumerate() {
-                line = line.lit_then(if i == 0 { " " } else { ", " }).add(fill);
-            }
-            line = line.lit_then(" }");
-        } else if !extra.is_empty() {
-            line = line.lit_then(", undefined");
-        }
-        if !extra.is_empty() {
-            line = line.lit_then(", {");
-            for (i, (is_key, x)) in extra.into_iter().enumerate() {
-                let x = if is_key { M::lit("key: ").add(x) } else { M::lit("ref: (__c) => { ").add(x).lit_then(" = __c; }") };
-                line = line.lit_then(if i == 0 { " " } else { ", " }).add(x);
-            }
-            line = line.lit_then(" }");
-        }
-        self.emit(line.lit_then(");"));
-        Ok(())
-    }
-
     /// A child component before comment `end`: `__dom.component` with its props as a read, callbacks as statics and
     /// slot fills, or in a list row `__dom.componentItem` with those as the list's shared reads.
     fn fine_component(&mut self, el: &Element, end: &str) -> Result<(), String> {
-        let ChildParts { name, type_args, infer, type_names, props, extra, fills } = self.component_parts(el, true)?;
+        let ChildParts { name, type_args, infer, type_names, props, extra, fills } = self.component_parts(el)?;
         let row = self.row_level();
         let (values, statics): (Vec<_>, Vec<_>) = props.into_iter().partition(|(_, once)| !once);
         let values = Self::object_of(values.into_iter().map(|(p, _)| p));
