@@ -4506,6 +4506,100 @@ mod tests {
     }
 
     #[test]
+    fn attributes_bag_skips_only_the_names_written_after_it() {
+        let src = "@code { bag = {}; n = 1; }\n<p class=\"a\" @attributes=\"bag\" id=\"b\" data-x=\"@n\" @onclick=\"() => n++\" aria:x=\"y\">t</p>\n<Card title=\"t\" @attributes=\"bag\" size=\"s\" />";
+        let g = gen_with(src, &[("Card", "@code { title = \"\"; size = \"\"; }")]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // Only plain names after the bag are skipped: not `class` (before), `@onclick` or the `:` one.
+        has("__dom.attrs(_e1, () => this.bag, [\"id\", \"data-x\"]);");
+        // On a component the bag spreads in written order, so the later `size` wins.
+        has("__dom.component(_e2, Card, (): Partial<Card> => ({ title: \"t\", ...this.bag, size: \"s\" }));");
+        let last = gen_with("@code { bag = {}; }\n<p id=\"b\" @attributes=\"bag\"></p>", &[]);
+        assert!(last.code.contains("__dom.attrs(_e0, () => this.bag);"), "{}", last.code);
+    }
+
+    #[test]
+    fn event_modifiers_set_bits_or_check_a_condition_when_the_event_fires() {
+        let src = "@code { stop = false; rows = [1]; go() {} }\n<a @onclick:preventDefault>a</a>\n<b @onclick:stopPropagation=\"false\" @onclick=\"go\">b</b>\n<i @onclick:stopPropagation=\"stop\">i</i>\n<u @onclick:preventDefault @onclick:stopPropagation=\"true\" @onclick=\"go\">u</u>\n<s @onkeydown:preventDefault=\"stop\" @onkeydown=\"go\">s</s>\n<ul>@for (const r of rows) {<li @onclick:preventDefault @onclick=\"() => go(r)\">@r</li>}</ul>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // A literal modifier with no handler.
+        has("__dom.on(_e1, \"click\", undefined, 1);");
+        // `=\"false\"` is no modifier at all.
+        has("__dom.on(_e2, \"click\", this.go.bind(this));");
+        // A dynamic one with no handler checks its condition in a handler of its own.
+        has("__dom.on(_e3, \"click\", (__e: any) => { if (this.stop) __e.stopPropagation(); });");
+        // Both bits, one of them written `=\"true\"`, with the handler.
+        has("__dom.on(_e4, \"click\", this.go.bind(this), 3);");
+        // A dynamic one with a handler wraps it and returns its result.
+        has("__dom.on(_e5, \"keydown\", (__e: any) => { if (this.stop) __e.preventDefault(); return ((this.go.bind(this)) as (e: any) => unknown)(__e); });");
+        // In a row the handler is one of the list's shared reads, and the bits ride on `onItem`.
+        has("(r): ((e: any) => unknown) => () => this.go(r),");
+        has("__dom.onItem(_e8, \"click\", 0, 1);");
+        assert_eq!(g.code.matches(", undefined, 1);").count(), 1, "{}", g.code);
+    }
+
+    #[test]
+    fn a_child_component_splits_its_arguments() {
+        let card = "@code { title = \"\"; count: number = 0; onSave?: EventCallback<number>; onDone?: EventCallback; }\n@slot:header";
+        let src = "@code { n = 1; card?: Card; save() {} }\n<Card title=\"t\" count=\"@n\" onSave=\"save\" @ondone=\"save\" @ref=\"card\" @key=\"n\">\n  @slot header { <b>h</b> }\n</Card>\n<Card title=\"u\" />";
+        let g = gen_with(src, &[("Card", card)]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        // Values are the typed read; callbacks are statics; then the slots, the `@ref` setter and the key.
+        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: \"t\", count: this.n }), { onSave: __dom.callback(this, this.save.bind(this)), onDone: __dom.callback(this, this.save.bind(this)) }, { header: () => __Component.$fragment((__p) => {");
+        has("}, this) }, (__c) => { this.card = __c; }, this.n);");
+        // Without any of them, only the read.
+        has("__dom.component(_e2, Card, (): Partial<Card> => ({ title: \"u\" }));");
+        // In a row each part is one of the list's shared reads, typed against the component.
+        let rows = "@code { rows = [1]; save() {} }\n<ul>@for (const r of rows) {<Card title=\"@r\" count=\"@r\" @onsave=\"save\" @key=\"r\" />}</ul>";
+        let g = gen_with(rows, &[("Card", card)]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("(r): (Partial<Card>) => ({ title: r, count: r }),");
+        has("(_): (Partial<Card>) => ({ onSave: __dom.callback(this, this.save.bind(this)) }),");
+        has("__dom.componentItem(_e2, Card, 0, 1, undefined, undefined, r);");
+    }
+
+    #[test]
+    fn slot_definitions_with_arguments_and_fallbacks() {
+        let src = "@code { x = 1; i = 2; }\n<div>\n  @slot:item(x, i) { <b>@x</b> }\n  @slot:plain { <i>none</i> }\n  @slot\n</div>";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("declare slots: { item?: (x: this[\"x\"], i: this[\"i\"]) => RenderFragment; plain?: () => RenderFragment; default?: () => RenderFragment };");
+        // Arguments are a read of their own; the fallback follows it.
+        has("__dom.slotAt(_e1, () => this.slots.item, () => [this.x, this.i], (__p) => {");
+        // No arguments: a gap before the fallback. Bare `@slot` is the default slot with neither.
+        has("__dom.slotAt(_e2, () => this.slots.plain, undefined, (__p) => {");
+        has("__dom.slotAt(_e3, () => this.slots.default);");
+    }
+
+    #[test]
+    fn cascades_pass_a_read_and_may_be_fixed() {
+        let src = "@code { value = 1; }\n@cascade:theme(value) { <b/> }\n@cascade:theme(value, fixed) { <i/> }";
+        let g = gen_with(src, &[]);
+        assert!(g.code.contains("__dom.cascadeAt(_e1, \"theme\", () => this.value, false, (__p) => {"), "{}", g.code);
+        assert!(g.code.contains("__dom.cascadeAt(_e2, \"theme\", () => this.value, true, (__p) => {"), "{}", g.code);
+        // Only `fixed` is accepted as the second argument.
+        let err = parse("@cascade:theme(value, true) { <b/> }").err().expect("`true` is not accepted");
+        assert!(err.message.contains("must be fixed"), "{}", err.message);
+    }
+
+    #[test]
+    fn routes_sections_take_the_shape_of_their_kind() {
+        let src = "@Routes(route) {\n  @admin(page) { <main>@page</main> }\n  @\"/legal/:doc\" { <i>@route.params.doc</i> }\n  @notFound { <p>none</p> }\n  @catch(e) { <p>@e</p> }\n}";
+        let g = gen_with(src, &[]);
+        let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
+        has("__dom.routesAt(_e0, __routes, [\n");
+        has("{ kind: \"tag\", tag: \"admin\", render: (_route: Route, page: Markup) => __Component.$fragment((__p) => {");
+        has("{ kind: \"pattern\", match: C.__m1, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return __Component.$fragment((__p) => {");
+        has("__dom.textAt(_e4, () => route.params.doc);");
+        has("{ kind: \"notFound\", render: () => __Component.$fragment((__p) => {");
+        has("{ kind: \"catch\", render: (_route: Route, e: unknown) => __Component.$fragment((__p) => {");
+        has("\n    ]);\n");
+        // The section bodies see the route as a local, never as a member.
+        assert!(!g.code.contains("this.route") && !g.code.contains("this.page") && !g.code.contains("this.e)"), "{}", g.code);
+    }
+
+    #[test]
     fn helpers() {
         assert_eq!(js_string("a\"b\\\n"), r#""a\"b\\\n""#);
         assert_eq!(class_name("my-counter"), "mycounter");
