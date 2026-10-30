@@ -42,6 +42,8 @@ const PAUSED = 8192;
 const STALE = 16384;
 /** A REGION that shows a value (`data` is `Content`): markup builds, else text; rebuilt only when the value is another. */
 const CONTENT = 32768;
+/** An ATTR that sets a bag (`@attributes`); `data` is the last bag. */
+const BAG = 65536;
 
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
@@ -249,6 +251,7 @@ class Binding {
         return;
       }
       case ATTR:
+        if ((flags & BAG) !== 0) return setBag(this, this.#run() as Record<string, unknown> | null | undefined);
         if ((flags & OWNED) !== 0) return ownAttr(this.node as Element, this.data as Owned, this.#run());
         return setAttr(this.node as Element, (flags & ITEM) !== 0 ? (this.read as unknown as Named).$n : this.data, this.#run());
       case REGION: {
@@ -604,6 +607,15 @@ function undoAttr(el: Element, s: Owned): void {
   else if (s.prev !== undefined) setAttr(el, s.name, s.prev);
 }
 
+// ponytail: the same bag object, mutated and given again, can't show which keys it lost.
+function setBag(b: Binding, bag: Record<string, unknown> | null | undefined): void {
+  const el = b.node as Element;
+  const prev = b.data as Record<string, unknown> | null | undefined;
+  if (prev != null) for (const name in prev) if (bag == null || !(name in bag)) setAttr(el, name, null);
+  if (bag != null) for (const name in bag) setAttr(el, name, bag[name]);
+  b.data = bag;
+}
+
 function removeRange(head: Node, tail: Node): void {
   for (let node = head; ; ) {
     const next = node.nextSibling;
@@ -851,6 +863,15 @@ function on(el: Element, event: string, handler: (e: any) => unknown, h: Holder)
   } else el.addEventListener(event, (e) => afterHandler(h.$ctx, handler(e)));
 }
 
+/** `mods`: 1 prevents the default, 2 stops propagation; the handler may be missing. */
+const modified =
+  (handler: ((e: any) => unknown) | undefined, mods: number) =>
+  (e: Event): unknown => {
+    if ((mods & 1) !== 0) e.preventDefault();
+    if ((mods & 2) !== 0) e.stopPropagation();
+    return handler?.(e);
+  };
+
 function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number, branch?: Build): void {
   const h = holder!;
   const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: h.$scope, start, item, branch, index: -1 };
@@ -929,17 +950,21 @@ export const dom = {
     return parent.appendChild(inSvg(parent) ? document.createElementNS(SVG, tag) : document.createElement(tag)) as El<K>;
   },
 
-  /** A handler; afterwards the component re-runs its bindings that read nothing tracked. */
-  on(el: Element, event: string, handler: (e: any) => unknown): void {
+  /** A handler; afterwards the component re-runs its bindings that read nothing tracked. `mods`: 1 preventDefault, 2 stopPropagation. */
+  on(el: Element, event: string, handler: ((e: any) => unknown) | undefined, mods = 0): void {
+    if (mods !== 0) handler = modified(handler, mods);
+    else if (handler === undefined) return;
     const h = holder!;
+    const run = handler;
     // The dispatcher asks a row with shared reads for the handler of its item.
-    on(el, event, (h as Partial<Row>).reads !== undefined && DELEGATED.has(event) ? () => handler : handler, h);
+    on(el, event, (h as Partial<Row>).reads !== undefined && DELEGATED.has(event) ? () => run : run, h);
   },
 
-  /** A row's handler: `reads[i](item)` gives it. */
-  onItem(el: Element, event: string, i: number): void {
+  /** A row's handler: `reads[i](item)` gives it; `mods` as `on`'s. */
+  onItem(el: Element, event: string, i: number, mods = 0): void {
     const row = holder as Row;
-    const read = row.reads![i]!;
+    const given = row.reads![i]!;
+    const read = mods === 0 ? given : (item: unknown) => modified(given(item), mods);
     if (DELEGATED.has(event)) on(el, event, read, row);
     else el.addEventListener(event, (e) => afterHandler(row.$ctx, read(row.item)(e)));
   },
@@ -973,6 +998,11 @@ export const dom = {
     const read = row.reads![i]! as Reads[number] & Named;
     read.$n = name;
     track(new Binding(ATTR | ITEM, el, read, row));
+  },
+
+  /** `@attributes="bag"` on `el`: the bag's values set as `attr`'s; keys the next bag lacks are removed. */
+  attrs(el: Element, read: () => Record<string, unknown> | null | undefined): void {
+    track(new Binding(ATTR | BAG, el, read, undefined));
   },
 
   /** `@attr:name` on the enclosing `el`, taken back off when the region or row holding it goes. */

@@ -2031,14 +2031,105 @@ test("leak check: 1000 consumers under a cascade mounted and removed leave the h
     await tick();
   };
   await cycle();
+  seen = [];
   Bun.gc(true);
   Bun.gc(true);
   const before = heapSize();
   await cycle();
+  seen = [];
   Bun.gc(true);
   Bun.gc(true);
   const after = heapSize();
   console.log(`cascade leak check: before ${before} B, after ${after} B, delta ${after - before} B, consumers ${scope.consumers!.size - 1}`);
   expect(scope.consumers!.size - 1).toBe(0);
   expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+});
+
+// `@attributes="bag"`, as codegen will emit it.
+class Bag extends Component {
+  #bag: Record<string, unknown> | null | undefined = { id: "a", title: "t", disabled: true, value: "v", "aria-busy": false };
+  get bag(): Record<string, unknown> | null | undefined { Component.$reader?.(this, 0); return this.#bag; } set bag(v: Record<string, unknown> | null | undefined) { const p = this.#bag; if (Component.same(p, v)) return; this.#bag = v; this.$changed(0, p); }
+  static { Component.$define(this, ["bag"]); }
+  protected override render(__p: Node): void {
+    const _e0 = dom.el(__p, "input");
+    _e0.setAttribute("name", "n");
+    dom.attrs(_e0, () => this.bag);
+  }
+}
+
+test("@attributes sets the bag's values, and removes the keys a new bag lacks", async () => {
+  const el = host();
+  const b = mount(Bag, el);
+  const input = el.querySelector("input")!;
+  expect(input.outerHTML).toBe('<input name="n" id="a" title="t" disabled="" value="v" aria-busy="false">');
+  expect(input.value).toBe("v");
+  b.bag = { id: "b", "data-x": 1, disabled: false };
+  await tick();
+  expect(input.outerHTML).toBe('<input name="n" id="b" data-x="1">');
+  b.bag = null;
+  await tick();
+  expect(input.outerHTML).toBe('<input name="n">');
+  b.bag = { title: "back" };
+  await tick();
+  expect(input.outerHTML).toBe('<input name="n" title="back">');
+});
+
+// Event modifiers: 1 = preventDefault, 2 = stopPropagation.
+const __mods = dom.template([["div", 0, ["button", 0, "go"], ["form", 0, ["input", 0]]]]);
+class Mods extends Component {
+  hits: string[] = [];
+  protected override render(__p: Node): void {
+    const _e0 = __mods() as HTMLDivElement;
+    const _e1 = _e0.firstChild as HTMLButtonElement;
+    const _e2 = _e1.nextSibling as HTMLFormElement;
+    dom.on(_e0, "click", () => this.hits.push("outer click"));
+    dom.on(_e1, "click", () => this.hits.push("button click"), 3);
+    dom.on(_e0, "submit", () => this.hits.push("outer submit"));
+    dom.on(_e2, "submit", undefined, 3);
+    dom.on(_e2.firstChild as HTMLInputElement, "focus", () => this.hits.push("focus"), 1);
+    __p.appendChild(_e0);
+  }
+}
+
+test("event modifiers: preventDefault and stopPropagation, delegated and not, with or without a handler", () => {
+  const el = host();
+  const m = mount(Mods, el);
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  el.querySelector("button")!.dispatchEvent(click);
+  expect(click.defaultPrevented).toBe(true);
+  const submit = new Event("submit", { bubbles: true, cancelable: true });
+  el.querySelector("form")!.dispatchEvent(submit);
+  expect(submit.defaultPrevented).toBe(true);
+  const focus = new FocusEvent("focus", { cancelable: true });
+  el.querySelector("input")!.dispatchEvent(focus);
+  expect(focus.defaultPrevented).toBe(true);
+  expect(m.hits).toEqual(["button click", "focus"]);
+  el.querySelector("div")!.click();
+  expect(m.hits).toEqual(["button click", "focus", "outer click"]);
+});
+
+const __li = dom.template([["li", 0, ["a", 0, "x"]]]);
+class ModRows extends Component {
+  items = [{ n: 1 }, { n: 2 }];
+  hits: number[] = [];
+  outer = 0;
+  protected override render(__p: Node): void {
+    const _e0 = dom.el(__p, "ul");
+    dom.on(_e0, "click", () => this.outer++);
+    dom.listAt(dom.anchor(_e0), () => this.items, [(r: { n: number }) => () => this.hits.push(r.n)], (__p) => {
+      const _e1 = __li() as HTMLLIElement;
+      dom.onItem(_e1.firstChild as Element, "click", 0, 3);
+      __p.appendChild(_e1);
+    });
+  }
+}
+
+test("event modifiers on a row's handler", () => {
+  const el = host();
+  const m = mount(ModRows, el);
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  el.querySelectorAll("a")[1]!.dispatchEvent(click);
+  expect(click.defaultPrevented).toBe(true);
+  expect(m.hits).toEqual([2]);
+  expect(m.outer).toBe(0);
 });
