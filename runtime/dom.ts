@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $inSvg as inSvg, $isFragment, $leave as leave, ComponentBase, disposeIsland, FINE, patchIsland, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -42,7 +42,7 @@ const STALE = 8192;
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
 /** Where the component was mounted: what an island needs to mount components. */
-type Ctx = { owner: ComponentBase; app: IApplication | undefined; scope: unknown; loose: Binding[]; sweep: boolean };
+type Ctx = { owner: Component; app: IApplication | undefined; scope: unknown; loose: Binding[]; sweep: boolean };
 /** Where bindings are chained: a component's root, a region or a list row. */
 type Holder = { bindings: unknown; ctx: Ctx };
 type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
@@ -201,15 +201,15 @@ class Binding {
 
   #run(parent?: Node): unknown {
     const prev = collecting;
-    const reader = ComponentBase.$reader;
+    const reader = Component.$reader;
     collecting = this;
-    ComponentBase.$reader = collect as unknown as typeof ComponentBase.$reader;
+    Component.$reader = collect as unknown as typeof Component.$reader;
     this.#reset();
     try {
       return (this.flags & ITEM) !== 0 ? this.read(this.data.item, parent) : this.read(parent);
     } finally {
       collecting = prev;
-      ComponentBase.$reader = reader;
+      Component.$reader = reader;
       this.#sweep();
     }
   }
@@ -369,14 +369,14 @@ function afterHandler(ctx: Ctx, result: unknown): void {
 // Runs `run` with no binding collecting, so what it reads subscribes nothing (`@once`).
 function untracked<T>(run: () => T): T {
   const prev = collecting;
-  const reader = ComponentBase.$reader;
+  const reader = Component.$reader;
   collecting = undefined;
-  ComponentBase.$reader = undefined;
+  Component.$reader = undefined;
   try {
     return run();
   } finally {
     collecting = prev;
-    ComponentBase.$reader = reader;
+    Component.$reader = reader;
   }
 }
 
@@ -1078,19 +1078,19 @@ const noop = (): void => {};
 
 /** @internal What `index.ts` calls to mount, refresh and dispose a component's DOM. */
 export const fineHooks = {
-  create(build: Build, owner: ComponentBase, app: IApplication | undefined, scope: unknown): FineRoot {
+  create(build: Build, owner: Component, app: IApplication | undefined, scope: unknown): FineRoot {
     const frag = document.createDocumentFragment();
     const start = frag.appendChild(document.createComment(""));
     const ctx: Ctx = { owner, app, scope, loose: [], sweep: false };
     (owner as unknown as Record<symbol, Ctx>)[FINE] = ctx;
     const root: FineRoot & Holder = { bindings: undefined, ctx, start, end: start };
     // Reads outside a binding subscribe nothing: a component is never re-rendered by what it reads.
-    const reader = ComponentBase.$reader;
-    ComponentBase.$reader = undefined;
+    const reader = Component.$reader;
+    Component.$reader = undefined;
     try {
       within(root, () => build(frag));
     } finally {
-      ComponentBase.$reader = reader;
+      Component.$reader = reader;
     }
     root.end = frag.appendChild(document.createComment(""));
     return root;
@@ -1106,7 +1106,7 @@ export const fineHooks = {
     if (memos !== undefined) for (const m of memos) m?.dispose();
     disposeAll(root as FineRoot & Holder);
   },
-  handled(owner: ComponentBase, result: unknown): void {
+  handled(owner: Component, result: unknown): void {
     const ctx = (owner as unknown as Record<symbol, Ctx | undefined>)[FINE];
     if (ctx !== undefined) afterHandler(ctx, result);
   },

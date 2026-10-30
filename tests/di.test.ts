@@ -8,15 +8,15 @@ const script = join(import.meta.dir, "..", "src", "di.ts");
 
 // Stand-ins for what codegen emits into .xzor/ (the folder is gitignored).
 const generated: Record<string, string> = {
-  "App.xzor.ts": `import { ComponentBase, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
-export default class App extends ComponentBase {
+  "App.xzor.ts": `import { Component, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
+export default class App extends Component {
   protected override buildRenderTree(__b: RenderTreeBuilder): void {}
 }
 `,
-  "Counter.xzor.ts": `import { ComponentBase, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
+  "Counter.xzor.ts": `import { Component, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
 import type { IDatabase } from "./services/data";
 import { AuthService } from "./main";
-export default class Counter extends ComponentBase {
+export default class Counter extends Component {
   static readonly inject = ["db", "auth"];
   readonly db: IDatabase;
   readonly auth: AuthService;
@@ -1425,7 +1425,7 @@ test.each([
   expect(code, out).toBe(0);
   const generated = readFileSync(join(dir, ".xzor", "Header.xzor.ts"), "utf8");
   expect(generated).toContain("readonly posts: Remote<IPosts>;");
-  expect(generated).toContain('import { ComponentBase, dom, type El, type RenderTreeBuilder, type Remote } from "@source-crafter/xzor-runtime";');
+  expect(generated).toContain('import { Component, dom, type El, type RenderTreeBuilder, type Remote } from "@source-crafter/xzor-runtime";');
   const tsc = Bun.spawnSync(["bun", "x", "tsc", "-p", dir, "--noEmit"], { cwd: repo });
   // The scratch project has no Bun/node types, so only the lines about the view are asserted.
   const errors = (tsc.stdout.toString() + tsc.stderr.toString()).split("\n").filter((l) => /Header\.xzor/.test(l) && !/xzor-runtime\/model/.test(l));

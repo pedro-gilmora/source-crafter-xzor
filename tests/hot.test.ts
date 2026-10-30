@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, type RenderTreeBuilder, mount } from "../runtime/index";
+import { Component, type RenderTreeBuilder, mount } from "../runtime/index";
 import { installHot } from "../npm/xzor/bin/hot";
 
 const ID = ".xzor/C.xzor.ts";
@@ -22,7 +22,7 @@ const click = (el: Element) => el.dispatchEvent(new MouseEvent("click", { bubble
 
 /** A counter as codegen emits it (`<b>n:@n</b>` plus a button); a fresh class per test, since patching mutates it. */
 const counter = () =>
-  class C extends ComponentBase {
+  class C extends Component {
     n = 0;
 
     protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -37,7 +37,7 @@ const counter = () =>
     }
   };
 
-const V2 = `class C extends ComponentBase {
+const V2 = `class C extends Component {
   n = 0;
   buildRenderTree(__b) {
     __b.openElement("i");
@@ -51,22 +51,22 @@ return C;`;
 test("a new reference field is not shared between instances", () => {
   const { host, hot } = setup();
   const C = counter();
-  class List extends ComponentBase {
+  class List extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addComponent(C, {});
       b.addComponent(C, {});
     }
   }
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   const seen: any[] = ((globalThis as any).__seen = []);
-  const code = `class C extends ComponentBase {
+  const code = `class C extends Component {
     n = 0;
     items = [];
     buildRenderTree(__b) { globalThis.__seen.push(this); __b.addContent(this.items.length); }
   }
   return C;`;
   mount(List, host);
-  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase"] }])).toBe(true);
+  expect(hot.apply([{ id: ID, code, imports: ["Component"] }])).toBe(true);
   const [a, b] = [...new Set(seen)];
   expect(a.items).toEqual([]);
   expect(a.items).not.toBe(b.items);
@@ -75,7 +75,7 @@ test("a new reference field is not shared between instances", () => {
 
 test("members deleted by an edit are removed", () => {
   const { host, hot } = setup();
-  class Quiet extends ComponentBase {
+  class Quiet extends Component {
     n = 0;
     protected override shouldRender(): boolean {
       return false;
@@ -84,14 +84,14 @@ test("members deleted by an edit are removed", () => {
       b.addText("old");
     }
   }
-  hot.register(ID, Quiet, () => ({ ComponentBase }));
+  hot.register(ID, Quiet, () => ({ Component }));
   mount(Quiet, host);
-  const code = `class Quiet extends ComponentBase {
+  const code = `class Quiet extends Component {
     n = 0;
     buildRenderTree(__b) { __b.addText("new"); }
   }
   return Quiet;`;
-  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase"] }])).toBe(true);
+  expect(hot.apply([{ id: ID, code, imports: ["Component"] }])).toBe(true);
   expect(host.textContent).toBe("new");
 });
 
@@ -103,12 +103,12 @@ test("installHot publishes the registry on the target", () => {
 test("patches the render and keeps the state", () => {
   const { host, hot, calls } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   const root = mount(C, host);
   click(host.querySelector("button")!);
   expect(host.textContent).toBe("n:5set");
 
-  expect(hot.apply([{ id: ID, code: V2, imports: ["ComponentBase"] }])).toBe(true);
+  expect(hot.apply([{ id: ID, code: V2, imports: ["Component"] }])).toBe(true);
   expect(host.querySelector("i")!.textContent).toBe("count 5");
   expect(root.n).toBe(5);
   expect(calls.reload).toBe(0);
@@ -117,11 +117,11 @@ test("patches the render and keeps the state", () => {
 test("adds fields the live instances lack", () => {
   const { host, hot } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   mount(C, host);
   click(host.querySelector("button")!);
 
-  const code = `class C extends ComponentBase {
+  const code = `class C extends Component {
     n = 0;
     label = "hi";
     buildRenderTree(__b) {
@@ -132,14 +132,14 @@ test("adds fields the live instances lack", () => {
     }
   }
   return C;`;
-  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase"] }])).toBe(true);
+  expect(hot.apply([{ id: ID, code, imports: ["Component"] }])).toBe(true);
   expect(host.querySelector("i")!.textContent).toBe("hi5");
 });
 
 test("a child keeps its instance and state when the parent is patched", () => {
   const { host, hot } = setup();
   const kids: Child[] = [];
-  class Child extends ComponentBase {
+  class Child extends Component {
     count = 0;
 
     constructor() {
@@ -157,7 +157,7 @@ test("a child keeps its instance and state when the parent is patched", () => {
       b.closeElement();
     }
   }
-  class Parent extends ComponentBase {
+  class Parent extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("h1");
       b.addText("old");
@@ -165,12 +165,12 @@ test("a child keeps its instance and state when the parent is patched", () => {
       b.addComponent(Child, {});
     }
   }
-  hot.register(".xzor/Parent.xzor.ts", Parent, () => ({ ComponentBase, Child }));
+  hot.register(".xzor/Parent.xzor.ts", Parent, () => ({ Component, Child }));
   mount(Parent, host);
   click(host.querySelector("button")!);
   expect(host.querySelector("span")!.textContent).toBe("3");
 
-  const code = `class Parent extends ComponentBase {
+  const code = `class Parent extends Component {
     buildRenderTree(__b) {
       __b.openElement("h2");
       __b.addText("new");
@@ -179,7 +179,7 @@ test("a child keeps its instance and state when the parent is patched", () => {
     }
   }
   return Parent;`;
-  expect(hot.apply([{ id: ".xzor/Parent.xzor.ts", code, imports: ["ComponentBase", "Child"] }])).toBe(true);
+  expect(hot.apply([{ id: ".xzor/Parent.xzor.ts", code, imports: ["Component", "Child"] }])).toBe(true);
   expect(host.querySelector("h2")!.textContent).toBe("new");
   expect(host.querySelector("span")!.textContent).toBe("3");
   expect(kids.length).toBe(1);
@@ -189,12 +189,12 @@ test("a child keeps its instance and state when the parent is patched", () => {
 test("a second patch applies on top of the first", () => {
   const { host, hot } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   mount(C, host);
   click(host.querySelector("button")!);
-  expect(hot.apply([{ id: ID, code: V2, imports: ["ComponentBase"] }])).toBe(true);
+  expect(hot.apply([{ id: ID, code: V2, imports: ["Component"] }])).toBe(true);
 
-  const v3 = `class C extends ComponentBase {
+  const v3 = `class C extends Component {
     n = 0;
     buildRenderTree(__b) {
       __b.openElement("u");
@@ -204,7 +204,7 @@ test("a second patch applies on top of the first", () => {
     }
   }
   return C;`;
-  expect(hot.apply([{ id: ID, code: v3, imports: ["ComponentBase"] }])).toBe(true);
+  expect(hot.apply([{ id: ID, code: v3, imports: ["Component"] }])).toBe(true);
   expect(host.querySelector("u")!.textContent).toBe("total 5");
   expect(host.querySelector("i")).toBe(null);
 });
@@ -212,8 +212,8 @@ test("a second patch applies on top of the first", () => {
 test("a component that is not on the page renders the new markup when it mounts", () => {
   const { host, hot } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
-  expect(hot.apply([{ id: ID, code: V2, imports: ["ComponentBase"] }])).toBe(true);
+  hot.register(ID, C, () => ({ Component }));
+  expect(hot.apply([{ id: ID, code: V2, imports: ["Component"] }])).toBe(true);
   mount(C, host);
   expect(host.querySelector("i")!.textContent).toBe("count 0");
 });
@@ -221,13 +221,13 @@ test("a component that is not on the page renders the new markup when it mounts"
 test("falls back when an import binding is missing", () => {
   const { host, hot, calls } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   mount(C, host);
   const code = `class C extends Helper {
     buildRenderTree(__b) { __b.addText("new"); }
   }
   return C;`;
-  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase", "Helper"] }])).toBe(false);
+  expect(hot.apply([{ id: ID, code, imports: ["Component", "Helper"] }])).toBe(false);
   expect(calls.reload).toBe(1);
   expect(host.textContent).toBe("n:0set");
 });
@@ -235,7 +235,7 @@ test("falls back when an import binding is missing", () => {
 test("falls back on an undeclared identifier", () => {
   const { hot, calls } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   const code = `class C extends Helper {
     buildRenderTree(__b) { __b.addText("new"); }
   }
@@ -247,14 +247,14 @@ test("falls back on an undeclared identifier", () => {
 test("falls back on a #private member", () => {
   const { host, hot, calls } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   mount(C, host);
-  const code = `class C extends ComponentBase {
+  const code = `class C extends Component {
     #secret = 1;
     buildRenderTree(__b) { __b.addText("new " + this.#secret); }
   }
   return C;`;
-  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase"] }])).toBe(false);
+  expect(hot.apply([{ id: ID, code, imports: ["Component"] }])).toBe(false);
   expect(calls.reload).toBe(1);
   expect(host.textContent).toBe("n:0set");
 });
@@ -262,20 +262,20 @@ test("falls back on a #private member", () => {
 test("falls back when the new render throws", () => {
   const { host, hot, calls } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   mount(C, host);
-  const code = `class C extends ComponentBase {
+  const code = `class C extends Component {
     buildRenderTree(__b) { throw new Error("boom"); }
   }
   return C;`;
-  expect(hot.apply([{ id: ID, code, imports: ["ComponentBase"] }])).toBe(false);
+  expect(hot.apply([{ id: ID, code, imports: ["Component"] }])).toBe(false);
   expect(calls.reload).toBe(1);
 });
 
 test("falls back when the base class changed", () => {
   const { hot, calls } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   const code = `class C {
     buildRenderTree(__b) { __b.addText("new"); }
   }
@@ -286,23 +286,23 @@ test("falls back when the base class changed", () => {
 
 test("falls back for an unknown id", () => {
   const { hot, calls } = setup();
-  expect(hot.apply([{ id: ".xzor/Gone.xzor.ts", code: V2, imports: ["ComponentBase"] }])).toBe(false);
+  expect(hot.apply([{ id: ".xzor/Gone.xzor.ts", code: V2, imports: ["Component"] }])).toBe(false);
   expect(calls.reload).toBe(1);
 });
 
 test("applies no update when another one in the batch fails", () => {
   const { host, hot, calls } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
+  hot.register(ID, C, () => ({ Component }));
   mount(C, host);
-  const bad = `class D extends ComponentBase {
+  const bad = `class D extends Component {
     #secret = 1;
     buildRenderTree(__b) { __b.addText("bad"); }
   }
   return D;`;
   const updates = [
-    { id: ID, code: V2, imports: ["ComponentBase"] },
-    { id: ".xzor/D.xzor.ts", code: bad, imports: ["ComponentBase"] },
+    { id: ID, code: V2, imports: ["Component"] },
+    { id: ".xzor/D.xzor.ts", code: bad, imports: ["Component"] },
   ];
   expect(hot.apply(updates)).toBe(false);
   expect(calls.reload).toBe(1);
@@ -312,8 +312,8 @@ test("applies no update when another one in the batch fails", () => {
 test("a disposed instance is not re-rendered", () => {
   const { host, hot } = setup();
   const C = counter();
-  hot.register(ID, C, () => ({ ComponentBase }));
-  class Shell extends ComponentBase {
+  hot.register(ID, C, () => ({ Component }));
+  class Shell extends Component {
     show = true;
 
     protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -329,6 +329,6 @@ test("a disposed instance is not re-rendered", () => {
   mount(Shell, host);
   click(host.querySelectorAll("button")[1]!);
   expect(host.querySelector("b")).toBe(null);
-  expect(hot.apply([{ id: ID, code: V2, imports: ["ComponentBase"] }])).toBe(true);
+  expect(hot.apply([{ id: ID, code: V2, imports: ["Component"] }])).toBe(true);
   expect(host.querySelector("i")).toBe(null);
 });

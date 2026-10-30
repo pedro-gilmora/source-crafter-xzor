@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, type IApplication, type RenderTreeBuilder, type VRegion, mount } from "./index";
+import { Component, type IApplication, type RenderTreeBuilder, type VRegion, mount } from "./index";
 
 // Written the way xzor emits `@cascade:name(value)` providers and `@Cascade` members.
 
@@ -7,7 +7,7 @@ const host = () => document.createElement("div");
 // Components keep an empty anchor comment after their nodes; compare markup without them.
 const html = (el: Element) => el.innerHTML.replaceAll("<!---->", "");
 
-class Themed extends ComponentBase {
+class Themed extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
   renders = 0;
@@ -23,7 +23,7 @@ class Themed extends ComponentBase {
   }
 }
 
-class Nested extends ComponentBase {
+class Nested extends Component {
   theme = "dark";
   outer?: Themed;
   inner?: Themed;
@@ -48,7 +48,7 @@ test("a consumer receives the nearest provider's value", () => {
   expect(root.inner!.renders).toBe(1);
 });
 
-class Plain extends ComponentBase {
+class Plain extends Component {
   label = "";
   renders = 0;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -57,7 +57,7 @@ class Plain extends ComponentBase {
   }
 }
 
-class Board extends ComponentBase {
+class Board extends Component {
   theme = "dark";
   consumer?: Themed;
   sibling?: Plain;
@@ -85,7 +85,7 @@ test("changing the provider re-renders only its consumers", () => {
   expect(board.sibling!.renders).toBe(1);
 });
 
-class Configured extends ComponentBase {
+class Configured extends Component {
   static readonly cascades = [["cfg", "cfg"]] as const;
   cfg = "none";
   renders = 0;
@@ -95,7 +95,7 @@ class Configured extends ComponentBase {
   }
 }
 
-class FixedRoot extends ComponentBase {
+class FixedRoot extends Component {
   cfg = "one";
   consumer?: Configured;
   region?: VRegion;
@@ -120,7 +120,7 @@ test("fixed providers do not update consumers", () => {
   expect(root.region!.cascade!.consumers).toBeUndefined();
 });
 
-class Leaf extends ComponentBase {
+class Leaf extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -130,7 +130,7 @@ class Leaf extends ComponentBase {
   }
 }
 
-class Branch extends ComponentBase {
+class Branch extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
   show = false;
@@ -144,7 +144,7 @@ class Branch extends ComponentBase {
   }
 }
 
-class Trunk extends ComponentBase {
+class Trunk extends Component {
   branch?: Branch;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openCascade("theme", "dark");
@@ -164,7 +164,7 @@ test("a consumer re-rendering itself keeps its scope", () => {
   expect(el.querySelector("i")!.textContent).toBe("dark");
 });
 
-class Toggle extends ComponentBase {
+class Toggle extends Component {
   theme = "dark";
   show = true;
   consumer?: Themed;
@@ -192,7 +192,7 @@ test("disposed consumers are unsubscribed", () => {
   expect(consumer.theme).toBe("dark");
 });
 
-class Removable extends ComponentBase {
+class Removable extends Component {
   show = true;
   theme = "dark";
   region?: VRegion;
@@ -227,7 +227,7 @@ test("a missing provider leaves the field", () => {
   expect(html(el)).toBe("<span>none</span>");
 });
 
-class Injected extends ComponentBase {
+class Injected extends Component {
   static readonly inject = ["dep"] as const;
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
@@ -238,7 +238,7 @@ class Injected extends ComponentBase {
   }
 }
 
-class AsyncHost extends ComponentBase {
+class AsyncHost extends Component {
   theme = "dark";
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openCascade("theme", this.theme);
@@ -248,8 +248,8 @@ class AsyncHost extends ComponentBase {
 }
 
 test("an async consumer gets the current value on arrival", async () => {
-  let resolve!: (c: ComponentBase) => void;
-  const arrival = new Promise<ComponentBase>((r) => (resolve = r));
+  let resolve!: (c: Component) => void;
+  const arrival = new Promise<Component>((r) => (resolve = r));
   const app: IApplication = { createComponent: (type) => (type === Injected ? arrival : undefined) };
   const el = host();
   const root = mount(AsyncHost, el, app);
@@ -263,7 +263,7 @@ test("an async consumer gets the current value on arrival", async () => {
 });
 
 // `@if` emits one region for all branches, so two different regions can meet at the same index.
-class BranchSwap extends ComponentBase {
+class BranchSwap extends Component {
   provide = true;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openRegion();
@@ -294,7 +294,7 @@ test("a provider region is never patched against a plain region", () => {
   expect(html(el)).toBe("<span>dark</span>");
 });
 
-class NameSwap extends ComponentBase {
+class NameSwap extends Component {
   role = false;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openRegion();
@@ -321,7 +321,7 @@ test("providers with different names are never patched against each other", () =
   expect(html(el)).toBe("<span>none</span>");
 });
 
-class Boxed extends ComponentBase {
+class Boxed extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
   data: object = {};
@@ -336,7 +336,7 @@ class Boxed extends ComponentBase {
   }
 }
 
-class Pair extends ComponentBase {
+class Pair extends Component {
   theme = "dark";
   data = { n: 1 };
   consumer?: Boxed;
@@ -360,7 +360,7 @@ test("a consumer whose props and cascade both change renders once", () => {
   expect(consumer.paramsSet).toBe(2);
 });
 
-class Fragile extends ComponentBase {
+class Fragile extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
   protected override onParametersSet(): void {
@@ -371,7 +371,7 @@ class Fragile extends ComponentBase {
   }
 }
 
-class TwoConsumers extends ComponentBase {
+class TwoConsumers extends Component {
   theme = "dark";
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openCascade("theme", this.theme);
@@ -413,7 +413,7 @@ test("a throwing consumer does not stop the others", async () => {
   expect(el.querySelector("span")!.textContent).toBe("light");
 });
 
-class FixedLate extends ComponentBase {
+class FixedLate extends Component {
   cfg = "one";
   show = false;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -434,7 +434,7 @@ test("a fixed provider keeps its first value for later consumers", () => {
   expect(html(el)).toBe("one");
 });
 
-class Twice extends ComponentBase {
+class Twice extends Component {
   static readonly cascades = [
     ["theme", "theme"],
     ["alt", "theme"],
@@ -448,7 +448,7 @@ class Twice extends ComponentBase {
   }
 }
 
-class TwiceRoot extends ComponentBase {
+class TwiceRoot extends Component {
   theme = "dark";
   consumer?: Twice;
   region?: VRegion;

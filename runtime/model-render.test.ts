@@ -1,6 +1,6 @@
 import { beforeEach, expect, spyOn, test } from "bun:test";
 import {
-  ComponentBase,
+  Component,
   type IApplication,
   type RenderTreeBuilder,
   type Route,
@@ -40,7 +40,7 @@ let views: RowView[];
 let labels: Label[];
 let leaf: Leaf | undefined;
 
-class RowView extends ComponentBase {
+class RowView extends Component {
   row!: Row;
   count = 0;
   constructor() {
@@ -56,7 +56,7 @@ class RowView extends ComponentBase {
   }
 }
 
-class Grid extends ComponentBase {
+class Grid extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -69,7 +69,7 @@ class Grid extends ComponentBase {
   }
 }
 
-class Label extends ComponentBase {
+class Label extends Component {
   count = 0;
   constructor() {
     super();
@@ -82,7 +82,7 @@ class Label extends ComponentBase {
   }
 }
 
-class Pair extends ComponentBase {
+class Pair extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -92,7 +92,7 @@ class Pair extends ComponentBase {
   }
 }
 
-class Summary extends ComponentBase {
+class Summary extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -101,7 +101,7 @@ class Summary extends ComponentBase {
   }
 }
 
-class Pay extends ComponentBase {
+class Pay extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -110,7 +110,7 @@ class Pay extends ComponentBase {
   }
 }
 
-class Toggle extends ComponentBase {
+class Toggle extends Component {
   count = 0;
   show = true;
 
@@ -122,7 +122,7 @@ class Toggle extends ComponentBase {
   }
 }
 
-class Leaf extends ComponentBase {
+class Leaf extends Component {
   count = 0;
   constructor() {
     super();
@@ -135,7 +135,7 @@ class Leaf extends ComponentBase {
   }
 }
 
-class Shell extends ComponentBase {
+class Shell extends Component {
   count = 0;
   show = true;
 
@@ -147,7 +147,7 @@ class Shell extends ComponentBase {
   }
 }
 
-class Editor extends ComponentBase {
+class Editor extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -159,7 +159,7 @@ class Editor extends ComponentBase {
   }
 }
 
-class Writer extends ComponentBase {
+class Writer extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -171,7 +171,7 @@ class Writer extends ComponentBase {
 
 let chore: Chore;
 
-class ChoreView extends ComponentBase {
+class ChoreView extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -205,7 +205,7 @@ for (let i = 0; i < wideNames.length; i++)
 type WideModel = Wide & Record<string, number>;
 let wide: WideModel;
 
-class Near extends ComponentBase {
+class Near extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -214,7 +214,7 @@ class Near extends ComponentBase {
   }
 }
 
-class Far extends ComponentBase {
+class Far extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -223,7 +223,7 @@ class Far extends ComponentBase {
   }
 }
 
-class Both extends ComponentBase {
+class Both extends Component {
   near!: Near;
   far!: Far;
 
@@ -233,7 +233,7 @@ class Both extends ComponentBase {
   }
 }
 
-class Boom extends ComponentBase {
+class Boom extends Component {
   count = 0;
   constructor() {
     super();
@@ -258,13 +258,13 @@ const page = (component: unknown): RouteTable => [
 ];
 
 const caught: RouteSection[] = [
-  { kind: "catch", render: (_route: Route, error: unknown) => ComponentBase.fragment((b) => b.addContent(String(error))) },
+  { kind: "catch", render: (_route: Route, error: unknown) => Component.fragment((b) => b.addContent(String(error))) },
 ];
 
 function routed(table: RouteTable, app?: IApplication): void {
   // The test never unmounts, so it must not leave a document listener behind.
   setNavigationForTests({ current: () => new URL("http://localhost/"), navigate() {}, subscribe: () => () => {} });
-  class Block extends ComponentBase {
+  class Block extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addRoutes(table, caught);
     }
@@ -277,7 +277,7 @@ function routed(table: RouteTable, app?: IApplication): void {
 // Queued after the flush that a change schedules.
 const tick = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 
-function show<C extends ComponentBase>(type: new () => C): C {
+function show<C extends Component>(type: new () => C): C {
   host = document.createElement("main");
   document.body.replaceChildren(host);
   return mount(type, host);
@@ -413,7 +413,7 @@ test("an EntitySet mutation re-renders the components reading that property", as
   expect(host.textContent).toBe("ab");
 });
 
-class StateView extends ComponentBase {
+class StateView extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -422,7 +422,7 @@ class StateView extends ComponentBase {
   }
 }
 
-class SetView extends ComponentBase {
+class SetView extends Component {
   count = 0;
   set = new EntitySet<Row>();
 
@@ -432,7 +432,7 @@ class SetView extends ComponentBase {
   }
 }
 
-class Dirty extends ComponentBase {
+class Dirty extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -443,7 +443,7 @@ class Dirty extends ComponentBase {
 
 let made: Row | undefined;
 
-class Maker extends ComponentBase {
+class Maker extends Component {
   count = 0;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {

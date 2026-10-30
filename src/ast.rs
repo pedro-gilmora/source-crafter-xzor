@@ -72,7 +72,7 @@ pub struct Document {
     pub pages: Vec<PageRoute>,
     /// `@typeparam` declarations, e.g. `T extends object`.
     pub type_params: Vec<Src>,
-    /// `@inherits Base<T>`: the base class instead of `ComponentBase`.
+    /// `@inherits Base<T>`: the base class instead of `Component`.
     pub inherits: Option<Src>,
     /// Compiled to DOM bindings with no render pass (base `FineComponent`). Always, outside the compiler's own
     /// tests of the virtual-DOM emitter that islands use.

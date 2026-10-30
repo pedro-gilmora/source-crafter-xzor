@@ -331,7 +331,7 @@ type Field = {
 
 type ClassHead = { name: string; model: string; open: number; close: number };
 
-/** Local names bound to `Model`, a component base (`ComponentBase`) and `Untracked` by value imports from the runtime. */
+/** Local names bound to `Model`, a component base (`Component`, or the deprecated `ComponentBase`) and `Untracked` by value imports from the runtime. */
 function modelLocals(src: string): { model: Set<string>; fine: Set<string>; untracked: Set<string> } {
   const model = new Set<string>();
   const fine = new Set<string>();
@@ -340,7 +340,7 @@ function modelLocals(src: string): { model: Set<string>; fine: Set<string>; untr
     if (m[1]) continue;
     for (const spec of m[2]!.split(",")) {
       const [name, as, alias] = spec.trim().split(/\s+/);
-      if (name === "ComponentBase") fine.add(as === "as" && alias ? alias : name);
+      if (name === "Component" || name === "ComponentBase") fine.add(as === "as" && alias ? alias : name);
     }
   }
   for (const m of src.matchAll(MODEL_IMPORT)) {

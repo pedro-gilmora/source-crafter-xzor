@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, type RenderTreeBuilder, mount } from "./index";
+import { Component, type RenderTreeBuilder, mount } from "./index";
 
 // Written the way xzor emits @attributes and event modifiers.
 
-class Splat extends ComponentBase {
+class Splat extends Component {
   extra: Record<string, unknown> = { id: "a", title: "from splat", hidden: false };
   clicks = 0;
   protected override buildRenderTree(b: RenderTreeBuilder): void {

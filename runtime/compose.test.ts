@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, type EventCallback, type RenderFragment, type RenderTreeBuilder, mount } from "./index";
+import { Component, type EventCallback, type RenderFragment, type RenderTreeBuilder, mount } from "./index";
 
 // Written the way xzor emits slots, callbacks and @bind.
 
-class Panel extends ComponentBase {
+class Panel extends Component {
   declare slots: { default?: () => RenderFragment; header?: (n: number) => RenderFragment };
   onPing?: EventCallback<number>;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("section");
-    b.addContent(this.slots.header?.(7) ?? ComponentBase.fragment((__b) => { __b.addText("no header"); }));
+    b.addContent(this.slots.header?.(7) ?? Component.fragment((__b) => { __b.addText("no header"); }));
     b.addContent(this.slots.default?.() ?? null);
     b.openElement("button");
     b.addEventHandler("click", () => this.onPing?.(1));
@@ -17,7 +17,7 @@ class Panel extends ComponentBase {
   }
 }
 
-class Page extends ComponentBase {
+class Page extends Component {
   pings = 0;
   name = "a";
   age = 1;
@@ -27,26 +27,26 @@ class Page extends ComponentBase {
       Panel,
       { onPing: __b.callback((n) => (this.pings += n)) },
       {
-        default: () => ComponentBase.fragment((__b) => {
+        default: () => Component.fragment((__b) => {
           __b.openElement("p");
           __b.addContent(this.pings);
           __b.closeElement();
         }),
       },
     );
-    __b.addComponent(Panel, {}, { header: (n) => ComponentBase.fragment((__b) => { __b.addContent(n * 2); }) });
+    __b.addComponent(Panel, {}, { header: (n) => Component.fragment((__b) => { __b.addContent(n * 2); }) });
     __b.openElement("input");
     __b.addAttribute("value", this.name);
-    __b.addEventHandler("change", (__e) => { this.name = ComponentBase.bindValue(__e, this.name); });
+    __b.addEventHandler("change", (__e) => { this.name = Component.bindValue(__e, this.name); });
     __b.closeElement();
     __b.openElement("input");
     __b.addAttribute("value", this.age);
-    __b.addEventHandler("input", (__e) => { this.age = ComponentBase.bindValue(__e, this.age); });
+    __b.addEventHandler("input", (__e) => { this.age = Component.bindValue(__e, this.age); });
     __b.closeElement();
     __b.openElement("input");
     __b.addAttribute("type", "checkbox");
     __b.addAttribute("checked", this.ok);
-    __b.addEventHandler("change", (__e) => { this.ok = ComponentBase.bindValue(__e, this.ok); });
+    __b.addEventHandler("change", (__e) => { this.ok = Component.bindValue(__e, this.ok); });
     __b.closeElement();
   }
 }

@@ -137,7 +137,7 @@ test("a tsconfig.json change rebuilds everything", async () => {
 
 test("renaming a member of an inherited .ts base recompiles the inheriting component", async () => {
   const base = (name: string) =>
-    `import { ComponentBase } from "@source-crafter/xzor-runtime";\nexport abstract class Titled extends ComponentBase { ${name} = "t"; }\n`;
+    `import { Component } from "@source-crafter/xzor-runtime";\nexport abstract class Titled extends Component { ${name} = "t"; }\n`;
   writeFileSync(join(dir, "base.ts"), base("title"));
   await waitFor("watching");
   writeFileSync(join(dir, "D.xzor"), `@import { Titled } from "./base"\n@inherits Titled\n<p>@title</p>\n`);

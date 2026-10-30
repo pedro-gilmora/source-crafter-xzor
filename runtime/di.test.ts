@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import {
-  ComponentBase,
+  Component,
   type IApplication,
   type RenderFragment,
   type RenderTreeBuilder,
@@ -31,7 +31,7 @@ test("polyfillDisposeSymbols fills missing dispose symbols and keeps native ones
 
 // Written the way xzor emits components that take injected services.
 
-class Hello extends ComponentBase {
+class Hello extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("p");
     b.addText("hello");
@@ -39,7 +39,7 @@ class Hello extends ComponentBase {
   }
 }
 
-class Needs extends ComponentBase {
+class Needs extends Component {
   static readonly inject = ["dep"] as const;
   constructor(readonly dep: string) {
     super();
@@ -51,7 +51,7 @@ class Needs extends ComponentBase {
   }
 }
 
-class Holder extends ComponentBase {
+class Holder extends Component {
   declare slots: { default?: () => RenderFragment };
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("div");
@@ -60,17 +60,17 @@ class Holder extends ComponentBase {
   }
 }
 
-class Middle extends ComponentBase {
+class Middle extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.addComponent(Needs, {});
   }
 }
 
-class Tree extends ComponentBase {
+class Tree extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.addComponent(Middle, {});
     b.addComponent(Holder, {}, {
-      default: () => ComponentBase.fragment((__b) => {
+      default: () => Component.fragment((__b) => {
         __b.addComponent(Needs, {});
       }),
     });
@@ -153,7 +153,7 @@ test("decorators are no-ops", () => {
   expect(typeof SharedInstance).toBe("symbol");
 });
 
-class Late extends ComponentBase {
+class Late extends Component {
   show = true;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("i");
@@ -187,8 +187,8 @@ test("async component removed before arrival is disposed", async () => {
       log.push("dispose");
     }
   }
-  let resolve!: (c: ComponentBase) => void;
-  const arrival = new Promise<ComponentBase>((r) => (resolve = r));
+  let resolve!: (c: Component) => void;
+  const arrival = new Promise<Component>((r) => (resolve = r));
   const el = host();
   const page = mount(Late, el, { createComponent: (type) => (type === Needs ? arrival : undefined) });
   page.show = false;
@@ -201,7 +201,7 @@ test("async component removed before arrival is disposed", async () => {
 
 test("async component keeps the latest props and lifecycle when it arrives", async () => {
   const log: string[] = [];
-  class Label extends ComponentBase {
+  class Label extends Component {
     static readonly inject = ["dep"] as const;
     text = "";
     protected override onAfterRender(first: boolean): void {
@@ -211,14 +211,14 @@ test("async component keeps the latest props and lifecycle when it arrives", asy
       b.addContent(this.text);
     }
   }
-  class Outer extends ComponentBase {
+  class Outer extends Component {
     text = "one";
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addComponent(Label, { text: this.text });
     }
   }
-  let resolve!: (c: ComponentBase) => void;
-  const arrival = new Promise<ComponentBase>((r) => (resolve = r));
+  let resolve!: (c: Component) => void;
+  const arrival = new Promise<Component>((r) => (resolve = r));
   const el = host();
   const outer = mount(Outer, el, { createComponent: (type) => (type === Label ? arrival : undefined) });
   outer.text = "two";
@@ -234,7 +234,7 @@ test("async component keeps the latest props and lifecycle when it arrives", asy
 
 test("rejected async component leaves its place empty and surfaces the error", async () => {
   const failure = new Error("boom");
-  const arrival = Promise.reject<ComponentBase>(failure);
+  const arrival = Promise.reject<Component>(failure);
   const el = host();
   // The runtime rethrows from a microtask; capture it instead of failing the test runner.
   const original = globalThis.queueMicrotask;
@@ -260,7 +260,7 @@ test("rejected async component leaves its place empty and surfaces the error", a
 
 test("components implementing Disposable are disposed on removal", () => {
   const log: string[] = [];
-  class Both extends ComponentBase {
+  class Both extends Component {
     protected override dispose(): void {
       log.push("hook");
     }
@@ -275,7 +275,7 @@ test("components implementing Disposable are disposed on removal", () => {
       b.addText("x");
     }
   }
-  class Switch extends ComponentBase {
+  class Switch extends Component {
     show = true;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openRegion();
@@ -313,8 +313,8 @@ async function thrownFrom(run: () => unknown): Promise<unknown[]> {
 }
 
 function deferred() {
-  let resolve!: (c: ComponentBase) => void;
-  const promise = new Promise<ComponentBase>((r) => (resolve = r));
+  let resolve!: (c: Component) => void;
+  const promise = new Promise<Component>((r) => (resolve = r));
   return { promise, resolve };
 }
 
@@ -332,7 +332,7 @@ const trackedNeeds = (log: string[]) =>
     }
   };
 
-class Shell extends ComponentBase {
+class Shell extends Component {
   show = true;
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openRegion();
@@ -341,7 +341,7 @@ class Shell extends ComponentBase {
   }
 }
 
-class Wrapper extends ComponentBase {
+class Wrapper extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("section");
     b.addComponent(Needs, {});
@@ -375,7 +375,7 @@ test("[Symbol.asyncDispose] runs once for a component removed before arrival", a
 });
 
 test("pending component moved by a keyed diff arrives in its new position", async () => {
-  class Keyed extends ComponentBase {
+  class Keyed extends Component {
     flip = false;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       const item = () => {
@@ -473,14 +473,14 @@ test("a throwing dispose hook while discarding the partial tree does not lose th
       throw boom;
     }
   }
-  class Parent extends ComponentBase {
+  class Parent extends Component {
     static readonly inject = ["dep"] as const;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addComponent(Fragile, {});
       b.addComponent(Faulty, {});
     }
   }
-  class Host extends ComponentBase {
+  class Host extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addComponent(Parent, {});
     }
@@ -508,14 +508,14 @@ test("an arriving component whose child throws can be removed and disposes the c
       throw boom;
     }
   }
-  class Parent extends ComponentBase {
+  class Parent extends Component {
     static readonly inject = ["dep"] as const;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addComponent(Sound, {});
       b.addComponent(Faulty, {});
     }
   }
-  class Host extends ComponentBase {
+  class Host extends Component {
     show = true;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openRegion();
@@ -551,7 +551,7 @@ test("a rejected [Symbol.asyncDispose] surfaces the error", async () => {
       return Promise.reject(failure);
     }
   }
-  class Switch extends ComponentBase {
+  class Switch extends Component {
     show = true;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openRegion();

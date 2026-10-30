@@ -444,7 +444,7 @@ const DIRECTIVES: &[(&str, &str, &str)] = &[
     ("import", "import $1 from \"$2\"", "Import a module or component"),
     ("typeparam", "typeparam $1", "Generic type parameter of this component"),
     ("while", "while ($1) {\n\t$0\n}", "Repeated markup while a condition holds"),
-    ("inherits", "inherits $1", "Base class instead of ComponentBase"),
+    ("inherits", "inherits $1", "Base class instead of Component"),
     ("fine", "fine", "No render pass: the DOM is built once and bindings keep it current (every component is; the line changes nothing)"),
     ("async", "async", "Load this component on first use: a chunk of its own in a --minify build"),
     ("cached", "cached", "Keep the instance and its DOM when it leaves the tree, for when it comes back"),

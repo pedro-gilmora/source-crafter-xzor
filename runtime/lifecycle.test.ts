@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, type RenderTreeBuilder, mount } from "./index";
+import { Component, type RenderTreeBuilder, mount } from "./index";
 
 // Written the way xzor emits lifecycle overrides, @key and @ref.
 
 const log: string[] = [];
 
-class Child extends ComponentBase {
+class Child extends Component {
   label = "";
   clicks = 0;
   protected override onInitialized(): void {
@@ -28,7 +28,7 @@ class Child extends ComponentBase {
   }
 }
 
-class Parent extends ComponentBase {
+class Parent extends Component {
   show = true;
   label = "a";
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -94,7 +94,7 @@ test("component identity follows position, so an @if before a sibling keeps its 
 });
 
 test("async lifecycle methods re-render when they settle; shouldRender can veto", async () => {
-  class Loader extends ComponentBase {
+  class Loader extends Component {
     data = "loading";
     frozen = false;
     protected override async onInitializedAsync(): Promise<void> {
@@ -120,7 +120,7 @@ test("async lifecycle methods re-render when they settle; shouldRender can veto"
 });
 
 test("@key moves keyed DOM nodes and component state instead of rewriting them", () => {
-  class Rows extends ComponentBase {
+  class Rows extends Component {
     items = ["a", "b", "c"];
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("ul");
@@ -152,7 +152,7 @@ test("@key moves keyed DOM nodes and component state instead of rewriting them",
 });
 
 test("@ref assigns elements and component instances", () => {
-  class Form extends ComponentBase {
+  class Form extends Component {
     input?: HTMLInputElement;
     child?: Child;
     protected override buildRenderTree(b: RenderTreeBuilder): void {

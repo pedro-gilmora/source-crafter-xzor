@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { $leave, ComponentBase, HttpError, type Remote, type RenderTreeBuilder, call, lazy, mount, segment } from "./index";
+import { $leave, Component, HttpError, type Remote, type RenderTreeBuilder, call, lazy, mount, segment } from "./index";
 import { HttpError as ServerHttpError } from "./server";
 
 const realFetch = globalThis.fetch;
@@ -107,7 +107,7 @@ test("Remote<T> makes every method async and the rest never", () => {
 let renders: Record<string, number>;
 const rendered = (key: string) => (renders[key] = (renders[key] ?? 0) + 1);
 
-class Counter extends ComponentBase {
+class Counter extends Component {
   label = "";
   count = 0;
 
@@ -142,7 +142,7 @@ class Counter extends ComponentBase {
   }
 }
 
-class App extends ComponentBase {
+class App extends Component {
   title = "app";
   firstLabel = "a";
   items = ["x", "y"];
@@ -182,10 +182,10 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 beforeEach(() => document.body.replaceChildren());
 
 test("a data-leave element the diff removes leaves when its animations finish; without any, at once", async () => {
-  ComponentBase.$leaves = true;
+  Component.$leaves = true;
   let finish!: () => void;
   const finished = new Promise<void>((r) => (finish = r));
-  class Toast extends ComponentBase {
+  class Toast extends Component {
     show = true;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openRegion();
@@ -215,7 +215,7 @@ test("a data-leave element the diff removes leaves when its animations finish; w
 });
 
 test("a leaving element waits only for the finite animations its leaving started, not an endless spinner inside (#2)", async () => {
-  ComponentBase.$leaves = true;
+  Component.$leaves = true;
   const endless = (): { finished: Promise<void>; effect: { getComputedTiming(): { endTime: number } } } => ({
     finished: new Promise<void>(() => {}),
     effect: { getComputedTiming: () => ({ endTime: Infinity }) },
@@ -239,7 +239,7 @@ test("a leaving element waits only for the finite animations its leaving started
 });
 
 test("toggleClass adds to the element's class while on", () => {
-  class Field extends ComponentBase {
+  class Field extends Component {
     err = false;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("div");
@@ -259,7 +259,7 @@ test("toggleClass adds to the element's class while on", () => {
 });
 
 test("aria-* attributes write booleans as true and false", () => {
-  class Toggle extends ComponentBase {
+  class Toggle extends Component {
     open = false;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("button");
@@ -287,8 +287,8 @@ test("debounce runs the last call after a pause, once, and settles every call's 
     return e;
   };
   let runs = 0;
-  const first = ComponentBase.debounce(event(), 20, () => runs++);
-  const second = ComponentBase.debounce(event(), 20, () => (runs++, "done"));
+  const first = Component.debounce(event(), 20, () => runs++);
+  const second = Component.debounce(event(), 20, () => (runs++, "done"));
   expect(runs).toBe(0);
   expect(await second).toBe("done");
   await first;
@@ -296,7 +296,7 @@ test("debounce runs the last call after a pause, once, and settles every call's 
 });
 
 test("a lazy component holds its place until its module arrives, then mounts there; later uses mount at once", async () => {
-  class Chart extends ComponentBase {
+  class Chart extends Component {
     label = "";
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("em");
@@ -306,7 +306,7 @@ test("a lazy component holds its place until its module arrives, then mounts the
   }
   let loads = 0;
   const LazyChart = lazy(async () => (loads++, { default: Chart }));
-  class Page extends ComponentBase {
+  class Page extends Component {
     n = 1;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("p");
@@ -333,7 +333,7 @@ test("a lazy component holds its place until its module arrives, then mounts the
 test("a cached component leaving the tree keeps its instance and nodes, and comes back with them", () => {
   let made = 0;
   let disposed = 0;
-  class Tab extends ComponentBase {
+  class Tab extends Component {
     static readonly cached = true;
     label = "";
     clicks = 0;
@@ -351,7 +351,7 @@ test("a cached component leaving the tree keeps its instance and nodes, and come
       b.closeElement();
     }
   }
-  class Tabs extends ComponentBase {
+  class Tabs extends Component {
     show = true;
     label = "a";
     protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -377,7 +377,7 @@ test("a cached component leaving the tree keeps its instance and nodes, and come
 });
 
 test("@attr: sets the nearest open element past regions, and class adds to its own", () => {
-  class Stock extends ComponentBase {
+  class Stock extends Component {
     n = 0;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("span");
@@ -426,7 +426,7 @@ test("an event re-renders only the owning component and patches nodes in place",
   expect(b.querySelector("span")!.firstChild).toBe(bSpanText);
 });
 
-class Styled extends ComponentBase {
+class Styled extends Component {
   width = 10;
 
   protected override buildRenderTree(b: RenderTreeBuilder): void {
@@ -505,7 +505,7 @@ test("loops grow and shrink in place", () => {
 });
 
 test("async handlers re-render again when they settle", async () => {
-  class Loader extends ComponentBase {
+  class Loader extends Component {
     state = "idle";
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("button");
@@ -529,7 +529,7 @@ test("async handlers re-render again when they settle", async () => {
 });
 
 test("render-tree <svg> elements and their children are created in the SVG namespace", () => {
-  class Icon extends ComponentBase {
+  class Icon extends Component {
     d = "M0 0";
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("svg");

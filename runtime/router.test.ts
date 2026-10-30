@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import {
-  ComponentBase,
+  Component,
   type IApplication,
   NavLink,
   type RenderFragment,
@@ -23,7 +23,7 @@ import {
 
 let lastUser: UserPage | undefined;
 
-class UserPage extends ComponentBase {
+class UserPage extends Component {
   id = 0;
   renders = 0;
   paramsSet = 0;
@@ -39,7 +39,7 @@ class UserPage extends ComponentBase {
   }
 }
 
-class NewUser extends ComponentBase {
+class NewUser extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("n");
     b.addText("new");
@@ -47,7 +47,7 @@ class NewUser extends ComponentBase {
   }
 }
 
-class DocPage extends ComponentBase {
+class DocPage extends Component {
   rest = "";
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("d");
@@ -56,7 +56,7 @@ class DocPage extends ComponentBase {
   }
 }
 
-class RootPage extends ComponentBase {
+class RootPage extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("r");
     b.addText("root");
@@ -64,7 +64,7 @@ class RootPage extends ComponentBase {
   }
 }
 
-class ListPage extends ComponentBase {
+class ListPage extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("l");
     b.addText("list");
@@ -107,7 +107,7 @@ const pages: RouteTable = [
   },
 ];
 
-const frag = (fn: (b: RenderTreeBuilder) => void): RenderFragment => ComponentBase.fragment(fn);
+const frag = (fn: (b: RenderTreeBuilder) => void): RenderFragment => Component.fragment(fn);
 
 /** A layout section: renders the page inside `tag`. */
 const wrap =
@@ -187,12 +187,12 @@ function routed(
   opts: { table?: RouteTable; app?: IApplication } = {},
 ) {
   const table = opts.table ?? pages;
-  class Block extends ComponentBase {
+  class Block extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.addRoutes(table, sections);
     }
   }
-  class Shell extends ComponentBase {
+  class Shell extends Component {
     show = true;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openRegion();
@@ -383,7 +383,7 @@ test("navigating to another route pattern builds a new page", () => {
   expect(lastUser).not.toBe(page);
 });
 
-class Crumb extends ComponentBase {
+class Crumb extends Component {
   static readonly cascades = [["route", "route"]] as const;
   route: Route | undefined;
   paramsSet = 0;
@@ -596,7 +596,7 @@ test("viewTransitions(true) commits a navigation inside document.startViewTransi
 // A page that renders its heading only once its data arrived, like the blog's Post page.
 const later = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-class LoadOnInit extends ComponentBase {
+class LoadOnInit extends Component {
   title = "";
   protected override async onInitializedAsync(): Promise<void> {
     await later(5);
@@ -611,7 +611,7 @@ class LoadOnInit extends ComponentBase {
   }
 }
 
-class LoadOnParams extends ComponentBase {
+class LoadOnParams extends Component {
   id = 0;
   title = "";
   protected override async onParametersSetAsync(): Promise<void> {
@@ -627,7 +627,7 @@ class LoadOnParams extends ComponentBase {
   }
 }
 
-class Hang extends ComponentBase {
+class Hang extends Component {
   protected override onInitializedAsync(): Promise<void> {
     return new Promise<void>(() => {});
   }
@@ -765,7 +765,7 @@ test("the 1500 ms cap holds when a lazy page's import never resolves", async () 
 });
 
 // Loads, then renders a child that loads its own data: the second wait starts in a later re-render.
-class LoadThenChild extends ComponentBase {
+class LoadThenChild extends Component {
   ready = false;
   protected override async onInitializedAsync(): Promise<void> {
     await later(5);
@@ -802,7 +802,7 @@ test("outside a transition the settle path collects nothing", async () => {
   expect(r.html()).toBe("<aside><h1>init</h1></aside>");
 });
 
-class ThrowingCtor extends ComponentBase {
+class ThrowingCtor extends Component {
   constructor() {
     super();
     throw new Error("ctor");
@@ -810,14 +810,14 @@ class ThrowingCtor extends ComponentBase {
   protected override buildRenderTree(): void {}
 }
 
-class ThrowingInit extends ComponentBase {
+class ThrowingInit extends Component {
   protected override onInitialized(): void {
     throw new Error("init");
   }
   protected override buildRenderTree(): void {}
 }
 
-class RejectingInit extends ComponentBase {
+class RejectingInit extends Component {
   protected override onInitializedAsync(): Promise<void> {
     return Promise.reject(new Error("init async"));
   }
@@ -826,13 +826,13 @@ class RejectingInit extends ComponentBase {
   }
 }
 
-class ThrowingRender extends ComponentBase {
+class ThrowingRender extends Component {
   protected override buildRenderTree(): void {
     throw new Error("render");
   }
 }
 
-class InjectedPage extends ComponentBase {
+class InjectedPage extends Component {
   static readonly inject = ["service"];
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.addText("injected");
@@ -902,7 +902,7 @@ test("@catch is cleared by the next navigation", async () => {
 
 let failSlow: ((err: unknown) => void) | undefined;
 
-class SlowPage extends ComponentBase {
+class SlowPage extends Component {
   protected override onInitializedAsync(): Promise<void> {
     return new Promise<void>((_resolve, reject) => {
       failSlow = reject;
@@ -963,7 +963,7 @@ test("a page kept across a query-only navigation still reports its failure", asy
 
 let tracked: Tracked | undefined;
 
-class Tracked extends ComponentBase {
+class Tracked extends Component {
   static readonly cascades = [["route", "route"]] as const;
   route: Route | undefined;
   paramsSet = 0;
@@ -979,7 +979,7 @@ class Tracked extends ComponentBase {
   }
 }
 
-class PartlyMounted extends ComponentBase {
+class PartlyMounted extends Component {
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.addComponent(Tracked, {}, undefined, { ref: (c) => (tracked = c) });
     b.addComponent(ThrowingCtor, {});
@@ -1000,7 +1000,7 @@ test("@catch disposes the children the failed page had already mounted", async (
   expect(child.paramsSet).toBe(1);
 });
 
-class RedirectPage extends ComponentBase {
+class RedirectPage extends Component {
   static readonly cascades = [["route", "route"]] as const;
   route: Route | undefined;
   protected override onInitialized(): void {
@@ -1066,12 +1066,12 @@ test("NavLink marks the active link by prefix or exact match", () => {
 
 /** Mounts `links` with no routes block anywhere in the tree. */
 function bare(links: (b: RenderTreeBuilder) => void) {
-  class Bar extends ComponentBase {
+  class Bar extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       links(b);
     }
   }
-  class Shell extends ComponentBase {
+  class Shell extends Component {
     show = true;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openRegion();

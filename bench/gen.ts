@@ -28,7 +28,7 @@ writeFileSync(
 );
 writeFileSync(
   join(dir, "c", "Base.ts"),
-  `import { ComponentBase } from "@source-crafter/xzor-runtime";\nexport abstract class Base extends ComponentBase {\n  title = "base";\n  shout(s: string) { return s.toUpperCase(); }\n}\n`,
+  `import { Component } from "@source-crafter/xzor-runtime";\nexport abstract class Base extends Component {\n  title = "base";\n  shout(s: string) { return s.toUpperCase(); }\n}\n`,
 );
 for (let i = 0; i < n; i++) {
   const deps = [i - 1, i - 2].filter((d) => d >= 0);

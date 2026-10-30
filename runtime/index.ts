@@ -30,7 +30,7 @@ type CascadeRecord = {
   name: string;
   value: unknown;
   fixed: boolean;
-  consumers: Set<ComponentBase> | undefined;
+  consumers: Set<Component> | undefined;
   parent: CascadeRecord | undefined;
 };
 
@@ -49,12 +49,12 @@ export type VRegion = {
 /** A child component; the diff decides whether it keeps its previous instance. */
 export type VComponent = {
   kind: "component";
-  type: Ctor<ComponentBase>;
+  type: Ctor<Component>;
   props: Record<string, unknown>;
   slots?: object;
   key?: unknown;
-  ref?: (c: ComponentBase) => void;
-  instance?: ComponentBase;
+  ref?: (c: Component) => void;
+  instance?: Component;
   mounted?: Mounted;
   // `@catch`: set on a routed page, it takes the failures the page itself causes instead of `rethrow`.
   onError?: (err: unknown, nav: number) => void;
@@ -73,7 +73,7 @@ export type FineRoot = { bindings: unknown; start: Comment; end: Comment };
 /** @internal On a component whose fine root was built (its fine context): its handlers and callbacks write tracked fields, so nothing re-renders it. */
 export const FINE: unique symbol = Symbol("xzor.fine");
 
-const isFine = (c: ComponentBase): boolean => (c as unknown as Record<symbol, unknown>)[FINE] !== undefined;
+const isFine = (c: Component): boolean => (c as unknown as Record<symbol, unknown>)[FINE] !== undefined;
 
 const FIELDS = Symbol("xzor.fields");
 type Watcher = { slot: number };
@@ -83,7 +83,7 @@ type Watcher = { slot: number };
  * `scope` is the cascade scope the fine component was mounted in.
  */
 export function patchIsland(
-  owner: ComponentBase,
+  owner: Component,
   app: IApplication | undefined,
   scope: unknown,
   end: Node,
@@ -408,12 +408,12 @@ function resolveRoute(router: Router, table: RouteTable, sections: readonly Rout
 }
 
 /** A navigation raised while something renders (a page redirecting itself) waits for that render to end. */
-function renavigate(owner: ComponentBase): void {
+function renavigate(owner: Component): void {
   if (depth === 0) update(owner);
   else queueMicrotask(() => update(owner));
 }
 
-type Ctor<C extends ComponentBase> = new (...args: any[]) => C;
+type Ctor<C extends Component> = new (...args: any[]) => C;
 // `latest` is the current vnode of a component still waiting for its instance; cleared on arrival or removal.
 type Mounted = {
   tree: VNode[];
@@ -431,7 +431,7 @@ type Mounted = {
 export interface IApplication {
   onStarted?(): void | Promise<void>;
   /** Consulted only for component classes with a non-empty `static inject`; returns the component, a promise for it, or `undefined` (the runtime then throws). */
-  createComponent?(type: Function): ComponentBase | Promise<ComponentBase> | undefined;
+  createComponent?(type: Function): Component | Promise<Component> | undefined;
 }
 
 /** A contract as browser code sees it: every method's result `R` becomes `Promise<Awaited<R>>`, other members `never`. */
@@ -519,10 +519,10 @@ export const Scoped: ServiceDecorator = () => noop;
 export const Transient: ServiceDecorator = () => noop;
 export const SharedInstance: unique symbol = Symbol("xzor.sharedInstance");
 
-const mountedComponents = new WeakMap<ComponentBase, Mounted>();
+const mountedComponents = new WeakMap<Component, Mounted>();
 const elementHandlers = new WeakMap<
   Element,
-  { owner: ComponentBase; events: Record<string, Handler>; modifiers: Record<string, Modifiers>; listening: Set<string> }
+  { owner: Component; events: Record<string, Handler>; modifiers: Record<string, Modifiers>; listening: Set<string> }
 >();
 
 const FRAGMENT: unique symbol = Symbol("xzor.fragment");
@@ -555,12 +555,12 @@ const DEBOUNCED = Symbol("xzor.debounced");
  * Base of every component. A `.xzor` component's fields are tracked like a model's (the bundle rewrites them), so a
  * handler that writes one updates what reads it; `stateHasChanged()` re-runs every binding.
  */
-export abstract class ComponentBase {
+export abstract class Component {
   #subs: Watcher[] | undefined;
   /** @internal Set by components that use `@leave`: until then, removal skips the `data-leave` check. */
   static $leaves = false;
 
-  /** @internal What tracked getters report to, set by the bindings (and the model tracker) while they run; the bundle emits `ComponentBase.$reader?.(this, i)`. */
+  /** @internal What tracked getters report to, set by the bindings (and the model tracker) while they run; the bundle emits `Component.$reader?.(this, i)`. */
   static $reader: ((source: object, index: number) => void) | undefined = undefined;
 
   /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */
@@ -656,6 +656,11 @@ export abstract class ComponentBase {
   }
 }
 
+/** @deprecated use `Component`. */
+export const ComponentBase = Component;
+/** @deprecated use `Component`. */
+export type ComponentBase = Component;
+
 type Hooks = {
   buildRenderTree(b: RenderTreeBuilder): void;
   onInitialized(): void;
@@ -668,13 +673,13 @@ type Hooks = {
   dispose(): void;
 };
 
-const hooks = (c: ComponentBase) => c as unknown as Hooks;
+const hooks = (c: Component) => c as unknown as Hooks;
 
 export class RenderTreeBuilder {
   readonly #root: VNode[] = [];
   readonly #open: (VElement | VRegion)[] = [];
 
-  constructor(private readonly owner: ComponentBase) {}
+  constructor(private readonly owner: Component) {}
 
   get nodes(): VNode[] {
     return this.#root;
@@ -719,7 +724,7 @@ export class RenderTreeBuilder {
 
   /** `@Routes`: renders the section that matches the current navigation. */
   addRoutes(table: RouteTable, sections: readonly RouteSection[]): void {
-    const owner = this.owner as ComponentBase & Routed;
+    const owner = this.owner as Component & Routed;
     const nav = navigationOf();
     let router = owner[ROUTER];
     if (!router) {
@@ -765,7 +770,7 @@ export class RenderTreeBuilder {
       state.caught!.render(route, state.error)(this);
     } else if (page) {
       const entry = page;
-      const fragment = ComponentBase.fragment((b) => b.#addPage(entry, state));
+      const fragment = Component.fragment((b) => b.#addPage(entry, state));
       if (section) (section.render as (r: Route, p: RenderFragment) => RenderFragment)(route, fragment)(this);
       else fragment(this);
     } else if (section) {
@@ -778,7 +783,7 @@ export class RenderTreeBuilder {
   #addPage(entry: RouteEntry, router: Router): void {
     this.#append({
       kind: "component",
-      type: entry.component as Ctor<ComponentBase>,
+      type: entry.component as Ctor<Component>,
       props: router.params,
       key: entry.family ?? entry.pattern,
       onError: router.onError,
@@ -866,7 +871,7 @@ export class RenderTreeBuilder {
     this.#append({ kind: "text", text: String(value) });
   }
 
-  addComponent<C extends ComponentBase>(
+  addComponent<C extends Component>(
     type: Ctor<C>,
     props: Partial<C>,
     slots?: C["slots"],
@@ -878,7 +883,7 @@ export class RenderTreeBuilder {
       props: props as Record<string, unknown>,
       slots,
       key: extra?.key,
-      ref: extra?.ref as ((c: ComponentBase) => void) | undefined,
+      ref: extra?.ref as ((c: Component) => void) | undefined,
     });
   }
 
@@ -917,9 +922,9 @@ function removeAttr(el: Element, name: string): void {
 
 /** What `@source-crafter/xzor-runtime/model` installs to learn which models a render read. */
 export type RenderObserver = {
-  begin(component: ComponentBase): void;
-  end(component: ComponentBase): void;
-  dispose(component: ComponentBase): void;
+  begin(component: Component): void;
+  end(component: Component): void;
+  dispose(component: Component): void;
 };
 
 let observer: RenderObserver | undefined;
@@ -929,7 +934,7 @@ export function setRenderObserver(o: RenderObserver | undefined): void {
   observer = o;
 }
 
-function render(component: ComponentBase): VNode[] {
+function render(component: Component): VNode[] {
   const builder = new RenderTreeBuilder(component);
   if (observer === undefined) hooks(component).buildRenderTree(builder);
   else {
@@ -957,7 +962,7 @@ function batch(fn: () => void): void {
   }
 }
 
-function settle(component: ComponentBase, result: Promise<void> | void, node?: VComponent): void {
+function settle(component: Component, result: Promise<void> | void, node?: VComponent): void {
   if (!(result instanceof Promise)) return;
   const outer = awaiting;
   const done = result.then(
@@ -988,7 +993,7 @@ function fail(v: VComponent, err: unknown): void {
   else rethrow(err);
 }
 
-function parametersSet(component: ComponentBase): void {
+function parametersSet(component: Component): void {
   hooks(component).onParametersSet();
   settle(component, hooks(component).onParametersSetAsync());
 }
@@ -998,7 +1003,7 @@ type CascadeList = readonly (readonly [prop: string, name: string])[];
 
 const cascadesOf = (type: Function): CascadeList | undefined => (type as { cascades?: CascadeList }).cascades;
 
-const fields = (c: ComponentBase) => c as unknown as Record<string, unknown>;
+const fields = (c: Component) => c as unknown as Record<string, unknown>;
 
 function findCascade(scope: CascadeRecord | undefined, name: string): CascadeRecord | undefined {
   for (let s = scope; s; s = s.parent) if (s.name === name) return s;
@@ -1006,7 +1011,7 @@ function findCascade(scope: CascadeRecord | undefined, name: string): CascadeRec
 }
 
 /** Gives each `@Cascade` member the nearest provider's value and subscribes to later changes. */
-function resolveCascades(instance: ComponentBase, scope: CascadeRecord | undefined): void {
+function resolveCascades(instance: Component, scope: CascadeRecord | undefined): void {
   // The instance's class, not the vnode's type: a lazy component's type is its loader.
   const list = cascadesOf(instance.constructor);
   if (!list) return;
@@ -1019,7 +1024,7 @@ function resolveCascades(instance: ComponentBase, scope: CascadeRecord | undefin
   }
 }
 
-function unsubscribeCascades(instance: ComponentBase, scope: CascadeRecord | undefined): void {
+function unsubscribeCascades(instance: Component, scope: CascadeRecord | undefined): void {
   const list = cascadesOf(instance.constructor);
   if (!list) return;
   for (const [, name] of list) findCascade(scope, name)?.consumers?.delete(instance);
@@ -1027,7 +1032,7 @@ function unsubscribeCascades(instance: ComponentBase, scope: CascadeRecord | und
 
 // Assigning before the region's children are patched lets a consumer whose props also changed
 // render once with both; the leftovers are told afterwards.
-function assignCascade(record: CascadeRecord, consumers: readonly ComponentBase[]): void {
+function assignCascade(record: CascadeRecord, consumers: readonly Component[]): void {
   for (const consumer of consumers) {
     for (const [prop, name] of cascadesOf(consumer.constructor)!) {
       if (name === record.name) fields(consumer)[prop] = record.value;
@@ -1036,7 +1041,7 @@ function assignCascade(record: CascadeRecord, consumers: readonly ComponentBase[
 }
 
 // A changed cascade takes the same path as a changed prop: onParametersSet, then re-render.
-function notifyCascade(consumers: readonly ComponentBase[]): void {
+function notifyCascade(consumers: readonly Component[]): void {
   for (const consumer of consumers) {
     const m = mountedComponents.get(consumer);
     if (!m || m.pass === pass) continue;
@@ -1051,14 +1056,14 @@ function notifyCascade(consumers: readonly ComponentBase[]): void {
   }
 }
 
-function queueAfterRender(component: ComponentBase, first: boolean): void {
+function queueAfterRender(component: Component, first: boolean): void {
   afterRender.push(() => {
     hooks(component).onAfterRender(first);
     void hooks(component).onAfterRenderAsync(first);
   });
 }
 
-function update(component: ComponentBase): void {
+function update(component: Component): void {
   batch(() => {
     const m = mountedComponents.get(component);
     const parent = m?.anchor.parentNode;
@@ -1072,7 +1077,7 @@ function update(component: ComponentBase): void {
 
 // `into` is the placeholder left by an async component; it keeps its anchor and the nodes go before it.
 function mountComponent(
-  component: ComponentBase,
+  component: Component,
   app: IApplication | undefined,
   scope: CascadeRecord | undefined,
   into?: Mounted,
@@ -1092,22 +1097,22 @@ function mountComponent(
 }
 
 const LAZY = Symbol("xzor.lazy");
-type Lazy = { [LAZY]: () => Promise<Ctor<ComponentBase>>; loaded: Ctor<ComponentBase> | undefined };
+type Lazy = { [LAZY]: () => Promise<Ctor<Component>>; loaded: Ctor<Component> | undefined };
 
 /**
  * A component loaded on first use (a chunk of its own in a split bundle). It stands for the class in the
  * tree: an anchor holds its place until the module arrives, and later uses construct it at once.
  */
 export function lazy<C>(load: () => Promise<{ default: C }>): C {
-  let pending: Promise<Ctor<ComponentBase>> | undefined;
+  let pending: Promise<Ctor<Component>> | undefined;
   const stub: Lazy = {
-    [LAZY]: () => (pending ??= load().then((m) => (stub.loaded = m.default as Ctor<ComponentBase>))),
+    [LAZY]: () => (pending ??= load().then((m) => (stub.loaded = m.default as Ctor<Component>))),
     loaded: undefined,
   };
   return stub as unknown as C;
 }
 
-function construct(type: Ctor<ComponentBase>, app: IApplication | undefined): ComponentBase | Promise<ComponentBase> {
+function construct(type: Ctor<Component>, app: IApplication | undefined): Component | Promise<Component> {
   const load = (type as Partial<Lazy>)[LAZY];
   if (load !== undefined) {
     const loaded = (type as unknown as Lazy).loaded;
@@ -1121,7 +1126,7 @@ function construct(type: Ctor<ComponentBase>, app: IApplication | undefined): Co
   throw new Error(`xzor: ${type.name} needs injected services (${inject.join(", ")}) but has no application`);
 }
 
-function arrive(mounted: Mounted, instance: ComponentBase): void {
+function arrive(mounted: Mounted, instance: Component): void {
   const v = mounted.latest;
   const parent = mounted.anchor.parentNode;
   mounted.latest = undefined;
@@ -1159,7 +1164,7 @@ function arrive(mounted: Mounted, instance: ComponentBase): void {
   }
 }
 
-function applyProps(instance: ComponentBase, v: VComponent): void {
+function applyProps(instance: Component, v: VComponent): void {
   Object.assign(instance, v.props);
   if (v.slots) instance.slots = v.slots;
 }
@@ -1195,7 +1200,7 @@ function listen(el: Element, event: string): void {
 
 function create(
   v: VNode,
-  owner: ComponentBase,
+  owner: Component,
   app: IApplication | undefined,
   scope: CascadeRecord | undefined,
   svg = false,
@@ -1388,7 +1393,7 @@ function dispose(v: VNode): void {
   }
 }
 
-function disposeInstance(c: ComponentBase): void {
+function disposeInstance(c: Component): void {
   observer?.dispose(c);
   (c as Routed)[ROUTER]?.off?.();
   hooks(c).dispose();
@@ -1408,7 +1413,7 @@ function remove(parent: Node, v: VNode): void {
  */
 export function $leave(node: Node): void {
   const el = node as Element;
-  if (!ComponentBase.$leaves || el.nodeType !== 1 || !el.hasAttribute("data-leave") || el.hasAttribute("data-leaving")) return void node.parentNode?.removeChild(node);
+  if (!Component.$leaves || el.nodeType !== 1 || !el.hasAttribute("data-leave") || el.hasAttribute("data-leaving")) return void node.parentNode?.removeChild(node);
   type Running = { finished: Promise<unknown>; effect?: { getComputedTiming(): { endTime?: number | CSSNumericValue } } | null };
   const running = (): Running[] => (el as Partial<{ getAnimations(o?: object): Running[] }>).getAnimations?.({ subtree: true }) ?? [];
   // Animations already running (a spinner inside) aren't the leave's; an endless one would never let it go.
@@ -1423,7 +1428,7 @@ export function $leave(node: Node): void {
 function patch(
   o: VNode,
   n: VNode,
-  owner: ComponentBase,
+  owner: Component,
   app: IApplication | undefined,
   scope: CascadeRecord | undefined,
 ): void {
@@ -1454,7 +1459,7 @@ function patch(
       const anchor = (n.anchor = old.anchor!);
       // The provider record is carried like the anchor, so consumers keep their subscription.
       const record = old.cascade;
-      let subscribers: ComponentBase[] | undefined;
+      let subscribers: Component[] | undefined;
       let inner = scope;
       if (record) {
         record.parent = scope;
@@ -1510,7 +1515,7 @@ function patchList(
   old: VNode[],
   next: VNode[],
   end: Node | null,
-  owner: ComponentBase,
+  owner: Component,
   app: IApplication | undefined,
   scope: CascadeRecord | undefined,
 ): void {
@@ -1539,7 +1544,7 @@ function patchKeyed(
   old: VNode[],
   next: VNode[],
   end: Node | null,
-  owner: ComponentBase,
+  owner: Component,
   app: IApplication | undefined,
   scope: CascadeRecord | undefined,
 ): void {
@@ -1583,7 +1588,7 @@ function resolveTarget(target: string | Element): Element {
 }
 
 /** `target` is an element, an element id, or a selector (anything containing `#`, `.` or `[`). */
-export function mount<C extends ComponentBase>(type: Ctor<C>, target: string | Element, app?: IApplication): C {
+export function mount<C extends Component>(type: Ctor<C>, target: string | Element, app?: IApplication): C {
   const host = resolveTarget(target);
   const root = construct(type, app);
   if (root instanceof Promise) throw new Error(`xzor: root component ${type.name} cannot be asynchronous`);
@@ -1593,7 +1598,7 @@ export function mount<C extends ComponentBase>(type: Ctor<C>, target: string | E
 }
 
 /** An `<a>` that carries `activeClass` while the current URL is on its `href`; it follows navigation itself. */
-export class NavLink extends ComponentBase {
+export class NavLink extends Component {
   href = "";
   activeClass = "active";
   match: "prefix" | "exact" = "prefix";

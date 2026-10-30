@@ -11,7 +11,7 @@
 // Importing this module also makes the components that read a model re-render when it changes.
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
 
-import { ComponentBase, setRenderObserver } from "./index";
+import { Component, setRenderObserver } from "./index";
 import { META as meta, MODEL, bitOf, changed, keyName, same } from "./track";
 
 export { EntitySet } from "./entity-set";
@@ -99,11 +99,11 @@ function captureOf(options: AddEventListenerOptions | EventListenerOptions | boo
 export abstract class Model extends EventTarget {
   /** @internal Set only while a binding or a render runs, so a tracked getter can report what it read: the component's slot. */
   static get $reader(): ((model: Model, index: number) => void) | undefined {
-    return ComponentBase.$reader;
+    return Component.$reader;
   }
 
   static set $reader(reader: ((model: Model, index: number) => void) | undefined) {
-    ComponentBase.$reader = reader as typeof ComponentBase.$reader;
+    Component.$reader = reader as typeof Component.$reader;
   }
 
   static {
@@ -345,8 +345,8 @@ export abstract class Model extends EventTarget {
       }
     }
     // Reading the fields back must not subscribe a component that is rendering.
-    const reader = ComponentBase.$reader;
-    ComponentBase.$reader = undefined;
+    const reader = Component.$reader;
+    Component.$reader = undefined;
     try {
       for (let i = 0; i < names.length; i++)
         try {
@@ -355,7 +355,7 @@ export abstract class Model extends EventTarget {
           if (!(error instanceof TypeError)) throw error;
         }
     } finally {
-      ComponentBase.$reader = reader;
+      Component.$reader = reader;
     }
     return this;
   }
@@ -417,10 +417,10 @@ export abstract class Model extends EventTarget {
     if ((this.#state & State.Detached) !== 0) this[StateKey] = State.Added;
     else if ((this.#state & State.Unchanged) !== 0) this[StateKey] = State.Modified;
     // The event needs the value, but a write made during a render must not subscribe the renderer.
-    const reader = ComponentBase.$reader;
-    ComponentBase.$reader = undefined;
+    const reader = Component.$reader;
+    Component.$reader = undefined;
     const value = (this as unknown as Record<string, unknown>)[name];
-    ComponentBase.$reader = reader;
+    Component.$reader = reader;
     attach(value, this, index);
     this.#emit(name, value, previous, index);
   }
@@ -428,10 +428,10 @@ export abstract class Model extends EventTarget {
   /** @internal A set on a tracked field was mutated: it keeps its own state, the model only tells its listeners. */
   $touched(index: number): void {
     const name = metaOf(this).names[index]!;
-    const reader = ComponentBase.$reader;
-    ComponentBase.$reader = undefined;
+    const reader = Component.$reader;
+    Component.$reader = undefined;
     const value = (this as unknown as Record<string, unknown>)[name];
-    ComponentBase.$reader = reader;
+    Component.$reader = reader;
     this.#emit(name, value, value, index);
   }
 
@@ -643,7 +643,7 @@ type Dep = {
 
 /** What one component read, kept on the instance under `reads`. */
 type Reads = {
-  component: ComponentBase;
+  component: Component;
   /** Almost every component reads one model; the rest go in `more`. */
   first: Dep | undefined;
   more: Map<Model, Dep> | undefined;
@@ -660,10 +660,10 @@ const reads = Symbol("xzor.model.reads");
 
 type Reader = Record<symbol, Reads | undefined>;
 
-const readsOf = (c: ComponentBase): Reads | undefined => (c as unknown as Reader)[reads];
+const readsOf = (c: Component): Reads | undefined => (c as unknown as Reader)[reads];
 
-const stack: ComponentBase[] = [];
-let current: ComponentBase | undefined;
+const stack: Component[] = [];
+let current: Component | undefined;
 let currentReads: Reads | undefined;
 
 function subscribe(own: Reads, model: Model): Dep {
@@ -736,7 +736,7 @@ function sweep(own: Reads): void {
 }
 
 setRenderObserver({
-  begin(component: ComponentBase): void {
+  begin(component: Component): void {
     stack.push(component);
     current = component;
     const own = (currentReads = readsOf(component));
@@ -745,19 +745,19 @@ setRenderObserver({
       own.renders++;
       own.seen = 0;
     }
-    ComponentBase.$reader = read as typeof ComponentBase.$reader;
+    Component.$reader = read as typeof Component.$reader;
   },
 
-  end(_component: ComponentBase): void {
+  end(_component: Component): void {
     const own = currentReads;
     if (own !== undefined && own.seen !== own.size) sweep(own);
     stack.pop();
     current = stack[stack.length - 1];
     currentReads = current === undefined ? undefined : readsOf(current);
-    if (current === undefined) ComponentBase.$reader = undefined;
+    if (current === undefined) Component.$reader = undefined;
   },
 
-  dispose(component: ComponentBase): void {
+  dispose(component: Component): void {
     const own = readsOf(component);
     if (own === undefined) return;
     if (own.first !== undefined) own.first.model.$unwatch(own.first);

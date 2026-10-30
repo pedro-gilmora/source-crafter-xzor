@@ -24,10 +24,15 @@ pub struct BaseMembers {
     pub unresolved: Option<String>,
 }
 
+/// The runtime's component base: `Component`, or its deprecated alias `ComponentBase`.
+fn is_runtime_base(name: &str) -> bool {
+    name == "Component" || name == "ComponentBase"
+}
+
 /// Members of `doc`'s `@inherits` base chain, read through `read` (the LSP reads open documents first).
 pub fn base_members(doc: &Document, path: &Path, read: Read) -> BaseMembers {
     let mut members = HashSet::new();
-    let base = doc.inherits.as_deref().map(leading_ident).filter(|b| *b != "ComponentBase");
+    let base = doc.inherits.as_deref().map(leading_ident).filter(|b| !is_runtime_base(b));
     let Some(base) = base else { return BaseMembers { members, deps: Vec::new(), unresolved: None } };
     let mut chain = Chain { read, files: Vec::new() };
     let dir = path.parent().unwrap_or(Path::new("."));
@@ -219,7 +224,7 @@ impl Chain<'_> {
         };
         class_members(&src.text[body], out);
         let Some(base) = base else { return Step::Done };
-        if base == "ComponentBase" {
+        if is_runtime_base(&base) {
             return Step::Done;
         }
         let from = {
@@ -249,7 +254,7 @@ impl Chain<'_> {
         out.extend(doc.injects.iter().map(|i| i.name.text.clone()));
         let Some(inherits) = &doc.inherits else { return Step::Done };
         let base = leading_ident(inherits);
-        if base == "ComponentBase" {
+        if is_runtime_base(base) {
             return Step::Done;
         }
         match self.imported(dir, doc.imports.iter().filter_map(|i| split_import(i)), base) {
@@ -936,9 +941,11 @@ export class After { late = 1; }
     fn without_inherits_nothing_is_read() {
         let (_, reads) = compile_in(&[("base.ts", TITLED)], "<p>@title</p>\n");
         assert!(reads.is_empty(), "{reads:?}");
-        let main = "@import { ComponentBase } from \"@source-crafter/xzor-runtime\"\n@inherits ComponentBase\n<p>@title</p>\n";
-        let (_, reads) = compile_in(&[("base.ts", TITLED)], main);
-        assert!(reads.is_empty(), "{reads:?}");
+        for base in ["Component", "ComponentBase"] {
+            let main = format!("@import {{ {base} }} from \"@source-crafter/xzor-runtime\"\n@inherits {base}\n<p>@title</p>\n");
+            let (_, reads) = compile_in(&[("base.ts", TITLED)], &main);
+            assert!(reads.is_empty(), "{reads:?}");
+        }
     }
 
     #[test]

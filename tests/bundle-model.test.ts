@@ -73,6 +73,15 @@ test("a component's fields are tracked like a model's, with no generated constru
   expect(out).not.toContain("this.assign(");
 });
 
+test("a component extending Component gets tracked fields, aliased or not", () => {
+  const src = FINE.replaceAll("ComponentBase", "Component");
+  const out = trackModelFields(src);
+  expect(out).toContain(`get count() { Component.$reader?.(this, 0); return this.#count; }`);
+  expect(out).toContain(`static { Component.$define(this, ["count"]); } }`);
+  const aliased = src.replace(`import { Component, dom,`, `import { Component as Base, dom,`).replace("extends Component", "extends Base");
+  expect(trackModelFields(aliased)).toContain(`get count() { Base.$reader?.(this, 0); return this.#count; }`);
+});
+
 test("a component extending an aliased ComponentBase gets tracked fields too", () => {
   const src = FINE.replace(`import { ComponentBase, dom,`, `import { ComponentBase as Base, dom,`).replace("extends ComponentBase", "extends Base");
   expect(src).toContain("extends Base {");

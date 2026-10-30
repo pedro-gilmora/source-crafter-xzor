@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, dom, mount, type RenderTreeBuilder } from "./index";
+import { Component, dom, mount, type RenderTreeBuilder } from "./index";
 import { EntitySet, Key, Model } from "./model";
 
 // Models and components are written the way the bundle and codegen emit them.
@@ -25,11 +25,11 @@ function host(): HTMLElement {
 
 let renders = 0;
 
-class Counter extends ComponentBase {
-  #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-  #label = "n"; get label(): string { ComponentBase.$reader?.(this, 1); return this.#label; } set label(v: string) { const p = this.#label; if (ComponentBase.same(p, v)) return; this.#label = v; this.$changed(1, p); }
+class Counter extends Component {
+  #count = 0; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+  #label = "n"; get label(): string { Component.$reader?.(this, 1); return this.#label; } set label(v: string) { const p = this.#label; if (Component.same(p, v)) return; this.#label = v; this.$changed(1, p); }
   untracked = 0;
-  static { ComponentBase.$define(this, ["count", "label"]); }
+  static { Component.$define(this, ["count", "label"]); }
 
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     renders++;
@@ -61,9 +61,9 @@ test("a tracked component field updates its bindings without a re-render", async
   expect(button.getAttribute("title")).toBe("x2");
 });
 
-class Bar extends ComponentBase {
-  #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-  static { ComponentBase.$define(this, ["count"]); }
+class Bar extends Component {
+  #count = 0; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+  static { Component.$define(this, ["count"]); }
 
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     __b.addFine((__p) => {
@@ -100,9 +100,9 @@ test("stateHasChanged refreshes what nothing tracks", async () => {
   expect(el.textContent).toBe("0 5");
 });
 
-class Sheet extends ComponentBase {
-  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { ComponentBase.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (ComponentBase.same(p, v)) return; this.#team = v; this.$changed(0, p); }
-  static { ComponentBase.$define(this, ["team"]); }
+class Sheet extends Component {
+  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { Component.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (Component.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+  static { Component.$define(this, ["team"]); }
 
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     __b.addFine((__p) => {
@@ -182,7 +182,7 @@ test("a deleted item leaves the view, and its bindings stop writing", async () =
 
 test("islands: child components get their parameters, and re-render only when what they read changes", async () => {
   let childRenders = 0;
-  class Child extends ComponentBase {
+  class Child extends Component {
     label = "";
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       childRenders++;
@@ -191,10 +191,10 @@ test("islands: child components get their parameters, and re-render only when wh
       b.closeElement();
     }
   }
-  class Parent extends ComponentBase {
-    #name = "a"; get name(): string { ComponentBase.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (ComponentBase.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-    #other = 0; get other(): number { ComponentBase.$reader?.(this, 1); return this.#other; } set other(v: number) { const p = this.#other; if (ComponentBase.same(p, v)) return; this.#other = v; this.$changed(1, p); }
-    static { ComponentBase.$define(this, ["name", "other"]); }
+  class Parent extends Component {
+    #name = "a"; get name(): string { Component.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Component.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+    #other = 0; get other(): number { Component.$reader?.(this, 1); return this.#other; } set other(v: number) { const p = this.#other; if (Component.same(p, v)) return; this.#other = v; this.$changed(1, p); }
+    static { Component.$define(this, ["name", "other"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.text(dom.el(__p, "b"), () => this.other);
@@ -215,18 +215,18 @@ test("islands: child components get their parameters, and re-render only when wh
 });
 
 test("islands: slot content reading the fine parent re-renders the child that shows it", async () => {
-  class Card extends ComponentBase {
+  class Card extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("section");
       b.addContent((this.slots as { default?: () => unknown }).default?.() ?? null);
       b.closeElement();
     }
   }
-  class Page extends ComponentBase {
-    #name = "a"; get name(): string { ComponentBase.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (ComponentBase.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["name"]); }
+  class Page extends Component {
+    #name = "a"; get name(): string { Component.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Component.same(p, v)) return; this.#name = v; this.$changed(0, p); }
+    static { Component.$define(this, ["name"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => dom.island(__p, (__b) => __b.addComponent(Card, {}, { default: () => ComponentBase.fragment((__b) => { __b.openElement("i"); __b.addContent(this.name); __b.closeElement(); }) } as never)));
+      __b.addFine((__p) => dom.island(__p, (__b) => __b.addComponent(Card, {}, { default: () => Component.fragment((__b) => { __b.openElement("i"); __b.addContent(this.name); __b.closeElement(); }) } as never)));
     }
   }
   const el = host();
@@ -238,7 +238,7 @@ test("islands: slot content reading the fine parent re-renders the child that sh
 });
 
 test("islands: a callback from a child updates the fine parent through its tracked field", async () => {
-  class Btn extends ComponentBase {
+  class Btn extends Component {
     onPick?: (n: number) => unknown;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("button");
@@ -247,9 +247,9 @@ test("islands: a callback from a child updates the fine parent through its track
     }
   }
   let renders = 0;
-  class Page extends ComponentBase {
-    #picked = 0; get picked(): number { ComponentBase.$reader?.(this, 0); return this.#picked; } set picked(v: number) { const p = this.#picked; if (ComponentBase.same(p, v)) return; this.#picked = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["picked"]); }
+  class Page extends Component {
+    #picked = 0; get picked(): number { Component.$reader?.(this, 0); return this.#picked; } set picked(v: number) { const p = this.#picked; if (Component.same(p, v)) return; this.#picked = v; this.$changed(0, p); }
+    static { Component.$define(this, ["picked"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       renders++;
       __b.addFine((__p) => {
@@ -267,10 +267,10 @@ test("islands: a callback from a child updates the fine parent through its track
 });
 
 test("a markup value in @expr renders as markup and follows what it reads", async () => {
-  class Page extends ComponentBase {
-    #n = 1; get n(): number { ComponentBase.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["n"]); }
-    summary = ComponentBase.fragment((__b) => { __b.openElement("u"); __b.addContent(this.n); __b.closeElement(); });
+  class Page extends Component {
+    #n = 1; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    static { Component.$define(this, ["n"]); }
+    summary = Component.fragment((__b) => { __b.openElement("u"); __b.addContent(this.n); __b.closeElement(); });
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => dom.text(dom.el(__p, "div"), () => this.summary));
     }
@@ -286,9 +286,9 @@ test("a markup value in @expr renders as markup and follows what it reads", asyn
 test("after its own handler, a fine component re-runs the bindings that read nothing tracked", async () => {
   const work = { changes: 0 };
   let tracked = 0;
-  class Page extends ComponentBase {
-    #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["count"]); }
+  class Page extends Component {
+    #count = 0; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { Component.$define(this, ["count"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const _e0 = dom.el(__p, "button");
@@ -314,7 +314,7 @@ test("after its own handler, a fine component re-runs the bindings that read not
 test("a set's hasChanges and hasErrors follow pushes", async () => {
   const el = host();
   const set = EntitySet.track(Worker, [{ name: "a", hours: 1, tax: 0 }]);
-  class Flags extends ComponentBase {
+  class Flags extends Component {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => dom.text(__p, () => `${set.hasChanges}/${set.hasErrors}`));
     }
@@ -361,9 +361,9 @@ test("replacing the list field rebuilds the rows", async () => {
 test("bindings inside a region that drops them stop writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
-  class Parent extends ComponentBase {
-    #show = true; get show(): boolean { ComponentBase.$reader?.(this, 0); return this.#show; } set show(v: boolean) { const p = this.#show; if (ComponentBase.same(p, v)) return; this.#show = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["show"]); }
+  class Parent extends Component {
+    #show = true; get show(): boolean { Component.$reader?.(this, 0); return this.#show; } set show(v: boolean) { const p = this.#show; if (Component.same(p, v)) return; this.#show = v; this.$changed(0, p); }
+    static { Component.$define(this, ["show"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => dom.region(__p, (__p) => {
         if (this.show) dom.text(dom.el(__p, "p"), () => worker.hours);
@@ -386,11 +386,11 @@ test("nested regions and lists in a region change alone: the outer block keeps i
   const __t2 = dom.template([["p", 0, "long"]]);
   const __t3 = dom.template([["li", 0, ""]]);
   let outer = 0;
-  class Page extends ComponentBase {
-    #open = true; get open(): boolean { ComponentBase.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (ComponentBase.same(p, v)) return; this.#open = v; this.$changed(0, p); }
-    #items = ["a", "b"]; get items(): string[] { ComponentBase.$reader?.(this, 1); return this.#items; } set items(v: string[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(1, p); }
-    #text = ""; get text(): string { ComponentBase.$reader?.(this, 2); return this.#text; } set text(v: string) { const p = this.#text; if (ComponentBase.same(p, v)) return; this.#text = v; this.$changed(2, p); }
-    static { ComponentBase.$define(this, ["open", "items", "text"]); }
+  class Page extends Component {
+    #open = true; get open(): boolean { Component.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (Component.same(p, v)) return; this.#open = v; this.$changed(0, p); }
+    #items = ["a", "b"]; get items(): string[] { Component.$reader?.(this, 1); return this.#items; } set items(v: string[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(1, p); }
+    #text = ""; get text(): string { Component.$reader?.(this, 2); return this.#text; } set text(v: string) { const p = this.#text; if (Component.same(p, v)) return; this.#text = v; this.$changed(2, p); }
+    static { Component.$define(this, ["open", "items", "text"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const _e0 = __t0();
@@ -436,9 +436,9 @@ test("nested regions and lists in a region change alone: the outer block keeps i
 });
 
 test("a list's else shows while it has no rows, and leaves with the first one", async () => {
-  class Page extends ComponentBase {
-    #items: string[] = []; get items(): string[] { ComponentBase.$reader?.(this, 0); return this.#items; } set items(v: string[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["items"]); }
+  class Page extends Component {
+    #items: string[] = []; get items(): string[] { Component.$reader?.(this, 0); return this.#items; } set items(v: string[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { Component.$define(this, ["items"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const ul = dom.el(__p, "ul");
@@ -464,9 +464,9 @@ test("a list's else shows while it has no rows, and leaves with the first one", 
 });
 
 test("@attr: in a region sets its element while the branch shows, and comes off when it goes", async () => {
-  class Stock extends ComponentBase {
-    #n = 0; get n(): number { ComponentBase.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["n"]); }
+  class Stock extends Component {
+    #n = 0; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    static { Component.$define(this, ["n"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const span = dom.el(__p, "span");
@@ -497,9 +497,9 @@ test("@attr: in a region sets its element while the branch shows, and comes off 
 
 test("keyed passes keep their rows: same key and values keep the nodes, changed values rebuild only that row", async () => {
   let builds = 0;
-  class Page extends ComponentBase {
-    #team: Record<string, number> = { a: 1, b: 2, c: 3 }; get team(): Record<string, number> { ComponentBase.$reader?.(this, 0); return this.#team; } set team(v: Record<string, number>) { const p = this.#team; if (ComponentBase.same(p, v)) return; this.#team = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["team"]); }
+  class Page extends Component {
+    #team: Record<string, number> = { a: 1, b: 2, c: 3 }; get team(): Record<string, number> { Component.$reader?.(this, 0); return this.#team; } set team(v: Record<string, number>) { const p = this.#team; if (Component.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+    static { Component.$define(this, ["team"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const ul = dom.el(__p, "ul");
@@ -535,7 +535,7 @@ test("keyed passes keep their rows: same key and values keep the nodes, changed 
 });
 
 test("a keyed run with a duplicate key throws, naming it", () => {
-  class Page extends ComponentBase {
+  class Page extends Component {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.keyedAt(__p.appendChild(document.createComment("")), (__pass) => {
@@ -549,9 +549,9 @@ test("a keyed run with a duplicate key throws, naming it", () => {
 
 test("a list keyed by a function keeps a row whose item is replaced by one with the same key", async () => {
   type Row = { id: number; name: string };
-  class Page extends ComponentBase {
-    #rows: Row[] = [{ id: 1, name: "a" }, { id: 2, name: "b" }]; get rows(): Row[] { ComponentBase.$reader?.(this, 0); return this.#rows; } set rows(v: Row[]) { const p = this.#rows; if (ComponentBase.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["rows"]); }
+  class Page extends Component {
+    #rows: Row[] = [{ id: 1, name: "a" }, { id: 2, name: "b" }]; get rows(): Row[] { Component.$reader?.(this, 0); return this.#rows; } set rows(v: Row[]) { const p = this.#rows; if (Component.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
+    static { Component.$define(this, ["rows"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const ul = dom.el(__p, "ul");
@@ -577,9 +577,9 @@ test("a list of models matches rows by the model's @Key", async () => {
   class Item extends Model { constructor(data?: object) { super(data); this.assign(data); }
     #id = 0; @Key get id(): number { Model.$reader?.(this, 0); return this.#id; } set id(v: number) { const p = this.#id; if (Model.same(p, v)) return; this.#id = v; this.$changed(0, p); }
   static { Model.$define(this, ["id"]); } }
-  class Page extends ComponentBase {
-    #items: Item[] = [new Item({ id: 1 }), new Item({ id: 2 })]; get items(): Item[] { ComponentBase.$reader?.(this, 0); return this.#items; } set items(v: Item[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["items"]); }
+  class Page extends Component {
+    #items: Item[] = [new Item({ id: 1 }), new Item({ id: 2 })]; get items(): Item[] { Component.$reader?.(this, 0); return this.#items; } set items(v: Item[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { Component.$define(this, ["items"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.listAt(__p.appendChild(document.createComment("")), () => this.items, [], (__p, it: Item) => {
@@ -606,9 +606,9 @@ test("a list of models matches rows by the model's @Key", async () => {
 test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRender; tracked writes update alone", async () => {
   const log: string[] = [];
   const outside = { n: 1 };
-  class Page extends ComponentBase {
-    #count = 0; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["count"]); }
+  class Page extends Component {
+    #count = 0; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { Component.$define(this, ["count"]); }
     allow = true;
     protected override shouldRender(): boolean {
       log.push("should");
@@ -645,10 +645,10 @@ test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRen
 });
 
 test("@once: read once, untracked, even inside a region", async () => {
-  class Page extends ComponentBase {
-    #n = 1; get n(): number { ComponentBase.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(0, p); }
-    #show = true; get show(): boolean { ComponentBase.$reader?.(this, 1); return this.#show; } set show(v: boolean) { const p = this.#show; if (ComponentBase.same(p, v)) return; this.#show = v; this.$changed(1, p); }
-    static { ComponentBase.$define(this, ["n", "show"]); }
+  class Page extends Component {
+    #n = 1; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+    #show = true; get show(): boolean { Component.$reader?.(this, 1); return this.#show; } set show(v: boolean) { const p = this.#show; if (Component.same(p, v)) return; this.#show = v; this.$changed(1, p); }
+    static { Component.$define(this, ["n", "show"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const t = __p.appendChild(document.createTextNode(""));
@@ -686,9 +686,9 @@ test("@once: read once, untracked, even inside a region", async () => {
 test("a cached getter runs once per change for all its readers, and is never stale", async () => {
   let runs = 0;
   const outside = { n: 1 };
-  class Page extends ComponentBase {
-    #a = 1; get a(): number { ComponentBase.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (ComponentBase.same(p, v)) return; this.#a = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["a"]); }
+  class Page extends Component {
+    #a = 1; get a(): number { Component.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (Component.same(p, v)) return; this.#a = v; this.$changed(0, p); }
+    static { Component.$define(this, ["a"]); }
     get total(): number {
       runs++;
       return this.a * 10;
@@ -725,9 +725,9 @@ test("a cached getter runs once per change for all its readers, and is never sta
 
 test("a getter with one reader, or read outside bindings, gets no cache", async () => {
   let runs = 0;
-  class Page extends ComponentBase {
-    #a = 1; get a(): number { ComponentBase.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (ComponentBase.same(p, v)) return; this.#a = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["a"]); }
+  class Page extends Component {
+    #a = 1; get a(): number { Component.$reader?.(this, 0); return this.#a; } set a(v: number) { const p = this.#a; if (Component.same(p, v)) return; this.#a = v; this.$changed(0, p); }
+    static { Component.$define(this, ["a"]); }
     get total(): number {
       runs++;
       return this.a * 10;
@@ -754,10 +754,10 @@ test("a getter with one reader, or read outside bindings, gets no cache", async 
 
 test("@await of a call requests again only when an argument changes, or what the call itself reads", async () => {
   const requests: string[] = [];
-  class Page extends ComponentBase {
-    #q = "Ab"; get q(): string { ComponentBase.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (ComponentBase.same(p, v)) return; this.#q = v; this.$changed(0, p); }
-    #lang = "en"; get lang(): string { ComponentBase.$reader?.(this, 1); return this.#lang; } set lang(v: string) { const p = this.#lang; if (ComponentBase.same(p, v)) return; this.#lang = v; this.$changed(1, p); }
-    static { ComponentBase.$define(this, ["q", "lang"]); }
+  class Page extends Component {
+    #q = "Ab"; get q(): string { Component.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (Component.same(p, v)) return; this.#q = v; this.$changed(0, p); }
+    #lang = "en"; get lang(): string { Component.$reader?.(this, 1); return this.#lang; } set lang(v: string) { const p = this.#lang; if (Component.same(p, v)) return; this.#lang = v; this.$changed(1, p); }
+    static { Component.$define(this, ["q", "lang"]); }
     get key(): string {
       return this.q.toLowerCase();
     }
@@ -794,10 +794,10 @@ test("@await of a call requests again only when an argument changes, or what the
 test("@await: pending, then the value; a newer promise wins; what then reads re-renders it without a new request", async () => {
   const gates: ((v: string[]) => void)[] = [];
   let requests = 0;
-  class Page extends ComponentBase {
-    #q = "a"; get q(): string { ComponentBase.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (ComponentBase.same(p, v)) return; this.#q = v; this.$changed(0, p); }
-    #suffix = "!"; get suffix(): string { ComponentBase.$reader?.(this, 1); return this.#suffix; } set suffix(v: string) { const p = this.#suffix; if (ComponentBase.same(p, v)) return; this.#suffix = v; this.$changed(1, p); }
-    static { ComponentBase.$define(this, ["q", "suffix"]); }
+  class Page extends Component {
+    #q = "a"; get q(): string { Component.$reader?.(this, 0); return this.#q; } set q(v: string) { const p = this.#q; if (Component.same(p, v)) return; this.#q = v; this.$changed(0, p); }
+    #suffix = "!"; get suffix(): string { Component.$reader?.(this, 1); return this.#suffix; } set suffix(v: string) { const p = this.#suffix; if (Component.same(p, v)) return; this.#suffix = v; this.$changed(1, p); }
+    static { Component.$define(this, ["q", "suffix"]); }
     load(q: string): Promise<string[]> {
       requests++;
       return new Promise((r) => gates.push(() => r([q])));
@@ -833,7 +833,7 @@ test("@await: pending, then the value; a newer promise wins; what then reads re-
 });
 
 test("@await: a rejection shows catch; a plain value shows then at once", async () => {
-  class Page extends ComponentBase {
+  class Page extends Component {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.awaitAt(dom.anchors(__p), () => Promise.reject(new Error("no")), undefined, undefined, (__p, e) => {
@@ -853,9 +853,9 @@ test("@await: a rejection shows catch; a plain value shows then at once", async 
 });
 
 test("a branch region keeps its branch's DOM while the chosen branch stays the same (#3)", async () => {
-  class Page extends ComponentBase {
-    #count = 3; get count(): number { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["count"]); }
+  class Page extends Component {
+    #count = 3; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
+    static { Component.$define(this, ["count"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const end = dom.anchors(__p);
@@ -892,11 +892,11 @@ test("@show: a chosen branch is built once and kept, the others hidden; hidden o
   let builds = 0;
   let liveRuns = 0;
   let pausedRuns = 0;
-  class Page extends ComponentBase {
-    #tab = "a"; get tab(): string { ComponentBase.$reader?.(this, 0); return this.#tab; } set tab(v: string) { const p = this.#tab; if (ComponentBase.same(p, v)) return; this.#tab = v; this.$changed(0, p); }
-    #n = 1; get n(): number { ComponentBase.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (ComponentBase.same(p, v)) return; this.#n = v; this.$changed(1, p); }
-    #on = true; get on(): boolean { ComponentBase.$reader?.(this, 2); return this.#on; } set on(v: boolean) { const p = this.#on; if (ComponentBase.same(p, v)) return; this.#on = v; this.$changed(2, p); }
-    static { ComponentBase.$define(this, ["tab", "n", "on"]); }
+  class Page extends Component {
+    #tab = "a"; get tab(): string { Component.$reader?.(this, 0); return this.#tab; } set tab(v: string) { const p = this.#tab; if (Component.same(p, v)) return; this.#tab = v; this.$changed(0, p); }
+    #n = 1; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+    #on = true; get on(): boolean { Component.$reader?.(this, 2); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(2, p); }
+    static { Component.$define(this, ["tab", "n", "on"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.branchAt(dom.anchors(__p), (__p) => {
@@ -974,9 +974,9 @@ test("@show: a chosen branch is built once and kept, the others hidden; hidden o
 test("a keyed row whose item is a new object keeps its nodes and takes the new item (#5)", async () => {
   type Line = { id: number; qty: number };
   let clicked: Line | undefined;
-  class Page extends ComponentBase {
-    #lines: Line[] = [{ id: 1, qty: 1 }, { id: 2, qty: 1 }]; get lines(): Line[] { ComponentBase.$reader?.(this, 0); return this.#lines; } set lines(v: Line[]) { const p = this.#lines; if (ComponentBase.same(p, v)) return; this.#lines = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["lines"]); }
+  class Page extends Component {
+    #lines: Line[] = [{ id: 1, qty: 1 }, { id: 2, qty: 1 }]; get lines(): Line[] { Component.$reader?.(this, 0); return this.#lines; } set lines(v: Line[]) { const p = this.#lines; if (Component.same(p, v)) return; this.#lines = v; this.$changed(0, p); }
+    static { Component.$define(this, ["lines"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.listAt(dom.anchors(__p), () => this.lines, [
@@ -1024,9 +1024,9 @@ test("rows dropped outside a handler leave nothing in the component's loose list
   type Row = { id: number; name: string };
   let next = 0;
   const rows = (): Row[] => Array.from({ length: 20 }, () => ({ id: ++next, name: "r" }));
-  class Page extends ComponentBase {
-    #items: Row[] = rows(); get items(): Row[] { ComponentBase.$reader?.(this, 0); return this.#items; } set items(v: Row[]) { const p = this.#items; if (ComponentBase.same(p, v)) return; this.#items = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["items"]); }
+  class Page extends Component {
+    #items: Row[] = rows(); get items(): Row[] { Component.$reader?.(this, 0); return this.#items; } set items(v: Row[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+    static { Component.$define(this, ["items"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.listAt(dom.anchors(__p), () => this.items, [(r: Row) => r.name], (__p) => {
@@ -1051,7 +1051,7 @@ test("a keyed row that closes over its item keeps its nodes, nested rows and chi
   const ROLES = ["a", "b"];
   const children: Card[] = [];
   let inits = 0;
-  class Card extends ComponentBase {
+  class Card extends Component {
     person!: Person;
     protected override onInitialized(): void {
       inits++;
@@ -1063,9 +1063,9 @@ test("a keyed row that closes over its item keeps its nodes, nested rows and chi
       b.closeElement();
     }
   }
-  class Page extends ComponentBase {
-    #people: Person[] = [{ id: 1, name: "Ana", roles: ["a"] }, { id: 2, name: "Luis", roles: [] }]; get people(): Person[] { ComponentBase.$reader?.(this, 0); return this.#people; } set people(v: Person[]) { const p = this.#people; if (ComponentBase.same(p, v)) return; this.#people = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["people"]); }
+  class Page extends Component {
+    #people: Person[] = [{ id: 1, name: "Ana", roles: ["a"] }, { id: 2, name: "Luis", roles: [] }]; get people(): Person[] { Component.$reader?.(this, 0); return this.#people; } set people(v: Person[]) { const p = this.#people; if (Component.same(p, v)) return; this.#people = v; this.$changed(0, p); }
+    static { Component.$define(this, ["people"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.listAt(dom.anchors(__p), () => this.people, [], (__p, p: Person) => {
@@ -1094,12 +1094,12 @@ test("a keyed row that closes over its item keeps its nodes, nested rows and chi
 });
 
 test("a data-leave element removed by its region stays, data-leaving, until its animations finish", async () => {
-  ComponentBase.$leaves = true;
+  Component.$leaves = true;
   let finish!: () => void;
   const finished = new Promise<void>((r) => (finish = r));
-  class Page extends ComponentBase {
-    #open = true; get open(): boolean { ComponentBase.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (ComponentBase.same(p, v)) return; this.#open = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["open"]); }
+  class Page extends Component {
+    #open = true; get open(): boolean { Component.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (Component.same(p, v)) return; this.#open = v; this.$changed(0, p); }
+    static { Component.$define(this, ["open"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         dom.region(__p, (__p) => {
@@ -1126,9 +1126,9 @@ test("a data-leave element removed by its region stays, data-leaving, until its 
 });
 
 test("class:name toggles one class, leaving the element's others", async () => {
-  class Page extends ComponentBase {
-    #err = ""; get err(): string { ComponentBase.$reader?.(this, 0); return this.#err; } set err(v: string) { const p = this.#err; if (ComponentBase.same(p, v)) return; this.#err = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["err"]); }
+  class Page extends Component {
+    #err = ""; get err(): string { Component.$reader?.(this, 0); return this.#err; } set err(v: string) { const p = this.#err; if (Component.same(p, v)) return; this.#err = v; this.$changed(0, p); }
+    static { Component.$define(this, ["err"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const d = dom.el(__p, "div");
@@ -1150,9 +1150,9 @@ test("class:name toggles one class, leaving the element's others", async () => {
 });
 
 test("aria-* attributes write booleans as true and false", async () => {
-  class Page extends ComponentBase {
-    #on = false; get on(): boolean { ComponentBase.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (ComponentBase.same(p, v)) return; this.#on = v; this.$changed(0, p); }
-    static { ComponentBase.$define(this, ["on"]); }
+  class Page extends Component {
+    #on = false; get on(): boolean { Component.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(0, p); }
+    static { Component.$define(this, ["on"]); }
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => {
         const b = dom.el(__p, "button");
@@ -1175,12 +1175,12 @@ test("aria-* attributes write booleans as true and false", async () => {
 test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
-  class One extends ComponentBase {
+  class One extends Component {
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addFine((__p) => dom.text(dom.el(__p, "i"), () => worker.hours));
     }
   }
-  class Parent extends ComponentBase {
+  class Parent extends Component {
     show = true;
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openRegion();
@@ -1205,9 +1205,9 @@ test("a fine child removed by a vdom parent stops writing", async () => {
 const __row = dom.template([["li", ["class", "row"], ["input", 0], ["span", 0, ""], null, null, ["button", 0, "x"]]]);
 const __ul = dom.template([["ul", 0, null], ["p", 0, ""]]);
 let picked: Worker[] = [];
-class Rows extends ComponentBase {
-  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { ComponentBase.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (ComponentBase.same(p, v)) return; this.#team = v; this.$changed(0, p); }
-  static { ComponentBase.$define(this, ["team"]); }
+class Rows extends Component {
+  #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { Component.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (Component.same(p, v)) return; this.#team = v; this.$changed(0, p); }
+  static { Component.$define(this, ["team"]); }
   outer = 0;
   protected override buildRenderTree(__b: RenderTreeBuilder): void {
     __b.addFine((__p) => {
@@ -1218,7 +1218,7 @@ class Rows extends ComponentBase {
       dom.on(_e1, "click", () => this.outer++);
       dom.listAt(_e2, () => this.team.view, [
         (w) => w.hours,
-        (w) => (__e: Event) => { w.hours = ComponentBase.bindValue(__e, w.hours); },
+        (w) => (__e: Event) => { w.hours = Component.bindValue(__e, w.hours); },
         (w) => w.payment.toFixed(2),
         (w, __p) => {
           if (w.hours > 24) dom.t(dom.el(__p, "small"), "too many");
@@ -1293,15 +1293,15 @@ test("templates create <svg> and its children in the SVG namespace", () => {
   expect(dom.el(parent, "path").namespaceURI).toBe(SVG);
 });
 
-test("Model and ComponentBase share one reader slot and the same `same`", () => {
+test("Model and Component share one reader slot and the same `same`", () => {
   const read = (): void => {};
   Model.$reader = read;
-  expect(ComponentBase.$reader).toBe(read);
-  ComponentBase.$reader = undefined;
+  expect(Component.$reader).toBe(read);
+  Component.$reader = undefined;
   expect(Model.$reader).toBeUndefined();
-  expect(ComponentBase.same([1, { a: 2 }], [1, { a: 2 }])).toBe(true);
-  expect(ComponentBase.same(new Date(5), new Date(5))).toBe(true);
-  expect(ComponentBase.same([1], [2])).toBe(false);
-  expect(ComponentBase.same(new Worker(), new Worker())).toBe(false);
-  expect(Model.same).toBe(ComponentBase.same);
+  expect(Component.same([1, { a: 2 }], [1, { a: 2 }])).toBe(true);
+  expect(Component.same(new Date(5), new Date(5))).toBe(true);
+  expect(Component.same([1], [2])).toBe(false);
+  expect(Component.same(new Worker(), new Worker())).toBe(false);
+  expect(Model.same).toBe(Component.same);
 });

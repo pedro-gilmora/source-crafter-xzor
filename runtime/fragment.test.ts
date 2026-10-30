@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { ComponentBase, type RenderFragment, type RenderTreeBuilder, mount } from "./index";
+import { Component, type RenderFragment, type RenderTreeBuilder, mount } from "./index";
 
 // Written the way xzor emits markup used as a value inside @code.
-class Badge extends ComponentBase {
+class Badge extends Component {
   text = "";
   protected override buildRenderTree(b: RenderTreeBuilder): void {
     b.openElement("b");
@@ -11,9 +11,9 @@ class Badge extends ComponentBase {
   }
 }
 
-class Host extends ComponentBase {
+class Host extends Component {
   kind: "badge" | "cached" | "none" = "badge";
-  cached: RenderFragment = ComponentBase.fragment((__b) => {
+  cached: RenderFragment = Component.fragment((__b) => {
     __b.openElement("i");
     __b.addText("cached");
     __b.closeElement();
@@ -22,7 +22,7 @@ class Host extends ComponentBase {
   view(kind: Host["kind"]): RenderFragment | null {
     switch (kind) {
       case "badge":
-        return ComponentBase.fragment((__b) => {
+        return Component.fragment((__b) => {
           __b.addComponent(Badge, { text: "hi" });
         });
       case "cached":
@@ -63,7 +63,7 @@ test("fragments returned by members render in place and switch cleanly", () => {
 });
 
 test("plain functions are not treated as fragments", () => {
-  class Plain extends ComponentBase {
+  class Plain extends Component {
     protected override buildRenderTree(b: RenderTreeBuilder): void {
       b.openElement("p");
       b.addContent(() => 1);
