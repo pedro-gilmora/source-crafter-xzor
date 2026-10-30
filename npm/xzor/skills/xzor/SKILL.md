@@ -123,6 +123,7 @@ A tracked field written anywhere (this component's handler, another component, a
 ```
 
 - One top-level `<style>` per component, or a sibling `X.css.xzor` (not both). Rules are scoped to the component's markup and the content it passes to children; `<style global>` (or `@global` first in `X.css.xzor`) opts out.
+- Tailwind: run its CLI beside the build (`bun x @tailwindcss/cli -i app.css -o tailwind.css [--watch|--minify]`, with `@import "tailwindcss"; @source "./**/*.xzor";` in `app.css`) and link `tailwind.css` in `index.html`; the bundler does not run Tailwind, so don't `import` that CSS or `@apply` in a component's `<style>`. Classes used only as `class:name="@x"` need `@source inline("name")`.
 - `@name` / `@(expr)` only in property values (one CSS custom property each); `@if (...) { rules } else { rules }` toggles rules; `@@` is a literal `@`; `@media`, `@keyframes`, ... stay CSS.
 - `@module { }` (one per file) is module-level TypeScript: constants, types, helpers, markup values; other files import its exports from the `.xzor`. It can't read component members.
 

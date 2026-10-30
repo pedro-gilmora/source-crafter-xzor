@@ -5,16 +5,20 @@
     "example": "cargo run -q -- build examples/counter",
     "ui": "cargo run -q -- compile ui",
     "serve": "cargo build -q && bun npm/xzor/bin/serve.ts target/debug/xzor",
-    "examples": "cargo run -q -- compile ui && cargo run -q -- build examples/dashboard && cargo run -q -- build examples/blog && cargo run -q -- build examples/sales",
+    "examples": "cargo run -q -- compile ui && cargo run -q -- build examples/dashboard && cargo run -q -- build examples/blog && cargo run -q -- build examples/sales && bun run tailwind",
+    "tailwind": "bun x @tailwindcss/cli -i examples/tailwind/app.css -o examples/tailwind/tailwind.css --minify && cargo run -q -- build examples/tailwind",
+    "tailwind:watch": "bun x @tailwindcss/cli -i examples/tailwind/app.css -o examples/tailwind/tailwind.css --watch",
     "docs": "bun docs/site/publish.ts",
     "test:grammar": "bun editors/vscode/test/run.ts",
     "build:vscode": "bun build editors/vscode/src/extension.ts --outdir editors/vscode/out --target node --format cjs --external vscode"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.14.6",
+    "@tailwindcss/cli": "^4.3.3",
     "@types/bun": "^1.4.3",
     "@types/vscode": "^1.140.0",
     "shiki": "^4.5.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vscode-languageclient": "^10.1.2",
     "vscode-tmgrammar-test": "^0.1.3"

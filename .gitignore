@@ -12,4 +12,5 @@ docs/site/_site/
 docs/site/sw.js
 docs/site/snippets.gen.ts
 examples/*/sw.js
+examples/tailwind/tailwind.css
 .vs/

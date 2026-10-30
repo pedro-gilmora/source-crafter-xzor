@@ -578,6 +578,8 @@ The component's own fields are tracked like a model's, so `count++` in a handler
 
 Three apps show it at work: [`examples/dashboard`](examples/dashboard) (KPIs, a sortable table, filters, a detail sheet), [`examples/blog`](examples/blog) (page transitions and a scroll-driven reading bar) and [`examples/sales`](examples/sales) (an installable phone app with a tab bar, basket and checkout). Build them with `bun run examples`. The [documentation site](https://pedro-gilmora.github.io/source-crafter-xzor/) has the live gallery, recipes and the roadmap, and [`.github/agents`](.github/agents) holds design sub-agents (designer, component builder, motion, reviewer) that build with it.
 
+Tailwind works too, without the kit: [`examples/tailwind`](examples/tailwind) is a task list styled only with utility classes. The Tailwind CLI writes `tailwind.css` from `app.css` (`@import "tailwindcss"; @source "./**/*.xzor";`) and `index.html` links it (`bun run tailwind` builds it, `bun run tailwind:watch` runs beside `xzor dev`). Tailwind reads `class:line-through="@done"` as an unknown `class:` variant, so list classes used only that way in `@source inline("...")`.
+
 The editor knows the kit through the tsconfig `paths`: it completes its components (adding the `@import`), prop values such as `tone` or `icon`, the page's ids for `opens` and `commandfor`, and its CSS classes, and shows each prop's doc comment on hover.
 
 ---

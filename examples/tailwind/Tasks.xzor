@@ -1,0 +1,72 @@
+@module {
+  export type Filter = "all" | "active" | "done";
+  type Task = { id: number; title: string; done: boolean };
+  const filters: Filter[] = ["all", "active", "done"];
+}
+
+@code {
+  tasks: Task[] = [
+    { id: 1, title: "Install Tailwind", done: true },
+    { id: 2, title: "Style the markup with utility classes", done: false },
+    { id: 3, title: "Ship it", done: false },
+  ];
+  filter: Filter = "all";
+  title = "";
+  nextId = 4;
+
+  get shown(): Task[] {
+    return this.filter === "all" ? this.tasks : this.tasks.filter((t) => t.done === (this.filter === "done"));
+  }
+
+  get left(): number {
+    return this.tasks.filter((t) => !t.done).length;
+  }
+
+  add() {
+    const title = this.title.trim();
+    if (!title) return;
+    this.tasks = [...this.tasks, { id: this.nextId++, title, done: false }];
+    this.title = "";
+  }
+
+  toggle(task: Task) {
+    this.tasks = this.tasks.map((t) => (t.id === task.id ? { ...t, done: !t.done } : t));
+  }
+
+  clearDone() {
+    this.tasks = this.tasks.filter((t) => !t.done);
+  }
+}
+
+<main class="min-h-dvh bg-slate-100 px-4 py-12 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+  <section class="mx-auto max-w-md rounded-2xl bg-white p-6 shadow-lg ring-1 ring-slate-900/5 dark:bg-slate-900 dark:ring-white/10">
+    <h1 class="text-2xl font-semibold tracking-tight">Tasks</h1>
+    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">@left left</p>
+
+    <form class="mt-6 flex gap-2" @onsubmit="add" @onsubmit:preventDefault>
+      <input class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30 dark:border-slate-700"
+             placeholder="What needs doing?" @bind="title" @bind:event="oninput" />
+      <button class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
+              disabled="@(!title.trim())">Add</button>
+    </form>
+
+    <ul class="mt-4 divide-y divide-slate-200 dark:divide-slate-800">
+      @for (const task of shown) @key(task.id) {
+        <li class="flex items-center gap-3 py-3">
+          <input type="checkbox" class="size-4 accent-indigo-600" checked="@task.done" @onchange="() => toggle(task)" />
+          <span class="flex-1 text-sm" class:line-through="@task.done" class:text-slate-400="@task.done">@task.title</span>
+        </li>
+      }
+    </ul>
+
+    <footer class="mt-4 flex items-center justify-between text-sm">
+      <nav class="flex gap-1">
+        @for (const f of filters) {
+          <button class="@(f === filter ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300" : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200") rounded-md px-2 py-1 capitalize"
+                  @onclick="() => filter = f">@f</button>
+        }
+      </nav>
+      <button class="text-slate-500 hover:text-red-600" @onclick="clearDone">Clear done</button>
+    </footer>
+  </section>
+</main>

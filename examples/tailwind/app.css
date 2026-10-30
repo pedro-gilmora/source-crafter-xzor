@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@source "./**/*.xzor";
+/* Tailwind reads `class:line-through=` as an unknown `class:` variant: list classes used only that way. */
+@source inline("line-through text-slate-400");
