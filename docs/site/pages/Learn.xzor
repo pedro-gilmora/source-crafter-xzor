@@ -120,7 +120,7 @@
         <p>A loop keeps each row's DOM, and the components in it, while the row's key stays. A new object with the same key (an immutable update) keeps the row too.</p>
         <Code name="more-keys" />
         <ul>
-          <li>Keys come from <code>@@key(expr)</code> after the loop head, a field's <code>@@Key("id")</code>, a model's <code>@@Key</code> property, or the item itself. A duplicate key is an error.</li>
+          <li>Keys come from <code>@@key(expr)</code> after the loop head (or <code>@@key="expr"</code> on the body's only top element), a field's <code>@@Key("id")</code>, a model's <code>@@Key</code> property, or the item itself. A duplicate key is an error, and so is an element <code>@@key</code> that keys no row.</li>
         </ul>
         <h2>Attributes</h2>
         <Code name="more-attrs" />

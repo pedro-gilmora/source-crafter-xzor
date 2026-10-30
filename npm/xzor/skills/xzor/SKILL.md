@@ -89,7 +89,7 @@ Editors: VS Code uses the xzor extension. In Zed, the `editors/zed` dev extensio
 | Print a value | `@name`, `@user.name`, `@items[0]`, `@(a + b)` for anything else; an array literal needs no parentheses: `@['a', 'b']` |
 | Literal `@` | `@@` (emails like `a@b.com` are fine as is) |
 | Condition | `@if (x) { ... } else if (y) { ... } else { ... }` |
-| Loop | `@for (const item of items) { <li @key="item.id">@item.name</li> }` (any JS `for` head; there is no `@foreach`) |
+| Loop | `@for (const item of items) @key(item.id) { <li>@item.name</li> }` (any JS `for` head; there is no `@foreach`). `<li @key="item.id">` on the body's only top element is the same key; an element `@key` anywhere else is a build error |
 | Switch | `@switch (v) { case "a": <p>A</p> break; default: <p>?</p> }` |
 | Hide instead of remove (tabs, steps) | `@show:if (tab === "a") { <form>…</form> } else { <ol>…</ol> }`, `@show:switch (step) { case 1: <form>…</form> default: <section>…</section> }`: a branch is built once, then hidden (`display: none`) and kept with its state; elements only at a branch's top level. Hidden branches stay live; `@pause` first in a branch (or `@pause { … }` around part of it) stops it while hidden |
 | Statements | `@{ const total = sum(items); }` then `@total` |

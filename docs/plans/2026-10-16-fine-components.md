@@ -81,3 +81,7 @@ Chromium, compiled bundles, medians of 5 interleaved page loads (`target/fine-be
 
 Against F, T mounts with 10-14% less script and holds 31-34% less JS heap; updates are unchanged. Against vdom it
 mounts with 32% less script and holds 69-71% less heap, and updates 1000-7000 times faster.
+
+## Later changes
+
+- 2026-10-29: an element `@key="expr"` that is the only top element (or component) of a `@for`/`@while` body keys that loop, like `@key(expr)` after the head (both at once is an error); any other element `@key` is a build error instead of being ignored.

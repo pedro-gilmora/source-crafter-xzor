@@ -301,6 +301,7 @@ A loop keeps each pass's DOM (and the components in it) while the pass's key sta
 @for (const user of users) { <li>@user.name</li> } else { <li>No one yet</li> }
 ```
 
+- `@key="id"` on a loop body's only top element or component (`@for (const u of users) { <li @key="u.id">@u.name</li> }`) is the same as `@key(u.id)` after the head; an element `@key` anywhere else is a build error.
 - Without `@key(...)`, a `@code` field marked `@Key("id")` (`@Key("id") users: User[] = [];`) keys its loops by that member, also through `filter`, `slice`, `sort`, `toSorted`, `toReversed` and `reverse`. A model's `@Key` property keys it everywhere. Other loops count their passes.
 - A duplicate key is an error, not a silent mismatch.
 
