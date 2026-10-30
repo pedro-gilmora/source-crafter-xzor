@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $cascade, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type EventCallback, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type Router, type RouteTable, type VNode } from "./index";
+import { $cascade, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type EventCallback, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type RenderFragment, type Router, type RouteTable, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -1235,14 +1235,14 @@ export const dom = {
    * fill. Called again when what they read changes and on the component's passes; rebuilt only when the fill or an
    * argument (`Object.is`) changed.
    */
-  slotAt(end: Comment, fill: () => ((...args: any[]) => Markup | null | undefined) | null | undefined, args?: () => readonly unknown[], fallback?: Build): void {
+  slotAt<A extends unknown[]>(end: Comment, fill: () => ((...args: A) => RenderFragment | null | undefined) | null | undefined, args?: () => [...A], fallback?: Build): void {
     const ctx = holder!.$ctx;
-    let last: ((...args: any[]) => unknown) | null | undefined;
+    let last: ((...args: A) => unknown) | null | undefined;
     let lastArgs: readonly unknown[] = NO_ARGS;
     let markup: unknown;
     const read = (): unknown => {
       const f = fill();
-      const a = args === undefined ? NO_ARGS : args();
+      const a = args === undefined ? (NO_ARGS as unknown as A) : args();
       if (f === last && sameValues(a, lastArgs)) return markup;
       last = f;
       lastArgs = a;

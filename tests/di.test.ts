@@ -1425,7 +1425,7 @@ test.each([
   expect(code, out).toBe(0);
   const generated = readFileSync(join(dir, ".xzor", "Header.xzor.ts"), "utf8");
   expect(generated).toContain("readonly posts: Remote<IPosts>;");
-  expect(generated).toContain('import { Component, dom, type El, type RenderTreeBuilder, type Remote } from "@source-crafter/xzor-runtime";');
+  expect(generated).toContain('import { Component as __Component, dom as __dom, type El, type Remote } from "@source-crafter/xzor-runtime";');
   const tsc = Bun.spawnSync(["bun", "x", "tsc", "-p", dir, "--noEmit"], { cwd: repo });
   // The scratch project has no Bun/node types, so only the lines about the view are asserted.
   const errors = (tsc.stdout.toString() + tsc.stderr.toString()).split("\n").filter((l) => /Header\.xzor/.test(l) && !/xzor-runtime\/model/.test(l));

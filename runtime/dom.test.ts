@@ -1770,6 +1770,25 @@ test("perf: an @expr giving the same fragment, re-run 10k times, builds no DOM",
   expect(el.querySelector("b")).toBe(b);
 });
 
+test("a builder island showing a markup value rebuilds when it gives another markup", () => {
+  class Page extends Component {
+    view: Markup = Component.$fragment((__p) => dom.text(dom.el(__p, "b"), () => "a"), this);
+    protected override buildRenderTree(__b: RenderTreeBuilder): void {
+      __b.addContent(this.view);
+    }
+  }
+  const el = host();
+  const p = mount(Page, el);
+  const first = el.querySelector("b");
+  expect(first!.textContent).toBe("a");
+  p.stateHasChanged();
+  expect(el.querySelector("b")).toBe(first);
+  p.view = Component.$fragment((__p) => dom.text(dom.el(__p, "i"), () => "c"), p);
+  p.stateHasChanged();
+  expect(el.querySelector("b")).toBeNull();
+  expect(el.querySelector("i")!.textContent).toBe("c");
+});
+
 const __card = dom.template([["div", 0, null, null]]);
 const __it = dom.template([["i", 0, ""]]);
 class Card extends Component {

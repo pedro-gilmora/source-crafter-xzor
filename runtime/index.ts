@@ -65,7 +65,7 @@ export type VComponent = {
 export type VNode = VText | VElement | VRegion | VComponent | VFine;
 
 /** A `@fine` component's DOM: built once by `dom.ts`, between two comments; patches only refresh it. */
-export type VFine = { kind: "fine"; build: (parent: Node) => void; root?: FineRoot };
+export type VFine = { kind: "fine"; build: (parent: Node) => void; root?: FineRoot; value?: true };
 
 /** @internal What `dom.ts` keeps for one fine vnode. */
 export type FineRoot = { $bindings: unknown; start: Comment; end: Comment };
@@ -934,7 +934,7 @@ export class RenderTreeBuilder {
   }
 
   addContent(value: unknown): void {
-    if (fineHooks.isMarkup(value)) return this.#append({ kind: "fine", build: value });
+    if (fineHooks.isMarkup(value)) return this.#append({ kind: "fine", build: value, value: true });
     if (isFragment(value)) {
       this.openRegion();
       value(this);
@@ -1504,6 +1504,8 @@ function same(o: VNode, n: VNode): boolean {
   if (o.kind === "component") return o.type === (n as VComponent).type && o.key === (n as VComponent).key;
   // A provider is only ever patched against the same provider; anything else replaces it.
   if (o.kind === "region") return o.name === (n as VRegion).name && o.fixed === (n as VRegion).fixed;
+  // Markup given as a value is the same node only while it is the same markup.
+  if (o.kind === "fine") return (n as VFine).value !== true || (o as VFine).build === (n as VFine).build;
   return true;
 }
 
