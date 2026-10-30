@@ -602,8 +602,8 @@ const FRAGMENT: unique symbol = Symbol("xzor.fragment");
 
 type Fragment = ((builder: RenderTreeBuilder) => void) & { readonly [FRAGMENT]: true };
 
-/** Markup held as a value (Blazor's RenderFragment); render it with `@member`. */
-export type RenderFragment = Fragment;
+/** Markup held as a value (Blazor's RenderFragment); render it with `@member`. Builder fragments go with the virtual DOM. */
+export type RenderFragment = Fragment | Markup;
 export type Renderer = RenderFragment;
 
 /** A component event; invoking it re-renders the component that passed it in. */
@@ -674,7 +674,7 @@ export abstract class Component {
   }
 
   /** Wraps builder calls as a RenderFragment; xzor emits this for markup used as a value. */
-  static fragment(build: (builder: RenderTreeBuilder) => void): RenderFragment {
+  static fragment(build: (builder: RenderTreeBuilder) => void): Fragment {
     return Object.assign(build, { [FRAGMENT]: true as const });
   }
 
@@ -740,7 +740,9 @@ export abstract class Component {
     throw new Error(`xzor: ${this.constructor.name} has no render`);
   }
 
-  protected buildRenderTree(_builder: RenderTreeBuilder): void {
+  protected buildRenderTree(builder: RenderTreeBuilder): void {
+    // A virtual-DOM parent (an island) mounting a component that builds its own DOM.
+    if (rendersDom(this.constructor)) return builder.addFine((parent) => this.render(parent));
     throw new Error(`xzor: ${this.constructor.name} has no buildRenderTree`);
   }
 
@@ -839,14 +841,14 @@ export class RenderTreeBuilder {
     const page = state.page;
     this.openCascade("route", route);
     if (state.failed) {
-      (state.caught!.render(route, state.error) as RenderFragment)(this);
+      (state.caught!.render(route, state.error) as Fragment)(this);
     } else if (page) {
       const entry = page;
       const fragment = Component.fragment((b) => b.#addPage(entry, state));
-      if (section) (section.render as (r: Route, p: RenderFragment) => RenderFragment)(route, fragment)(this);
+      if (section) (section.render as (r: Route, p: Fragment) => Fragment)(route, fragment)(this);
       else fragment(this);
     } else if (section) {
-      (section.render as (r: Route) => RenderFragment)(route)(this);
+      (section.render as (r: Route) => Fragment)(route)(this);
     }
     this.closeRegion();
   }

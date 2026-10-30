@@ -1883,6 +1883,44 @@ test("click after the row's item is replaced under the same key uses the new ite
   expect(p.picked).toEqual(["a", "b"]);
 });
 
+test("a callback made with dom.callback runs its owner's after-handler pass", () => {
+  class Owner extends Component {
+    clicks = 0;
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Pick, () => ({ name: "p" }), { onPick: dom.callback(this, () => void this.clicks++) });
+      dom.text(__p, () => this.clicks);
+    }
+  }
+  const el = host();
+  mount(Owner, el);
+  el.querySelector("button")!.click();
+  expect(el.textContent).toBe("p1");
+});
+
+test("dom.component and componentItem type their props against the component", () => {
+  class Owner extends Component {
+    protected override render(__p: Node): void {
+      // @ts-expect-error `nam` is not a prop of Pick
+      dom.component(dom.anchor(__p), Pick, (): Partial<Pick> => ({ nam: "x" }));
+      // @ts-expect-error a prop of the wrong type
+      dom.component(dom.anchor(__p), Pick, () => ({}), { name: 1 });
+      dom.component(dom.anchor(__p), Pick, () => ({ name: "ok" }), undefined, undefined, (c) => void c.name.length);
+    }
+  }
+  expect(Owner).toBeDefined();
+});
+
+test("a builder component mounts a render component", () => {
+  class Builder extends Component {
+    protected override buildRenderTree(b: RenderTreeBuilder): void {
+      b.addComponent(Pick, { name: "in vdom" });
+    }
+  }
+  const el = host();
+  mount(Builder, el);
+  expect(el.querySelector("button")!.textContent).toBe("in vdom");
+});
+
 class OldFrame extends Component {
   declare slots: { default?: () => unknown };
   protected override buildRenderTree(b: RenderTreeBuilder): void {

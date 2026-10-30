@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $cascade, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type Router, type RouteTable, type VNode } from "./index";
+import { $cascade, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type EventCallback, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type Router, type RouteTable, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -1004,6 +1004,16 @@ export const dom = {
     else el.addEventListener(event, (e) => afterHandler(row.$ctx, run(e)));
   },
 
+  /** A callback passed to a child: runs `handler`, then `owner`'s after-handler pass (else the context building it). */
+  callback<T = void>(owner: Component | undefined, handler: (arg: T) => unknown): EventCallback<T> {
+    const ctx = owner ?? holder!.$ctx;
+    return (arg: T) => {
+      const result = handler(arg);
+      afterHandler(ctx, result);
+      return result;
+    };
+  },
+
   /** Static text. */
   t(parent: Node, text: string): void {
     parent.appendChild(document.createTextNode(text));
@@ -1203,20 +1213,20 @@ export const dom = {
    * A child component before `end` (its end comment): `props` gives its value props, diffed against the last ones;
    * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
    */
-  component(end: Comment, type: abstract new (...args: any[]) => Component, props: () => Record<string, unknown>, statics?: Record<string, unknown>, slots?: object, ref?: (c: Component) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+  component<C extends Component>(end: Comment, type: new (...args: any[]) => C, props: () => Partial<C>, statics?: Partial<C>, slots?: C["slots"], ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
     const h = holder!;
-    const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics, slots, ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: undefined };
-    track(new Binding(COMPONENT, end, props, child));
+    const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics: statics as Child["statics"], slots, ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: undefined };
+    track(new Binding(COMPONENT, end, props as () => Record<string, unknown>, child));
   },
 
   /**
    * A list row's child component: `reads[i](item)` gives its props; `reads[statics](item)` its callbacks and
    * `reads[slots](item)` its slot fills, given again when the row's item is replaced under the same key.
    */
-  componentItem(end: Comment, type: abstract new (...args: any[]) => Component, i: number, statics?: number, slots?: number, ref?: (c: Component) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+  componentItem<C extends Component>(end: Comment, type: new (...args: any[]) => C, i: number, statics?: number, slots?: number, ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
     const row = holder as Row;
     const reads = row.reads!;
-    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, scope: row.$scope as Child["scope"], props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: row.item };
+    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, scope: row.$scope as Child["scope"], props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: row.item };
     track(new Binding(COMPONENT | ITEM, end, reads[i]!, child));
   },
 
