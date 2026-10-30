@@ -8,9 +8,9 @@ fn example_components_compile() {
     assert!(ts.contains("import Counter from \"../Counter.xzor\";"));
     assert!(ts.contains("export default class Home extends __Component {"));
     assert!(ts.contains("static readonly route = \"/\";"));
-    assert!(ts.contains("__dom.component(_e4, Counter, (): Partial<Counter> => ({ label: \"Fives\", step: 5 }));"), "{ts}");
+    assert!(ts.contains("__dom.component(_e11, Counter, (): Partial<Counter> => ({ label: \"Fives\", step: 5 }));"), "{ts}");
     assert!(app.contains("step=\"5\""));
-    assert!(ts.contains("for (const step of this.steps) {"));
+    assert!(ts.contains("__dom.listAt(_e3, () => this.steps, ["), "{ts}");
     assert!(ts.contains("__dom.textAt("), "{ts}");
 }
 
