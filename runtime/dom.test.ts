@@ -1732,6 +1732,21 @@ test("a content region switches between markup and text, and back", async () => 
   expect(s.builds).toBe(2);
 });
 
+test("markup replaced by text disposes its bindings", async () => {
+  const el = host();
+  const s = mount(Shows, el);
+  let runs = 0;
+  s.view = Component.$fragment((__p) => dom.text(__p, () => (runs++, s.n)), s);
+  await tick();
+  s.view = "x";
+  await tick();
+  const before = runs;
+  s.n = 7;
+  await tick();
+  expect(runs).toBe(before);
+  expect(el.textContent).toBe("x0");
+});
+
 test("perf: an @expr giving the same fragment, re-run 10k times, builds no DOM", async () => {
   const el = host();
   const s = mount(Shows, el);
