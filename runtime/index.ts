@@ -26,7 +26,7 @@ export type VElement = {
 };
 
 /** One `@cascade:name(value)` provider; created on the region's first render and carried across the next ones. */
-type CascadeRecord = {
+export type CascadeRecord = {
   name: string;
   value: unknown;
   fixed: boolean;
@@ -1122,6 +1122,16 @@ function notifyCascade(consumers: readonly Component[]): void {
   }
 }
 
+/** @internal A `dom.cascadeAt` value ran: a change reaches the consumers as it does through a patch. */
+export function $cascade(record: CascadeRecord, value: unknown): void {
+  if (Object.is(record.value, value)) return;
+  record.value = value;
+  if (!record.consumers?.size) return;
+  const consumers = [...record.consumers];
+  assignCascade(record, consumers);
+  batch(() => notifyCascade(consumers));
+}
+
 function queueAfterRender(component: Component, first: boolean): void {
   afterRender.push(component);
   afterFirst.push(first);
@@ -1488,8 +1498,10 @@ const rendersDom = (type: Function): boolean => (type.prototype as { render?: un
 export type Child = {
   type: Ctor<Component>;
   end: Comment;
-  /** The parent: its application and cascade scope. */
+  /** The parent: its application. */
   ctx: Component;
+  /** The cascade scope where it is. */
+  scope: CascadeRecord | undefined;
   props: Record<string, unknown> | undefined;
   /** A row's (`dom.componentItem`) are given by its item. */
   statics: Record<string, unknown> | ((item: any) => Record<string, unknown>) | undefined;
@@ -1630,7 +1642,7 @@ export function $childItem(s: Child, item: unknown): void {
 }
 
 function start(s: Child, c: Component): void {
-  const scope = s.ctx.$scope;
+  const scope = s.scope;
   s.instance = c;
   s.phase = LIVE;
   assign(s, c);
@@ -1645,7 +1657,7 @@ function abandon(s: Child, c: Component, err: unknown): void {
   if (s.instance === c) {
     s.instance = undefined;
     s.phase = FAILED;
-    unsubscribeCascades(c, s.ctx.$scope as CascadeRecord | undefined);
+    unsubscribeCascades(c, s.scope);
     try {
       fineHooks.dispose(c);
     } catch (disposeErr) {
@@ -1715,7 +1727,7 @@ function reviveChild(s: Child): boolean {
   byKey!.delete(s.key);
   keptChildCount--;
   const c = old.instance;
-  const scope = s.ctx.$scope;
+  const scope = s.scope;
   c.$app = s.ctx.$app;
   c.$scope = scope;
   s.instance = c;
@@ -1742,7 +1754,7 @@ function reviveChild(s: Child): boolean {
 function bridge(s: Child, props: Record<string, unknown>): void {
   const owner = s.ctx;
   const all = s.statics === undefined ? props : { ...staticsOf(s), ...props };
-  s.tree = patchIsland(owner, owner.$app, owner.$scope, s.end, s.tree!, (b) => b.addComponent(s.type, all as Partial<Component>, slotsOf(s) as Component["slots"], { key: s.key, ref: s.ref }));
+  s.tree = patchIsland(owner, owner.$app, s.scope, s.end, s.tree!, (b) => b.addComponent(s.type, all as Partial<Component>, slotsOf(s) as Component["slots"], { key: s.key, ref: s.ref }));
 }
 function remove(parent: Node, v: VNode): void {
   for (const node of nodesOf(v)) $leave(node);

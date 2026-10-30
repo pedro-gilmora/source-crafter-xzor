@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $child, $childItem, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type Child, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { $cascade, $child, $childItem, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -48,15 +48,15 @@ type Dep = { model: Source; owner: Binding; mask: number; slot: number };
 /** The component bindings belong to: where it was mounted (`$app`, `$scope`) and its loose bindings. */
 type Ctx = Component;
 /** Where bindings are chained: a component (its root), a region or a list row. */
-type Holder = { $bindings: unknown; $ctx: Ctx };
-type Region = { $bindings: Binding | undefined; $ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
+type Holder = { $bindings: unknown; $ctx: Ctx; $scope: unknown };
+type Region = { $bindings: Binding | undefined; $ctx: Ctx; $scope: unknown; start: Comment; item: unknown; branch: Build | undefined; index: number };
 /** A built branch of a show block: its top-level elements, and their inline `display` while hidden. */
 type ShowBranch = Region & { first: Node | null; els: HTMLElement[]; display: string[] };
-type Show = { ctx: Ctx; start: Comment; index: number; build: (parent: Node) => unknown; branches: (ShowBranch | undefined)[] };
+type Show = { ctx: Ctx; scope: unknown; start: Comment; index: number; build: (parent: Node) => unknown; branches: (ShowBranch | undefined)[] };
 /** A row's shared reads, from the list: `(item, x) => value`; a handler's gives the handler. */
 type Reads = readonly ((item: any, x?: any) => any)[];
 /** `set`: a build that closes over its item gives it the new one (`dom.rowItem`). */
-type Row = { $bindings: Binding | undefined; $ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
+type Row = { $bindings: Binding | undefined; $ctx: Ctx; $scope: unknown; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
 /** `value`: what it shows; `owner`: the context of what has none (text, a slot's fallback, markup made outside a build). `branch` is a slot's fallback. */
@@ -68,10 +68,10 @@ export type Markup = ((parent: Node) => void) & { readonly [MARKUP]: Ctx | null 
 const isMarkup = (value: unknown): value is Markup => typeof value === "function" && MARKUP in value;
 // What a content region shows for a value: 1 markup, 2 nothing (a slot's fallback), 0 text.
 const shows = (value: unknown): number => (isMarkup(value) ? 1 : value === null || value === undefined ? 2 : 0);
-type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
+type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; scope: unknown; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
-type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
+type Keyed = { ctx: Ctx; scope: unknown; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.dom.empty");
 
@@ -302,7 +302,7 @@ class Binding {
     show.index = index;
     let branch = show.branches[index];
     if (branch !== undefined) return showBranch(branch);
-    branch = { $bindings: undefined, $ctx: show.ctx, start: show.start, item: undefined, branch: undefined, index: -1, first: null, els: [], display: [] };
+    branch = { $bindings: undefined, $ctx: show.ctx, $scope: show.scope, start: show.start, item: undefined, branch: undefined, index: -1, first: null, els: [], display: [] };
     show.branches[index] = branch;
     const frag = document.createDocumentFragment();
     within(branch, () => untracked(() => show.build(frag)));
@@ -329,7 +329,7 @@ class Binding {
     this.node = parent.insertBefore(document.createComment(""), text.nextSibling);
     parent.removeChild(text);
     this.flags = (this.flags & ~KIND) | REGION | CONTENT;
-    const c: Content = { $bindings: undefined, $ctx: h.$ctx, start, item: (this.flags & ITEM) !== 0 ? h.item : undefined, branch: undefined, index: -1, value: undefined, owner: h.$ctx };
+    const c: Content = { $bindings: undefined, $ctx: h.$ctx, $scope: h.$scope, start, item: (this.flags & ITEM) !== 0 ? h.item : undefined, branch: undefined, index: -1, value: undefined, owner: h.$ctx };
     this.data = c;
     this.#fill(c, value);
   }
@@ -374,7 +374,7 @@ class Binding {
     text.parentNode!.removeChild(text);
     this.node = end;
     this.flags = (this.flags & ~(KIND | ITEM)) | ISLAND;
-    island(this, h.$ctx, (b) => {
+    island(this, h.$ctx, h.$scope, (b) => {
       const v = value();
       if ($isFragment(v)) (v as (b: RenderTreeBuilder) => void)(b);
       else b.addContent(v);
@@ -400,11 +400,11 @@ class Binding {
 }
 
 /** Makes `b` patch a virtual-DOM island built by `build`, before its end comment. */
-function island(b: Binding, ctx: Ctx, build: (b: RenderTreeBuilder) => void): void {
+function island(b: Binding, ctx: Ctx, scope: unknown, build: (b: RenderTreeBuilder) => void): void {
   const state: Island = { ctx, tree: [], build };
   b.data = state;
   b.read = () => {
-    state.tree = patchIsland(ctx, ctx.$app, ctx.$scope, b.node, state.tree, build);
+    state.tree = patchIsland(ctx, ctx.$app, scope, b.node, state.tree, build);
   };
 }
 
@@ -614,9 +614,9 @@ function removeRange(head: Node, tail: Node): void {
 }
 
 /** A row built by `build` (given the item), its nodes in a fragment until `place` puts them. */
-function newRow(ctx: Ctx, item: unknown, reads: Reads | undefined, build: (parent: Node, item: any) => void): Row {
+function newRow(ctx: Ctx, scope: unknown, item: unknown, reads: Reads | undefined, build: (parent: Node, item: any) => void): Row {
   const frag = document.createDocumentFragment();
-  const row: Row = { $bindings: undefined, $ctx: ctx, head: frag, tail: frag, item, reads, set: undefined };
+  const row: Row = { $bindings: undefined, $ctx: ctx, $scope: scope, head: frag, tail: frag, item, reads, set: undefined };
   within(row, () => build(frag, item));
   seal(row, frag);
   return row;
@@ -702,7 +702,7 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
     const item = next[i];
     let row = rows.get(keys[i]);
     if (row === undefined) {
-      row = item === EMPTY ? newRow(state.ctx, item, undefined, state.empty!) : newRow(state.ctx, item, state.reads, state.build);
+      row = item === EMPTY ? newRow(state.ctx, state.scope, item, undefined, state.empty!) : newRow(state.ctx, state.scope, item, state.reads, state.build);
       rows.set(keys[i], row);
     }
     order.push(row);
@@ -762,7 +762,7 @@ function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
         return undefined;
       }
       const frag = document.createDocumentFragment();
-      row = { $bindings: undefined, $ctx: s.ctx, head: frag, tail: frag, item: values, reads: undefined, set: undefined };
+      row = { $bindings: undefined, $ctx: s.ctx, $scope: s.scope, head: frag, tail: frag, item: values, reads: undefined, set: undefined };
       s.rows.set(key, row);
       order.push(row);
       building = row;
@@ -775,7 +775,7 @@ function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
   }
   if (order.length === 0 && s.empty !== undefined) {
     let row = s.rows.get(EMPTY);
-    if (row === undefined) s.rows.set(EMPTY, (row = newRow(s.ctx, EMPTY, undefined, s.empty)));
+    if (row === undefined) s.rows.set(EMPTY, (row = newRow(s.ctx, s.scope, EMPTY, undefined, s.empty)));
     order.push(row);
     seen.add(EMPTY);
   }
@@ -852,12 +852,13 @@ function on(el: Element, event: string, handler: (e: any) => unknown, h: Holder)
 }
 
 function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number, branch?: Build): void {
-  const region: Region = { $bindings: undefined, $ctx: holder!.$ctx, start, item, branch, index: -1 };
+  const h = holder!;
+  const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: h.$scope, start, item, branch, index: -1 };
   track(new Binding(REGION | flags, end, build, region));
 }
 
 function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void, empty?: Build, key?: (item: any) => unknown): void {
-  const state: ListState = { build, ctx: holder!.$ctx, rows: new Map(), order: [], reads, empty, key };
+  const state: ListState = { build, ctx: holder!.$ctx, scope: holder!.$scope, rows: new Map(), order: [], reads, empty, key };
   track(new Binding(LIST, end, items, state));
 }
 
@@ -870,7 +871,7 @@ function awaiting<R>(end: Comment, pending: Build | undefined, then: ((parent: N
     if (state.phase === 0) pending?.(p);
     else if (state.phase === 1) then?.(p, state.value as Awaited<R>);
     else fail?.(p, state.value);
-  }, { $bindings: undefined, $ctx: holder!.$ctx, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1 } satisfies Region);
+  }, { $bindings: undefined, $ctx: holder!.$ctx, $scope: holder!.$scope, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1 } satisfies Region);
   const show = (phase: number, value: unknown): void => {
     if ((view.flags & DEAD) !== 0) return;
     state.phase = phase;
@@ -996,7 +997,7 @@ export const dom = {
 
   /** `@show:if`/`@show:switch` before `end`: `run()` picks a branch, `run(parent)` builds the one picked; see `#show`. */
   showAt(end: Comment, run: (parent?: Node) => number): void {
-    const show: Show = { ctx: holder!.$ctx, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
+    const show: Show = { ctx: holder!.$ctx, scope: holder!.$scope, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
     track(new Binding(REGION | SHOW, end, run, show));
   },
 
@@ -1112,7 +1113,7 @@ export const dom = {
   branchItem(end: Comment, i: number): void {
     const row = holder as Row;
     const read = row.reads![i]!;
-    const state: Region = { $bindings: undefined, $ctx: row.$ctx, start: end.previousSibling as Comment, item: row.item, branch: undefined, index: -1 };
+    const state: Region = { $bindings: undefined, $ctx: row.$ctx, $scope: row.$scope, start: end.previousSibling as Comment, item: row.item, branch: undefined, index: -1 };
     state.branch = (p) => read(state.item, p);
     track(new Binding(REGION | ITEM, end, read, state));
   },
@@ -1129,7 +1130,7 @@ export const dom = {
 
   /** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
   keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
-    const state: Keyed = { ctx: holder!.$ctx, rows: new Map(), order: [], empty };
+    const state: Keyed = { ctx: holder!.$ctx, scope: holder!.$scope, rows: new Map(), order: [], empty };
     track(new Binding(KEYED, end, () => runKeyed(state, end, run), state));
   },
 
@@ -1138,7 +1139,8 @@ export const dom = {
    * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
    */
   component(end: Comment, type: abstract new (...args: any[]) => Component, props: () => Record<string, unknown>, statics?: Record<string, unknown>, slots?: object, ref?: (c: Component) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
-    const child: Child = { type: type as Child["type"], end, ctx: holder!.$ctx, props: undefined, statics, slots, ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: undefined };
+    const h = holder!;
+    const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics, slots, ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: undefined };
     track(new Binding(COMPONENT, end, props, child));
   },
 
@@ -1149,7 +1151,7 @@ export const dom = {
   componentItem(end: Comment, type: abstract new (...args: any[]) => Component, i: number, statics?: number, slots?: number, ref?: (c: Component) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
     const row = holder as Row;
     const reads = row.reads!;
-    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: row.item };
+    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, scope: row.$scope as Child["scope"], props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: row.item };
     track(new Binding(COMPONENT | ITEM, end, reads[i]!, child));
   },
 
@@ -1171,8 +1173,21 @@ export const dom = {
       lastArgs = a;
       return (markup = f?.(...a));
     };
-    const c: Content = { $bindings: undefined, $ctx: ctx, start: end.previousSibling as Comment, item: undefined, branch: fallback, index: -1, value: undefined, owner: ctx };
+    const c: Content = { $bindings: undefined, $ctx: ctx, $scope: holder!.$scope, start: end.previousSibling as Comment, item: undefined, branch: fallback, index: -1, value: undefined, owner: ctx };
     track(new Binding(REGION | CONTENT, end, read, c));
+  },
+
+  /**
+   * `@cascade:name(value[, fixed])` before `end` (and the comment before it): `build` once, its components given
+   * `value()` under `name`. A change reaches them (assigned, `onParametersSet`, a pass); `fixed` keeps the first value.
+   */
+  cascadeAt(end: Comment, name: string, value: () => unknown, fixed: boolean, build: Build): void {
+    const h = holder!;
+    const record: CascadeRecord = { name, value: undefined, fixed, consumers: undefined, parent: h.$scope as CascadeRecord | undefined };
+    if (fixed) record.value = untracked(value);
+    else track(new Binding(EFFECT, end, () => $cascade(record, value()), undefined));
+    const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: build, index: -1 };
+    track(new Binding(REGION, end, zero, region));
   },
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */
@@ -1182,12 +1197,13 @@ export const dom = {
 
   islandAt(end: Comment, build: (b: RenderTreeBuilder) => void): void {
     const b = new Binding(ISLAND, end, noop, undefined);
-    island(b, holder!.$ctx, build);
+    island(b, holder!.$ctx, holder!.$scope, build);
     track(b);
   },
 };
 
 const noop = (): void => {};
+const zero = (): number => 0;
 const NO_ARGS: readonly unknown[] = [];
 
 /** @internal What `index.ts` calls to mount, refresh and dispose a component's DOM. */
@@ -1202,7 +1218,7 @@ export const fineHooks = {
       owner.$scope = scope;
       (owner as unknown as Record<symbol, Ctx>)[FINE] = owner;
     }
-    const root: FineRoot & Holder = { $bindings: undefined, $ctx: made ?? owner, start, end: start };
+    const root: FineRoot & Holder = { $bindings: undefined, $ctx: made ?? owner, $scope: scope, start, end: start };
     // Reads outside a binding subscribe nothing: a component is never re-rendered by what it reads.
     const reader = Component.$reader;
     Component.$reader = undefined;

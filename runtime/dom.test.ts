@@ -1915,3 +1915,130 @@ test("a builder-based child shows DOM markup it was given as a slot fill, in its
   el.querySelector("i")!.click();
   expect(el.textContent).toBe("b1");
 });
+
+// `@cascade:name(value[, fixed])`, as codegen will emit it.
+let seen: string[] = [];
+type Scope = { name: string; value: unknown; consumers: Set<Component> | undefined };
+class Reader extends Component {
+  static cascades = [["theme", "theme"]] as const;
+  theme: unknown = undefined;
+  tag = "";
+  protected override onParametersSet(): void { seen.push(`${this.tag} params ${String(this.theme)}`); }
+  protected override render(__p: Node): void { dom.text(__p, () => `${this.tag}=${String(this.theme)};`); }
+}
+class Theme extends Component {
+  #theme = "dark"; get theme(): string { Component.$reader?.(this, 0); return this.#theme; } set theme(v: string) { const p = this.#theme; if (Component.same(p, v)) return; this.#theme = v; this.$changed(0, p); }
+  #inner = "x"; get inner(): string { Component.$reader?.(this, 1); return this.#inner; } set inner(v: string) { const p = this.#inner; if (Component.same(p, v)) return; this.#inner = v; this.$changed(1, p); }
+  #on = true; get on(): boolean { Component.$reader?.(this, 2); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(2, p); }
+  #more = 0; get more(): number { Component.$reader?.(this, 3); return this.#more; } set more(v: number) { const p = this.#more; if (Component.same(p, v)) return; this.#more = v; this.$changed(3, p); }
+  static { Component.$define(this, ["theme", "inner", "on", "more"]); }
+  fixed = false;
+  nested = false;
+  a: Reader | undefined;
+  protected override render(__p: Node): void {
+    dom.region(__p, (__p) => {
+      if (!this.on) return;
+      dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, this.fixed, (__p) => {
+        dom.component(dom.anchor(__p), Reader, () => ({ tag: "a" }), undefined, undefined, (c) => (this.a = c as Reader));
+        if (this.nested) dom.cascadeAt(dom.anchors(__p), "theme", () => this.inner, false, (__p) => dom.component(dom.anchor(__p), Reader, () => ({ tag: "b" })));
+        dom.region(__p, (__p) => {
+          for (let i = 0; i < this.more; i++) dom.component(dom.anchor(__p), Reader, () => ({ tag: `c${i}` }));
+        });
+      });
+    });
+  }
+}
+
+test("@cascade: a child takes the value, and a change assigns it, then onParametersSet and a pass", async () => {
+  seen = [];
+  const el = host();
+  const t = mount(Theme, el);
+  expect(el.textContent).toBe("a=dark;");
+  t.theme = "light";
+  await tick();
+  expect(el.textContent).toBe("a=light;");
+  expect(seen).toEqual(["a params dark", "a params light"]);
+});
+
+test("@cascade: a region inside it built later still sees it", async () => {
+  const el = host();
+  const t = mount(Theme, el);
+  t.more = 2;
+  await tick();
+  expect(el.textContent).toBe("a=dark;c0=dark;c1=dark;");
+  t.theme = "light";
+  await tick();
+  expect(el.textContent).toBe("a=light;c0=light;c1=light;");
+});
+
+test("@cascade fixed keeps its first value and subscribes no one", async () => {
+  class Fixed extends Theme {
+    override fixed = true;
+  }
+  seen = [];
+  const el = host();
+  const t = mount(Fixed, el);
+  t.theme = "light";
+  await tick();
+  expect(el.textContent).toBe("a=dark;");
+  expect(seen).toEqual(["a params dark"]);
+  expect((t.a!.$scope as Scope).consumers).toBeUndefined();
+});
+
+test("@cascade nested: the nearest provider of a name wins", async () => {
+  class Nested extends Theme {
+    override nested = true;
+  }
+  seen = [];
+  const el = host();
+  const t = mount(Nested, el);
+  expect(el.textContent).toBe("a=dark;b=x;");
+  t.inner = "y";
+  await tick();
+  expect(el.textContent).toBe("a=dark;b=y;");
+  t.theme = "light";
+  await tick();
+  expect(el.textContent).toBe("a=light;b=y;");
+  expect(seen).toEqual(["a params dark", "b params x", "b params y", "a params light"]);
+});
+
+test("@cascade: a consumer that goes unsubscribes", async () => {
+  const el = host();
+  const t = mount(Theme, el);
+  t.more = 3;
+  await tick();
+  const scope = t.a!.$scope as Scope;
+  expect(scope.name).toBe("theme");
+  expect(scope.consumers!.size).toBe(4);
+  t.more = 1;
+  await tick();
+  expect(scope.consumers!.size).toBe(2);
+  t.on = false;
+  await tick();
+  expect(el.textContent).toBe("");
+  expect(scope.consumers!.size).toBe(0);
+});
+
+test("leak check: 1000 consumers under a cascade mounted and removed leave the heap and the consumers as they were", async () => {
+  const { heapSize } = await import("bun:jsc");
+  const el = host();
+  const t = mount(Theme, el);
+  const scope = t.a!.$scope as Scope;
+  const cycle = async (): Promise<void> => {
+    t.more = 1000;
+    await tick();
+    t.more = 0;
+    await tick();
+  };
+  await cycle();
+  Bun.gc(true);
+  Bun.gc(true);
+  const before = heapSize();
+  await cycle();
+  Bun.gc(true);
+  Bun.gc(true);
+  const after = heapSize();
+  console.log(`cascade leak check: before ${before} B, after ${after} B, delta ${after - before} B, consumers ${scope.consumers!.size - 1}`);
+  expect(scope.consumers!.size - 1).toBe(0);
+  expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
+});
