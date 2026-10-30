@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
+import { $child, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, Component, disposeIsland, FINE, patchIsland, SVG, type Child, type FineRoot, type IApplication, type RenderTreeBuilder, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -17,50 +17,50 @@ const KEYED = 5;
 const EFFECT = 6;
 /** A cached getter (value in `data`): a change to what it read marks it stale; it recomputes when read. Always QUEUED, so never queued. */
 const MEMO = 7;
-const KIND = 7;
+/** A child component before its end comment: `read` gives its props, `data` is its `Child`. */
+const COMPONENT = 8;
+const KIND = 15;
 /** The tracker has it queued; `at` reads 0 then, else -1. */
-const QUEUED = 8;
+const QUEUED = 16;
 /** `model` is a map of deps: the binding read more than one source. */
-const MANY = 16;
-const DEAD = 32;
+const MANY = 32;
+const DEAD = 64;
 /** In its component's `loose` list: its last run read nothing tracked. */
-const LOOSE = 64;
+const LOOSE = 128;
 /** A row's binding: `read` is shared by the list's rows and takes the row's item (`data.item`). */
-const ITEM = 128;
+const ITEM = 256;
 /** An ATTR binding from `@attr:` on an enclosing element: disposing it takes its value back off (`data` is `Owned`). */
-const OWNED = 256;
+const OWNED = 512;
 /** A MEMO's value is current. */
-const FRESH = 512;
+const FRESH = 1024;
 /** A REGION that is `@show:if`/`@show:switch` (`data` is `Show`). */
-const SHOW = 1024;
+const SHOW = 2048;
 /** A REGION that is `@pause { }`: what it holds stops while its show branch is hidden. */
-const PAUSE = 2048;
+const PAUSE = 4096;
 /** Under a `@pause` of a hidden branch: changes only mark it STALE. */
-const PAUSED = 4096;
-const STALE = 8192;
+const PAUSED = 8192;
+const STALE = 16384;
 
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
-/** Where the component was mounted: what an island needs to mount components. */
-type Ctx = { owner: Component; app: IApplication | undefined; scope: unknown; loose: Binding[]; sweep: boolean };
-/** Where bindings are chained: a component's root, a region or a list row. */
-type Holder = { bindings: unknown; ctx: Ctx };
-type Region = { bindings: Binding | undefined; ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
+/** The component bindings belong to: where it was mounted (`$app`, `$scope`) and its loose bindings. */
+type Ctx = Component;
+/** Where bindings are chained: a component (its root), a region or a list row. */
+type Holder = { $bindings: unknown; $ctx: Ctx };
+type Region = { $bindings: Binding | undefined; $ctx: Ctx; start: Comment; item: unknown; branch: Build | undefined; index: number };
 /** A built branch of a show block: its top-level elements, and their inline `display` while hidden. */
 type ShowBranch = Region & { first: Node | null; els: HTMLElement[]; display: string[] };
 type Show = { ctx: Ctx; start: Comment; index: number; build: (parent: Node) => unknown; branches: (ShowBranch | undefined)[] };
 /** A row's shared reads, from the list: `(item, x) => value`; a handler's gives the handler. */
 type Reads = readonly ((item: any, x?: any) => any)[];
 /** `set`: a build that closes over its item gives it the new one (`dom.rowItem`). */
-type Row = { bindings: Binding | undefined; ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
+type Row = { $bindings: Binding | undefined; $ctx: Ctx; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
 type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
 type ListState = { build: (parent: Node, item: any) => void; ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; reads: Reads | undefined; empty: Build | undefined; key: ((item: any) => unknown) | undefined };
 /** One pass of a keyed loop: its key and the loop variables it saw; a node to build its row into, or `undefined` to keep it. */
 type Pass = (key: unknown, values: readonly unknown[]) => Node | undefined;
 type Keyed = { ctx: Ctx; rows: Map<unknown, Row>; order: Row[]; empty: Build | undefined };
-/** A component's cached getters by `dom.memo` index, created when a second binding reads them. */
-const MEMOS = Symbol("xzor.dom.memos");
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.dom.empty");
 
@@ -196,7 +196,7 @@ class Binding {
   #loose(): void {
     if ((this.flags & (LOOSE | DEAD | PAUSE)) !== 0 || (this.flags & KIND) >= EFFECT || holder === undefined) return;
     this.flags |= LOOSE;
-    holder.ctx.loose.push(this);
+    ((holder.$ctx.$loose ??= []) as Binding[]).push(this);
   }
 
   #run(parent?: Node): unknown {
@@ -269,6 +269,8 @@ class Binding {
         return;
       case MEMO:
         return;
+      case COMPONENT:
+        return $child(this.data as Child, this.#run() as Record<string, unknown>);
     }
   }
 
@@ -282,7 +284,7 @@ class Binding {
     show.index = index;
     let branch = show.branches[index];
     if (branch !== undefined) return showBranch(branch);
-    branch = { bindings: undefined, ctx: show.ctx, start: show.start, item: undefined, branch: undefined, index: -1, first: null, els: [], display: [] };
+    branch = { $bindings: undefined, $ctx: show.ctx, start: show.start, item: undefined, branch: undefined, index: -1, first: null, els: [], display: [] };
     show.branches[index] = branch;
     const frag = document.createDocumentFragment();
     within(branch, () => untracked(() => show.build(frag)));
@@ -310,7 +312,7 @@ class Binding {
     text.parentNode!.removeChild(text);
     this.node = end;
     this.flags = (this.flags & ~(KIND | ITEM)) | ISLAND;
-    island(this, h.ctx, (b) => {
+    island(this, h.$ctx, (b) => {
       const v = value();
       if ($isFragment(v)) (v as (b: RenderTreeBuilder) => void)(b);
       else b.addContent(v);
@@ -327,7 +329,8 @@ class Binding {
     else if (kind === ISLAND) {
       disposeIsland((this.data as Island).tree);
       (this.data as Island).tree = [];
-    } else if ((this.flags & OWNED) !== 0) undoAttr(this.node as Element, this.data as Owned);
+    } else if (kind === COMPONENT) $dropChild(this.data as Child);
+    else if ((this.flags & OWNED) !== 0) undoAttr(this.node as Element, this.data as Owned);
     this.#reset();
     this.#sweep();
     this.flags = DEAD;
@@ -339,13 +342,14 @@ function island(b: Binding, ctx: Ctx, build: (b: RenderTreeBuilder) => void): vo
   const state: Island = { ctx, tree: [], build };
   b.data = state;
   b.read = () => {
-    state.tree = patchIsland(ctx.owner, ctx.app, ctx.scope, b.node, state.tree, build);
+    state.tree = patchIsland(ctx, ctx.$app, ctx.$scope, b.node, state.tree, build);
   };
 }
 
 /** Re-runs the component's bindings that read nothing tracked; drops the dead ones and those that now track. */
 function refreshLoose(ctx: Ctx): void {
-  const loose = ctx.loose;
+  const loose = ctx.$loose as Binding[] | undefined;
+  if (loose === undefined) return;
   for (let i = 0; i < loose.length; ) {
     const b = loose[i]!;
     if ((b.flags & DEAD) !== 0 || b.model !== undefined) {
@@ -392,29 +396,29 @@ function within(h: Holder, run: () => void): void {
 
 function track(b: Binding): void {
   const h = holder!;
-  b.next = h.bindings as Binding | undefined;
-  h.bindings = b;
+  b.next = h.$bindings as Binding | undefined;
+  h.$bindings = b;
   b.stateHasChanged();
 }
 
 function disposeAll(h: Holder): void {
   let loose = false;
-  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+  for (let b = h.$bindings as Binding | undefined; b !== undefined; b = b.next) {
     if ((b.flags & LOOSE) !== 0) loose = true;
     b.dispose();
   }
-  h.bindings = undefined;
-  if (loose) sweepLoose(h.ctx);
+  h.$bindings = undefined;
+  if (loose) sweepLoose(h.$ctx);
 }
 
 // The loose list holds its bindings, and they their nodes, until a handler would drop them: a change from
 // elsewhere (a timer, a server update) could grow it without end. One pass per component per microtask.
 function sweepLoose(ctx: Ctx): void {
-  if (ctx.sweep) return;
-  ctx.sweep = true;
+  if (ctx.$sweep) return;
+  ctx.$sweep = true;
   queueMicrotask(() => {
-    ctx.sweep = false;
-    const loose = ctx.loose;
+    ctx.$sweep = false;
+    const loose = ctx.$loose as Binding[];
     let kept = 0;
     for (const b of loose) if ((b.flags & DEAD) === 0) loose[kept++] = b;
     loose.length = kept;
@@ -423,7 +427,7 @@ function sweepLoose(ctx: Ctx): void {
 
 /** Re-runs every binding under `h`, rows included: what `stateHasChanged` does for changes nothing tracks. */
 function refreshAll(h: Holder): void {
-  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+  for (let b = h.$bindings as Binding | undefined; b !== undefined; b = b.next) {
     const kind = b.flags & KIND;
     const kept = kind === REGION ? (b.data as Region).index : -1;
     b.stateHasChanged();
@@ -433,24 +437,28 @@ function refreshAll(h: Holder): void {
   }
 }
 
-/** Calls `f` with each holder right under `b`: a region's, a list's rows, a show block's built branches. */
+/** Calls `f` with each holder right under `b`: a region's, a list's rows, a show block's built branches, a child component. */
 function under(b: Binding, f: (h: Holder) => void): void {
   const kind = b.flags & KIND;
   if ((b.flags & SHOW) !== 0) for (const branch of (b.data as Show).branches) branch !== undefined && f(branch);
   else if (kind === REGION) f(b.data as Region);
   else if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) f(row);
+  else if (kind === COMPONENT) {
+    const child = (b.data as Child).instance;
+    if (child !== undefined) f(child);
+  }
 }
 
 /** Pauses everything under the `@pause` regions of `h`. */
 function pauseIn(h: Holder): void {
-  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+  for (let b = h.$bindings as Binding | undefined; b !== undefined; b = b.next) {
     if ((b.flags & PAUSE) !== 0) under(b, freeze);
     else under(b, pauseIn);
   }
 }
 
 function freeze(h: Holder): void {
-  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+  for (let b = h.$bindings as Binding | undefined; b !== undefined; b = b.next) {
     b.flags |= PAUSED;
     under(b, freeze);
   }
@@ -458,7 +466,7 @@ function freeze(h: Holder): void {
 
 /** Resumes what `freeze` paused: a binding that missed a change runs once, then what is under it resumes. */
 function thaw(h: Holder): void {
-  for (let b = h.bindings as Binding | undefined; b !== undefined; b = b.next) {
+  for (let b = h.$bindings as Binding | undefined; b !== undefined; b = b.next) {
     const stale = (b.flags & STALE) !== 0;
     b.flags &= ~(PAUSED | STALE);
     if (stale) b.stateHasChanged();
@@ -546,7 +554,7 @@ function removeRange(head: Node, tail: Node): void {
 /** A row built by `build` (given the item), its nodes in a fragment until `place` puts them. */
 function newRow(ctx: Ctx, item: unknown, reads: Reads | undefined, build: (parent: Node, item: any) => void): Row {
   const frag = document.createDocumentFragment();
-  const row: Row = { bindings: undefined, ctx, head: frag, tail: frag, item, reads, set: undefined };
+  const row: Row = { $bindings: undefined, $ctx: ctx, head: frag, tail: frag, item, reads, set: undefined };
   within(row, () => build(frag, item));
   seal(row, frag);
   return row;
@@ -649,7 +657,7 @@ function reconcile(list: Binding, items: Iterable<unknown>): void {
 function retake(row: Row, item: unknown): void {
   row.item = item;
   if (row.set !== undefined) row.set(item);
-  for (let b = row.bindings; b !== undefined; b = b.next) {
+  for (let b = row.$bindings; b !== undefined; b = b.next) {
     if ((b.flags & ITEM) === 0) continue;
     if ((b.flags & KIND) === REGION) (b.data as Region).item = item;
     if (row.set === undefined) b.stateHasChanged();
@@ -691,7 +699,7 @@ function runKeyed(s: Keyed, end: Node, run: (pass: Pass) => void): Row[] {
         return undefined;
       }
       const frag = document.createDocumentFragment();
-      row = { bindings: undefined, ctx: s.ctx, head: frag, tail: frag, item: values, reads: undefined, set: undefined };
+      row = { $bindings: undefined, $ctx: s.ctx, head: frag, tail: frag, item: values, reads: undefined, set: undefined };
       s.rows.set(key, row);
       order.push(row);
       building = row;
@@ -759,7 +767,7 @@ function fire(node: Target, e: Event): boolean {
   if (handler === undefined) return false;
   const h = node[HOLDER] as Holder & Partial<Row>;
   Object.defineProperty(e, "currentTarget", { configurable: true, value: node });
-  afterHandler(h.ctx, h.reads !== undefined ? handler(h.item)(e) : handler(e));
+  afterHandler(h.$ctx, h.reads !== undefined ? handler(h.item)(e) : handler(e));
   return e.cancelBubble;
 }
 
@@ -777,16 +785,16 @@ function on(el: Element, event: string, handler: (e: any) => unknown, h: Holder)
     const target = el as unknown as Record<symbol, unknown>;
     target[keyOf(event)] = handler;
     target[HOLDER] = h;
-  } else el.addEventListener(event, (e) => afterHandler(h.ctx, handler(e)));
+  } else el.addEventListener(event, (e) => afterHandler(h.$ctx, handler(e)));
 }
 
 function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number, branch?: Build): void {
-  const region: Region = { bindings: undefined, ctx: holder!.ctx, start, item, branch, index: -1 };
+  const region: Region = { $bindings: undefined, $ctx: holder!.$ctx, start, item, branch, index: -1 };
   track(new Binding(REGION | flags, end, build, region));
 }
 
 function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void, empty?: Build, key?: (item: any) => unknown): void {
-  const state: ListState = { build, ctx: holder!.ctx, rows: new Map(), order: [], reads, empty, key };
+  const state: ListState = { build, ctx: holder!.$ctx, rows: new Map(), order: [], reads, empty, key };
   track(new Binding(LIST, end, items, state));
 }
 
@@ -799,7 +807,7 @@ function awaiting<R>(end: Comment, pending: Build | undefined, then: ((parent: N
     if (state.phase === 0) pending?.(p);
     else if (state.phase === 1) then?.(p, state.value as Awaited<R>);
     else fail?.(p, state.value);
-  }, { bindings: undefined, ctx: holder!.ctx, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1 } satisfies Region);
+  }, { $bindings: undefined, $ctx: holder!.$ctx, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1 } satisfies Region);
   const show = (phase: number, value: unknown): void => {
     if ((view.flags & DEAD) !== 0) return;
     state.phase = phase;
@@ -869,7 +877,7 @@ export const dom = {
     const row = holder as Row;
     const read = row.reads![i]!;
     if (DELEGATED.has(event)) on(el, event, read, row);
-    else el.addEventListener(event, (e) => afterHandler(row.ctx, read(row.item)(e)));
+    else el.addEventListener(event, (e) => afterHandler(row.$ctx, read(row.item)(e)));
   },
 
   /** Static text. */
@@ -925,7 +933,7 @@ export const dom = {
 
   /** `@show:if`/`@show:switch` before `end`: `run()` picks a branch, `run(parent)` builds the one picked; see `#show`. */
   showAt(end: Comment, run: (parent?: Node) => number): void {
-    const show: Show = { ctx: holder!.ctx, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
+    const show: Show = { ctx: holder!.$ctx, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
     track(new Binding(REGION | SHOW, end, run, show));
   },
 
@@ -973,7 +981,7 @@ export const dom = {
       Object.defineProperty(proto, name, {
         ...desc,
         get(this: Record<symbol, unknown>) {
-          const memo = (this[MEMOS] as (Binding | undefined)[] | undefined)?.[i];
+          const memo = ((this as unknown as Component).$memos as (Binding | undefined)[] | undefined)?.[i];
           if (memo !== undefined) return memo.$memo();
           // A cache pays off from a second reader: outside bindings, or for its one reader, it runs as written.
           const by = collecting;
@@ -985,7 +993,7 @@ export const dom = {
           }
           this[reader] = undefined;
           const b = new Binding(MEMO | QUEUED, null as unknown as Node, () => get.call(this), undefined);
-          ((this[MEMOS] ??= []) as (Binding | undefined)[])[i] = b;
+          (((this as unknown as Component).$memos ??= []) as (Binding | undefined)[])[i] = b;
           return b.$memo();
         },
       });
@@ -1041,7 +1049,7 @@ export const dom = {
   branchItem(end: Comment, i: number): void {
     const row = holder as Row;
     const read = row.reads![i]!;
-    const state: Region = { bindings: undefined, ctx: row.ctx, start: end.previousSibling as Comment, item: row.item, branch: undefined, index: -1 };
+    const state: Region = { $bindings: undefined, $ctx: row.$ctx, start: end.previousSibling as Comment, item: row.item, branch: undefined, index: -1 };
     state.branch = (p) => read(state.item, p);
     track(new Binding(REGION | ITEM, end, read, state));
   },
@@ -1058,8 +1066,17 @@ export const dom = {
 
   /** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
   keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
-    const state: Keyed = { ctx: holder!.ctx, rows: new Map(), order: [], empty };
+    const state: Keyed = { ctx: holder!.$ctx, rows: new Map(), order: [], empty };
     track(new Binding(KEYED, end, () => runKeyed(state, end, run), state));
+  },
+
+  /**
+   * A child component before `end` (its end comment): `props` gives its value props, diffed against the last ones;
+   * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
+   */
+  component(end: Comment, type: abstract new (...args: any[]) => Component, props: () => Record<string, unknown>, statics?: Record<string, unknown>, slots?: object, ref?: (c: Component) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+    const child: Child = { type: type as Child["type"], end, ctx: holder!.$ctx, props: undefined, statics, slots, ref, key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined };
+    track(new Binding(COMPONENT, end, props, child));
   },
 
   /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */
@@ -1069,7 +1086,7 @@ export const dom = {
 
   islandAt(end: Comment, build: (b: RenderTreeBuilder) => void): void {
     const b = new Binding(ISLAND, end, noop, undefined);
-    island(b, holder!.ctx, build);
+    island(b, holder!.$ctx, build);
     track(b);
   },
 };
@@ -1081,9 +1098,10 @@ export const fineHooks = {
   create(build: Build, owner: Component, app: IApplication | undefined, scope: unknown): FineRoot {
     const frag = document.createDocumentFragment();
     const start = frag.appendChild(document.createComment(""));
-    const ctx: Ctx = { owner, app, scope, loose: [], sweep: false };
-    (owner as unknown as Record<symbol, Ctx>)[FINE] = ctx;
-    const root: FineRoot & Holder = { bindings: undefined, ctx, start, end: start };
+    owner.$app = app;
+    owner.$scope = scope;
+    (owner as unknown as Record<symbol, Ctx>)[FINE] = owner;
+    const root: FineRoot & Holder = { $bindings: undefined, $ctx: owner, start, end: start };
     // Reads outside a binding subscribe nothing: a component is never re-rendered by what it reads.
     const reader = Component.$reader;
     Component.$reader = undefined;
@@ -1095,19 +1113,46 @@ export const fineHooks = {
     root.end = frag.appendChild(document.createComment(""));
     return root;
   },
-  refresh(root: FineRoot): void {
-    // A whole-component pass recomputes the cached getters too: what changed may be untracked.
-    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, (Binding | undefined)[] | undefined>)[MEMOS];
-    if (memos !== undefined) for (const m of memos) if (m !== undefined) m.flags &= ~FRESH;
-    refreshAll(root as FineRoot & Holder);
+  /** Runs `c.render` into `parent`, untracked, with `c` holding its bindings. */
+  build(c: Component, parent: Node): void {
+    const prev = collecting;
+    const reader = Component.$reader;
+    const outer = holder;
+    collecting = undefined;
+    Component.$reader = undefined;
+    holder = c;
+    try {
+      (c as unknown as { render(parent: Node): void }).render(parent);
+    } finally {
+      collecting = prev;
+      Component.$reader = reader;
+      holder = outer;
+    }
   },
-  dispose(root: FineRoot): void {
-    const memos = ((root as FineRoot & Holder).ctx.owner as unknown as Record<symbol, (Binding | undefined)[] | undefined>)[MEMOS];
+  /** A whole-component pass: a fine root's, or a render component's (`h` is the component). */
+  refresh(h: FineRoot | Component): void {
+    const root = h as unknown as Holder;
+    // A whole-component pass recomputes the cached getters too: what changed may be untracked.
+    const memos = root.$ctx.$memos as (Binding | undefined)[] | undefined;
+    if (memos !== undefined) for (const m of memos) if (m !== undefined) m.flags &= ~FRESH;
+    // A binding that now reads nothing tracked joins its component's loose list.
+    const outer = holder;
+    holder = root;
+    try {
+      refreshAll(root);
+    } finally {
+      holder = outer;
+    }
+  },
+  dispose(h: FineRoot | Component): void {
+    const root = h as unknown as Holder;
+    const ctx = root.$ctx;
+    const memos = ctx.$memos as (Binding | undefined)[] | undefined;
     if (memos !== undefined) for (const m of memos) m?.dispose();
-    disposeAll(root as FineRoot & Holder);
+    ctx.$memos = undefined;
+    disposeAll(root);
   },
   handled(owner: Component, result: unknown): void {
-    const ctx = (owner as unknown as Record<symbol, Ctx | undefined>)[FINE];
-    if (ctx !== undefined) afterHandler(ctx, result);
+    if (owner.$end !== undefined || (owner as unknown as Record<symbol, Ctx | undefined>)[FINE] !== undefined) afterHandler(owner, result);
   },
 };

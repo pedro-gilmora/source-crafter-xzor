@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Component, dom, mount, type RenderTreeBuilder } from "./index";
+import { Component, dom, lazy, mount, type RenderTreeBuilder } from "./index";
 import { EntitySet, Key, Model } from "./model";
 
 // Models and components are written the way the bundle and codegen emit them.
@@ -1036,7 +1036,7 @@ test("rows dropped outside a handler leave nothing in the component's loose list
     }
   }
   const p = mount(Page, host());
-  const loose = (): unknown[] => (p as unknown as Record<symbol, { loose: unknown[] }>)[Object.getOwnPropertySymbols(p).find((s) => s.description === "xzor.fine")!]!.loose;
+  const loose = (): unknown[] => p.$loose ?? [];
   // Plain objects: each row's text reads nothing tracked, so it waits in the loose list for handlers.
   expect(loose()).toHaveLength(20);
   for (let i = 0; i < 5; i++) {
@@ -1304,4 +1304,360 @@ test("Model and Component share one reader slot and the same `same`", () => {
   expect(Component.same([1], [2])).toBe(false);
   expect(Component.same(new Worker(), new Worker())).toBe(false);
   expect(Model.same).toBe(Component.same);
+});
+
+// Components that render through `dom` (`render(parent)`), and children as COMPONENT bindings, as codegen will emit them.
+let log: string[] = [];
+let childRuns = 0;
+const __kid = dom.template([["span", 0, ""]]);
+class Kid extends Component {
+  #title = ""; get title(): string { Component.$reader?.(this, 0); return this.#title; } set title(v: string) { const p = this.#title; if (Component.same(p, v)) return; this.#title = v; this.$changed(0, p); }
+  static { Component.$define(this, ["title"]); }
+  count = 0;
+  box: { n: number } | undefined = undefined;
+  onPick: ((v: string) => void) | undefined = undefined;
+  declare slots: { default?: unknown };
+  protected override onInitialized(): void { log.push(`kid init ${this.title}`); }
+  protected override onInitializedAsync(): void { log.push("kid initAsync"); }
+  protected override onParametersSet(): void { log.push(`kid params ${this.title}`); }
+  protected override onParametersSetAsync(): void { log.push("kid paramsAsync"); }
+  protected override onAfterRender(first: boolean): void { log.push(`kid after ${first}`); }
+  protected override render(__p: Node): void {
+    log.push("kid render");
+    const _e0 = __kid() as HTMLSpanElement;
+    dom.textAt(_e0.firstChild as Text, () => { childRuns++; return `${this.title}:${this.count}:${this.box?.n ?? "-"}`; });
+    __p.appendChild(_e0);
+  }
+}
+
+const __host = dom.template([["div", 0, null]]);
+class Host extends Component {
+  #title = "a"; get title(): string { Component.$reader?.(this, 0); return this.#title; } set title(v: string) { const p = this.#title; if (Component.same(p, v)) return; this.#title = v; this.$changed(0, p); }
+  static { Component.$define(this, ["title"]); }
+  count = 1;
+  box: { n: number } | undefined = undefined;
+  withSlots = false;
+  picked: string[] = [];
+  kid: Kid | undefined;
+  protected override onInitialized(): void { log.push("host init"); }
+  protected override onParametersSet(): void { log.push("host params"); }
+  protected override onAfterRender(first: boolean): void { log.push(`host after ${first}`); }
+  protected override render(__p: Node): void {
+    log.push("host render");
+    const _e0 = __host() as HTMLDivElement;
+    dom.component(_e0.firstChild as Comment, Kid, () => ({ title: this.title, count: this.count, box: this.box }), { onPick: (v: string) => this.picked.push(v) }, this.withSlots ? { default: "x" } : undefined, (c) => (this.kid = c as Kid));
+    __p.appendChild(_e0);
+  }
+}
+
+test("a render component mounts through dom; a child binding mounts its child in lifecycle order", () => {
+  log = [];
+  const el = host();
+  const h = mount(Host, el);
+  expect(el.innerHTML).toBe("<!----><div><span>a:1:-</span><!----></div><!---->");
+  expect(log).toEqual(["host init", "host params", "host render", "kid init a", "kid initAsync", "kid params a", "kid paramsAsync", "kid render", "kid after true", "host after true"]);
+  expect(h.kid).toBeInstanceOf(Kid);
+  h.kid!.onPick!("v");
+  expect(h.picked).toEqual(["v"]);
+});
+
+test("a changed prop: assigned, onParametersSet, then the child's pass", async () => {
+  const el = host();
+  const h = mount(Host, el);
+  log = [];
+  h.title = "b";
+  await tick();
+  expect(el.querySelector("span")!.textContent).toBe("b:1:-");
+  expect(log).toEqual(["kid params b", "kid paramsAsync", "kid after false"]);
+});
+
+test("a parent stateHasChanged with unchanged primitive props runs no child binding", () => {
+  const el = host();
+  const h = mount(Host, el);
+  log = [];
+  childRuns = 0;
+  h.stateHasChanged();
+  expect(childRuns).toBe(0);
+  expect(log).toEqual(["host after false"]);
+  h.count = 2;
+  h.stateHasChanged();
+  expect(childRuns).toBe(1);
+  expect(el.querySelector("span")!.textContent).toBe("a:2:-");
+});
+
+test("an object prop counts as changed: the child gets a pass", () => {
+  const el = host();
+  const h = mount(Host, el);
+  h.box = { n: 1 };
+  h.stateHasChanged();
+  expect(el.querySelector("span")!.textContent).toBe("a:1:1");
+  h.box.n = 2;
+  childRuns = 0;
+  h.stateHasChanged();
+  expect(childRuns).toBe(1);
+  expect(el.querySelector("span")!.textContent).toBe("a:1:2");
+});
+
+test("a child given slots gets a pass on every parent pass", () => {
+  class Slotted extends Host {
+    override withSlots = true;
+  }
+  const el = host();
+  const s = mount(Slotted, el);
+  expect(s.kid!.slots).toEqual({ default: "x" });
+  // Unchanged props are not assigned again: the child's own value shows after the pass.
+  s.kid!.count = 9;
+  childRuns = 0;
+  s.stateHasChanged();
+  expect(childRuns).toBe(1);
+  expect(el.querySelector("span")!.textContent).toBe("a:9:-");
+});
+
+test("the default slots object is shared and frozen", () => {
+  const a = new Kid();
+  const b = new Kid();
+  expect(a.slots).toBe(b.slots);
+  expect(Object.isFrozen(a.slots)).toBe(true);
+});
+
+test("a render component: shouldRender false skips a pass; onAfterRender(false) after it", () => {
+  log = [];
+  let allow = true;
+  class Gate extends Component {
+    value = 0;
+    protected override shouldRender(): boolean { return allow; }
+    protected override onAfterRender(first: boolean): void { log.push(`after ${first}`); }
+    protected override render(__p: Node): void { dom.text(__p, () => this.value); }
+  }
+  const el = host();
+  const g = mount(Gate, el);
+  g.value = 1;
+  allow = false;
+  g.stateHasChanged();
+  expect(el.textContent).toBe("0");
+  allow = true;
+  g.stateHasChanged();
+  expect(el.textContent).toBe("1");
+  expect(log).toEqual(["after true", "after false"]);
+});
+
+class Needs extends Component {
+  static inject = ["svc"];
+  constructor(public svc: string) { super(); }
+  protected override render(__p: Node): void { dom.t(__p, this.svc); }
+}
+class NeedsHost extends Component {
+  protected override render(__p: Node): void { dom.component(dom.anchor(__p), Needs, () => ({})); }
+}
+
+test("a child with injected services is built by the application", () => {
+  const el = host();
+  const made: Function[] = [];
+  mount(NeedsHost, el, { createComponent: (type) => (made.push(type), new (type as typeof Needs)("svc!")) });
+  expect(made).toEqual([Needs]);
+  expect(el.textContent).toBe("svc!");
+});
+
+test("a lazy child: its anchor holds the place, and it arrives with the latest props", async () => {
+  let arrive!: (m: { default: typeof Kid }) => void;
+  const Late = lazy(() => new Promise<{ default: typeof Kid }>((r) => (arrive = r)));
+  class LazyHost extends Component {
+    #title = "a"; get title(): string { Component.$reader?.(this, 0); return this.#title; } set title(v: string) { const p = this.#title; if (Component.same(p, v)) return; this.#title = v; this.$changed(0, p); }
+    static { Component.$define(this, ["title"]); }
+    protected override render(__p: Node): void {
+      const _e0 = __host() as HTMLDivElement;
+      dom.component(_e0.firstChild as Comment, Late, () => ({ title: this.title }));
+      __p.appendChild(_e0);
+    }
+  }
+  const el = host();
+  const h = mount(LazyHost, el);
+  expect(el.querySelector("div")!.innerHTML).toBe("<!---->");
+  h.title = "late";
+  await tick();
+  arrive({ default: Kid });
+  await tick();
+  expect(el.querySelector("div")!.innerHTML).toBe("<span>late:0:-</span><!---->");
+});
+
+let cachedMade = 0;
+let cachedDisposed = 0;
+class Kept extends Component {
+  static cached = true;
+  #n = 0; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+  static { Component.$define(this, ["n"]); }
+  label = "";
+  constructor() { super(); cachedMade++; }
+  protected override dispose(): void { cachedDisposed++; }
+  protected override render(__p: Node): void {
+    const _e0 = __kid() as HTMLSpanElement;
+    dom.textAt(_e0.firstChild as Text, () => `${this.label}${this.n}`);
+    __p.appendChild(_e0);
+  }
+}
+class Toggle extends Component {
+  #on = true; get on(): boolean { Component.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(0, p); }
+  static { Component.$define(this, ["on"]); }
+  label = "x";
+  type: Function = Kept;
+  kid: Component | undefined;
+  protected override render(__p: Node): void {
+    dom.region(__p, (__p) => {
+      if (this.on) dom.component(dom.anchor(__p), this.type as typeof Kept, () => ({ label: this.label }), undefined, undefined, (c) => (this.kid = c), "k");
+    });
+  }
+}
+
+test("a @cached child is kept detached when it leaves, and revived by type and key", async () => {
+  cachedMade = cachedDisposed = 0;
+  const el = host();
+  const t = mount(Toggle, el);
+  const first = t.kid as Kept;
+  first.n = 5;
+  await tick();
+  expect(el.querySelector("span")!.textContent).toBe("x5");
+  t.on = false;
+  await tick();
+  expect(el.querySelector("span")).toBeNull();
+  expect(cachedDisposed).toBe(0);
+  t.label = "y";
+  t.on = true;
+  await tick();
+  expect(t.kid).toBe(first);
+  expect(cachedMade).toBe(1);
+  expect(el.querySelector("span")!.textContent).toBe("y5");
+  first.n = 6;
+  await tick();
+  expect(el.querySelector("span")!.textContent).toBe("y6");
+});
+
+class Themed extends Component {
+  static cascades = [["theme", "theme"]] as const;
+  theme = "";
+  protected override onParametersSet(): void { log.push(`themed params ${this.theme}`); }
+  protected override render(__p: Node): void { dom.text(__p, () => this.theme); }
+}
+class Provider extends Component {
+  theme = "dark";
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openCascade("theme", this.theme);
+    b.addFine((__p) => dom.component(dom.anchor(__p), Themed, () => ({})));
+    b.closeRegion();
+  }
+}
+
+test("a child's @Cascade members come from the scope it is mounted in, and follow its changes", () => {
+  log = [];
+  const el = host();
+  const p = mount(Provider, el);
+  expect(el.textContent).toBe("dark");
+  p.theme = "light";
+  p.stateHasChanged();
+  expect(el.textContent).toBe("light");
+  expect(log).toEqual(["themed params dark", "themed params light"]);
+});
+
+let subs = 0;
+let gone: string[] = [];
+class Disposable extends Component {
+  label = "";
+  protected override dispose(): void { gone.push(`dispose ${this.label}`); }
+  [Symbol.dispose](): void { gone.push(`Symbol.dispose ${this.label}`); }
+  protected override render(__p: Node): void { dom.text(__p, () => this.label); }
+}
+class Many extends Component {
+  #n = 0; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
+  #tag = "t"; get tag(): string { Component.$reader?.(this, 1); return this.#tag; } set tag(v: string) { const p = this.#tag; if (Component.same(p, v)) return; this.#tag = v; this.$changed(1, p); }
+  static { Component.$define(this, ["n", "tag"]); }
+  override $watch(dep: object): void { subs++; super.$watch(dep); }
+  override $unwatch(dep: object): void { subs--; super.$unwatch(dep); }
+  protected override render(__p: Node): void {
+    dom.region(__p, (__p) => {
+      for (let i = 0; i < this.n; i++) dom.component(dom.anchor(__p), Disposable, () => ({ label: `${this.tag}${i}` }));
+    });
+  }
+}
+
+test("a removed child is disposed (dispose, Symbol.dispose) and its props binding unsubscribes", async () => {
+  subs = 0;
+  gone = [];
+  const el = host();
+  const m = mount(Many, el);
+  m.n = 2;
+  await tick();
+  expect(el.textContent).toBe("t0t1");
+  m.n = 0;
+  await tick();
+  expect(el.textContent).toBe("");
+  expect([...gone].sort()).toEqual(["Symbol.dispose t0", "Symbol.dispose t1", "dispose t0", "dispose t1"]);
+  // The region reads `n`; the children's props bindings read `tag`: only the region's subscription is left.
+  expect(subs).toBe(1);
+});
+
+test("a @catch child that fails to mount reports to onError and leaves its anchor", () => {
+  class Broken extends Component {
+    protected override onInitialized(): void { throw new Error("boom"); }
+    protected override render(__p: Node): void { dom.t(__p, "never"); }
+  }
+  const errors: unknown[] = [];
+  class Catcher extends Component {
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Broken, () => ({}), undefined, undefined, undefined, undefined, (err) => errors.push(err));
+    }
+  }
+  const el = host();
+  mount(Catcher, el);
+  expect(errors.length).toBe(1);
+  expect((errors[0] as Error).message).toBe("boom");
+  expect(el.textContent).toBe("");
+});
+
+class OldKid extends Component {
+  title = "";
+  protected override buildRenderTree(b: RenderTreeBuilder): void {
+    b.openElement("i");
+    b.addContent(this.title);
+    b.closeElement();
+  }
+}
+class BridgeHost extends Component {
+  #title = "a"; get title(): string { Component.$reader?.(this, 0); return this.#title; } set title(v: string) { const p = this.#title; if (Component.same(p, v)) return; this.#title = v; this.$changed(0, p); }
+  static { Component.$define(this, ["title"]); }
+  protected override render(__p: Node): void { dom.component(dom.anchor(__p), OldKid, () => ({ title: this.title })); }
+}
+
+test("a child without render (builder-based) mounts through the virtual DOM", async () => {
+  const el = host();
+  const h = mount(BridgeHost, el);
+  expect(el.querySelector("i")!.textContent).toBe("a");
+  h.title = "b";
+  await tick();
+  expect(el.querySelector("i")!.textContent).toBe("b");
+});
+
+test("leak check: 1000 children mounted and removed leave the heap and the subscribers as they were", async () => {
+  const { heapSize } = await import("bun:jsc");
+  const el = host();
+  const m = mount(Many, el);
+  const cycle = async (): Promise<void> => {
+    m.n = 1000;
+    await tick();
+    m.n = 0;
+    await tick();
+  };
+  await cycle();
+  subs = 0;
+  gone = [];
+  Bun.gc(true);
+  Bun.gc(true);
+  const before = heapSize();
+  await cycle();
+  expect(gone.length).toBe(2000);
+  gone = [];
+  Bun.gc(true);
+  Bun.gc(true);
+  const after = heapSize();
+  console.log(`leak check: before ${before} B, after ${after} B, delta ${after - before} B, subscribers ${subs}`);
+  expect(subs).toBe(0);
+  expect(after - before).toBeLessThan(0.1 * 1024 * 1024);
 });
