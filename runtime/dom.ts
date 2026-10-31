@@ -1292,7 +1292,7 @@ function dispatchAtTarget(e: Event): void {
   if (!e.bubbles && e.target !== null) fire(e.target as Target, e);
 }
 
-function on(el: Element, event: string, handler: ((e: any) => unknown) | number, h: Holder): void {
+function listen(el: Element, event: string, handler: ((e: any) => unknown) | number, h: Holder): void {
   if (DELEGATED.has(event)) {
     const target = el as unknown as Record<symbol, unknown>;
     target[keyOf(event)] = handler;
@@ -1309,18 +1309,19 @@ const modified =
     return handler?.(e);
   };
 
-function region(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number, branch?: Build): void {
+function openRegion(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number, branch?: Build): void {
   const h = holder!;
   const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: h.$scope, start, item, branch, index: -1 };
   track(new Binding(REGION | flags, end, build, region));
 }
 
-function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void, empty?: Build, key?: (item: any) => unknown): void {
+function openList(end: Comment, items: () => Iterable<unknown>, reads: Reads | undefined, build: (parent: Node, item: any) => void, empty?: Build, key?: (item: any) => unknown): void {
   const state: ListState = { build, ctx: holder!.$ctx, scope: holder!.$scope, rows: new Map(), order: [], reads, empty, key };
   track(new Binding(LIST, end, items, state));
 }
 
-const anchor = (parent: Node): Comment => (claiming ? (CLAIM_PARENT as Comment) : parent.appendChild(document.createComment("")));
+/** A comment appended to `parent`: where a lone list or keyed loop goes. */
+export const anchor = (parent: Node): Comment => (claiming ? (CLAIM_PARENT as Comment) : parent.appendChild(document.createComment("")));
 
 /** An `@await`'s state; the arms, the read (`awaitAt`) or the call and its arguments (`awaitCallAt`) are fields, so a claim re-points them. */
 type Await = {
@@ -1417,618 +1418,613 @@ function pieced(start: Comment, end: Comment, build: (a?: any, b?: any) => unkno
   track(new Binding(REGION | PIECES | flags, end, build, s));
 }
 
+// The bindings: what generated code calls, as `dom.x` (`bindings.ts` is the namespace). A run of nodes is a
+// `template` clone; the `...At` calls bind the nodes it has in place, and the `...Item` ones bind a row's nodes to
+// a read its list shares (`reads[i]`, given the item). The others append the node they bind to `parent`.
+
 /**
- * What generated code calls. A run of nodes is a `template` clone; the `...At` calls bind the nodes it
- * has in place, and the `...Item` ones bind a row's nodes to a read its list shares (`reads[i]`, given the item).
- * The others append the node they bind to `parent`.
+ * Builds the nodes of `specs` (a fragment unless they are one element). The first call builds them directly:
+ * a component used once keeps no copy. From the second on, calls clone a copy built then.
  */
-export const dom = {
-  /**
-   * Builds the nodes of `specs` (a fragment unless they are one element). The first call builds them directly:
-   * a component used once keeps no copy. From the second on, calls clone a copy built then.
-   */
-  template(specs: readonly unknown[]): () => Node {
-    let node: Node | undefined;
-    let used = false;
-    const build = (): Node => {
-      const first = specs[0];
-      if (specs.length === 1 && Array.isArray(first)) return make(first as unknown as Spec);
-      const frag = document.createDocumentFragment();
-      for (const spec of specs) frag.appendChild(make(spec as Spec));
-      return frag;
-    };
-    return () => {
-      if (claiming) return CLAIM_PARENT;
-      if (node !== undefined) return node.cloneNode(true);
-      if (!used) {
-        used = true;
-        return build();
-      }
-      node = build();
-      return node.cloneNode(true);
-    };
-  },
-
-  /** A fragment for structure a row's pass builds in place of an anchor (`anchor.replaceWith(frag)`). */
-  frag(): DocumentFragment {
-    return claiming ? (CLAIM_PARENT as DocumentFragment) : document.createDocumentFragment();
-  },
-
-  el<K extends string>(parent: Node, tag: K): El<K> {
-    if (claiming) return CLAIM_PARENT as El<K>;
-    return parent.appendChild(inSvg(parent) ? document.createElementNS(SVG, tag) : document.createElement(tag)) as El<K>;
-  },
-
-  /** `@ref` on an element: `set` gives the target the element. In a markup value a claim gives the new target the element it kept. */
-  ref<E extends Element>(el: E, set: (el: E) => void): void {
-    if (claiming) {
-      const b = take(REF);
-      if (b === undefined) return;
-      b.read = set as Binding["read"];
-      set(b.node as E);
-      return;
+export function template(specs: readonly unknown[]): () => Node {
+  let node: Node | undefined;
+  let used = false;
+  const build = (): Node => {
+    const first = specs[0];
+    if (specs.length === 1 && Array.isArray(first)) return make(first as unknown as Spec);
+    const frag = document.createDocumentFragment();
+    for (const spec of specs) frag.appendChild(make(spec as Spec));
+    return frag;
+  };
+  return () => {
+    if (claiming) return CLAIM_PARENT;
+    if (node !== undefined) return node.cloneNode(true);
+    if (!used) {
+      used = true;
+      return build();
     }
-    if (marking) track(new Binding(REF, el, set as Binding["read"], holder!));
-    set(el);
-  },
+    node = build();
+    return node.cloneNode(true);
+  };
+}
 
-  /** A handler; afterwards the component re-runs its bindings that read nothing tracked. `mods`: 1 preventDefault, 2 stopPropagation. */
-  on(el: Element, event: string, handler: ((e: any) => unknown) | undefined, mods = 0): void {
-    // In a markup value: kept as a binding, so a claim gives it the new handler.
-    if (claiming) {
-      const b = take(HANDLER);
-      if (b !== undefined) {
-        b.read = handler as Binding["read"];
-        b.slot = mods;
-      }
-      return;
-    }
-    const h = holder!;
-    if (marking) {
-      const b = new Binding(HANDLER, el, handler as Binding["read"], h);
+/** A fragment for structure a row's pass builds in place of an anchor (`anchor.replaceWith(frag)`). */
+export function frag(): DocumentFragment {
+  return claiming ? (CLAIM_PARENT as DocumentFragment) : document.createDocumentFragment();
+}
+
+export function el<K extends string>(parent: Node, tag: K): El<K> {
+  if (claiming) return CLAIM_PARENT as El<K>;
+  return parent.appendChild(inSvg(parent) ? document.createElementNS(SVG, tag) : document.createElement(tag)) as El<K>;
+}
+
+/** `@ref` on an element: `set` gives the target the element. In a markup value a claim gives the new target the element it kept. */
+export function ref<E extends Element>(el: E, set: (el: E) => void): void {
+  if (claiming) {
+    const b = take(REF);
+    if (b === undefined) return;
+    b.read = set as Binding["read"];
+    set(b.node as E);
+    return;
+  }
+  if (marking) track(new Binding(REF, el, set as Binding["read"], holder!));
+  set(el);
+}
+
+/** A handler; afterwards the component re-runs its bindings that read nothing tracked. `mods`: 1 preventDefault, 2 stopPropagation. */
+export function on(el: Element, event: string, handler: ((e: any) => unknown) | undefined, mods = 0): void {
+  // In a markup value: kept as a binding, so a claim gives it the new handler.
+  if (claiming) {
+    const b = take(HANDLER);
+    if (b !== undefined) {
+      b.read = handler as Binding["read"];
       b.slot = mods;
-      track(b);
-      if (DELEGATED.has(event)) {
-        const target = el as unknown as Record<symbol, unknown>;
-        target[keyOf(event)] = b;
-        target[HOLDER] = h;
-      } else el.addEventListener(event, (e) => runHandler(b, e));
-      return;
     }
-    if (mods !== 0) handler = modified(handler, mods);
-    else if (handler === undefined) return;
-    const run = handler;
-    // The dispatcher asks a row with shared reads for the handler of its item.
-    on(el, event, (h as Partial<Row>).reads !== undefined && DELEGATED.has(event) ? () => run : run, h);
-  },
+    return;
+  }
+  const h = holder!;
+  if (marking) {
+    const b = new Binding(HANDLER, el, handler as Binding["read"], h);
+    b.slot = mods;
+    track(b);
+    if (DELEGATED.has(event)) {
+      const target = el as unknown as Record<symbol, unknown>;
+      target[keyOf(event)] = b;
+      target[HOLDER] = h;
+    } else el.addEventListener(event, (e) => runHandler(b, e));
+    return;
+  }
+  if (mods !== 0) handler = modified(handler, mods);
+  else if (handler === undefined) return;
+  const run = handler;
+  // The dispatcher asks a row with shared reads for the handler of its item.
+  listen(el, event, (h as Partial<Row>).reads !== undefined && DELEGATED.has(event) ? () => run : run, h);
+}
 
-  /** A row's handler: `reads[i](item)` gives it, read when the event comes; `mods` as `on`'s. */
-  onItem(el: Element, event: string, i: number, mods = 0): void {
-    if (claiming) return;
-    const row = holder as Row;
-    if (mods === 0) {
-      if (DELEGATED.has(event)) on(el, event, i, row);
-      else el.addEventListener(event, (e) => afterHandler(row.$ctx, row.reads![i]!(row.item)(e)));
-      return;
-    }
-    // Built once per element: the modifiers apply in it, not in a closure made per event.
-    const run = (e: Event): unknown => {
-      if ((mods & 1) !== 0) e.preventDefault();
-      if ((mods & 2) !== 0) e.stopPropagation();
-      return row.reads![i]!(row.item)?.(e);
-    };
-    if (DELEGATED.has(event)) on(el, event, () => run, row);
-    else el.addEventListener(event, (e) => afterHandler(row.$ctx, run(e)));
-  },
+/** A row's handler: `reads[i](item)` gives it, read when the event comes; `mods` as `on`'s. */
+export function onItem(el: Element, event: string, i: number, mods = 0): void {
+  if (claiming) return;
+  const row = holder as Row;
+  if (mods === 0) {
+    if (DELEGATED.has(event)) listen(el, event, i, row);
+    else el.addEventListener(event, (e) => afterHandler(row.$ctx, row.reads![i]!(row.item)(e)));
+    return;
+  }
+  // Built once per element: the modifiers apply in it, not in a closure made per event.
+  const run = (e: Event): unknown => {
+    if ((mods & 1) !== 0) e.preventDefault();
+    if ((mods & 2) !== 0) e.stopPropagation();
+    return row.reads![i]!(row.item)?.(e);
+  };
+  if (DELEGATED.has(event)) listen(el, event, () => run, row);
+  else el.addEventListener(event, (e) => afterHandler(row.$ctx, run(e)));
+}
 
-  /** A callback passed to a child: runs `handler` (with `owner` as `this`), then `owner`'s after-handler pass (else the context building it). */
-  callback<T = void>(owner: Component | undefined, handler: (arg: T) => unknown): EventCallback<T> {
-    const ctx = owner ?? holder!.$ctx;
-    return (arg: T) => {
-      const result = handler.call(owner, arg);
-      afterHandler(ctx, result);
-      return result;
-    };
-  },
+/** A callback passed to a child: runs `handler` (with `owner` as `this`), then `owner`'s after-handler pass (else the context building it). */
+export function callback<T = void>(owner: Component | undefined, handler: (arg: T) => unknown): EventCallback<T> {
+  const ctx = owner ?? holder!.$ctx;
+  return (arg: T) => {
+    const result = handler.call(owner, arg);
+    afterHandler(ctx, result);
+    return result;
+  };
+}
 
-  /** Static text. */
-  t(parent: Node, text: string): void {
-    if (claiming) return;
-    parent.appendChild(document.createTextNode(text));
-  },
+/** Static text. */
+export function t(parent: Node, text: string): void {
+  if (claiming) return;
+  parent.appendChild(document.createTextNode(text));
+}
 
-  /** Text that follows `read()`; markup (a `RenderFragment`) renders as markup. */
-  text(parent: Node, read: () => unknown): void {
-    if (claiming) return claimRead(TEXT, read, REGION | CONTENT);
-    dom.textAt(parent.appendChild(document.createTextNode("")), read);
-  },
+/** Text that follows `read()`; markup (a `RenderFragment`) renders as markup. */
+export function text(parent: Node, read: () => unknown): void {
+  if (claiming) return claimRead(TEXT, read, REGION | CONTENT);
+  textAt(parent.appendChild(document.createTextNode("")), read);
+}
 
-  textAt(node: Text, read: () => unknown): void {
-    if (claiming) return claimRead(TEXT, read, REGION | CONTENT);
-    track(new Binding(TEXT, node, read, holder!));
-  },
+export function textAt(node: Text, read: () => unknown): void {
+  if (claiming) return claimRead(TEXT, read, REGION | CONTENT);
+  track(new Binding(TEXT, node, read, holder!));
+}
 
-  textItem(node: Text, i: number): void {
-    const row = holder as Row;
-    if (claiming) return claimRead(TEXT | ITEM, row.reads![i]!, REGION | CONTENT | ITEM);
-    track(new Binding(TEXT | ITEM, node, row.reads![i]!, row));
-  },
+export function textItem(node: Text, i: number): void {
+  const row = holder as Row;
+  if (claiming) return claimRead(TEXT | ITEM, row.reads![i]!, REGION | CONTENT | ITEM);
+  track(new Binding(TEXT | ITEM, node, row.reads![i]!, row));
+}
 
-  /** Attribute `name` of `el` that follows `read()`; `false`/`null`/`undefined` remove it. */
-  attr(el: Element, name: string, read: () => unknown): void {
-    if (claiming) return claimRead(ATTR, read);
-    // Its element remembers the holder, so the binding finds its component wherever it re-runs.
-    (el as unknown as Target)[HOLDER] = holder!;
-    track(new Binding(ATTR, el, read, name));
-  },
+/** Attribute `name` of `el` that follows `read()`; `false`/`null`/`undefined` remove it. */
+export function attr(el: Element, name: string, read: () => unknown): void {
+  if (claiming) return claimRead(ATTR, read);
+  // Its element remembers the holder, so the binding finds its component wherever it re-runs.
+  (el as unknown as Target)[HOLDER] = holder!;
+  track(new Binding(ATTR, el, read, name));
+}
 
-  attrItem(el: Element, name: string, i: number): void {
-    const row = holder as Row;
-    const read = row.reads![i]! as Reads[number] & Named;
-    read.$n = name;
-    if (claiming) return claimRead(ATTR | ITEM, read);
-    track(new Binding(ATTR | ITEM, el, read, row));
-  },
+export function attrItem(el: Element, name: string, i: number): void {
+  const row = holder as Row;
+  const read = row.reads![i]! as Reads[number] & Named;
+  read.$n = name;
+  if (claiming) return claimRead(ATTR | ITEM, read);
+  track(new Binding(ATTR | ITEM, el, read, row));
+}
 
-  /** `@attributes="bag"` on `el`: the bag's values set as `attr`'s; keys the next bag lacks are removed. `skip` names the attributes written after it, which win; `pre` the ones written before it as `name, value | read` pairs (restored when the bag drops the key), plus every `class:x` as `"class:x", on | read`. */
-  attrs(el: Element, read: () => Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
-    if (claiming) {
-      const b = take(ATTR | BAG);
-      if (b === undefined) return;
-      b.read = read;
-      const s = b.data as Bag;
-      s.skip = skip;
-      s.pre = pre;
-      return;
-    }
-    track(new Binding(ATTR | BAG, el, read, { at: holder!, prev: undefined, skip, pre } satisfies Bag));
-  },
+/** `@attributes="bag"` on `el`: the bag's values set as `attr`'s; keys the next bag lacks are removed. `skip` names the attributes written after it, which win; `pre` the ones written before it as `name, value | read` pairs (restored when the bag drops the key), plus every `class:x` as `"class:x", on | read`. */
+export function attrs(el: Element, read: () => Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
+  if (claiming) {
+    const b = take(ATTR | BAG);
+    if (b === undefined) return;
+    b.read = read;
+    const s = b.data as Bag;
+    s.skip = skip;
+    s.pre = pre;
+    return;
+  }
+  track(new Binding(ATTR | BAG, el, read, { at: holder!, prev: undefined, skip, pre } satisfies Bag));
+}
 
-  /** `@attributes` inside `@once`: the bag set once, then the `class:x` toggles of `pre`. */
-  setAttrs(el: Element, bag: Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
-    const b = once(el, bag);
-    if (b === null) return;
-    writeBag(b === undefined ? el : (b.node as Element), b === undefined ? undefined : (b.data as typeof bag), bag, skip, pre);
-    if (b !== undefined) b.data = bag;
-  },
+/** `@attributes` inside `@once`: the bag set once, then the `class:x` toggles of `pre`. */
+export function setAttrs(el: Element, bag: Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
+  const b = once(el, bag);
+  if (b === null) return;
+  writeBag(b === undefined ? el : (b.node as Element), b === undefined ? undefined : (b.data as typeof bag), bag, skip, pre);
+  if (b !== undefined) b.data = bag;
+}
 
-  /** `@attr:name` on the enclosing `el`, taken back off when the region or row holding it goes. */
-  attrOf(el: Element, name: string, read: () => unknown): void {
-    if (claiming) {
-      const b = take(ATTR | OWNED);
-      if (b === undefined) return;
-      b.read = read;
-      (b.data as Owned).ctx = holder!.$ctx;
-      return;
-    }
-    track(new Binding(ATTR | OWNED, el, read, { name, text: undefined, prev: undefined, added: [], ctx: holder!.$ctx } satisfies Owned));
-  },
+/** `@attr:name` on the enclosing `el`, taken back off when the region or row holding it goes. */
+export function attrOf(el: Element, name: string, read: () => unknown): void {
+  if (claiming) {
+    const b = take(ATTR | OWNED);
+    if (b === undefined) return;
+    b.read = read;
+    (b.data as Owned).ctx = holder!.$ctx;
+    return;
+  }
+  track(new Binding(ATTR | OWNED, el, read, { name, text: undefined, prev: undefined, added: [], ctx: holder!.$ctx } satisfies Owned));
+}
 
-  /** `@if`, `@switch`, a `@for` that is not a plain list, `@{ }`: rebuilt whenever what `build` read changes. */
-  region(parent: Node, build: Build): void {
-    if (claiming) return claimRead(REGION, build);
-    region(anchor(parent), anchor(parent), build, undefined, 0);
-  },
+/** `@if`, `@switch`, a `@for` that is not a plain list, `@{ }`: rebuilt whenever what `build` read changes. */
+export function region(parent: Node, build: Build): void {
+  if (claiming) return claimRead(REGION, build);
+  openRegion(anchor(parent), anchor(parent), build, undefined, 0);
+}
 
-  /** A region between `end` and the comment before it. */
-  regionAt(end: Comment, build: Build): void {
-    if (claiming) return claimRead(REGION, build);
-    region(end.previousSibling as Comment, end, build, undefined, 0);
-  },
+/** A region between `end` and the comment before it. */
+export function regionAt(end: Comment, build: Build): void {
+  if (claiming) return claimRead(REGION, build);
+  openRegion(end.previousSibling as Comment, end, build, undefined, 0);
+}
 
-  /** A `@{ }` block with markup statements before `end`: re-run when what `build` read changes, its pieces kept (`piece`). */
-  piecesAt(end: Comment, build: Build): void {
-    if (claiming) return claimRead(REGION | PIECES, build);
-    pieced(end.previousSibling as Comment, end, build, undefined, 0);
-  },
+/** A `@{ }` block with markup statements before `end`: re-run when what `build` read changes, its pieces kept (`piece`). */
+export function piecesAt(end: Comment, build: Build): void {
+  if (claiming) return claimRead(REGION | PIECES, build);
+  pieced(end.previousSibling as Comment, end, build, undefined, 0);
+}
 
-  /** A row's `@{ }` block with markup statements: `reads[i](item, parent)` runs it; see `piecesAt`. */
-  piecesItem(end: Comment, i: number): void {
-    const row = holder as Row;
-    if (claiming) return claimItemRegion(row, i, PIECES);
-    pieced(end.previousSibling as Comment, end, row.reads![i]!, row.item, ITEM);
-  },
+/** A row's `@{ }` block with markup statements: `reads[i](item, parent)` runs it; see `piecesAt`. */
+export function piecesItem(end: Comment, i: number): void {
+  const row = holder as Row;
+  if (claiming) return claimItemRegion(row, i, PIECES);
+  pieced(end.previousSibling as Comment, end, row.reads![i]!, row.item, ITEM);
+}
 
-  /**
-   * A markup statement from markup literal `site`, in the block running now: `build` builds its nodes. Last run's
-   * next piece of the same site, not taken yet, is claimed (`build` runs against its bindings, which then run
-   * again); else, or when the claim doesn't match, a new piece builds into a fragment. Either way it is done when
-   * this returns, so it reads the block's locals as the statement sees them. `own`: it reads the block's `let`s.
-   */
-  piece(site: unknown, build: Build, own = false): void {
-    const s = pieces;
-    // A statement run after its block's run (a timer's callback) builds into a fragment nothing shows.
-    if (s === undefined) return build(document.createDocumentFragment());
-    const was = local;
-    local = own ? block : undefined;
-    try {
-      const old = s.old;
-      const run = s.run;
-      // Where this site's scan stopped in this run (run numbers are unique across blocks), so no piece is scanned twice.
-      const k = site as { $r?: number; $i?: number };
-      let i = k.$r === run && k.$i! > s.at ? k.$i! : s.at;
-      while (i < old.length && (old[i]!.site !== site || old[i]!.run === run)) i++;
-      k.$r = run;
-      k.$i = i + 1;
-      if (i < old.length) {
-        const p = old[i]!;
-        p.run = run;
-        if (i === s.at) while (++s.at < old.length && old[s.at]!.run === run);
-        s.now.push(p);
-        claimBegin(p);
-        let ok = false;
-        try {
-          build(CLAIM_PARENT);
-          ok = true;
-        } finally {
-          ok = claimEnd(p, s) && ok;
-        }
-        if (ok) return rerun(p);
-        // Another shape: this piece builds anew, the others keep theirs.
-        dropRow(p);
-        s.now.pop();
-      }
-      const frag = document.createDocumentFragment();
-      const p: Piece = { $bindings: undefined, $ctx: s.$ctx, $scope: s.$scope, head: frag, tail: frag, site, run };
+/**
+ * A markup statement from markup literal `site`, in the block running now: `build` builds its nodes. Last run's
+ * next piece of the same site, not taken yet, is claimed (`build` runs against its bindings, which then run
+ * again); else, or when the claim doesn't match, a new piece builds into a fragment. Either way it is done when
+ * this returns, so it reads the block's locals as the statement sees them. `own`: it reads the block's `let`s.
+ */
+export function piece(site: unknown, build: Build, own = false): void {
+  const s = pieces;
+  // A statement run after its block's run (a timer's callback) builds into a fragment nothing shows.
+  if (s === undefined) return build(document.createDocumentFragment());
+  const was = local;
+  local = own ? block : undefined;
+  try {
+    const old = s.old;
+    const run = s.run;
+    // Where this site's scan stopped in this run (run numbers are unique across blocks), so no piece is scanned twice.
+    const k = site as { $r?: number; $i?: number };
+    let i = k.$r === run && k.$i! > s.at ? k.$i! : s.at;
+    while (i < old.length && (old[i]!.site !== site || old[i]!.run === run)) i++;
+    k.$r = run;
+    k.$i = i + 1;
+    if (i < old.length) {
+      const p = old[i]!;
+      p.run = run;
+      if (i === s.at) while (++s.at < old.length && old[s.at]!.run === run);
       s.now.push(p);
-      holder = p;
+      claimBegin(p);
+      let ok = false;
       try {
-        build(frag);
+        build(CLAIM_PARENT);
+        ok = true;
       } finally {
-        seal(p, frag);
-        holder = s;
+        ok = claimEnd(p, s) && ok;
       }
-    } finally {
-      local = was;
-    }
-  },
-
-  /** `@if`/`@switch` before `end`: `run()` gives the branch's index, `run(parent)` builds it; rebuilt only when the index changes. */
-  branchAt(end: Comment, run: (parent?: Node) => number): void {
-    if (claiming) {
-      const b = take(REGION);
-      if (b !== undefined) b.read = (b.data as Region).branch = run as Build;
-      return;
-    }
-    region(end.previousSibling as Comment, end, run, undefined, 0, run as Build);
-  },
-
-  /** `@show:if`/`@show:switch` before `end`: `run()` picks a branch, `run(parent)` builds the one picked; see `#show`. */
-  showAt(end: Comment, run: (parent?: Node) => number): void {
-    if (claiming) {
-      const b = take(REGION | SHOW);
-      if (b !== undefined) b.read = (b.data as Show).build = run;
-      return;
-    }
-    const show: Show = { ctx: holder!.$ctx, scope: holder!.$scope, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
-    track(new Binding(REGION | SHOW, end, run, show));
-  },
-
-  /** `@pause { }` in a show branch, before `end`: built once; what it holds stops while the branch is hidden. */
-  pauseAt(end: Comment, build: Build): void {
-    if (claiming) {
-      const b = take(REGION | PAUSE);
-      if (b !== undefined) (b.data as Region).branch = build;
-      return;
-    }
-    region(end.previousSibling as Comment, end, zero, undefined, PAUSE, build);
-  },
-
-  /** `@once(expr)`: `read()` once, untracked, into `node`; in a markup value, again when a claim gives a new `read`. */
-  textOnce(node: Text, read: () => unknown): void {
-    if (claiming) {
-      const b = take(ONCE);
-      if (b === undefined) return;
-      b.read = read;
-      node = b.node as Text;
-    } else if (marking) track(new Binding(ONCE, node, read, holder!));
-    const text = textOf(untracked(read));
-    if (node.data !== text) node.data = text;
-  },
-
-  /**
-   * `@once { }`: `build` once, untracked, before `end`; its values are set, not bound (in a markup value, set again
-   * by a claim). `plain`: its structure is plain control flow, which a claim can't match: the claim fails first.
-   */
-  onceAt(end: Comment, build: Build, plain = false): void {
-    if (claiming) {
-      if (plain) failed = true;
-      else untracked(() => build(CLAIM_PARENT));
-      return;
+      if (ok) return rerun(p);
+      // Another shape: this piece builds anew, the others keep theirs.
+      dropRow(p);
+      s.now.pop();
     }
     const frag = document.createDocumentFragment();
-    untracked(() => build(frag));
-    end.parentNode!.insertBefore(frag, end);
-  },
+    const p: Piece = { $bindings: undefined, $ctx: s.$ctx, $scope: s.$scope, head: frag, tail: frag, site, run };
+    s.now.push(p);
+    holder = p;
+    try {
+      build(frag);
+    } finally {
+      seal(p, frag);
+      holder = s;
+    }
+  } finally {
+    local = was;
+  }
+}
 
-  /** An attribute set once, inside `@once`. */
-  set(el: Element, name: string, value: unknown): void {
-    const b = once(el, value);
-    if (b === null) return;
-    setAttr(b === undefined ? el : (b.node as Element), name, value);
-    if (b !== undefined) b.data = value;
-  },
+/** `@if`/`@switch` before `end`: `run()` gives the branch's index, `run(parent)` builds it; rebuilt only when the index changes. */
+export function branchAt(end: Comment, run: (parent?: Node) => number): void {
+  if (claiming) {
+    const b = take(REGION);
+    if (b !== undefined) b.read = (b.data as Region).branch = run as Build;
+    return;
+  }
+  openRegion(end.previousSibling as Comment, end, run, undefined, 0, run as Build);
+}
 
-  /** Text set once, inside `@once`. */
-  setText(node: Text, value: unknown): void {
-    const b = once(node, value);
-    if (b === null) return;
-    (b === undefined ? node : (b.node as Text)).data = textOf(value);
-    if (b !== undefined) b.data = value;
-  },
+/** `@show:if`/`@show:switch` before `end`: `run()` picks a branch, `run(parent)` builds the one picked; see `#show`. */
+export function showAt(end: Comment, run: (parent?: Node) => number): void {
+  if (claiming) {
+    const b = take(REGION | SHOW);
+    if (b !== undefined) b.read = (b.data as Show).build = run;
+    return;
+  }
+  const show: Show = { ctx: holder!.$ctx, scope: holder!.$scope, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
+  track(new Binding(REGION | SHOW, end, run, show));
+}
 
-  /** A comment appended to `parent`: where a lone list or keyed loop goes. */
-  anchor,
+/** `@pause { }` in a show branch, before `end`: built once; what it holds stops while the branch is hidden. */
+export function pauseAt(end: Comment, build: Build): void {
+  if (claiming) {
+    const b = take(REGION | PAUSE);
+    if (b !== undefined) (b.data as Region).branch = build;
+    return;
+  }
+  openRegion(end.previousSibling as Comment, end, zero, undefined, PAUSE, build);
+}
 
-  /**
-   * Caches the getters `names` of `cls` per instance: computed once per change of what they read, whoever
-   * reads them. One that reads nothing tracked is computed on every read; `@Volatile` getters are left out.
-   */
-  memo(cls: Function, names: readonly string[]): void {
-    const proto = cls.prototype as object;
-    names.forEach((name, i) => {
-      const desc = Object.getOwnPropertyDescriptor(proto, name);
-      const get = desc?.get;
-      if (get === undefined) return;
-      const reader = Symbol(name);
-      Object.defineProperty(proto, name, {
-        ...desc,
-        get(this: Record<symbol, unknown>) {
-          const memo = ((this as unknown as Component).$memos as (Binding | undefined)[] | undefined)?.[i];
-          if (memo !== undefined) return memo.$memo();
-          // A cache pays off from a second reader: outside bindings, or for its one reader, it runs as written.
-          const by = collecting;
-          if (by === undefined) return get.call(this);
-          const first = this[reader] as Binding | undefined;
-          if (first === undefined || first === by || (first.flags & DEAD) !== 0) {
-            this[reader] = by;
-            return get.call(this);
-          }
-          this[reader] = undefined;
-          const b = new Binding(MEMO | QUEUED, null as unknown as Node, () => get.call(this), undefined);
-          (((this as unknown as Component).$memos ??= []) as (Binding | undefined)[])[i] = b;
-          return b.$memo();
-        },
-      });
+/** `@once(expr)`: `read()` once, untracked, into `node`; in a markup value, again when a claim gives a new `read`. */
+export function textOnce(node: Text, read: () => unknown): void {
+  if (claiming) {
+    const b = take(ONCE);
+    if (b === undefined) return;
+    b.read = read;
+    node = b.node as Text;
+  } else if (marking) track(new Binding(ONCE, node, read, holder!));
+  const text = textOf(untracked(read));
+  if (node.data !== text) node.data = text;
+}
+
+/**
+ * `@once { }`: `build` once, untracked, before `end`; its values are set, not bound (in a markup value, set again
+ * by a claim). `plain`: its structure is plain control flow, which a claim can't match: the claim fails first.
+ */
+export function onceAt(end: Comment, build: Build, plain = false): void {
+  if (claiming) {
+    if (plain) failed = true;
+    else untracked(() => build(CLAIM_PARENT));
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  untracked(() => build(frag));
+  end.parentNode!.insertBefore(frag, end);
+}
+
+/** An attribute set once, inside `@once`. */
+export function set(el: Element, name: string, value: unknown): void {
+  const b = once(el, value);
+  if (b === null) return;
+  setAttr(b === undefined ? el : (b.node as Element), name, value);
+  if (b !== undefined) b.data = value;
+}
+
+/** Text set once, inside `@once`. */
+export function setText(node: Text, value: unknown): void {
+  const b = once(node, value);
+  if (b === null) return;
+  (b === undefined ? node : (b.node as Text)).data = textOf(value);
+  if (b !== undefined) b.data = value;
+}
+
+
+/**
+ * Caches the getters `names` of `cls` per instance: computed once per change of what they read, whoever
+ * reads them. One that reads nothing tracked is computed on every read; `@Volatile` getters are left out.
+ */
+export function memo(cls: Function, names: readonly string[]): void {
+  const proto = cls.prototype as object;
+  names.forEach((name, i) => {
+    const desc = Object.getOwnPropertyDescriptor(proto, name);
+    const get = desc?.get;
+    if (get === undefined) return;
+    const reader = Symbol(name);
+    Object.defineProperty(proto, name, {
+      ...desc,
+      get(this: Record<symbol, unknown>) {
+        const memo = ((this as unknown as Component).$memos as (Binding | undefined)[] | undefined)?.[i];
+        if (memo !== undefined) return memo.$memo();
+        // A cache pays off from a second reader: outside bindings, or for its one reader, it runs as written.
+        const by = collecting;
+        if (by === undefined) return get.call(this);
+        const first = this[reader] as Binding | undefined;
+        if (first === undefined || first === by || (first.flags & DEAD) !== 0) {
+          this[reader] = by;
+          return get.call(this);
+        }
+        this[reader] = undefined;
+        const b = new Binding(MEMO | QUEUED, null as unknown as Node, () => get.call(this), undefined);
+        (((this as unknown as Component).$memos ??= []) as (Binding | undefined)[])[i] = b;
+        return b.$memo();
+      },
     });
-  },
+  });
+}
 
-  /**
-   * `@await (read()) { pending } then (v) { } catch (e) { }` between `end` and the comment before it. `read`
-   * runs again when what it reads changes, and a promise it replaced is ignored when it settles; the arms re-run
-   * on their own reads like a region's. A rejection without `catch` is reported.
-   */
-  awaitAt<R>(end: Comment, read: () => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
-    if (claiming) {
-      take(REGION);
-      const e = take(EFFECT);
-      if (e !== undefined) arms(e.data as Await, pending, then, fail).read = read;
+/**
+ * `@await (read()) { pending } then (v) { } catch (e) { }` between `end` and the comment before it. `read`
+ * runs again when what it reads changes, and a promise it replaced is ignored when it settles; the arms re-run
+ * on their own reads like a region's. A rejection without `catch` is reported.
+ */
+export function awaitAt<R>(end: Comment, read: () => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
+  if (claiming) {
+    take(REGION);
+    const e = take(EFFECT);
+    if (e !== undefined) arms(e.data as Await, pending, then, fail).read = read;
+    return;
+  }
+  const s: Await = { phase: 0, value: undefined, seq: 0, pending, then, fail, read, args: undefined, call: undefined, last: undefined };
+  const show = awaiting(end, s);
+  track(new Binding(EFFECT, end, () => show(s.read!()), s));
+}
+
+/**
+ * `@await (f(a, b))`: as `awaitAt`, but `f` is called again only when an argument changes (`Object.is`) or
+ * what `f` itself reads does, not on every change to what the arguments read.
+ */
+export function awaitCallAt<A extends unknown[], R>(end: Comment, args: () => [...A], call: (...args: A) => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
+  if (claiming) {
+    take(REGION);
+    const e = take(EFFECT);
+    take(EFFECT);
+    if (e === undefined) return;
+    const s = arms(e.data as Await, pending, then, fail);
+    s.args = args;
+    s.call = call as Await["call"];
+    return;
+  }
+  const s: Await = { phase: 0, value: undefined, seq: 0, pending, then, fail, read: undefined, args, call: call as Await["call"], last: undefined };
+  const show = awaiting(end, s);
+  const request = new Binding(EFFECT, end, () => show(s.call!(...s.last!)), undefined);
+  track(new Binding(EFFECT, end, () => {
+    const next = s.args!();
+    const last = s.last;
+    if (last !== undefined && next.every((v, i) => Object.is(v, last[i]))) return;
+    s.last = next;
+    if (last !== undefined) request.stateHasChanged();
+  }, s));
+  track(request);
+}
+
+/** Two comments appended to `parent`, for a lone region; the end one. */
+export function anchors(parent: Node): Comment {
+  anchor(parent);
+  return anchor(parent);
+}
+
+/** A row's build closes over its item: `set` gives it the item that replaces it under the same key. */
+export function rowItem(set: (item: any) => void): void {
+  (holder as Row).set = set;
+}
+
+/** A row's region: `reads[i](item, parent)` builds it. */
+export function regionItem(end: Comment, i: number): void {
+  const row = holder as Row;
+  if (claiming) return claimItemRegion(row, i);
+  openRegion(end.previousSibling as Comment, end, row.reads![i]!, row.item, ITEM);
+}
+
+/** A row's `@if`/`@switch`: `reads[i](item)` picks the branch, `reads[i](item, parent)` builds it; see `branchAt`. */
+export function branchItem(end: Comment, i: number): void {
+  const row = holder as Row;
+  if (claiming) return claimItemRegion(row, i);
+  const state: Region = { $bindings: undefined, $ctx: row.$ctx, $scope: row.$scope, start: end.previousSibling as Comment, item: row.item, branch: undefined, index: -1 };
+  const b = new Binding(REGION | ITEM, end, row.reads![i]!, state);
+  // Through the binding, so a claim's new read builds too.
+  state.branch = (p) => b.read(state.item, p);
+  track(b);
+}
+
+/** `@for (const item of items)`: one row per item, matched by identity; a row is built once. */
+export function list<T>(parent: Node, items: () => Iterable<T>, build: (parent: Node, item: T) => void): void {
+  if (claiming) {
+    const b = take(LIST);
+    if (b === undefined) return;
+    b.read = items;
+    (b.data as ListState).build = build;
+    return;
+  }
+  openList(anchor(parent), items, undefined, build);
+}
+
+/** A list before `end`; its rows' bindings use `reads`, shared by the rows. `empty` builds its `else`; `key` matches rows. */
+export function listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void, empty?: Build, key?: (item: T) => unknown): void {
+  if (claiming) {
+    const b = take(LIST);
+    if (b === undefined) return;
+    b.read = items;
+    const s = b.data as ListState;
+    s.reads = reads;
+    s.build = build;
+    s.empty = empty;
+    s.key = key;
+    return;
+  }
+  openList(end, items, reads, build, empty, key);
+}
+
+/** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
+export function keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
+  if (claiming) {
+    const b = take(KEYED);
+    if (b === undefined) return;
+    const state = b.data as Keyed;
+    const at = b.node;
+    b.read = () => runKeyed(state, at, run);
+    state.empty = empty;
+    return;
+  }
+  const state: Keyed = { at: holder!, rows: undefined, order: NO_ROWS, empty };
+  track(new Binding(KEYED, end, () => runKeyed(state, end, run), state));
+}
+
+/**
+ * A child component before `end` (its end comment): `props` gives its value props, diffed against the last ones;
+ * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
+ * Claimed with the same type and key, the instance stays and takes the new statics and slots.
+ */
+export function component<C extends Component>(end: Comment, type: new (...args: any[]) => C, props: () => Props<C>, statics?: Props<C>, slots?: C["slots"], ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+  if (claiming) {
+    const child = claimChild(COMPONENT, type, props, key);
+    if (child === undefined) return;
+    child.statics = statics as Child["statics"];
+    child.slots = slots;
+    child.ref = ref as Child["ref"];
+    child.onError = onError;
+    const c = child.instance;
+    if (c !== undefined) {
+      if (statics !== undefined) Object.assign(c, statics);
+      if (slots !== undefined) c.slots = slots;
+    }
+    return;
+  }
+  const h = holder!;
+  const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics: statics as Child["statics"], slots, ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: undefined };
+  track(new Binding(COMPONENT, end, props as () => Record<string, unknown>, child));
+}
+
+/**
+ * A list row's child component: `reads[i](item)` gives its props; `reads[statics](item)` its callbacks and
+ * `reads[slots](item)` its slot fills, given again when the row's item is replaced under the same key.
+ */
+export function componentItem<C extends Component>(end: Comment, type: new (...args: any[]) => C, i: number, statics?: number, slots?: number, ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+  const row = holder as Row;
+  const reads = row.reads!;
+  if (claiming) {
+    const child = claimChild(COMPONENT | ITEM, type, reads[i]!, key);
+    if (child === undefined) return;
+    child.statics = statics === undefined ? undefined : reads[statics];
+    child.slots = slots === undefined ? undefined : reads[slots];
+    child.ref = ref as Child["ref"];
+    child.onError = onError;
+    return $childItem(child, row.item);
+  }
+  const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, scope: row.$scope as Child["scope"], props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: row.item };
+  track(new Binding(COMPONENT | ITEM, end, reads[i]!, child));
+}
+
+/**
+ * `@slot` before `end` (and the comment before it): builds `fill()?.(...args())`, or `fallback` when there is no
+ * fill. Called again when what they read changes and on the component's passes; rebuilt only when the fill or an
+ * argument (`Object.is`) changed.
+ */
+export function slotAt<A extends unknown[]>(end: Comment, fill: () => ((...args: A) => RenderFragment | null | undefined) | null | undefined, args?: () => [...A], fallback?: Build): void {
+  if (claiming) {
+    const b = take(REGION | CONTENT);
+    if (b === undefined) return;
+    const s = b.data as Slot;
+    s.fill = fill as Slot["fill"];
+    s.args = args;
+    s.branch = fallback;
+    return;
+  }
+  const ctx = holder!.$ctx;
+  const s: Slot = { $bindings: undefined, $ctx: ctx, $scope: holder!.$scope, start: end.previousSibling as Comment, item: undefined, branch: fallback, index: -1, value: undefined, owner: ctx, fill: fill as Slot["fill"], args, last: undefined, lastArgs: NO_ARGS, markup: undefined };
+  track(new Binding(REGION | CONTENT, end, () => slotRead(s), s));
+}
+
+/**
+ * `@cascade:name(value[, fixed])` before `end` (and the comment before it): `build` once, its components given
+ * `value()` under `name`. A change reaches them (assigned, `onParametersSet`, a pass); `fixed` keeps the first value.
+ */
+export function cascadeAt(end: Comment, name: string, value: () => unknown, fixed: boolean, build: Build): void {
+  if (claiming) {
+    // The effect was moved ahead of the region: the region comes first in creation order.
+    const r = take(REGION);
+    if (r === undefined) return;
+    const region = r.data as Region;
+    const record = region.$scope as CascadeRecord;
+    if (record.fixed !== fixed || record.name !== name) {
+      failed = true;
       return;
     }
-    const s: Await = { phase: 0, value: undefined, seq: 0, pending, then, fail, read, args: undefined, call: undefined, last: undefined };
-    const show = awaiting(end, s);
-    track(new Binding(EFFECT, end, () => show(s.read!()), s));
-  },
+    region.branch = build;
+    if (fixed) return;
+    const e = take(EFFECT);
+    if (e !== undefined) e.read = provide(record, value);
+    return;
+  }
+  const h = holder!;
+  const record: CascadeRecord = { name, value: undefined, fixed, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
+  if (fixed) record.value = untracked(value);
+  else track(new Binding(EFFECT, end, provide(record, value), record));
+  const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: build, index: -1 };
+  track(new Binding(REGION, end, zero, region));
+  if (!fixed) {
+    // A whole pass runs the effect first: the region's consumers are assigned before it re-runs them.
+    const r = h.$bindings as Binding;
+    const e = r.next!;
+    r.next = e.next;
+    e.next = r;
+    h.$bindings = e;
+  }
+}
 
-  /**
-   * `@await (f(a, b))`: as `awaitAt`, but `f` is called again only when an argument changes (`Object.is`) or
-   * what `f` itself reads does, not on every change to what the arguments read.
-   */
-  awaitCallAt<A extends unknown[], R>(end: Comment, args: () => [...A], call: (...args: A) => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
-    if (claiming) {
-      take(REGION);
-      const e = take(EFFECT);
-      take(EFFECT);
-      if (e === undefined) return;
-      const s = arms(e.data as Await, pending, then, fail);
-      s.args = args;
-      s.call = call as Await["call"];
-      return;
-    }
-    const s: Await = { phase: 0, value: undefined, seq: 0, pending, then, fail, read: undefined, args, call: call as Await["call"], last: undefined };
-    const show = awaiting(end, s);
-    const request = new Binding(EFFECT, end, () => show(s.call!(...s.last!)), undefined);
-    track(new Binding(EFFECT, end, () => {
-      const next = s.args!();
-      const last = s.last;
-      if (last !== undefined && next.every((v, i) => Object.is(v, last[i]))) return;
-      s.last = next;
-      if (last !== undefined) request.stateHasChanged();
-    }, s));
-    track(request);
-  },
-
-  /** Two comments appended to `parent`, for a lone region; the end one. */
-  anchors(parent: Node): Comment {
-    anchor(parent);
-    return anchor(parent);
-  },
-
-  /** A row's build closes over its item: `set` gives it the item that replaces it under the same key. */
-  rowItem(set: (item: any) => void): void {
-    (holder as Row).set = set;
-  },
-
-  /** A row's region: `reads[i](item, parent)` builds it. */
-  regionItem(end: Comment, i: number): void {
-    const row = holder as Row;
-    if (claiming) return claimItemRegion(row, i);
-    region(end.previousSibling as Comment, end, row.reads![i]!, row.item, ITEM);
-  },
-
-  /** A row's `@if`/`@switch`: `reads[i](item)` picks the branch, `reads[i](item, parent)` builds it; see `branchAt`. */
-  branchItem(end: Comment, i: number): void {
-    const row = holder as Row;
-    if (claiming) return claimItemRegion(row, i);
-    const state: Region = { $bindings: undefined, $ctx: row.$ctx, $scope: row.$scope, start: end.previousSibling as Comment, item: row.item, branch: undefined, index: -1 };
-    const b = new Binding(REGION | ITEM, end, row.reads![i]!, state);
-    // Through the binding, so a claim's new read builds too.
-    state.branch = (p) => b.read(state.item, p);
-    track(b);
-  },
-
-  /** `@for (const item of items)`: one row per item, matched by identity; a row is built once. */
-  list<T>(parent: Node, items: () => Iterable<T>, build: (parent: Node, item: T) => void): void {
-    if (claiming) {
-      const b = take(LIST);
-      if (b === undefined) return;
-      b.read = items;
-      (b.data as ListState).build = build;
-      return;
-    }
-    list(anchor(parent), items, undefined, build);
-  },
-
-  /** A list before `end`; its rows' bindings use `reads`, shared by the rows. `empty` builds its `else`; `key` matches rows. */
-  listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void, empty?: Build, key?: (item: T) => unknown): void {
-    if (claiming) {
-      const b = take(LIST);
-      if (b === undefined) return;
-      b.read = items;
-      const s = b.data as ListState;
-      s.reads = reads;
-      s.build = build;
-      s.empty = empty;
-      s.key = key;
-      return;
-    }
-    list(end, items, reads, build, empty, key);
-  },
-
-  /** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
-  keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
-    if (claiming) {
-      const b = take(KEYED);
-      if (b === undefined) return;
-      const state = b.data as Keyed;
-      const at = b.node;
-      b.read = () => runKeyed(state, at, run);
-      state.empty = empty;
-      return;
-    }
-    const state: Keyed = { at: holder!, rows: undefined, order: NO_ROWS, empty };
-    track(new Binding(KEYED, end, () => runKeyed(state, end, run), state));
-  },
-
-  /**
-   * A child component before `end` (its end comment): `props` gives its value props, diffed against the last ones;
-   * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
-   * Claimed with the same type and key, the instance stays and takes the new statics and slots.
-   */
-  component<C extends Component>(end: Comment, type: new (...args: any[]) => C, props: () => Props<C>, statics?: Props<C>, slots?: C["slots"], ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
-    if (claiming) {
-      const child = claimChild(COMPONENT, type, props, key);
-      if (child === undefined) return;
-      child.statics = statics as Child["statics"];
-      child.slots = slots;
-      child.ref = ref as Child["ref"];
-      child.onError = onError;
-      const c = child.instance;
-      if (c !== undefined) {
-        if (statics !== undefined) Object.assign(c, statics);
-        if (slots !== undefined) c.slots = slots;
-      }
-      return;
-    }
-    const h = holder!;
-    const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics: statics as Child["statics"], slots, ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: undefined };
-    track(new Binding(COMPONENT, end, props as () => Record<string, unknown>, child));
-  },
-
-  /**
-   * A list row's child component: `reads[i](item)` gives its props; `reads[statics](item)` its callbacks and
-   * `reads[slots](item)` its slot fills, given again when the row's item is replaced under the same key.
-   */
-  componentItem<C extends Component>(end: Comment, type: new (...args: any[]) => C, i: number, statics?: number, slots?: number, ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
-    const row = holder as Row;
-    const reads = row.reads!;
-    if (claiming) {
-      const child = claimChild(COMPONENT | ITEM, type, reads[i]!, key);
-      if (child === undefined) return;
-      child.statics = statics === undefined ? undefined : reads[statics];
-      child.slots = slots === undefined ? undefined : reads[slots];
-      child.ref = ref as Child["ref"];
-      child.onError = onError;
-      return $childItem(child, row.item);
-    }
-    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, scope: row.$scope as Child["scope"], props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: row.item };
-    track(new Binding(COMPONENT | ITEM, end, reads[i]!, child));
-  },
-
-  /**
-   * `@slot` before `end` (and the comment before it): builds `fill()?.(...args())`, or `fallback` when there is no
-   * fill. Called again when what they read changes and on the component's passes; rebuilt only when the fill or an
-   * argument (`Object.is`) changed.
-   */
-  slotAt<A extends unknown[]>(end: Comment, fill: () => ((...args: A) => RenderFragment | null | undefined) | null | undefined, args?: () => [...A], fallback?: Build): void {
-    if (claiming) {
-      const b = take(REGION | CONTENT);
-      if (b === undefined) return;
-      const s = b.data as Slot;
-      s.fill = fill as Slot["fill"];
-      s.args = args;
-      s.branch = fallback;
-      return;
-    }
-    const ctx = holder!.$ctx;
-    const s: Slot = { $bindings: undefined, $ctx: ctx, $scope: holder!.$scope, start: end.previousSibling as Comment, item: undefined, branch: fallback, index: -1, value: undefined, owner: ctx, fill: fill as Slot["fill"], args, last: undefined, lastArgs: NO_ARGS, markup: undefined };
-    track(new Binding(REGION | CONTENT, end, () => slotRead(s), s));
-  },
-
-  /**
-   * `@cascade:name(value[, fixed])` before `end` (and the comment before it): `build` once, its components given
-   * `value()` under `name`. A change reaches them (assigned, `onParametersSet`, a pass); `fixed` keeps the first value.
-   */
-  cascadeAt(end: Comment, name: string, value: () => unknown, fixed: boolean, build: Build): void {
-    if (claiming) {
-      // The effect was moved ahead of the region: the region comes first in creation order.
-      const r = take(REGION);
-      if (r === undefined) return;
-      const region = r.data as Region;
-      const record = region.$scope as CascadeRecord;
-      if (record.fixed !== fixed || record.name !== name) {
-        failed = true;
-        return;
-      }
-      region.branch = build;
-      if (fixed) return;
-      const e = take(EFFECT);
-      if (e !== undefined) e.read = provide(record, value);
-      return;
-    }
-    const h = holder!;
-    const record: CascadeRecord = { name, value: undefined, fixed, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
-    if (fixed) record.value = untracked(value);
-    else track(new Binding(EFFECT, end, provide(record, value), record));
-    const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: build, index: -1 };
-    track(new Binding(REGION, end, zero, region));
-    if (!fixed) {
-      // A whole pass runs the effect first: the region's consumers are assigned before it re-runs them.
-      const r = h.$bindings as Binding;
-      const e = r.next!;
-      r.next = e.next;
-      e.next = r;
-      h.$bindings = e;
-    }
-  },
-
-  /**
-   * `@Routes` before `end` (and the comment before it): the section matching the current navigation, with the page
-   * as a child keyed by its route family; `route` is cascaded. A section is kept while it stays the matching one.
-   */
-  routesAt(end: Comment, table: RouteTable, sections: readonly RouteSection[]): void {
-    if (unclaimable()) return;
-    const h = holder!;
-    const ctx = h.$ctx;
-    const record: CascadeRecord = { name: "route", value: undefined, fixed: false, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
-    const s = { $bindings: undefined, $ctx: ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1, table, sections, section: -1, failed: false, paged: false, page: undefined } as unknown as Routes;
-    const b = new Binding(REGION | ROUTES, end, noop, s);
-    s.router = $router(sections, () => b.stateHasChanged());
-    s.route = $currentRoute(s.router);
-    s.markup = markup((parent) => placePage(s, parent), ctx);
-    track(b);
-  },
-};
+/**
+ * `@Routes` before `end` (and the comment before it): the section matching the current navigation, with the page
+ * as a child keyed by its route family; `route` is cascaded. A section is kept while it stays the matching one.
+ */
+export function routesAt(end: Comment, table: RouteTable, sections: readonly RouteSection[]): void {
+  if (unclaimable()) return;
+  const h = holder!;
+  const ctx = h.$ctx;
+  const record: CascadeRecord = { name: "route", value: undefined, fixed: false, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
+  const s = { $bindings: undefined, $ctx: ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1, table, sections, section: -1, failed: false, paged: false, page: undefined } as unknown as Routes;
+  const b = new Binding(REGION | ROUTES, end, noop, s);
+  s.router = $router(sections, () => b.stateHasChanged());
+  s.route = $currentRoute(s.router);
+  s.markup = markup((parent) => placePage(s, parent), ctx);
+  track(b);
+}
 
 /** The `@cascade` record whose effect `refreshAll` is running: its consumers wait for the region's pass. */
 let refreshing: unknown;

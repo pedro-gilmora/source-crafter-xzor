@@ -156,6 +156,24 @@ function tryResolve(spec: string, dir: string): string | undefined {
   }
 }
 
+const DOM_IMPORT = /\bimport\s*\{([^}]*?)\bdom as __dom\b,?([^}]*)\}\s*from\s*"@source-crafter\/xzor-runtime";/;
+const bindingsByDir = new Map<string, string | undefined>();
+
+/**
+ * Generated code's `dom` import, taken from the runtime's `bindings` module itself (beside the runtime's entry) on
+ * the same line: Bun keeps every member of a namespace re-exported through `index`, and only the called ones of this.
+ */
+export function importBindings(text: string, file: string): string {
+  const dir = dirname(file);
+  if (!bindingsByDir.has(dir)) {
+    const index = tryResolve("@source-crafter/xzor-runtime", dir);
+    const found = index && [".ts", ".js"].map((ext) => join(dirname(index), `bindings${ext}`)).find(existsSync);
+    bindingsByDir.set(dir, found);
+  }
+  const bindings = bindingsByDir.get(dir);
+  return bindings ? text.replace(DOM_IMPORT, (_, a: string, b: string) => `import {${a}${b}} from "@source-crafter/xzor-runtime"; import * as __dom from ${JSON.stringify(bindings.replaceAll("\\", "/"))};`) : text;
+}
+
 // xzor's DI decorators are no-ops read only by the analyzer; stripping them spares the bundle the decorator helpers.
 const MARKERS = new Set(["ServiceProvider", "Run", "Import", "Singleton", "Scoped", "Transient", "Endpoints", "Get", "Post", "Put", "Patch", "Delete", "Query"]);
 const RUNTIME_IMPORT = /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*["']@source-crafter\/xzor-runtime(?:\/server)?["']/g;
@@ -1157,6 +1175,7 @@ async function main(entry: string | undefined, outdir: string, hot = false, watc
               if (rewritten !== text) originals.set(resolve(args.path), text);
               text = rewritten;
             }
+            if (path.includes("/.xzor/") && path.endsWith(".xzor.ts")) text = importBindings(text, args.path);
             // A component's lowered `<style>` sits beside its module; appended, so no line moves under the source map.
             if (path.includes("/.xzor/") && path.endsWith(".xzor.ts") && existsSync(`${args.path.slice(0, -3)}.css`)) {
               text += `\nimport "./${basename(args.path).slice(0, -3)}.css";\n`;

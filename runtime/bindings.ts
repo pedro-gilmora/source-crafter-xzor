@@ -1,0 +1,2 @@
+// `dom`: the bindings generated code calls (`dom.textAt(...)`). A module namespace, so a bundle keeps only those it calls.
+export { anchor, anchors, attr, attrItem, attrOf, attrs, awaitAt, awaitCallAt, branchAt, branchItem, callback, cascadeAt, component, componentItem, el, frag, keyedAt, list, listAt, memo, on, onceAt, onItem, pauseAt, piece, piecesAt, piecesItem, ref, region, regionAt, regionItem, routesAt, rowItem, set, setAttrs, setText, showAt, slotAt, t, template, text, textAt, textItem, textOnce } from "./dom";

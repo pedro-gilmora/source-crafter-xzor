@@ -1,11 +1,13 @@
 // xzor runtime: a component builds its DOM once (`render`, through the `dom` primitives of `dom.ts`), and
 // bindings keep it current. This module holds the component lifecycle, routing state and the mount entry.
 
-import { dom, markup, refreshPass, releaseDom, renderInto, type Markup } from "./dom";
+import { anchors, attr, el, markup, refreshPass, releaseDom, renderInto, slotAt, type Markup } from "./dom";
 import { changed, same as equal } from "./track";
 
 /** @internal What generated code calls to build a component's DOM. */
-export { dom, type El, type Markup, type Props } from "./dom";
+import * as dom from "./bindings";
+export { dom };
+export { type El, type Markup, type Props } from "./dom";
 
 /** One `@cascade:name(value)` provider; created on the region's first render and carried across the next ones. */
 export type CascadeRecord = {
@@ -1256,10 +1258,10 @@ export class NavLink extends Component {
   }
 
   protected override render(__p: Node): void {
-    const a = dom.el(__p, "a");
-    dom.attr(a, "href", () => this.href);
-    dom.attr(a, "class", () => (this.#active() ? this.activeClass : null));
-    dom.attr(a, "aria-current", () => (this.#active() ? "page" : null));
-    dom.slotAt(dom.anchors(a), () => this.slots.default);
+    const a = el(__p, "a");
+    attr(a, "href", () => this.href);
+    attr(a, "class", () => (this.#active() ? this.activeClass : null));
+    attr(a, "aria-current", () => (this.#active() ? "page" : null));
+    slotAt(anchors(a), () => this.slots.default);
   }
 }

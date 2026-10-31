@@ -85,8 +85,9 @@ function Stage-Package([string]$name, [string]$from, $manifest) {
 }
 
 # Runtime: JavaScript plus declarations, so tsc in user projects doesn't check its source under their settings.
+# One file per module, imports kept: a bundle then keeps only the `dom` bindings an app calls.
 $runtimeOut = Join-Path $stage "runtime-build"
-Invoke-Step "Building the runtime" { bun build runtime/index.ts runtime/model.ts --outdir $runtimeOut --splitting --target browser --format esm --sourcemap=linked }
+Invoke-Step "Building the runtime" { bun build runtime/index.ts runtime/bindings.ts runtime/dom.ts runtime/track.ts runtime/model.ts runtime/entity-set.ts --outdir $runtimeOut --target browser --format esm --sourcemap=linked --external "./*" }
 # index stays external so HttpError is the one class of the main export.
 Invoke-Step "Building the runtime server" { bun build runtime/server.ts --outdir $runtimeOut --target bun --format esm --external "*/index" --sourcemap=linked }
 Invoke-Step "Emitting the runtime declarations" {
