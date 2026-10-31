@@ -4124,9 +4124,10 @@ mod tests {
         // A row of a list runs it in the row's own pieces region.
         let g = gen_with("@code { rows = [{ n: 1 }]; }\n<ul>@for (const r of rows) {\n<li>@{ const k = r.n; } @k</li>\n}</ul>", &[]).code;
         has(&g, "__dom.piecesItem(");
-        // A loop without code stays a plain region.
+        // A loop without code is a pieces region too: its passes are matched by site, not by call count.
         let g = gen_with("@code { n = 1; }\n@while (n < 3) { <u/> }", &[]).code;
-        has(&g, "__dom.regionAt(");
+        has(&g, "__dom.piecesAt(");
+        assert!(!g.contains("regionAt"), "{g}");
     }
 
     fn gen_with(src: &str, components: &[(&str, &str)]) -> Generated {
@@ -4449,11 +4450,11 @@ mod tests {
         has("__dom.textAt(_e3, () => total);");
         has("__dom.template([[\"i\", 0, \"\"]]);");
         has("__dom.template([\"Count: \", \"\", \"!\"]);");
-        has("__dom.piecesAt(_e9, (__p) => {\n        while (this.n < 3) {\n          __dom.piece(__s4, (__p3) => {\n            const _e13 = __t5() as El<\"u\">;\n            __p3.appendChild(_e13);\n          });\n        }\n      });");
+        has("__dom.piecesAt(_e9, (__p) => {\n          while (this.n < 3) {\n            __dom.piece(__s4, (__p3) => {\n              const _e13 = __t5() as El<\"u\">;\n              __p3.appendChild(_e13);\n            });\n          }\n        });");
         has("\"hi \", \"\"");
         has("__dom.textAt(_e10, () => total);");
         assert!(!g.code.contains("[\"text\""), "{}", g.code);
-        has("__dom.attrs(_e11, () => this.extra, [\"class\"]);\n      __dom.on(_e11, \"submit\", undefined, 1);\n      __dom.on(_e11, \"click\", (__e: any) => { if (this.stop) __e.stopPropagation(); });");
+        has("__dom.attrs(_e11, () => this.extra, [\"class\"]);\n        __dom.on(_e11, \"submit\", undefined, 1);\n        __dom.on(_e11, \"click\", (__e: any) => { if (this.stop) __e.stopPropagation(); });");
         has("__dom.component(_e12, Card, (): __Props<Card> => ({ ...this.extra, title: \"t\" }));");
     }
 

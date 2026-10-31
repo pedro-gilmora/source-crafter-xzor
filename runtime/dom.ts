@@ -100,6 +100,8 @@ type Keyed = { at: Holder; rows: Map<unknown, Row> | undefined; order: Row[]; em
 const NO_ROWS: Row[] = [];
 /** The key of the row an empty list's else builds. */
 const EMPTY = Symbol("xzor.dom.empty");
+/** The item of a row whose claim failed: one sweep of the list's map then forgets them all. */
+const GONE = Symbol("xzor.dom.gone");
 
 /** The element type of tag `K`. */
 export type El<K extends string> = K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : HTMLElement;
@@ -119,6 +121,8 @@ let failed = false;
 let reclaim = false;
 /** The `@{ }` block running now: where `dom.piece` takes its pieces. */
 let pieces: Pieces | undefined;
+/** The last `@{ }` block run's number: unique across blocks, so a site's scan cursor can't be mistaken for another run's. */
+let runs = 0;
 /** Building or claiming a markup statement that reads the block's `let`s: what it binds is `LOCAL`. */
 let local = false;
 /** What a claimed build appends to, and the node `el`/`anchor` give it: nothing is built during a claim. */
@@ -334,7 +338,7 @@ class Binding {
     const old = s.now;
     s.now = s.old;
     s.old = old;
-    s.run++;
+    s.run = ++runs;
     s.at = 0;
     const prev = pieces;
     const outer = holder;
@@ -420,13 +424,20 @@ class Binding {
   #claimList(): void {
     const state = this.data as ListState;
     const order = state.order;
+    let gone = false;
     for (let i = 0; i < order.length; i++) {
       const row = order[i]!;
       const empty = row.item === EMPTY;
       const build = empty ? state.empty : state.build;
       if (!empty) row.reads = state.reads;
-      if (build === undefined || !reclaimed(row, build, row.item)) forget(state, row);
+      if (build === undefined || !reclaimed(row, build, row.item)) {
+        dropRow(row);
+        row.item = GONE;
+        gone = true;
+      }
     }
+    // A row whose claim failed goes; the reconcile after builds it anew.
+    if (gone) for (const [key, r] of state.rows) if (r.item === GONE) state.rows.delete(key);
     reconcile(this, this.#run() as Iterable<unknown>);
   }
 
@@ -1000,16 +1011,6 @@ function seal(row: Span, frag: DocumentFragment): void {
 function dropRow(row: Span): void {
   disposeAll(row);
   removeRange(row.head, row.tail);
-}
-
-// A row whose claim failed goes; the reconcile after builds it anew.
-function forget(state: ListState, row: Row): void {
-  dropRow(row);
-  for (const [key, r] of state.rows)
-    if (r === row) {
-      state.rows.delete(key);
-      return;
-    }
 }
 
 // Kept rows keep their nodes and bindings, and only move when out of place; new ones come out of their fragment.
@@ -1623,8 +1624,12 @@ export const dom = {
     try {
       const old = s.old;
       const run = s.run;
-      let i = s.at;
+      // Where this site's scan stopped in this run (run numbers are unique across blocks), so no piece is scanned twice.
+      const k = site as { $r?: number; $i?: number };
+      let i = k.$r === run && k.$i! > s.at ? k.$i! : s.at;
       while (i < old.length && (old[i]!.site !== site || old[i]!.run === run)) i++;
+      k.$r = run;
+      k.$i = i + 1;
       if (i < old.length) {
         const p = old[i]!;
         p.run = run;

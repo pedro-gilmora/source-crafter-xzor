@@ -645,3 +645,27 @@ test("@once holding plain control flow in a markup value: a claim builds it anew
   expect(host.querySelectorAll("span.a b").length).toBe(1);
   expect((globalThis as any).onceRuns).toBe(2);
 }, 120000);
+
+test("interleaved sites each claim their own next piece, and a missing site builds anew", async () => {
+  const { app: c, host } = await load<{ items: number[]; tag: string }>("interleave", {
+    "App.xzor": `@code { items = [1, 2, 3, 4]; tag = "x"; }
+<div>@{
+  const t = tag;
+  for (const n of items) {
+    if (n % 2) { <i>@n:@t</i> } else if (n > 0) { <b>@n:@t</b> } else { <u>@n:@t</u> }
+  }
+}</div>
+`,
+  });
+  const is = [...host.querySelectorAll("i")];
+  const bs = [...host.querySelectorAll("b")];
+  c.items = [3, 1, -2, 4, 2];
+  c.tag = "y";
+  await tick();
+  expect(host.querySelector("div")!.textContent).toBe("3:y1:y-2:y4:y2:y");
+  const same = (now: Element[], was: Element[]) => was.every((e, i) => now[i] === e);
+  expect(same([...host.querySelectorAll("i")], is)).toBe(true);
+  expect(same([...host.querySelectorAll("b")], bs)).toBe(true);
+  expect(host.querySelectorAll("b").length).toBe(2);
+  expect(host.querySelectorAll("u").length).toBe(1);
+}, 120000);
