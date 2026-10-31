@@ -50,7 +50,14 @@ export function flush(): void {
   for (let i = 0; i < run.length; i++) {
     const b = run[i]!;
     b.flags &= ~QUEUED;
-    b.stateHasChanged();
+    try {
+      b.stateHasChanged();
+    } catch (err) {
+      // Reported, not thrown: the rest of the queue still runs.
+      queueMicrotask(() => {
+        throw err;
+      });
+    }
   }
   run.length = 0;
   spare = run;
