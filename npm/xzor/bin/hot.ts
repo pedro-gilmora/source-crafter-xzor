@@ -11,12 +11,14 @@ export type HotUpdate = {
 
 export type HotRegistry = {
   register(id: string, cls: Function, imports: () => Record<string, unknown>): void;
+  /** Hands over the runtime's `$rebuild`: without it, an edit to a template reloads the page. */
+  link(rebuild: (c: any) => boolean): void;
   apply(updates: HotUpdate[]): boolean;
 };
 
 type Entry = { cls: Function; imports: () => Record<string, unknown> };
 type Instance = { stateHasChanged(): void };
-type Patch = { cls: Function; fresh: Function; fields: string[] };
+type Patch = { cls: Function; fresh: Function; fields: string[]; template: boolean };
 
 // `#private` names are per class body: the new methods could not reach the live instances' fields.
 const PRIVATE = /(^|[^\w$"'`])#[A-Za-z_$]/;
@@ -43,6 +45,7 @@ const construct = (cls: Function): Record<string, unknown> | undefined => {
 export function installHot(target: { __xzorHot?: unknown; location?: { reload(): void } }): HotRegistry {
   const entries = new Map<string, Entry>();
   const live = new Set<Instance>();
+  let rebuild: ((c: Instance) => boolean) | undefined;
 
   // The runtime calls the lifecycle through the prototype chain, so an own wrapper on a registered
   // prototype sees every instance. A patch may overwrite it; `observe` runs again after each one.
@@ -78,7 +81,9 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
       if (Object.getPrototypeOf(fresh) !== Object.getPrototypeOf(entry.cls)) return undefined;
       // The new field initializers; a component that needs constructor arguments contributes none.
       const probe = construct(fresh);
-      return { cls: entry.cls, fresh, fields: probe ? Object.keys(probe) : [] };
+      // A template edit changes `render`: its DOM is built again, not just re-run.
+      const template = String(entry.cls.prototype.render) !== String(fresh.prototype.render);
+      return { cls: entry.cls, fresh, fields: probe ? Object.keys(probe) : [], template };
     } catch {
       return undefined;
     }
@@ -99,16 +104,23 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
       }
       // A re-render mounts children, which registers them; the snapshot keeps this loop finite.
       for (const instance of [...live]) {
+        // A rebuilt parent disposed it.
+        if (!live.has(instance)) continue;
         let patched = false;
-        for (const { cls, fresh, fields } of patches) {
+        let template = false;
+        for (const patch of patches) {
+          const { cls, fresh, fields } = patch;
           if (!(instance instanceof (cls as new () => Instance))) continue;
           patched = true;
+          template ||= patch.template;
           const missing = fields.filter((key) => !(key in instance));
           // One probe per instance, so a new `items = []` is not shared between instances.
           const probe = missing.length ? construct(fresh) : undefined;
           if (probe) for (const key of missing) (instance as any)[key] = probe[key];
         }
-        if (patched) instance.stateHasChanged();
+        if (template) {
+          if (!rebuild?.(instance)) return reload();
+        } else if (patched) instance.stateHasChanged();
       }
     } catch {
       return reload();
@@ -122,6 +134,9 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
       observe(cls);
     },
     apply,
+    link(fn) {
+      rebuild = fn;
+    },
   };
   target.__xzorHot = registry;
   return registry;

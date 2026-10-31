@@ -867,6 +867,38 @@ function disposeInstance(c: Component): void {
   surface(d[wellKnown.asyncDispose]?.());
 }
 
+let ranges = false;
+
+/** @internal Hot reload's hook: from now on every component gets a start comment, so `$rebuild` finds its DOM. */
+export function $hot(): typeof $rebuild {
+  ranges = true;
+  return $rebuild;
+}
+
+/** @internal Hot reload: runs `c.render` again between its comments, keeping its fields. False when it has no range to replace. */
+export function $rebuild(c: Component): boolean {
+  const start = c.$start;
+  const end = c.$end;
+  const parent = end?.parentNode;
+  if (start === undefined || end === undefined || !parent || start.parentNode !== parent) return false;
+  const mark = open();
+  try {
+    releaseDom(c);
+    for (let node = start.nextSibling!; node !== end; ) {
+      const next = node.nextSibling!;
+      parent.removeChild(node);
+      node = next;
+    }
+    const frag = document.createDocumentFragment();
+    renderInto(c, frag);
+    parent.insertBefore(frag, end);
+    queueAfterRender(c, false);
+  } finally {
+    close(mark);
+  }
+  return true;
+}
+
 /** @internal A child component binding's state (`dom.component`). */
 export type Child = {
   type: Ctor<Component>;
@@ -908,8 +940,8 @@ function build(c: Component, app: IApplication | undefined, scope: unknown, end:
   c.$scope = scope;
   c.$pass = pass;
   const frag = document.createDocumentFragment();
-  // Only roots and `@cached` ones get a start comment: keeping needs their range.
-  if (end === null || (c.constructor as { cached?: boolean }).cached === true) c.$start = frag.appendChild(document.createComment(""));
+  // Only roots and `@cached` ones get a start comment (keeping needs their range), and every one under hot reload (a rebuild does).
+  if (end === null || ranges || (c.constructor as { cached?: boolean }).cached === true) c.$start = frag.appendChild(document.createComment(""));
   renderInto(c, frag);
   c.$end = end ?? frag.appendChild(document.createComment(""));
   queueAfterRender(c, true);
