@@ -1704,7 +1704,7 @@ impl<'p> Gen<'p> {
             TplPart::Region(node) if self.reads_only_pass(node) => {
                 // Its pass's values keep the row only while they are the same: a region would add nothing.
                 let f = self.node_var();
-                self.line(&format!("const {f} = document.createDocumentFragment();"));
+                self.line(&format!("const {f} = __dom.frag();"));
                 self.emit_flow(node, &f)?;
                 self.line(&format!("{var}.replaceWith({f});"));
             }

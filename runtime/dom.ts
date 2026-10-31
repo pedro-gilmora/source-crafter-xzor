@@ -125,8 +125,13 @@ let pieces: Pieces | undefined;
 let runs = 0;
 /** Building or claiming a markup statement that reads the block's `let`s: what it binds is `LOCAL`. */
 let local = false;
-/** What a claimed build appends to, and the node `el`/`anchor` give it: nothing is built during a claim. */
-const CLAIM_PARENT = { appendChild: (n: Node): Node => n } as unknown as Node;
+/**
+ * The node every build call gives during a claim (`template`, `el`, `anchor`, `frag`): what generated code does to
+ * it (navigate, append, replace, set a static attribute) does nothing, so a claim never touches a template's master.
+ */
+const sink = { appendChild: (n: Node): Node => n, replaceWith() {}, setAttribute() {}, firstChild: undefined as unknown, nextSibling: undefined as unknown };
+sink.firstChild = sink.nextSibling = sink;
+const CLAIM_PARENT = sink as unknown as Node;
 
 function collect(source: Source, index: number): void {
   collectBits(source, bitOf(index));
@@ -1422,8 +1427,7 @@ export const dom = {
       return frag;
     };
     return () => {
-      // A claim navigates the master, never inserted nor changed.
-      if (claiming) return (node ??= build());
+      if (claiming) return CLAIM_PARENT;
       if (node !== undefined) return node.cloneNode(true);
       if (!used) {
         used = true;
@@ -1432,6 +1436,11 @@ export const dom = {
       node = build();
       return node.cloneNode(true);
     };
+  },
+
+  /** A fragment for structure a row's pass builds in place of an anchor (`anchor.replaceWith(frag)`). */
+  frag(): DocumentFragment {
+    return claiming ? (CLAIM_PARENT as DocumentFragment) : document.createDocumentFragment();
   },
 
   el<K extends string>(parent: Node, tag: K): El<K> {

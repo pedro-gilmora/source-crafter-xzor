@@ -669,3 +669,76 @@ test("interleaved sites each claim their own next piece, and a missing site buil
   expect(host.querySelectorAll("b").length).toBe(2);
   expect(host.querySelectorAll("u").length).toBe(1);
 }, 120000);
+
+const texts = (host: HTMLElement, sel: string) => [...host.querySelectorAll(sel)].map((e) => e.textContent);
+
+test("a claimed loop row whose element holds a pass-only @if leaves the template alone", async () => {
+  const { app: c, host } = await load<{ n: number; refs: HTMLElement[] }>("claim-master-flow", {
+    "App.xzor": `@code {
+  n = 3;
+  refs: HTMLElement[] = [];
+  view(n: number) {
+    return <ul>@for (let i = 0; i < n; i++) {
+      <li @ref="this.refs[i]"><input/>@i @if (i % 2) { <b>odd</b> }</li>
+    }</ul>;
+  }
+}
+
+@view(n)
+`,
+  });
+  const first = [...host.querySelectorAll("li")];
+  expect(texts(host, "li")).toEqual(["0 ", "1 odd", "2 "]);
+  c.n = 4;
+  await tick();
+  expect(texts(host, "li")).toEqual(["0 ", "1 odd", "2 ", "3 odd"]);
+  const now = [...host.querySelectorAll("li")];
+  expect(now.slice(0, 3).every((li, i) => li === first[i])).toBe(true);
+  expect(c.refs.slice(0, 4).every((r, i) => r === now[i])).toBe(true);
+}, 120000);
+
+test("a piece claiming a keyed loop whose row has a pass-only @if before a sibling leaves the template alone", async () => {
+  const { app: c, host } = await load<{ n: number; tag: string }>("claim-master-replace", {
+    "App.xzor": `@code {
+  tag = "x";
+  n = 2;
+}
+
+<div>@{
+  const t = tag;
+  <ul>@for (let i = 0; i < n; i++) { <li>@if (i % 2) { <b>odd</b> }<i>@t</i></li> }</ul>
+}</div>
+`,
+  });
+  expect(texts(host, "li")).toEqual(["x", "oddx"]);
+  c.tag = "y";
+  await tick();
+  expect(texts(host, "li")).toEqual(["y", "oddy"]);
+  c.n = 4;
+  await tick();
+  expect(texts(host, "li")).toEqual(["y", "oddy", "y", "oddy"]);
+}, 120000);
+
+test("master stays pristine: a row built after a claim is identical to a first-built one", async () => {
+  const { app: c, host } = await load<{ n: number; tag: string }>("claim-master-pristine", {
+    "App.xzor": `@code {
+  tag = "x";
+  n = 2;
+}
+
+<div>@{
+  const t = tag;
+  <ul>@for (let i = 0; i < n; i++) { <li class="r">@if (i % 2) { <b>odd</b> }<span>@for (let j = 0; j < 1; j++) { <u class="u">@j</u> }</span><i>@t</i></li> }</ul>
+}</div>
+`,
+  });
+  const html = () => [...host.querySelectorAll("li")].map((li) => li.outerHTML);
+  const built = html();
+  c.tag = "y";
+  await tick();
+  c.tag = "x";
+  await tick();
+  c.n = 4;
+  await tick();
+  expect(html()).toEqual([...built, ...built]);
+}, 120000);
