@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Component, type RenderTreeBuilder, mount } from "./index";
+import { Component, type El, dom, mount } from "./index";
 
 // Written the way xzor emits lifecycle overrides, @key and @ref.
 
@@ -20,24 +20,35 @@ class Child extends Component {
   protected override dispose(): void {
     log.push(`dispose ${this.label}`);
   }
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
+  protected override render(__p: Node): void {
     log.push(`render ${this.label}`);
-    b.openElement("i");
-    b.addContent(`${this.label}:${this.clicks}`);
-    b.closeElement();
+    const _e0 = __child() as El<"i">;
+    dom.textAt(_e0.firstChild as Text, () => `${this.label}:${this.clicks}`);
+    __p.appendChild(_e0);
   }
 }
 
 class Parent extends Component {
   show = true;
   label = "a";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openRegion();
-    if (this.show) b.addComponent(Child, { label: "x" });
-    b.closeRegion();
-    b.addComponent(Child, { label: this.label });
+  protected override render(__p: Node): void {
+    const _e0 = __parent();
+    const _e1 = _e0.firstChild!.nextSibling! as Comment;
+    const _e2 = _e1.nextSibling! as Comment;
+    dom.branchAt(_e1, (__p) => {
+      if (this.show) {
+        if (!__p) return 0;
+        dom.component(dom.anchor(__p), Child, (): Partial<Child> => ({ label: "x" }));
+      }
+      return 1;
+    });
+    dom.component(_e2, Child, (): Partial<Child> => ({ label: this.label }));
+    __p.appendChild(_e0);
   }
 }
+
+const __child = dom.template([["i", 0, ""]]);
+const __parent = dom.template([null, null, null]);
 
 test("lifecycle runs in Blazor order and disposes removed children", () => {
   log.length = 0;
@@ -54,9 +65,10 @@ test("lifecycle runs in Blazor order and disposes removed children", () => {
   p.stateHasChanged();
   expect(log).toEqual([]);
 
+  // `render` runs once: a changed prop re-runs the child's bindings, not its build.
   p.label = "b";
   p.stateHasChanged();
-  expect(log).toEqual(["params b", "render b", "after b false"]);
+  expect(log).toEqual(["params b", "after b false"]);
 
   log.length = 0;
   p.show = false;
@@ -68,29 +80,39 @@ test("lifecycle runs in Blazor order and disposes removed children", () => {
 
 test("component identity follows position, so an @if before a sibling keeps its state", () => {
   const host = document.createElement("div");
-  const p = mount(Parent, host);
-  let refs: Child[] = [];
-  class Probe extends Parent {
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      refs = [];
-      b.openRegion();
-      if (this.show) b.addComponent(Child, { label: "x" }, undefined, { ref: (c) => refs.push(c) });
-      b.closeRegion();
-      b.addComponent(Child, { label: "y" }, undefined, { ref: (c) => refs.push(c) });
+  // `@ref` runs again whenever the child's binding does, so count distinct instances.
+  const refs = new Set<Child>();
+  class Probe extends Component {
+    show = true;
+    protected override render(__p: Node): void {
+      const _e0 = __parent();
+      const _e1 = _e0.firstChild!.nextSibling! as Comment;
+      const _e2 = _e1.nextSibling! as Comment;
+      dom.branchAt(_e1, (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Child, (): Partial<Child> => ({ label: "x" }), undefined, undefined, (c) => { refs.add(c); });
+        }
+        return 1;
+      });
+      dom.component(_e2, Child, (): Partial<Child> => ({ label: "y" }), undefined, undefined, (c) => { refs.add(c); });
+      __p.appendChild(_e0);
     }
   }
   const probe = mount(Probe, host);
-  const y = refs[1]!;
+  expect(refs.size).toBe(2);
+  const [x, y] = [...refs] as [Child, Child];
   y.clicks = 5;
   y.stateHasChanged();
   probe.show = false;
   probe.stateHasChanged();
-  expect(refs).toEqual([y]);
+  expect(refs.size).toBe(2);
   probe.show = true;
   probe.stateHasChanged();
-  expect(refs[1]).toBe(y);
+  expect(refs.size).toBe(3);
+  expect([...refs][2]).not.toBe(x);
+  expect([...refs][1]).toBe(y);
   expect(host.textContent).toBe("x:0y:5");
-  void p;
 });
 
 test("async lifecycle methods re-render when they settle; shouldRender can veto", async () => {
@@ -104,8 +126,8 @@ test("async lifecycle methods re-render when they settle; shouldRender can veto"
     protected override shouldRender(): boolean {
       return !this.frozen;
     }
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addContent(this.data);
+    protected override render(__p: Node): void {
+      dom.text(__p, () => this.data);
     }
   }
   const host = document.createElement("div");
@@ -122,22 +144,25 @@ test("async lifecycle methods re-render when they settle; shouldRender can veto"
 test("@key moves keyed DOM nodes and component state instead of rewriting them", () => {
   class Rows extends Component {
     items = ["a", "b", "c"];
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("ul");
-      b.openRegion();
-      for (const item of this.items) {
-        b.openElement("li");
-        b.setKey(item);
-        b.addContent(item);
-        b.closeElement();
-      }
-      b.closeRegion();
-      b.closeElement();
-      b.openRegion();
-      for (const item of this.items) b.addComponent(Child, { label: item }, undefined, { key: item });
-      b.closeRegion();
+    protected override render(__p: Node): void {
+      const _e0 = __rows();
+      const _e1 = _e0.firstChild! as El<"ul">;
+      const _e2 = _e1.firstChild! as Comment;
+      const _e3 = _e1.nextSibling! as Comment;
+      dom.listAt(_e2, () => this.items, [(item) => item], (__p) => {
+        const _e4 = __li() as El<"li">;
+        dom.textItem(_e4.firstChild as Text, 0);
+        __p.appendChild(_e4);
+      }, undefined, (item) => item);
+      dom.listAt(_e3, () => this.items, [(item): Partial<Child> => ({ label: item })], (__p, item) => {
+        dom.rowItem((__v: typeof item) => { item = __v; });
+        dom.componentItem(dom.anchor(__p), Child, 0, undefined, undefined, undefined, item);
+      }, undefined, (item) => item);
+      __p.appendChild(_e0);
     }
   }
+  const __rows = dom.template([["ul", 0, null], null]);
+  const __li = dom.template([["li", 0, ""]]);
   const host = document.createElement("div");
   const rows = mount(Rows, host);
   const [a, b, c] = Array.from(host.querySelectorAll("li"));
@@ -155,13 +180,16 @@ test("@ref assigns elements and component instances", () => {
   class Form extends Component {
     input?: HTMLInputElement;
     child?: Child;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("input");
-      b.setRef("input", (e) => { this.input = e; });
-      b.closeElement();
-      b.addComponent(Child, { label: "r" }, undefined, { ref: (c) => { this.child = c; } });
+    protected override render(__p: Node): void {
+      const _e0 = __form();
+      const _e1 = _e0.firstChild! as El<"input">;
+      const _e2 = _e1.nextSibling! as Comment;
+      dom.component(_e2, Child, (): Partial<Child> => ({ label: "r" }), undefined, undefined, (__c) => { this.child = __c; });
+      this.input = _e1;
+      __p.appendChild(_e0);
     }
   }
+  const __form = dom.template([["input", 0], null]);
   const host = document.createElement("div");
   const f = mount(Form, host);
   expect(f.input).toBe(host.querySelector("input")!);
