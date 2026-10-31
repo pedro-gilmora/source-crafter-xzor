@@ -1033,22 +1033,19 @@ impl<'p> Gen<'p> {
     /// decorators (`blanks`) blanked out.
     fn code_block(&mut self, parts: &[CodePart], blanks: &[(usize, usize)]) -> Result<M, String> {
         let mut out = M::default();
-        // The statement being scanned: a `static` member's markup has no instance to own it.
-        let mut statement = String::new();
+        // The member being scanned: a `static` member's markup has no instance to own it.
+        let mut member = Member::default();
         let outer = self.ownerless;
         for part in parts {
             out = match part {
                 CodePart::Ts(s) => {
-                    match s.rfind([';', '{', '}']) {
-                        Some(end) => statement = s[end + 1..].to_string(),
-                        None => statement.push_str(s),
-                    }
+                    member.feed(&s.text);
                     out.add(blanked(s, blanks))
                 }
                 // Markup in `@code` is plain TypeScript scope: no `this.` rewriting.
                 CodePart::Markup(el) => {
-                    let in_static = statement.trim_start().strip_prefix("static").is_some_and(|r| r.starts_with(char::is_whitespace));
-                    self.ownerless = outer || in_static;
+                    self.ownerless = outer || member.is_static();
+                    member.last = '}';
                     let fragment = self.dom_fragment(std::slice::from_ref(&Node::Element(el.clone())), false, &[]);
                     self.ownerless = outer;
                     out.add(fragment?)
@@ -2863,6 +2860,102 @@ pub fn cascade_error(doc: &Document) -> Option<(String, usize)> {
     doc.code.iter().find_map(|code| cascade_members(code, &member_decls(code), &mut Vec::new(), &mut Vec::new()).err())
 }
 
+/// The `@code` member being scanned: its leading modifiers decide whether it is `static`, and that holds
+/// through its whole initializer or body, braces and parens included.
+#[derive(Default)]
+struct Member {
+    /// Text before the first `=`, `:`, `(` or `{` at depth 0.
+    head: String,
+    term: Option<char>,
+    depth: usize,
+    has_eq: bool,
+    /// Last significant character, to tell where a member without `;` ends.
+    last: char,
+    /// A line break at depth 0 after a complete value: the next identifier starts a new member.
+    newline: bool,
+}
+
+impl Member {
+    fn is_static(&self) -> bool {
+        let words: Vec<&str> = self.head.split_whitespace().collect();
+        for (i, w) in words.iter().enumerate() {
+            match *w {
+                "public" | "private" | "protected" | "readonly" | "declare" | "override" | "accessor" => {}
+                "static" => return i + 1 < words.len() || matches!(self.term, Some('{' | '[')),
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    fn feed(&mut self, s: &str) {
+        let c: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i < c.len() {
+            let ch = c[i];
+            i += 1;
+            if ch.is_whitespace() {
+                if ch == '\n' && self.depth == 0 && self.has_eq && (self.last.is_alphanumeric() || "_$)]}\"'`".contains(self.last)) {
+                    self.newline = true;
+                }
+                if self.term.is_none() {
+                    self.head.push(' ');
+                }
+                continue;
+            }
+            let next = c.get(i).copied();
+            if ch == '/' && matches!(next, Some('/' | '*')) {
+                match next {
+                    Some('/') => i += c[i..].iter().position(|&x| x == '\n').unwrap_or(c.len() - i),
+                    _ => i = c[i + 1..].windows(2).position(|w| w == ['*', '/']).map_or(c.len(), |p| i + 1 + p + 2),
+                }
+                continue;
+            }
+            if std::mem::take(&mut self.newline) && (ch.is_alphabetic() || "_$@".contains(ch)) {
+                *self = Member::default();
+            }
+            match ch {
+                '"' | '\'' | '`' => {
+                    while i < c.len() && c[i] != ch {
+                        i += if c[i] == '\\' { 2 } else { 1 };
+                    }
+                    i += 1;
+                }
+                '{' | '(' | '[' => {
+                    self.term = self.term.or(Some(ch));
+                    self.depth += 1;
+                }
+                '}' | ')' | ']' => {
+                    self.depth = self.depth.saturating_sub(1);
+                    // A method or static block ends at its closing brace.
+                    if ch == '}' && self.depth == 0 && matches!(self.term, Some('(' | '{')) {
+                        *self = Member::default();
+                        continue;
+                    }
+                }
+                ';' if self.depth == 0 => {
+                    *self = Member::default();
+                    continue;
+                }
+                '=' if self.depth == 0 => {
+                    if matches!(next, Some('>' | '=')) {
+                        i += 1;
+                    } else {
+                        self.term = self.term.or(Some('='));
+                        self.has_eq = true;
+                    }
+                }
+                ':' if self.depth == 0 => self.term = self.term.or(Some(':')),
+                _ => {}
+            }
+            if self.term.is_none() {
+                self.head.push(ch);
+            }
+            self.last = ch;
+        }
+    }
+}
+
 /// Source text with the spans in `blanks` replaced by spaces, mapped around them.
 fn blanked(s: &Src, blanks: &[(usize, usize)]) -> M {
     let (start, end) = (s.at, s.at + s.len());
@@ -4626,6 +4719,26 @@ mod tests {
         assert!(g.contains("{ onPick: __dom.callback(undefined, () => 1) }") && !g.contains("callback(this"), "{g}");
         // An instance member keeps its owner.
         assert!(g.contains("own = __Component.$fragment((__p) => {\n    const _e2 = __t1() as El<\"i\">;\n    __p.appendChild(_e2);\n  }, this);"), "{g}");
+        // Modifiers before `static`, in any order, and markup nested in the initializer's braces or parens.
+        let one = |member: &str| gen_with(&format!("@code {{\n  {member}\n}}\n<p/>"), &[]).code;
+        for member in [
+            "public static a = <b/>;",
+            "private static readonly b = <b/>;",
+            "readonly static declare c = <b/>;",
+            "static override accessor d = <b/>;",
+            "static x = { a: <b/> };",
+            "public static readonly y = f(<i/>);",
+            "static z: { a: number } = [<b/>];",
+            "static w = { a: { b: <b/> } }\n  static v = <i/>;",
+        ] {
+            let g = one(member);
+            assert!(g.contains("$fragment((__p) => {") && !g.contains("}, this)"), "{member}\n{g}");
+        }
+        // Instance members keep `this`, also right after a static one without a semicolon.
+        for member in ["public a = <b/>;", "private readonly b = { a: <b/> };", "static x = { a: 1 }\n  own = <b/>;", "static f() {}\n  own = <b/>;", "static;\n  own = <b/>;"] {
+            let g = one(member);
+            assert!(g.contains("}, this)"), "{member}\n{g}");
+        }
     }
 
     #[test]
