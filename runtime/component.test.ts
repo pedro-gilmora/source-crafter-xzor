@@ -4,7 +4,7 @@ import { Component, ComponentBase } from "./index";
 test("ComponentBase stays importable as a deprecated alias of Component", () => {
   expect(ComponentBase).toBe(Component);
   class Legacy extends ComponentBase {
-    protected override buildRenderTree(): void {}
+    protected override render(): void {}
   }
   const legacy: ComponentBase = new Legacy();
   expect(legacy).toBeInstanceOf(Component);

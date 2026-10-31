@@ -1,12 +1,20 @@
 import { expect, test } from "bun:test";
-import { Component, type IApplication, type RenderTreeBuilder, type VRegion, mount } from "./index";
+import { Component, type El, type IApplication, dom, mount } from "./index";
 
 // Written the way xzor emits `@cascade:name(value)` providers and `@Cascade` members.
 
 const host = () => document.createElement("div");
 // Components keep an empty anchor comment after their nodes; compare markup without them.
 const html = (el: Element) => el.innerHTML.replaceAll("<!---->", "");
+type Scope = { consumers: Set<unknown> | undefined };
+const scopeOf = (c: Component) => c.$scope as Scope;
 
+const __span = dom.template([["span", 0, ""]]);
+const __i = dom.template([["i", 0, ""]]);
+const __b = dom.template([["b", 0, ""]]);
+const __p1 = dom.template([["p", 0, ""]]);
+
+// `renders` counts the runs of the text binding: each pass over the component that reads it.
 class Themed extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
@@ -15,11 +23,10 @@ class Themed extends Component {
   protected override onParametersSet(): void {
     this.paramsSet++;
   }
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    this.renders++;
-    b.openElement("span");
-    b.addContent(this.theme);
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __span() as El<"span">;
+    dom.textAt(_e0.firstChild as Text, () => (this.renders++, this.theme));
+    __p.appendChild(_e0);
   }
 }
 
@@ -27,13 +34,13 @@ class Nested extends Component {
   theme = "dark";
   outer?: Themed;
   inner?: Themed;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.addComponent(Themed, {}, undefined, { ref: (c) => (this.outer = c) });
-    b.openCascade("theme", "inner");
-    b.addComponent(Themed, {}, undefined, { ref: (c) => (this.inner = c) });
-    b.closeRegion();
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}), undefined, undefined, (__c) => { this.outer = __c; });
+      dom.cascadeAt(dom.anchors(__p), "theme", () => "inner", false, (__p) => {
+        dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}), undefined, undefined, (__c) => { this.inner = __c; });
+      });
+    });
   }
 }
 
@@ -51,9 +58,8 @@ test("a consumer receives the nearest provider's value", () => {
 class Plain extends Component {
   label = "";
   renders = 0;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    this.renders++;
-    b.addContent(this.label);
+  protected override render(__p: Node): void {
+    dom.text(__p, () => (this.renders++, this.label));
   }
 }
 
@@ -61,11 +67,11 @@ class Board extends Component {
   theme = "dark";
   consumer?: Themed;
   sibling?: Plain;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.addComponent(Themed, {}, undefined, { ref: (c) => (this.consumer = c) });
-    b.addComponent(Plain, { label: "x" }, undefined, { ref: (c) => (this.sibling = c) });
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}), undefined, undefined, (__c) => { this.consumer = __c; });
+      dom.component(dom.anchor(__p), Plain, (): Partial<Plain> => ({ label: "x" }), undefined, undefined, (__c) => { this.sibling = __c; });
+    });
   }
 }
 
@@ -89,21 +95,18 @@ class Configured extends Component {
   static readonly cascades = [["cfg", "cfg"]] as const;
   cfg = "none";
   renders = 0;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    this.renders++;
-    b.addContent(this.cfg);
+  protected override render(__p: Node): void {
+    dom.text(__p, () => (this.renders++, this.cfg));
   }
 }
 
 class FixedRoot extends Component {
   cfg = "one";
   consumer?: Configured;
-  region?: VRegion;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("cfg", this.cfg, true);
-    b.addComponent(Configured, {}, undefined, { ref: (c) => (this.consumer = c) });
-    b.closeRegion();
-    this.region ??= b.nodes[0] as VRegion;
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "cfg", () => this.cfg, true, (__p) => {
+      dom.component(dom.anchor(__p), Configured, (): Partial<Configured> => ({}), undefined, undefined, (__c) => { this.consumer = __c; });
+    });
   }
 }
 
@@ -117,16 +120,16 @@ test("fixed providers do not update consumers", () => {
   expect(html(el)).toBe("one");
   expect(root.consumer!.renders).toBe(1);
   // No subscriber, no set.
-  expect(root.region!.cascade!.consumers).toBeUndefined();
+  expect(scopeOf(root.consumer!).consumers).toBeUndefined();
 });
 
 class Leaf extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("i");
-    b.addContent(this.theme);
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __i() as El<"i">;
+    dom.textAt(_e0.firstChild as Text, () => this.theme);
+    __p.appendChild(_e0);
   }
 }
 
@@ -134,22 +137,26 @@ class Branch extends Component {
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
   show = false;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("span");
-    b.addContent(this.theme);
-    b.closeElement();
-    b.openRegion();
-    if (this.show) b.addComponent(Leaf, {});
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    const _e0 = __span() as El<"span">;
+    dom.textAt(_e0.firstChild as Text, () => this.theme);
+    __p.appendChild(_e0);
+    dom.branchAt(dom.anchors(__p), (__p) => {
+      if (this.show) {
+        if (!__p) return 0;
+        dom.component(dom.anchor(__p), Leaf, (): Partial<Leaf> => ({}));
+      }
+      return 1;
+    });
   }
 }
 
 class Trunk extends Component {
   branch?: Branch;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", "dark");
-    b.addComponent(Branch, {}, undefined, { ref: (c) => (this.branch = c) });
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => "dark", false, (__p) => {
+      dom.component(dom.anchor(__p), Branch, (): Partial<Branch> => ({}), undefined, undefined, (__c) => { this.branch = __c; });
+    });
   }
 }
 
@@ -168,12 +175,16 @@ class Toggle extends Component {
   theme = "dark";
   show = true;
   consumer?: Themed;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.openRegion();
-    if (this.show) b.addComponent(Themed, {}, undefined, { ref: (c) => (this.consumer = c) });
-    b.closeRegion();
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.branchAt(dom.anchors(__p), (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}), undefined, undefined, (__c) => { this.consumer = __c; });
+        }
+        return 1;
+      });
+    });
   }
 }
 
@@ -195,30 +206,30 @@ test("disposed consumers are unsubscribed", () => {
 class Removable extends Component {
   show = true;
   theme = "dark";
-  region?: VRegion;
   consumer?: Themed;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openRegion();
-    if (this.show) {
-      b.openCascade("theme", this.theme);
-      b.addComponent(Themed, {}, undefined, { ref: (c) => (this.consumer = c) });
-      b.closeRegion();
-      this.region ??= (b.nodes[0] as VRegion).children[0] as VRegion;
-    }
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.branchAt(dom.anchors(__p), (__p) => {
+      if (this.show) {
+        if (!__p) return 0;
+        dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+          dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}), undefined, undefined, (__c) => { this.consumer = __c; });
+        });
+      }
+      return 1;
+    });
   }
 }
 
-test("disposing a provider region drops the record instead of unsubscribing", () => {
+test("disposing a provider region leaves no consumer subscribed", () => {
   const el = host();
   const root = mount(Removable, el);
-  const record = root.region!.cascade!;
+  const record = scopeOf(root.consumer!);
   expect(record.consumers!.size).toBe(1);
 
   root.show = false;
   root.stateHasChanged();
   expect(html(el)).toBe("");
-  expect(record.consumers).toBeUndefined();
+  expect(record.consumers?.size ?? 0).toBe(0);
 });
 
 test("a missing provider leaves the field", () => {
@@ -231,19 +242,19 @@ class Injected extends Component {
   static readonly inject = ["dep"] as const;
   static readonly cascades = [["theme", "theme"]] as const;
   theme = "none";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("b");
-    b.addContent(this.theme);
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __b() as El<"b">;
+    dom.textAt(_e0.firstChild as Text, () => this.theme);
+    __p.appendChild(_e0);
   }
 }
 
 class AsyncHost extends Component {
   theme = "dark";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.addComponent(Injected, {});
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.component(dom.anchor(__p), Injected, (): Partial<Injected> => ({}));
+    });
   }
 }
 
@@ -262,25 +273,26 @@ test("an async consumer gets the current value on arrival", async () => {
   expect(html(el)).toBe("<b>light</b>");
 });
 
-// `@if` emits one region for all branches, so two different regions can meet at the same index.
+// `@if` emits one branch region, so a provider and a plain region take turns at the same place.
 class BranchSwap extends Component {
   provide = true;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openRegion();
-    if (this.provide) {
-      b.openCascade("theme", "dark");
-      b.addComponent(Themed, {});
-      b.closeRegion();
-    } else {
-      b.openRegion();
-      b.addComponent(Themed, {});
-      b.closeRegion();
-    }
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.branchAt(dom.anchors(__p), (__p) => {
+      if (this.provide) {
+        if (!__p) return 0;
+        dom.cascadeAt(dom.anchors(__p), "theme", () => "dark", false, (__p) => {
+          dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}));
+        });
+      } else {
+        if (!__p) return 1;
+        dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}));
+      }
+      return 2;
+    });
   }
 }
 
-test("a provider region is never patched against a plain region", () => {
+test("a provider branch never leaks into a plain branch", () => {
   const el = host();
   const root = mount(BranchSwap, el);
   expect(html(el)).toBe("<span>dark</span>");
@@ -296,22 +308,25 @@ test("a provider region is never patched against a plain region", () => {
 
 class NameSwap extends Component {
   role = false;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openRegion();
-    if (this.role) {
-      b.openCascade("role", "admin");
-      b.addComponent(Themed, {});
-      b.closeRegion();
-    } else {
-      b.openCascade("theme", "dark");
-      b.addComponent(Themed, {});
-      b.closeRegion();
-    }
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.branchAt(dom.anchors(__p), (__p) => {
+      if (this.role) {
+        if (!__p) return 0;
+        dom.cascadeAt(dom.anchors(__p), "role", () => "admin", false, (__p) => {
+          dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}));
+        });
+      } else {
+        if (!__p) return 1;
+        dom.cascadeAt(dom.anchors(__p), "theme", () => "dark", false, (__p) => {
+          dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}));
+        });
+      }
+      return 2;
+    });
   }
 }
 
-test("providers with different names are never patched against each other", () => {
+test("providers with different names never feed each other's consumers", () => {
   const el = host();
   const root = mount(NameSwap, el);
   expect(html(el)).toBe("<span>dark</span>");
@@ -330,9 +345,8 @@ class Boxed extends Component {
   protected override onParametersSet(): void {
     this.paramsSet++;
   }
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    this.renders++;
-    b.addContent(this.theme);
+  protected override render(__p: Node): void {
+    dom.text(__p, () => (this.renders++, this.theme));
   }
 }
 
@@ -340,10 +354,10 @@ class Pair extends Component {
   theme = "dark";
   data = { n: 1 };
   consumer?: Boxed;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.addComponent(Boxed, { data: this.data }, undefined, { ref: (c) => (this.consumer = c) });
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.component(dom.anchor(__p), Boxed, (): Partial<Boxed> => ({ data: this.data }), undefined, undefined, (__c) => { this.consumer = __c; });
+    });
   }
 }
 
@@ -366,18 +380,18 @@ class Fragile extends Component {
   protected override onParametersSet(): void {
     if (this.theme === "light") throw new Error("boom");
   }
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.addContent(this.theme);
+  protected override render(__p: Node): void {
+    dom.text(__p, () => this.theme);
   }
 }
 
 class TwoConsumers extends Component {
   theme = "dark";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.addComponent(Fragile, {});
-    b.addComponent(Themed, {});
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.component(dom.anchor(__p), Fragile, (): Partial<Fragile> => ({}));
+      dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}));
+    });
   }
 }
 
@@ -416,12 +430,16 @@ test("a throwing consumer does not stop the others", async () => {
 class FixedLate extends Component {
   cfg = "one";
   show = false;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("cfg", this.cfg, true);
-    b.openRegion();
-    if (this.show) b.addComponent(Configured, {});
-    b.closeRegion();
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "cfg", () => this.cfg, true, (__p) => {
+      dom.branchAt(dom.anchors(__p), (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Configured, (): Partial<Configured> => ({}));
+        }
+        return 1;
+      });
+    });
   }
 }
 
@@ -442,21 +460,18 @@ class Twice extends Component {
   theme = "none";
   alt = "none";
   renders = 0;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    this.renders++;
-    b.addContent(`${this.theme}/${this.alt}`);
+  protected override render(__p: Node): void {
+    dom.text(__p, () => (this.renders++, `${this.theme}/${this.alt}`));
   }
 }
 
 class TwiceRoot extends Component {
   theme = "dark";
   consumer?: Twice;
-  region?: VRegion;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.addComponent(Twice, {}, undefined, { ref: (c) => (this.consumer = c) });
-    b.closeRegion();
-    this.region ??= b.nodes[0] as VRegion;
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.component(dom.anchor(__p), Twice, (): Partial<Twice> => ({}), undefined, undefined, (__c) => { this.consumer = __c; });
+    });
   }
 }
 
@@ -464,7 +479,7 @@ test("two members bound to one name are set together and subscribe once", () => 
   const el = host();
   const root = mount(TwiceRoot, el);
   expect(html(el)).toBe("dark/dark");
-  expect(root.region!.cascade!.consumers!.size).toBe(1);
+  expect(scopeOf(root.consumer!).consumers!.size).toBe(1);
 
   root.theme = "light";
   root.stateHasChanged();

@@ -2,7 +2,7 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $cascade, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type EventCallback, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type RenderFragment, type Router, type RouteTable, type VNode } from "./index";
+import { $cascade, $release, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type EventCallback, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type RenderFragment, type Router, type RouteTable, type VNode } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
@@ -511,13 +511,23 @@ function sweepLoose(ctx: Ctx): void {
 
 /** Re-runs every binding under `h`, rows included: what `stateHasChanged` does for changes nothing tracks. */
 function refreshAll(h: Holder): void {
+  // A `@cascade` effect gives its consumers the value and, ahead of its region, owes them the notice.
+  let owed: CascadeRecord | undefined;
   for (let b = h.$bindings as Binding | undefined; b !== undefined; b = b.next) {
+    const due = owed;
+    owed = undefined;
     const kind = b.flags & KIND;
     const kept = kind === REGION ? (b.data as Region).index : -1;
-    b.stateHasChanged();
+    if (kind === EFFECT) {
+      refreshing = b.data;
+      b.stateHasChanged();
+      refreshing = undefined;
+      if (b.data !== undefined && (b.data as CascadeRecord).held) owed = b.data as CascadeRecord;
+    } else b.stateHasChanged();
     if ((b.flags & SHOW) !== 0) for (const branch of (b.data as Show).branches) branch !== undefined && refreshAll(branch);
     else if (kind === LIST || kind === KEYED) for (const row of (b.data as ListState | Keyed).order) refreshAll(row);
     else if (kept !== -1 && kept === (b.data as Region).index) refreshAll(b.data as Region);
+    if (due !== undefined) $release(due);
   }
 }
 
@@ -867,7 +877,14 @@ const DELEGATED = new Set(["beforeinput", "click", "dblclick", "contextmenu", "f
 const keys = new Map<string, symbol>();
 const HOLDER = Symbol("xzor.dom.holder");
 
+// A replaced global document (a test registering a new window) has none of the listeners.
+let listening: Document | undefined;
+
 function keyOf(type: string): symbol {
+  if (listening !== document) {
+    listening = document;
+    keys.clear();
+  }
   let key = keys.get(type);
   if (key === undefined) {
     keys.set(type, (key = Symbol(type)));
@@ -1290,15 +1307,23 @@ export const dom = {
    */
   cascadeAt(end: Comment, name: string, value: () => unknown, fixed: boolean, build: Build): void {
     const h = holder!;
-    const record: CascadeRecord = { name, value: undefined, fixed, consumers: undefined, parent: h.$scope as CascadeRecord | undefined };
+    const record: CascadeRecord = { name, value: undefined, fixed, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
     if (fixed) record.value = untracked(value);
     // Untracked: what the consumers' hooks read is theirs, not the provider's.
     else track(new Binding(EFFECT, end, () => {
       const v = value();
-      untracked(() => $cascade(record, v));
-    }, undefined));
+      untracked(() => $cascade(record, v, refreshing === record));
+    }, record));
     const region: Region = { $bindings: undefined, $ctx: h.$ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: build, index: -1 };
     track(new Binding(REGION, end, zero, region));
+    if (!fixed) {
+      // A whole pass runs the effect first: the region's consumers are assigned before it re-runs them.
+      const r = h.$bindings as Binding;
+      const e = r.next!;
+      r.next = e.next;
+      e.next = r;
+      h.$bindings = e;
+    }
   },
 
   /**
@@ -1308,7 +1333,7 @@ export const dom = {
   routesAt(end: Comment, table: RouteTable, sections: readonly DomRouteSection[]): void {
     const h = holder!;
     const ctx = h.$ctx;
-    const record: CascadeRecord = { name: "route", value: undefined, fixed: false, consumers: undefined, parent: h.$scope as CascadeRecord | undefined };
+    const record: CascadeRecord = { name: "route", value: undefined, fixed: false, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
     const s = { $bindings: undefined, $ctx: ctx, $scope: record, start: end.previousSibling as Comment, item: undefined, branch: undefined, index: -1, table, sections, section: -1, failed: false, paged: false, page: undefined } as unknown as Routes;
     const b = new Binding(REGION | ROUTES, end, noop, s);
     s.router = $router(sections, () => b.stateHasChanged());
@@ -1329,6 +1354,8 @@ export const dom = {
   },
 };
 
+/** The `@cascade` record whose effect `refreshAll` is running: its consumers wait for the region's pass. */
+let refreshing: unknown;
 const noop = (): void => {};
 const zero = (): number => 0;
 const NO_ARGS: readonly unknown[] = [];

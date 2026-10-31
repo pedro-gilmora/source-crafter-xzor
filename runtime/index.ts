@@ -32,6 +32,8 @@ export type CascadeRecord = {
   fixed: boolean;
   consumers: Set<Component> | undefined;
   parent: CascadeRecord | undefined;
+  /** Consumers hold the new value but are not told yet (`$cascade` with `hold`; `$release` tells them). */
+  held: boolean;
 };
 
 /** Output of one `@if`/`@for`/`@switch`/`@cascade`; its contents are diffed in isolation. */
@@ -1162,14 +1164,23 @@ function notifyCascade(consumers: readonly Component[]): void {
   }
 }
 
-/** @internal A `dom.cascadeAt` value ran: a change reaches the consumers as it does through a patch. */
-export function $cascade(record: CascadeRecord, value: unknown): void {
+/**
+ * @internal A `dom.cascadeAt` value ran: a change reaches the consumers as it does through a patch. With `hold`
+ * (a whole pass is about to re-run the region) they are only assigned: `$release` tells those the pass gave none.
+ */
+export function $cascade(record: CascadeRecord, value: unknown, hold = false): void {
   if (Object.is(record.value, value)) return;
   record.value = value;
   if (!record.consumers?.size) return;
-  const consumers = [...record.consumers];
-  assignCascade(record, consumers);
-  batch(() => notifyCascade(consumers));
+  assignCascade(record, [...record.consumers]);
+  if (hold) record.held = true;
+  else $release(record);
+}
+
+/** @internal The pass re-ran the region `$cascade` held: the consumers it gave no pass are told. */
+export function $release(record: CascadeRecord): void {
+  record.held = false;
+  if (record.consumers?.size) batch(() => notifyCascade([...record.consumers!]));
 }
 
 /**
@@ -1367,7 +1378,7 @@ function create(
       const inner =
         v.name === undefined
           ? scope
-          : (v.cascade = { name: v.name, value: v.value, fixed: v.fixed === true, consumers: undefined, parent: scope });
+          : (v.cascade = { name: v.name, value: v.value, fixed: v.fixed === true, consumers: undefined, parent: scope, held: false });
       return [...v.children.flatMap((c) => create(c, owner, app, inner, svg)), v.anchor];
     }
     case "component": {
