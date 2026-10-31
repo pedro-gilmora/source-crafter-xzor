@@ -227,7 +227,7 @@ pub enum PropKind {
     Text,
     /// Other types: attribute text is a TypeScript expression (Blazor's rule).
     Expr,
-    /// `EventCallback<T>`: the handler re-renders the component that passed it.
+    /// `EventCallback<T>`: the handler runs the passing component's after-handler pass.
     Callback,
 }
 
@@ -2404,7 +2404,7 @@ impl<'p> Gen<'p> {
         })
     }
 
-    /// Statement calling a `@bind:after` handler, returned so async work re-renders.
+    /// Statement calling a `@bind:after` handler, returned so async work refreshes when it settles.
     fn after_call(&self, after: Option<&AttrValue>) -> Result<M, String> {
         match after {
             None => Ok(M::default()),

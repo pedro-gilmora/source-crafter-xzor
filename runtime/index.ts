@@ -486,7 +486,7 @@ export const SharedInstance: unique symbol = Symbol("xzor.sharedInstance");
 export type RenderFragment = Markup;
 export type Renderer = RenderFragment;
 
-/** A component event; invoking it re-renders the component that passed it in. */
+/** A component event; invoking it runs the passing component's after-handler pass. */
 export type EventCallback<T = void> = (arg: T) => unknown;
 
 /** The DOM element type for a tag name, as `document.createElement` would return it. */
@@ -609,7 +609,7 @@ export abstract class Component {
   /** Builds this component's DOM into `parent`; xzor generates it from the template. */
   protected abstract render(parent: Node): void;
 
-  // Lifecycle, in Blazor's order. `...Async` results re-render the component when they settle.
+  // Lifecycle, in Blazor's order. `...Async` results give the component a pass when they settle.
   protected onInitialized(): void {}
   protected onInitializedAsync(): Promise<void> | void {}
   protected onParametersSet(): void {}
@@ -622,7 +622,7 @@ export abstract class Component {
   /** Called when the component leaves the tree. */
   protected dispose(): void {}
 
-  /** Re-renders this component. Event handlers it owns do this automatically. */
+  /** Re-checks every binding of this component, for changes nothing tracks. */
   stateHasChanged(): void {
     update(this);
   }
@@ -764,7 +764,7 @@ function assignCascade(record: CascadeRecord, consumers: readonly Component[]): 
   }
 }
 
-// A changed cascade takes the same path as a changed prop: onParametersSet, then re-render.
+// A changed cascade takes the same path as a changed prop: onParametersSet, then a pass.
 function notifyCascade(consumers: readonly Component[]): void {
   for (const consumer of consumers) {
     if (consumer.$pass === pass) continue;
