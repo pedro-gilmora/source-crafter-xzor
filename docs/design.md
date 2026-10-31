@@ -390,7 +390,7 @@ Models are also `EventTarget`s: `change` (a `ModelChangeEvent` with `property`, 
 | `confirmChanges(values?)` | After saving: the current values become the originals, optionally replaced by the server's. Added and Modified become Unchanged. |
 | `@Validate(...validators)`, `errors`, `hasErrors`, `hasValidChanges` | A validator returns `true` or a message. `errors` lists the messages per validated field, but only after the model changed. A Detached or Deleted model has no errors. |
 
-Validators: `required`, `email`, `phone`, `maxLength(n)`, `minLength(n)`, `requiredIdValue`, `nonZero`, `minValue(n)`, `maxValue(n)`. `isLike(a, b)` compares with the same rule as the setter: dates by time, arrays and plain objects by content, models by identity.
+Validators: `required`, `email`, `phone`, `maxLength(n)`, `minLength(n)`, `requiredIdValue`, `nonZero`, `minValue(n)`, `maxValue(n)`. `isLike(a, b)` compares with the same rule as the setter: dates by time, arrays and plain objects by content, other objects (models, class instances, maps, elements) by identity.
 
 ### EntitySet
 

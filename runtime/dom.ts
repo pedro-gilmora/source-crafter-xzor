@@ -438,19 +438,22 @@ class Binding {
     const state = this.data as ListState;
     const order = state.order;
     let gone = false;
-    for (let i = 0; i < order.length; i++) {
-      const row = order[i]!;
-      const empty = row.item === EMPTY;
-      const build = empty ? state.empty : state.build;
-      if (!empty) row.reads = state.reads;
-      if (build === undefined || !reclaimed(row, build, row.item)) {
-        dropRow(row);
-        row.item = GONE;
-        gone = true;
+    try {
+      for (let i = 0; i < order.length; i++) {
+        const row = order[i]!;
+        const empty = row.item === EMPTY;
+        const build = empty ? state.empty : state.build;
+        if (!empty) row.reads = state.reads;
+        if (build === undefined || !reclaimed(row, build, row.item)) {
+          dropRow(row);
+          row.item = GONE;
+          gone = true;
+        }
       }
+    } finally {
+      // A row whose claim failed goes, even when a later one throws; the reconcile after builds it anew.
+      if (gone) for (const [key, r] of state.rows) if (r.item === GONE) state.rows.delete(key);
     }
-    // A row whose claim failed goes; the reconcile after builds it anew.
-    if (gone) for (const [key, r] of state.rows) if (r.item === GONE) state.rows.delete(key);
     reconcile(this, this.#run() as Iterable<unknown>);
   }
 

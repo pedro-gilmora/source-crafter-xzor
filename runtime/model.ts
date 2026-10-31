@@ -159,7 +159,7 @@ export abstract class Model extends EventTarget {
     return at;
   }
 
-  /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */
+  /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, other objects (models, class instances, maps, elements) by identity. */
   static readonly same: (a: unknown, b: unknown) => boolean = same;
 
   get [StateKey](): State {

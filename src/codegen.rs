@@ -1733,7 +1733,7 @@ impl<'p> Gen<'p> {
                 g.emit_flow(node, "__p")
             })?,
             TplPart::Code(code, rest) => {
-                let scope = self.locals.len();
+                let scope = self.scope();
                 // The block's markup is pieces, which the region keeps and claims when the block runs again.
                 let pieces = !rest.is_empty() || code.iter().any(|p| matches!(p, CodePart::Render(_)));
                 let r = self.emit_region(var, if pieces { "pieces" } else { "region" }, |g| {
@@ -1741,7 +1741,7 @@ impl<'p> Gen<'p> {
                     g.emit_block(block);
                     if pieces { g.emit_pieces(rest) } else { g.emit_nodes(rest, "__p") }
                 });
-                self.locals.truncate(scope);
+                self.leave(scope);
                 r?;
             }
             TplPart::List(node) => self.emit_list(node, var)?,
@@ -1989,7 +1989,7 @@ impl<'p> Gen<'p> {
     fn emit_list(&mut self, node: &Node, end: &str) -> Result<(), String> {
         let Node::For { head, key, body, otherwise } = node else { unreachable!("a list is a for") };
         let (binding, source) = for_of(head).expect("a list is a for...of");
-        let scope = self.locals.len();
+        let scope = self.scope();
         self.locals.extend(loop_locals(head));
         let items = self.expr(&source);
         let name = binding.split(':').next().unwrap_or_default().trim().to_string();
@@ -2010,7 +2010,7 @@ impl<'p> Gen<'p> {
         self.pass_locals = pass;
         self.in_region = in_region;
         let reads = std::mem::replace(&mut self.reads, outer).expect("set above");
-        self.locals.truncate(scope);
+        self.leave(scope);
         let row = row?;
         // The else builds like a region: its bindings close over their values.
         let empty = match otherwise {
@@ -2095,7 +2095,7 @@ impl<'p> Gen<'p> {
         if key.is_none() {
             self.line("let __i = 0;");
         }
-        let scope = self.locals.len();
+        let scope = self.scope();
         self.locals.extend(locals.iter().cloned());
         let lead = match node {
             Node::For { head, .. } => M::lit("for (").add(self.expr(head)),
@@ -2114,7 +2114,7 @@ impl<'p> Gen<'p> {
         let r = self.emit_body(body, "__p");
         self.row_roots.truncate(self.row_roots.len() - usize::from(root.is_some()));
         self.pass_locals = outer_pass;
-        self.locals.truncate(scope);
+        self.leave(scope);
         let r = r.and_then(|()| {
             self.line("}");
             self.depth -= 1;
@@ -2167,7 +2167,7 @@ impl<'p> Gen<'p> {
                     open = false;
                     continue;
                 };
-                let scope = self.locals.len();
+                let scope = self.scope();
                 let head = match name {
                     Some(n) => {
                         self.locals.push(n.text.clone());
@@ -2177,7 +2177,7 @@ impl<'p> Gen<'p> {
                 };
                 self.emit(head);
                 let r = self.emit_body(body, "__p");
-                self.locals.truncate(scope);
+                self.leave(scope);
                 r?;
                 open = true;
             }
@@ -2219,11 +2219,11 @@ impl<'p> Gen<'p> {
         // A claim runs it again: an element `@ref` must be set to the element kept.
         let markup = std::mem::replace(&mut self.in_markup, true);
         let pass = self.pass_locals.take();
-        let scope = self.locals.len();
+        let scope = self.scope();
         self.depth += 1;
         let r = self.capture(|g| g.emit_run(nodes, &var));
         self.depth -= 1;
-        self.locals.truncate(scope);
+        self.leave(scope);
         self.pass_locals = pass;
         self.in_markup = markup;
         (self.in_region, self.in_loop) = flags;
@@ -2283,12 +2283,22 @@ impl<'p> Gen<'p> {
         Ok(block)
     }
 
+    /// The extent of the locals and `let`s, to give back with `leave` when their scope ends.
+    fn scope(&self) -> (usize, usize) {
+        (self.locals.len(), self.lets.len())
+    }
+
+    fn leave(&mut self, (locals, lets): (usize, usize)) {
+        self.locals.truncate(locals);
+        self.lets.truncate(lets);
+    }
+
     /// A branch of a control-flow statement, with its own scope for locals.
     fn emit_body(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         self.depth += 1;
-        let scope = self.locals.len();
+        let scope = self.scope();
         let r = self.emit_nodes(nodes, parent);
-        self.locals.truncate(scope);
+        self.leave(scope);
         self.depth -= 1;
         r
     }
@@ -2326,7 +2336,7 @@ impl<'p> Gen<'p> {
                 if otherwise.is_some() {
                     self.open_none();
                 }
-                let scope = self.locals.len();
+                let scope = self.scope();
                 self.locals.extend(loop_locals(head));
                 let line = M::lit("for (").add(self.expr(head)).lit_then(") {");
                 self.emit(line);
@@ -2336,7 +2346,7 @@ impl<'p> Gen<'p> {
                 let in_loop = std::mem::replace(&mut self.in_loop, true);
                 let r = self.emit_body(body, p);
                 self.in_loop = in_loop;
-                self.locals.truncate(scope);
+                self.leave(scope);
                 r?;
                 self.line("}");
                 if let Some(body) = otherwise {
@@ -3296,17 +3306,139 @@ fn declarations(code: &str, keywords: &[&str]) -> Vec<String> {
                 i += 1;
             }
             if keywords.contains(&&code[s..i]) {
-                let rest = code[i..].trim_start();
-                let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$').collect();
-                if !name.is_empty() {
-                    names.push(name);
-                }
+                declarators(b, i, &mut names);
             }
             continue;
         }
         i += 1;
     }
     names
+}
+
+fn skip_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// An expression's end: a `,` or `;` outside brackets, an unmatched closer, or (with `lines`) the end of its line.
+fn skip_expr(b: &[u8], mut i: usize, lines: bool) -> usize {
+    let mut depth = 0i32;
+    while i < b.len() {
+        if let Some(end) = skip_literal(b, i, Some(b'a')) {
+            i = end;
+            continue;
+        }
+        match b[i] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return i,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' | b';' if depth == 0 => return i,
+            b'\n' if lines && depth == 0 => {
+                let last = b[..i].iter().rev().find(|c| !c.is_ascii_whitespace());
+                let next = b[i..].iter().find(|c| !c.is_ascii_whitespace());
+                if !matches!(last, Some(b',' | b'=')) && next != Some(&b',') {
+                    return i;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    i
+}
+
+/// The end of a type annotation: a `=`, `,` or `;` outside brackets and `<>`.
+fn skip_type(b: &[u8], mut i: usize) -> usize {
+    let mut depth = 0i32;
+    while i < b.len() {
+        match b[i] {
+            b'=' if b.get(i + 1) == Some(&b'>') => i += 1,
+            b'(' | b'[' | b'{' | b'<' => depth += 1,
+            b')' | b']' | b'}' | b'>' if depth == 0 => return i,
+            b')' | b']' | b'}' | b'>' => depth -= 1,
+            b'=' | b',' | b';' | b'\n' if depth == 0 => return i,
+            _ => {}
+        }
+        i += 1;
+    }
+    i
+}
+
+/// The names bound by one binding target at `i` (an identifier or a destructuring pattern), and the end of it.
+fn binding(b: &[u8], i: usize, names: &mut Vec<String>) -> usize {
+    let i = skip_ws(b, i);
+    let ident = |at: usize| {
+        let mut j = at;
+        while j < b.len() && is_ident_char(b[j]) {
+            j += 1;
+        }
+        j
+    };
+    match b.get(i) {
+        Some(&c) if is_ident_start(c) => {
+            let end = ident(i);
+            names.push(String::from_utf8_lossy(&b[i..end]).into_owned());
+            end
+        }
+        Some(&open @ (b'[' | b'{')) => {
+            let mut j = i + 1;
+            loop {
+                j = skip_ws(b, j);
+                match b.get(j) {
+                    None => return j,
+                    Some(b']' | b'}') => return j + 1,
+                    Some(b',') => j += 1,
+                    Some(_) => {
+                        if b[j..].starts_with(b"...") {
+                            j = binding(b, j + 3, names);
+                        } else if open == b'[' {
+                            j = binding(b, j, names);
+                        } else {
+                            // `key: target`, a shorthand `key`, or a computed `[key]: target`.
+                            let key = if b[j] == b'[' { skip_expr(b, j + 1, false) + 1 } else if matches!(b[j], b'"' | b'\'') { skip_string(b, j) } else { ident(j).max(j + 1) };
+                            let after = skip_ws(b, key);
+                            j = if b.get(after) == Some(&b':') {
+                                binding(b, after + 1, names)
+                            } else {
+                                names.push(String::from_utf8_lossy(&b[j..key]).into_owned());
+                                key
+                            };
+                        }
+                        j = skip_ws(b, j);
+                        if b.get(j) == Some(&b'=') {
+                            j = skip_expr(b, j + 1, false);
+                        }
+                    }
+                }
+            }
+        }
+        _ => i,
+    }
+}
+
+/// The names declared after a `const`/`let`/`var` keyword at `i`: each declarator's target, which may be a pattern.
+fn declarators(b: &[u8], mut i: usize, names: &mut Vec<String>) {
+    loop {
+        let before = names.len();
+        i = binding(b, i, names);
+        if names.len() == before {
+            return;
+        }
+        // Not past a newline: a declarator without an initializer ends its line.
+        while matches!(b.get(i), Some(b' ' | b'\t' | b'\r')) {
+            i += 1;
+        }
+        if b.get(i) == Some(&b':') {
+            i = skip_type(b, i + 1);
+        }
+        i = skip_expr(b, i, true);
+        if b.get(i) != Some(&b',') {
+            return;
+        }
+        i += 1;
+    }
 }
 
 /// Names declared by a parameter list like `item: T = x, i`.
@@ -4128,6 +4260,23 @@ mod tests {
         let g = gen_with("@code { n = 1; }\n@while (n < 3) { <u/> }", &[]).code;
         has(&g, "__dom.piecesAt(");
         assert!(!g.contains("regionAt"), "{g}");
+    }
+
+    #[test]
+    fn a_piece_reading_a_block_let_is_marked_whatever_the_declaration() {
+        let marked = |decl: &str| gen_with(&format!("@code {{ items = [1]; }}\n<ul>@{{\n  {decl}\n  for (const x of items) {{\n    <li>@i</li>\n    i++;\n  }}\n}}</ul>"), &[]).code.matches("}, true);").count();
+        for decl in ["let i = 0;", "let [i] = [0];", "let { a: i } = { a: 0 };", "let { i } = { i: 0 };", "let z = 0, i = 0;", "let z: Map<string, number> = new Map(), i = 0;", "let [z = [1, 2]] = [], { y, ...i } = {};", "var i = 0;"] {
+            assert_eq!(marked(decl), 1, "{decl}");
+        }
+        assert_eq!(marked("const i = 0;"), 0);
+        assert_eq!(marked("let z = [0, 1]; const i = 0;"), 0);
+    }
+
+    #[test]
+    fn a_let_of_an_earlier_block_does_not_mark_a_later_const() {
+        assert_eq!(declared_names("let a\nlet b = f(1, 2),\n  c = 3\nconst { d, e: [f], ...g } = o; for (let i = 0, n = 1; i < n; i++) {}"), ["a", "b", "c", "d", "f", "g", "i", "n"]);
+        let g = gen_with("@code { n = 1; }\n@if (n > 0) {\n  @{ let i = 0; }\n  <b>@i</b>\n} else {\n  @{ const i = 1; }\n  <u>@i</u>\n}", &[]).code;
+        assert_eq!(g.matches("}, true);").count(), 1, "{g}");
     }
 
     fn gen_with(src: &str, components: &[(&str, &str)]) -> Generated {

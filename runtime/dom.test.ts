@@ -1840,6 +1840,7 @@ test("claim: 100 claims leave the subscribers as after the first build, and none
 // Claims re-point what a markup value holds: lists, loops, regions, branches, components, slots, cascades, nested values.
 type Lbl = { id: number; label: string };
 const __sRows = {};
+const __sMixed = {};
 const __sKeyed = {};
 const __sIf = {};
 const __sBlock = {};
@@ -1893,6 +1894,20 @@ class Nest extends Component {
       }, undefined, (r: Lbl) => r.id);
       __p.appendChild(_e0);
     }, this, __sRows);
+  }
+  // A row with `extra` binds one more text when `more`: its claim under `more` fails; the others' claims run.
+  mixed(xs: (Lbl & { extra?: boolean; boom?: boolean })[], more: boolean): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __nul() as HTMLElement;
+      dom.listAt(_e0.firstChild as Comment, () => (this.n, xs), [(r: Lbl) => r.label.toUpperCase()], (__p, r: Lbl & { extra?: boolean; boom?: boolean }) => {
+        if (r.boom) throw new Error("boom");
+        const _e1 = __nli() as HTMLElement;
+        dom.textItem(_e1.firstChild as Text, 0);
+        if (more && r.extra) dom.text(_e1.appendChild(document.createElement("b")), () => "+");
+        __p.appendChild(_e1);
+      }, undefined, (r: Lbl) => r.id);
+      __p.appendChild(_e0);
+    }, this, __sMixed);
   }
   keyed(xs: string[], pre: string): Markup {
     return Component.fragment((__p) => {
@@ -2081,6 +2096,36 @@ test("claim: rows added and removed keep the others", async () => {
   expect(now[2] === d!).toBe(true);
 });
 
+test("claim: a row whose claim fails goes even when a later row's claim throws", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  const xs: (Lbl & { extra?: boolean; boom?: boolean })[] = [{ id: 0, label: "a", extra: true }, { id: 1, label: "b" }, { id: 2, label: "c" }];
+  c.view = c.mixed(xs, false);
+  await tick();
+  expect([...el.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["A", "B", "C"]);
+
+  // Row 0's claim fails (it needs a binding the first build had no use for); row 1's claim throws.
+  const errors: unknown[] = [];
+  const queue = globalThis.queueMicrotask;
+  globalThis.queueMicrotask = (run) => queue(() => { try { run(); } catch (e) { errors.push(e); } });
+  xs[1]!.boom = true;
+  try {
+    c.view = c.mixed(xs, true);
+    await tick();
+  } finally {
+    globalThis.queueMicrotask = queue;
+  }
+  expect(errors.length).toBeGreaterThan(0);
+
+  // The list runs again by itself: it builds row 0 anew rather than reuse the disposed one.
+  xs[1]!.boom = false;
+  c.n = 1;
+  await tick();
+  const now = [...el.querySelectorAll("li")];
+  expect(now.map((li) => li.textContent)).toEqual(["A+", "B", "C"]);
+  expect(now.every((li) => li.isConnected)).toBe(true);
+  expect(el.querySelectorAll("ul").length).toBe(1);
+});
 test("claim: a keyed loop keeps its rows and re-points them", async () => {
   const el = host();
   const c = mount(Nest, el);

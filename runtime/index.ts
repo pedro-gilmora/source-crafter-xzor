@@ -513,7 +513,7 @@ export abstract class Component {
   /** @internal What tracked getters report to, set by the bindings (and the model tracker) while they run; the bundle emits `Component.$reader?.(this, i)`. */
   static $reader: ((source: object, index: number) => void) | undefined = undefined;
 
-  /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */
+  /** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, other objects (models, class instances, maps, elements) by identity. */
   static readonly same: (a: unknown, b: unknown) => boolean = equal;
 
   /** @internal Records a class's tracked fields after its base's; where they start is the class's `$at`. */
