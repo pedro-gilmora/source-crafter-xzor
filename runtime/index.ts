@@ -736,7 +736,7 @@ function findCascade(scope: CascadeRecord | undefined, name: string): CascadeRec
 
 /** Gives each `@Cascade` member the nearest provider's value and subscribes to later changes. */
 function resolveCascades(instance: Component, scope: CascadeRecord | undefined): void {
-  // The instance's class, not the vnode's type: a lazy component's type is its loader.
+  // The instance's class, not the child record's type: a lazy component's type is its loader.
   const list = cascadesOf(instance.constructor);
   if (!list) return;
   for (const [prop, name] of list) {

@@ -1,5 +1,5 @@
 //! Lowers a parsed `.xzor` document into a TypeScript component class, the
-//! way Razor lowers `.razor` into a C# class with `BuildRenderTree`.
+//! way Razor lowers `.razor` into a C# class with a render method.
 
 use crate::ast::*;
 use crate::routes::{ParamKind, RouteInfo};

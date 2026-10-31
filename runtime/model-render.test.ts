@@ -4,7 +4,7 @@ import {
   type El,
   type IApplication,
   type Route,
-  type DomRouteSection,
+  type RouteSection,
   type RouteTable,
   dom,
   mount,
@@ -272,7 +272,7 @@ const page = (component: unknown): RouteTable => [
   { tag: undefined, pattern: "/", component, match: () => ({}) },
 ];
 
-const caught: DomRouteSection[] = [
+const caught: RouteSection[] = [
   { kind: "catch", render: (_route: Route, error: unknown) => Component.fragment((__p) => dom.text(__p, () => String(error))) },
 ];
 

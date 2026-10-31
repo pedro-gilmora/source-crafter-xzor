@@ -49,12 +49,12 @@ test("project sources and generated components get tracked fields; other generat
   expect(tracksFields(join(root, "node_modules", "x", "y.xzor.ts"), root, fineText)).toBe(false);
 });
 
-const FINE = `import { ComponentBase, dom, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
+const FINE = `import { ComponentBase, dom } from "@source-crafter/xzor-runtime";
 export default class Counter extends ComponentBase {
   count = 0;
   static inject = [];
-  protected override buildRenderTree(__b: RenderTreeBuilder): void {
-    __b.addFine((__p) => dom.text(__p, () => this.count));
+  protected override render(__p: Node): void {
+    dom.text(__p, () => this.count);
   }
 }
 export class Twice extends Counter {
@@ -78,12 +78,12 @@ test("a component extending Component gets tracked fields, aliased or not", () =
   const out = trackModelFields(src);
   expect(out).toContain(`get count() { Component.$reader?.(this, 0); return this.#count; }`);
   expect(out).toContain(`static { Component.$define(this, ["count"]); } }`);
-  const aliased = src.replace(`import { Component, dom,`, `import { Component as Base, dom,`).replace("extends Component", "extends Base");
+  const aliased = src.replace(`import { Component, dom }`, `import { Component as Base, dom }`).replace("extends Component", "extends Base");
   expect(trackModelFields(aliased)).toContain(`get count() { Base.$reader?.(this, 0); return this.#count; }`);
 });
 
 test("a component extending an aliased ComponentBase gets tracked fields too", () => {
-  const src = FINE.replace(`import { ComponentBase, dom,`, `import { ComponentBase as Base, dom,`).replace("extends ComponentBase", "extends Base");
+  const src = FINE.replace(`import { ComponentBase, dom }`, `import { ComponentBase as Base, dom }`).replace("extends ComponentBase", "extends Base");
   expect(src).toContain("extends Base {");
   const out = trackModelFields(src);
   expect(out).toContain(`get count() { Base.$reader?.(this, 0); return this.#count; }`);

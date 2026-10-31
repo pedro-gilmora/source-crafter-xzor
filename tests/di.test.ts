@@ -8,12 +8,12 @@ const script = join(import.meta.dir, "..", "src", "di.ts");
 
 // Stand-ins for what codegen emits into .xzor/ (the folder is gitignored).
 const generated: Record<string, string> = {
-  "App.xzor.ts": `import { Component, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
+  "App.xzor.ts": `import { Component } from "@source-crafter/xzor-runtime";
 export default class App extends Component {
-  protected override buildRenderTree(__b: RenderTreeBuilder): void {}
+  protected override render(__p: Node): void {}
 }
 `,
-  "Counter.xzor.ts": `import { Component, type RenderTreeBuilder } from "@source-crafter/xzor-runtime";
+  "Counter.xzor.ts": `import { Component } from "@source-crafter/xzor-runtime";
 import type { IDatabase } from "./services/data";
 import { AuthService } from "./main";
 export default class Counter extends Component {
@@ -21,7 +21,7 @@ export default class Counter extends Component {
   readonly db: IDatabase;
   readonly auth: AuthService;
   constructor(db: IDatabase, auth: AuthService) { super(); this.db = db; this.auth = auth; }
-  protected override buildRenderTree(__b: RenderTreeBuilder): void { __b.addContent(this.db.name); }
+  protected override render(__p: Node): void { __p.appendChild(document.createTextNode(this.db.name)); }
 }
 `,
 };

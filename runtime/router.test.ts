@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import {
   Component,
   dom,
-  type DomRouteSection,
+  type RouteSection,
   type IApplication,
   type Markup,
   NavLink,
@@ -162,7 +162,7 @@ const event = (init: MouseEventInit): MouseEvent =>
   new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
 
 function routed(
-  sections: DomRouteSection[],
+  sections: RouteSection[],
   opts: { table?: RouteTable; app?: IApplication } = {},
 ) {
   const table = opts.table ?? pages;
@@ -853,7 +853,7 @@ const breaking = (component: unknown): RouteTable => [
   ...pages,
 ];
 
-const caught: DomRouteSection[] = [
+const caught: RouteSection[] = [
   { kind: "catch", render: (route: Route, error: unknown) => label("em", () => String(error))(route) },
   { kind: "default", render: wrap("aside") },
 ];

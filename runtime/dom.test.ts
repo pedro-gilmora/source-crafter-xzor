@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Component, dom, type DomRouteSection, lazy, mount, type Markup, NavLink, type RenderTreeBuilder, type Route, type RouteTable, setNavigationForTests, setTransitionCapForTests, viewTransitions } from "./index";
+import { Component, dom, lazy, mount, type Markup, NavLink, type Route, type RouteTable, type RouteSection, setNavigationForTests, setTransitionCapForTests, viewTransitions } from "./index";
 import { EntitySet, Key, Model } from "./model";
 
 // Models and components are written the way the bundle and codegen emit them.
@@ -178,7 +178,7 @@ test("a markup value in @expr renders as markup and follows what it reads", asyn
   class Page extends Component {
     #n = 1; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
     static { Component.$define(this, ["n"]); }
-    summary = Component.fragment((__b) => { __b.openElement("u"); __b.addContent(this.n); __b.closeElement(); });
+    summary = Component.fragment((__p) => dom.text(dom.el(__p, "u"), () => this.n), this);
     protected override render(__p: Node): void {
       dom.text(dom.el(__p, "div"), () => this.summary);
     }
@@ -922,31 +922,28 @@ test("a keyed row that closes over its item keeps its nodes, nested rows and chi
   const children: Card[] = [];
   let inits = 0;
   class Card extends Component {
-    person!: Person;
+    #person!: Person; get person(): Person { Component.$reader?.(this, 0); return this.#person; } set person(v: Person) { const p = this.#person; if (Component.same(p, v)) return; this.#person = v; this.$changed(0, p); }
+    static { Component.$define(this, ["person"]); }
     protected override onInitialized(): void {
       inits++;
       children.push(this);
     }
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("em");
-      b.addContent(this.person.name);
-      b.closeElement();
+    protected override render(__p: Node): void {
+      dom.text(dom.el(__p, "em"), () => this.person.name);
     }
   }
   class Page extends Component {
     #people: Person[] = [{ id: 1, name: "Ana", roles: ["a"] }, { id: 2, name: "Luis", roles: [] }]; get people(): Person[] { Component.$reader?.(this, 0); return this.#people; } set people(v: Person[]) { const p = this.#people; if (Component.same(p, v)) return; this.#people = v; this.$changed(0, p); }
     static { Component.$define(this, ["people"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.listAt(dom.anchors(__p), () => this.people, [], (__p, p: Person) => {
-          dom.rowItem((__v: typeof p) => { p = __v; });
-          const li = __p.appendChild(document.createElement("li"));
-          dom.listAt(dom.anchors(li), () => ROLES, [(r: string) => (p.roles.includes(r) ? r : "-")], (__p) => {
-            dom.textItem(__p.appendChild(document.createElement("b")).appendChild(document.createTextNode("")), 0);
-          }, undefined, (r: string) => r);
-          dom.islandAt(dom.anchor(li), (__b) => __b.addComponent(Card, { person: p }));
-        }, undefined, (p: Person) => p.id);
-      });
+    protected override render(__p: Node): void {
+      dom.listAt(dom.anchors(__p), () => this.people, [(p: Person) => ({ person: p })], (__p, p: Person) => {
+        dom.rowItem((__v: typeof p) => { p = __v; });
+        const li = __p.appendChild(document.createElement("li"));
+        dom.listAt(dom.anchors(li), () => ROLES, [(r: string) => (p.roles.includes(r) ? r : "-")], (__p) => {
+          dom.textItem(__p.appendChild(document.createElement("b")).appendChild(document.createTextNode("")), 0);
+        }, undefined, (r: string) => r);
+        dom.componentItem(dom.anchor(li), Card, 0);
+      }, undefined, (p: Person) => p.id);
     }
   }
   const el = host();
@@ -1036,7 +1033,7 @@ test("aria-* attributes write booleans as true and false", async () => {
   expect(b.getAttribute("disabled")).toBe("");
 });
 
-test("a fine child removed by a vdom parent stops writing", async () => {
+test("a child removed by its region stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
   class One extends Component {
@@ -1046,10 +1043,10 @@ test("a fine child removed by a vdom parent stops writing", async () => {
   }
   class Parent extends Component {
     show = true;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openRegion();
-      if (this.show) b.addComponent(One, {});
-      b.closeRegion();
+    protected override render(__p: Node): void {
+      dom.region(__p, (__p) => {
+        if (this.show) dom.component(dom.anchor(__p), One, () => ({}));
+      });
     }
   }
   const p = mount(Parent, el);
@@ -1485,29 +1482,6 @@ test("a @catch child that fails to mount reports to onError and leaves its ancho
   expect(el.textContent).toBe("");
 });
 
-class OldKid extends Component {
-  title = "";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("i");
-    b.addContent(this.title);
-    b.closeElement();
-  }
-}
-class BridgeHost extends Component {
-  #title = "a"; get title(): string { Component.$reader?.(this, 0); return this.#title; } set title(v: string) { const p = this.#title; if (Component.same(p, v)) return; this.#title = v; this.$changed(0, p); }
-  static { Component.$define(this, ["title"]); }
-  protected override render(__p: Node): void { dom.component(dom.anchor(__p), OldKid, () => ({ title: this.title })); }
-}
-
-test("a child without render (builder-based) mounts through the virtual DOM", async () => {
-  const el = host();
-  const h = mount(BridgeHost, el);
-  expect(el.querySelector("i")!.textContent).toBe("a");
-  h.title = "b";
-  await tick();
-  expect(el.querySelector("i")!.textContent).toBe("b");
-});
-
 test("leak check: 1000 children mounted and removed leave the heap and the subscribers as they were", async () => {
   const { heapSize } = await import("bun:jsc");
   const el = host();
@@ -1632,11 +1606,11 @@ test("perf: an @expr giving the same fragment, re-run 10k times, builds no DOM",
   expect(el.querySelector("b")).toBe(b);
 });
 
-test("a builder island showing a markup value rebuilds when it gives another markup", () => {
+test("a markup value in @expr rebuilds when it gives another markup", () => {
   class Page extends Component {
     view: Markup = Component.fragment((__p) => dom.text(dom.el(__p, "b"), () => "a"), this);
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addContent(this.view);
+    protected override render(__p: Node): void {
+      dom.text(__p, () => this.view);
     }
   }
   const el = host();
@@ -1810,50 +1784,6 @@ test("dom.component and componentItem type their props against the component", (
     }
   }
   expect(Owner).toBeDefined();
-});
-
-test("a builder component mounts a render component", () => {
-  class Builder extends Component {
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addComponent(Pick, { name: "in vdom" });
-    }
-  }
-  const el = host();
-  mount(Builder, el);
-  expect(el.querySelector("button")!.textContent).toBe("in vdom");
-});
-
-class OldFrame extends Component {
-  declare slots: { default?: () => unknown };
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("nav");
-    b.addContent(this.slots.default?.());
-    b.closeElement();
-  }
-}
-class FrameHost extends Deck {
-  protected override render(__p: Node): void {
-    dom.component(dom.anchor(__p), OldFrame, () => ({}), undefined, {
-      default: () => Component.fragment((__p) => {
-        const _e0 = __it() as HTMLElement;
-        dom.textAt(_e0.firstChild as Text, () => this.label);
-        dom.on(_e0, "click", () => this.loose++);
-        __p.appendChild(_e0);
-      }, this),
-    });
-    dom.text(__p, () => this.loose);
-  }
-}
-
-test("a builder-based child shows DOM markup it was given as a slot fill, in its creator's context", async () => {
-  const el = host();
-  const f = mount(FrameHost, el);
-  expect(el.querySelector("nav > i")!.textContent).toBe("a");
-  f.label = "b";
-  await tick();
-  expect(el.querySelector("nav > i")!.textContent).toBe("b");
-  el.querySelector("i")!.click();
-  expect(el.textContent).toBe("b1");
 });
 
 // `@cascade:name(value[, fixed])`, as codegen will emit it.
@@ -2285,7 +2215,7 @@ const shows =
   (route: Route): Markup =>
     Component.fragment((__p) => dom.text(dom.el(__p, tag), () => read(route)));
 
-function routing(sections: DomRouteSection[], table: RouteTable = views) {
+function routing(sections: RouteSection[], table: RouteTable = views) {
   class Shell extends Component {
     #on = true; get on(): boolean { Component.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(0, p); }
     static { Component.$define(this, ["on"]); }
@@ -2403,7 +2333,7 @@ class BrokenView extends Component {
   protected override render(__p: Node): void { dom.t(__p, "never"); }
 }
 const failing = (component: unknown): RouteTable => [{ tag: undefined, pattern: "/boom", component, match: (s) => (s.length === 1 && s[0] === "boom" ? {} : null) }, ...views];
-const catching: DomRouteSection[] = [
+const catching: RouteSection[] = [
   { kind: "catch", render: (route: Route, error: unknown) => shows("em", () => String(error))(route) },
   { kind: "default", render: around("aside") },
 ];
@@ -2607,7 +2537,7 @@ test("routes through dom: a page that leaves is disposed, a family change or a s
 
 test("leak check: a routes block navigated 200 times and unmounted leaves the heap and the subscribers as they were", async () => {
   const { heapSize, heapStats } = await import("bun:jsc");
-  // happy-dom's `baseURI` getter keeps one cache record per read after any DOM change (the vDOM `addRoutes` too).
+  // happy-dom's `baseURI` getter keeps one cache record per read after any DOM change.
   Object.defineProperty(document, "baseURI", { configurable: true, get: () => "http://localhost/" });
   const m = memoryNav("/users/1");
   const cycle = async (): Promise<void> => {
@@ -2726,17 +2656,15 @@ test("leak check: 1000 builder-based children (NavLink) through the bridge, moun
   }
 });
 
-test("a lazy builder-based child: the instance that arrived over the bridge leaves none undisposed", async () => {
+test("a lazy child that arrived is disposed once when its region closes", async () => {
   let made = 0;
   let disposed = 0;
   class Old extends Component {
     title = "";
     constructor() { super(); made++; }
     protected override dispose(): void { disposed++; }
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("i");
-      b.addContent(this.title);
-      b.closeElement();
+    protected override render(__p: Node): void {
+      dom.t(dom.el(__p, "i"), this.title);
     }
   }
   let arrive!: (m: { default: typeof Old }) => void;
