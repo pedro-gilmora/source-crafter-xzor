@@ -390,6 +390,12 @@ pub fn generate_in(
     if doc.cached {
         g.line("static readonly cached = true;");
     }
+    if !doc.type_params.is_empty() {
+        // Types only: callers infer the type arguments from a props object as a call would, under the constraints written here.
+        let decls: Vec<&str> = doc.type_params.iter().map(|t| &**t).collect();
+        let names: Vec<&str> = decls.iter().map(|d| d.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')).next().unwrap_or_default()).collect();
+        g.line(&format!("declare static readonly $fit: <{}>(p: Partial<{class_name}<{}>>) => void;", decls.join(", "), names.join(", ")));
+    }
     if !memos.is_empty() {
         let names: Vec<String> = memos.iter().map(|n| js_string(n)).collect();
         g.line(&format!("static {{ __dom.memo(this, [{}]); }}", names.join(", ")));
@@ -2563,6 +2569,14 @@ impl<'p> Gen<'p> {
         Ok(ChildParts { name, type_args, infer, type_names, props, extra, fills })
     }
 
+    /// Types only: `p` (a props object's type) when `class`'s type parameters can be inferred from it as a call
+    /// would infer them (props that disagree on one fail) and, with `keys`, it has only props; else `never`.
+    fn fit(class: &str, type_names: &[String], p: &str, keys: bool) -> String {
+        let any = vec!["any"; type_names.len()].join(", ");
+        let only = if keys { format!(" & {{ [K in Exclude<keyof {p}, keyof Partial<{class}<{any}>>>]: never }}") } else { String::new() };
+        format!("typeof {class}.$fit extends (p: {p}) => void ? {p}{only} : never")
+    }
+
     /// `{ a: 1, b: 2 }` from `entries`.
     fn object_of(entries: impl IntoIterator<Item = M>) -> M {
         let mut object = M::lit("{");
@@ -2579,6 +2593,8 @@ impl<'p> Gen<'p> {
     fn emit_component(&mut self, el: &Element, end: &str) -> Result<(), String> {
         let ChildParts { name, type_args, infer, type_names, props, extra, fills } = self.component_parts(el)?;
         let row = self.row_level();
+        // A spread's keys are unknown, so they are not checked as props.
+        let spread = props.iter().any(|(p, _)| p.text.starts_with("..."));
         let (values, statics): (Vec<_>, Vec<_>) = props.into_iter().partition(|(_, once)| !once);
         let values = Self::object_of(values.into_iter().map(|(p, _)| p));
         // The type the checks run against: a row's reads are typed by hand, a hoisted read by its inference.
@@ -2607,7 +2623,17 @@ impl<'p> Gen<'p> {
                 .map(|t| format!("ReturnType<typeof {var}> extends Partial<{class}<{infers}>> ? {t} : unknown"))
                 .collect();
             head = head.lit_then(&format!("<{}>", types.join(", ")));
-            args = args.add(head).lit_then(&format!(", {var}"));
+            let fit = Self::fit(class, &type_names, &format!("ReturnType<typeof {var}>"), !spread);
+            args = args.add(head).lit_then(&format!(", {var} satisfies (() => {fit})"));
+        } else if row && infer {
+            // Inferred as a call would, so props that disagree on `T` fail; hoisted to name its type, no runtime cost.
+            let id = self.props_ids.get();
+            self.props_ids.set(id + 1);
+            let var = format!("__p{id}");
+            let fit = Self::fit(class, &type_names, &format!("typeof {var}"), !spread);
+            let body = M::lit(&format!("{{ const {var} = ")).add(values).lit_then(&format!("; return {var} satisfies {fit}; }}"));
+            let i = self.push_read(&format!("): (Partial<{ty}>"), body);
+            args = args.add(head).lit_then(&format!(", {i}"));
         } else if row {
             let i = self.push_read(&format!("): (Partial<{ty}>"), M::lit("(").add(values).lit_then(")"));
             args = args.add(head).lit_then(&format!(", {i}"));
@@ -4124,14 +4150,28 @@ mod tests {
         let list = "@typeparam T\n@typeparam U = string\n@code { items: T[] = []; }\n@slot:item";
         let src = "@code { xs = [\"a\"]; }\n<List items=\"@xs\">\n  @slot item(x) { @x }\n</List>\n<List items=\"@xs\" />";
         let g = gen_with(src, &[("List", list)]);
+        let fit = |p: &str| format!("typeof List.$fit extends (p: {p}) => void ? {p} & {{ [K in Exclude<keyof {p}, keyof Partial<List<any, any>>>]: never }} : never");
         let infer = |p: &str| {
             let i = "infer T, infer U";
-            format!("List<ReturnType<typeof {p}> extends Partial<List<{i}>> ? T : unknown, ReturnType<typeof {p}> extends Partial<List<{i}>> ? U : unknown>, {p}")
+            let ret = format!("ReturnType<typeof {p}>");
+            format!("List<{ret} extends Partial<List<{i}>> ? T : unknown, {ret} extends Partial<List<{i}>> ? U : unknown>, {p} satisfies (() => {})", fit(&ret))
         };
         assert!(g.code.contains("const __p0 = () => ({ items: this.xs });"), "{}", g.code);
         assert!(g.code.contains(&format!("__dom.component(_e1, {}, undefined, {{ item: (x) =>", infer("__p0"))), "{}", g.code);
         assert!(g.code.contains("const __p1 = () => ({ items: this.xs });"), "{}", g.code);
         assert!(g.code.contains(&format!("__dom.component(_e2, {});", infer("__p1"))), "{}", g.code);
+    }
+
+    /// In a row the props object is hoisted into the shared read, which checks it as a call would infer it.
+    #[test]
+    fn generic_component_in_a_row_checks_its_props() {
+        let list = "@typeparam T\n@code { items: T[] = []; }";
+        let src = "@code { xs = [[\"a\"]]; }\n@for (const x of xs) {\n  <List items=\"@x\" />\n  <List T=\"string\" items=\"@x\" />\n}";
+        let g = gen_with(src, &[("List", list)]);
+        let fit = "typeof List.$fit extends (p: typeof __p0) => void ? typeof __p0 & { [K in Exclude<keyof typeof __p0, keyof Partial<List<any>>>]: never } : never";
+        assert!(g.code.contains(&format!("(x): (Partial<List<any>>) => {{ const __p0 = {{ items: x }}; return __p0 satisfies {fit}; }},")), "{}", g.code);
+        assert!(g.code.contains("(x): (Partial<List<string>>) => ({ items: x }),"), "{}", g.code);
+        assert!(!g.code.contains("const __p1"), "{}", g.code);
     }
 
     /// A literal-typed text prop (`depth?: "0" | "1"`) keeps its literal type in the hoisted object, so it
@@ -4222,6 +4262,7 @@ mod tests {
         let (doc, _) = parse("@typeparam T extends object\n@typeparam U\n<p/>").unwrap();
         let g = generate(&doc, "Grid", "Grid.xzor").unwrap();
         assert!(g.code.contains("export default class Grid<T extends object, U> extends __Component {"), "{}", g.code);
+        assert!(g.code.contains("declare static readonly $fit: <T extends object, U>(p: Partial<Grid<T, U>>) => void;"), "{}", g.code);
     }
 
     #[test]
