@@ -1482,6 +1482,32 @@ test("a @catch child that fails to mount reports to onError and leaves its ancho
   expect(el.textContent).toBe("");
 });
 
+test("a @catch child whose render throws after onInitialized is released and disposed once; one that never initialized is not", () => {
+  const log: string[] = [];
+  const failing = (init: boolean) =>
+    class extends Component {
+      protected override onInitialized(): void { if (!init) throw new Error("init"); }
+      protected override dispose(): void { log.push("dispose"); }
+      [Symbol.dispose](): void { log.push("Symbol.dispose"); }
+      protected override render(__p: Node): void { dom.t(__p, "x"); throw new Error("render"); }
+    };
+  const errors: unknown[] = [];
+  const page = (child: ReturnType<typeof failing>) =>
+    class extends Component {
+      protected override render(__p: Node): void {
+        dom.component(dom.anchor(__p), child, () => ({}), undefined, undefined, undefined, undefined, (err) => errors.push(err));
+      }
+    };
+  const el = host();
+  mount(page(failing(true)), el);
+  expect(log).toEqual(["dispose", "Symbol.dispose"]);
+  expect(errors.map((e) => (e as Error).message)).toEqual(["render"]);
+  expect(el.textContent).toBe("");
+  log.length = 0;
+  mount(page(failing(false)), host());
+  expect(log).toEqual([]);
+});
+
 test("leak check: 1000 children mounted and removed leave the heap and the subscribers as they were", async () => {
   const { heapSize } = await import("bun:jsc");
   const el = host();
@@ -2817,6 +2843,7 @@ test("a @pause region holding a child component freezes the child while hidden a
 
 // A binding that goes loose joins the list of the component it was built in, wherever it is re-run.
 class LooseKid extends Component {
+  x = "";
   declare slots: { default?: () => Markup };
   protected override render(__p: Node): void {
     dom.slotAt(dom.anchors(__p), () => this.slots.default);

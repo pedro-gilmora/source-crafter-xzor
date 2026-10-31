@@ -636,3 +636,88 @@ test("a rejected [Symbol.asyncDispose] surfaces the error", async () => {
   });
   expect(thrown).toEqual([failure]);
 });
+
+
+test("every after-render hook of a pass runs, and each error is reported", async () => {
+  const boomA = new Error("first after failed");
+  const boomC = new Error("third after failed");
+  const log: string[] = [];
+  class First extends Hello {
+    protected override onAfterRender(): void {
+      log.push("first");
+      throw boomA;
+    }
+  }
+  class Second extends Hello {
+    protected override onAfterRender(): void {
+      log.push("second");
+    }
+    protected override onAfterRenderAsync(): void {
+      log.push("second async");
+    }
+  }
+  class Third extends Hello {
+    protected override onAfterRender(): void {
+      log.push("third");
+      throw boomC;
+    }
+  }
+  class Page extends Component {
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), First, (): Partial<First> => ({}));
+      dom.component(dom.anchor(__p), Second, (): Partial<Second> => ({}));
+      dom.component(dom.anchor(__p), Third, (): Partial<Third> => ({}));
+    }
+  }
+  const el = host();
+  const thrown = await thrownFrom(() => mount(Page, el));
+  expect(log).toEqual(["first", "second", "second async", "third"]);
+  expect(thrown).toEqual([boomA, boomC]);
+  expect(html(el)).toBe("<p>hello</p><p>hello</p><p>hello</p>");
+});
+
+// A first build that throws: what it built is released, and the instance is disposed once if it got past onInitialized.
+function discardable(log: string[], init: boolean) {
+  return class extends Hello {
+    protected override onInitialized(): void {
+      log.push("init");
+      if (!init) throw new Error("init failed");
+    }
+    protected override dispose(): void {
+      log.push("hook");
+    }
+    [Symbol.dispose](): void {
+      log.push("dispose");
+    }
+    [Symbol.asyncDispose](): Promise<void> {
+      log.push("asyncDispose");
+      return Promise.resolve();
+    }
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Sound, (): Partial<Sound> => ({}));
+      throw new Error("render failed");
+    }
+  };
+}
+
+class Sound extends Hello {
+  static log: string[] = [];
+  protected override dispose(): void {
+    Sound.log.push("sound");
+  }
+}
+
+test("a root whose first render throws is released and disposed once, and the error reaches the caller", () => {
+  const log: string[] = [];
+  Sound.log = log;
+  const el = host();
+  expect(() => mount(discardable(log, true), el)).toThrow("render failed");
+  expect(log).toEqual(["init", "sound", "hook", "dispose", "asyncDispose"]);
+  expect(html(el)).toBe("");
+});
+
+test("a root whose onInitialized throws was never initialized: it is not disposed", () => {
+  const log: string[] = [];
+  expect(() => mount(discardable(log, false), host())).toThrow("init failed");
+  expect(log).toEqual(["init"]);
+});

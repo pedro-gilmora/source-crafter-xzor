@@ -662,16 +662,22 @@ function open(): number {
 // The outermost pass runs the hooks queued since it opened; a pass a hook starts runs its own, then truncates back.
 function close(mark: number): void {
   if (--depth !== 0) return;
-  try {
-    for (let i = mark; i < afterRender.length; i++) {
-      const c = hooks(afterRender[i]!);
-      const first = afterFirst[i]!;
+  // A hook that throws is reported; the rest still run.
+  for (let i = mark; i < afterRender.length; i++) {
+    const c = hooks(afterRender[i]!);
+    const first = afterFirst[i]!;
+    try {
       c.onAfterRender(first);
-      void c.onAfterRenderAsync(first);
+    } catch (err) {
+      rethrow(err);
     }
-  } finally {
-    afterRender.length = afterFirst.length = mark;
+    try {
+      surface(c.onAfterRenderAsync(first));
+    } catch (err) {
+      rethrow(err);
+    }
   }
+  afterRender.length = afterFirst.length = mark;
 }
 
 function batch(fn: () => void): void {
@@ -934,11 +940,12 @@ const GONE = 4;
 function build(c: Component, app: IApplication | undefined, scope: unknown, end: Comment | null, node?: Failing): DocumentFragment {
   const h = hooks(c);
   h.onInitialized();
+  // Set once initialized: `discard` disposes only an instance that got this far.
+  c.$pass = pass;
   settle(c, h.onInitializedAsync(), node);
   parametersSet(c);
   c.$app = app;
   c.$scope = scope;
-  c.$pass = pass;
   const frag = document.createDocumentFragment();
   // Only roots and `@cached` ones get a start comment (keeping needs their range), and every one under hot reload (a rebuild does).
   if (end === null || ranges || (c.constructor as { cached?: boolean }).cached === true) c.$start = frag.appendChild(document.createComment(""));
@@ -1057,14 +1064,23 @@ function abandon(s: Child, c: Component, err: unknown): void {
   try {
     fail(s, err);
   } finally {
-    if (mine) {
-      try {
-        releaseDom(c);
-      } catch (disposeErr) {
-        rethrow(disposeErr);
-      }
-      c.$end = undefined;
-    }
+    if (mine) discard(c);
+  }
+}
+
+// A first build that threw: its bindings go, and the instance is disposed if it got past `onInitialized`. Errors are reported.
+function discard(c: Component): void {
+  try {
+    releaseDom(c);
+  } catch (err) {
+    rethrow(err);
+  }
+  c.$end = undefined;
+  if (c.$pass === 0) return;
+  try {
+    disposeInstance(c);
+  } catch (err) {
+    rethrow(err);
   }
 }
 
@@ -1102,16 +1118,7 @@ function arriveChild(s: Child, c: Component): void {
       rethrow(handler);
     }
   } finally {
-    // An after-render hook that throws leaves the component mounted; the error is reported, not thrown into the promise.
-    try {
-      close(mark);
-    } catch (err) {
-      try {
-        fail(s, err);
-      } catch (handler) {
-        rethrow(handler);
-      }
-    }
+    close(mark);
   }
 }
 
@@ -1194,6 +1201,9 @@ export function mount<C extends Component>(type: Ctor<C>, target: string | Eleme
   const mark = open();
   try {
     host.replaceChildren(build(root, app, undefined, null));
+  } catch (err) {
+    discard(root);
+    throw err;
   } finally {
     close(mark);
   }

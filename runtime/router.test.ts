@@ -923,6 +923,29 @@ test("@catch renders for a page whose first render throws", async () => {
   expect(r.html()).toBe("<em>Error: render</em>");
 });
 
+class Acquiring extends Component {
+  static acquired = 0;
+  static released = 0;
+  protected override onInitialized(): void {
+    Acquiring.acquired++;
+  }
+  protected override dispose(): void {
+    Acquiring.released++;
+  }
+  protected override render(): void {
+    throw new Error("render");
+  }
+}
+
+test("@catch disposes the page whose first render threw after it acquired something, once", async () => {
+  nav("/boom");
+  Acquiring.acquired = Acquiring.released = 0;
+  const r = routed(caught, { table: breaking(Acquiring) });
+  await tick();
+  expect(r.html()).toBe("<em>Error: render</em>");
+  expect([Acquiring.acquired, Acquiring.released]).toEqual([1, 1]);
+});
+
 test("@catch renders for a page the application fails to build", async () => {
   nav("/boom");
   const app: IApplication = { createComponent: () => Promise.reject(new Error("di")) };
