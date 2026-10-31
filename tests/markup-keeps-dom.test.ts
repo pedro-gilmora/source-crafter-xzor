@@ -380,3 +380,115 @@ test("nested control flow and elements holding code inside a loop's pieces regio
   await tick();
   expect(texts()).toEqual(["none"]);
 }, 120000);
+
+// The constructor of what an element's delegated click handler is stored as: a `Binding` under a markup value.
+const clickKind = (el: Element): string | undefined => {
+  const s = Object.getOwnPropertySymbols(el).find((s) => String(s) === "Symbol(click)");
+  return s === undefined ? undefined : (el as any)[s]?.constructor?.name;
+};
+
+test("a throw while a block's last claimed piece runs again leaves the runtime sane", async () => {
+  const errors: unknown[] = [];
+  const queue = globalThis.queueMicrotask;
+  // The flush reports a throw by re-throwing it in a microtask.
+  globalThis.queueMicrotask = (run) =>
+    queue(() => {
+      try {
+        run();
+      } catch (e) {
+        errors.push(e);
+      }
+    });
+  try {
+    const { app: c, host } = await load<{ o: any; k: number }>("piece-throw", {
+      "main.ts": `import { mount } from "@source-crafter/xzor-runtime";
+import App from "./App.xzor";
+import Child from "./Child.xzor";
+(globalThis as any).app = mount(App, document.getElementById("app")!);
+(globalThis as any).mountChild = (el: HTMLElement) => mount(Child, el);
+`,
+      "App.xzor": `@code { o: any = { a: { b: 1 } }; k = 1; }
+<div class="blk">@{ const v = o; const kk = k; <i>@kk</i> if (kk > 0) { <u>@v.a.b</u> } }</div>
+`,
+      "Child.xzor": `<button @onclick="() => {}">x</button>
+`,
+    });
+    const blk = () => host.querySelector(".blk")!.innerHTML;
+    c.o = { a: null };
+    await tick();
+    await tick();
+    expect(errors.length).toBeGreaterThan(0);
+
+    const other = document.createElement("div");
+    document.body.appendChild(other);
+    (globalThis as any).mountChild(other);
+    expect(clickKind(other.querySelector("button")!)).toBe("Function");
+
+    c.o = { a: { b: 2 } };
+    await tick();
+    expect(blk()).toBe("<!----><i>1</i><u>2</u><!---->");
+    c.k = 2;
+    await tick();
+    expect(blk()).toBe("<!----><i>2</i><u>2</u><!---->");
+    c.k = 0;
+    await tick();
+    expect(blk()).toBe("<!----><i>0</i><!---->");
+    c.k = 3;
+    await tick();
+    expect(blk()).toBe("<!----><i>3</i><u>2</u><!---->");
+  } finally {
+    globalThis.queueMicrotask = queue;
+  }
+}, 120000);
+
+test("a child component first built under a markup value stores its handlers plainly", async () => {
+  const { host } = await load<{ n: number }>("child-unmarked", {
+    "App.xzor": `@import Child from "./Child.xzor"
+@code {
+  n = 1;
+  view(k: number) { return <div class="v"><Child k="@k" /></div>; }
+}
+@view(n)
+`,
+    "Child.xzor": `@code { k = 0; }
+<button @onclick="() => {}">@k</button>
+`,
+  });
+  expect(clickKind(host.querySelector(".v button")!)).toBe("Function");
+}, 120000);
+
+test("a markup value switched to another instance's same site builds under that instance", async () => {
+  (globalThis as any).g = { n: 0 };
+  const { app: c, host } = await load<{ flag: boolean }>("other-owner", {
+    "App.xzor": `@import Box from "./Box.xzor"
+@code { flag = true; a = new Box(); b = new Box(); }
+@(flag ? a.view() : b.view())
+`,
+    "Box.xzor": `@code {
+  count() { return (globalThis as any).g.n; }
+  view() { return <p><button @onclick="() => { (globalThis as any).g.n++; }">go</button><span>@this.count()</span></p>; }
+}
+<i></i>
+`,
+  });
+  const p = host.querySelector("p")!;
+  c.flag = false;
+  await tick();
+  host.querySelector("button")!.click();
+  await tick();
+  // The untracked count runs again after a handler of the owner it was built in: `b`, not `a`.
+  expect(host.querySelector("span")!.textContent).toBe("1");
+  expect(host.querySelector("p")).not.toBe(p);
+}, 120000);
+
+test("a markup statement that runs after its block's run builds nothing and doesn't throw", async () => {
+  (globalThis as any).late = "pending";
+  const { host } = await load<{}>("late-piece", {
+    "App.xzor": `<ul>@{ setTimeout(() => { try { <li>late</li> (globalThis as any).late = "ok"; } catch (e) { (globalThis as any).late = String(e); } }); <li>now</li> }</ul>
+`,
+  });
+  await tick();
+  await tick();
+  expect((globalThis as any).late).toBe("ok");
+  expect(host.querySelector("ul")!.textContent).toBe("now");
+}, 120000);

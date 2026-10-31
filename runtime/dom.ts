@@ -342,13 +342,17 @@ class Binding {
     try {
       this.#run(CLAIM_PARENT);
     } finally {
-      closePiece(s);
-      pieces = prev;
-      holder = outer;
-      marking = was;
-      for (let i = 0; i < old.length; i++) if (old[i]!.run !== s.run) dropRow(old[i]!);
-      place(this.node, old, s.now);
-      old.length = 0;
+      // The last piece's re-run may throw too: the globals and the pieces are set right whatever it does.
+      try {
+        closePiece(s);
+      } finally {
+        pieces = prev;
+        holder = outer;
+        marking = was;
+        for (let i = 0; i < old.length; i++) if (old[i]!.run !== s.run) dropRow(old[i]!);
+        place(this.node, old, s.now);
+        old.length = 0;
+      }
     }
     if (s.again) this.#pieces(true);
   }
@@ -514,7 +518,8 @@ class Binding {
     }
     // A new index: `refreshAll` leaves what was just built alone.
     c.index++;
-    if (kind === 1 && isMarkup(prev) && prev[SITE] !== undefined && prev[SITE] === (value as Markup)[SITE] && claim(c, value as Markup)) return;
+    // Another owner's value (an instance of the same class) builds anew: what it holds is bound to its owner.
+    if (kind === 1 && isMarkup(prev) && prev[SITE] !== undefined && prev[SITE] === (value as Markup)[SITE] && prev[MARKUP] === (value as Markup)[MARKUP] && claim(c, value as Markup)) return;
     disposeAll(c);
     for (let node = c.start.nextSibling!; node !== end; ) {
       const next = node.nextSibling!;
@@ -655,7 +660,6 @@ function buildMarkup(c: Content, build: Build, parent: Node, mark: boolean): voi
  * re-points it; then they all run once, and equal values touch nothing. False when a call didn't match.
  */
 function claim(c: Content, value: Markup): boolean {
-  c.$ctx = value[MARKUP] ?? c.owner;
   if (!claimBuild(c, value, undefined)) return false;
   rerun(c);
   return true;
@@ -1627,7 +1631,9 @@ export const dom = {
    * else a new piece builds into a fragment. Both end at the next statement, or with the run.
    */
   piece(site: unknown): Node {
-    const s = pieces!;
+    const s = pieces;
+    // A statement run after its block's run (a timer's callback) builds into a fragment nothing shows.
+    if (s === undefined) return document.createDocumentFragment();
     closePiece(s);
     const old = s.old;
     const run = s.run;
@@ -2126,15 +2132,19 @@ export function renderInto(c: Component, parent: Node): void {
   const prev = collecting;
   const reader = Component.$reader;
   const outer = holder;
+  const was = marking;
   collecting = undefined;
   Component.$reader = undefined;
   holder = c;
+  // A child first built under a markup value is not markup: its handlers are plain.
+  marking = false;
   try {
     (c as unknown as { render(parent: Node): void }).render(parent);
   } finally {
     collecting = prev;
     Component.$reader = reader;
     holder = outer;
+    marking = was;
   }
 }
 
