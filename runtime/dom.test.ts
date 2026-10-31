@@ -31,16 +31,14 @@ class Counter extends Component {
   untracked = 0;
   static { Component.$define(this, ["count", "label"]); }
 
-  protected override buildRenderTree(__b: RenderTreeBuilder): void {
+  protected override render(__p: Node): void {
     renders++;
-    __b.addFine((__p) => {
-      const _button0 = dom.el(__p, "button");
-      _button0.addEventListener("click", () => this.count++);
-      dom.attr(_button0, "title", () => `${this.label}${this.count}`);
-      dom.text(_button0, () => this.count);
-      dom.t(__p, " ");
-      dom.text(__p, () => this.untracked);
-    });
+    const _button0 = dom.el(__p, "button");
+    _button0.addEventListener("click", () => this.count++);
+    dom.attr(_button0, "title", () => `${this.label}${this.count}`);
+    dom.text(_button0, () => this.count);
+    dom.t(__p, " ");
+    dom.text(__p, () => this.untracked);
   }
 }
 
@@ -65,12 +63,10 @@ class Bar extends Component {
   #count = 0; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
   static { Component.$define(this, ["count"]); }
 
-  protected override buildRenderTree(__b: RenderTreeBuilder): void {
-    __b.addFine((__p) => {
-      const _div0 = dom.el(__p, "div");
-      dom.attr(_div0, "--w", () => this.count * 10 + "%");
-      dom.attr(_div0, "--on", () => this.count > 1 || null);
-    });
+  protected override render(__p: Node): void {
+    const _div0 = dom.el(__p, "div");
+    dom.attr(_div0, "--w", () => this.count * 10 + "%");
+    dom.attr(_div0, "--on", () => this.count > 1 || null);
   }
 }
 
@@ -104,23 +100,21 @@ class Sheet extends Component {
   #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { Component.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (Component.same(p, v)) return; this.#team = v; this.$changed(0, p); }
   static { Component.$define(this, ["team"]); }
 
-  protected override buildRenderTree(__b: RenderTreeBuilder): void {
-    __b.addFine((__p) => {
-      const _ul0 = dom.el(__p, "ul");
-      dom.list(_ul0, () => this.team.view, (__p, worker: Worker) => {
-        const _li0 = dom.el(__p, "li");
-        const _input0 = dom.el(_li0, "input");
-        dom.attr(_input0, "value", () => worker.hours);
-        _input0.addEventListener("input", (__e) => (worker.hours = Number((__e.target as HTMLInputElement).value)));
-        const _span0 = dom.el(_li0, "span");
-        dom.text(_span0, () => worker.payment.toFixed(2));
-        dom.region(_li0, (__p) => {
-          if (worker.hours > 24) dom.t(dom.el(__p, "small"), "too many");
-        });
+  protected override render(__p: Node): void {
+    const _ul0 = dom.el(__p, "ul");
+    dom.list(_ul0, () => this.team.view, (__p, worker: Worker) => {
+      const _li0 = dom.el(__p, "li");
+      const _input0 = dom.el(_li0, "input");
+      dom.attr(_input0, "value", () => worker.hours);
+      _input0.addEventListener("input", (__e) => (worker.hours = Number((__e.target as HTMLInputElement).value)));
+      const _span0 = dom.el(_li0, "span");
+      dom.text(_span0, () => worker.payment.toFixed(2));
+      dom.region(_li0, (__p) => {
+        if (worker.hours > 24) dom.t(dom.el(__p, "small"), "too many");
       });
-      const _b0 = dom.el(__p, "b");
-      dom.text(_b0, () => this.team.view.reduce((sum, w) => sum + w.payment, 0));
     });
+    const _b0 = dom.el(__p, "b");
+    dom.text(_b0, () => this.team.view.reduce((sum, w) => sum + w.payment, 0));
   }
 }
 
@@ -180,99 +174,13 @@ test("a deleted item leaves the view, and its bindings stop writing", async () =
   expect(li.querySelector("span")!.textContent).toBe("20.00");
 });
 
-test("islands: child components get their parameters, and re-render only when what they read changes", async () => {
-  let childRenders = 0;
-  class Child extends Component {
-    label = "";
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      childRenders++;
-      b.openElement("em");
-      b.addContent(this.label);
-      b.closeElement();
-    }
-  }
-  class Parent extends Component {
-    #name = "a"; get name(): string { Component.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Component.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-    #other = 0; get other(): number { Component.$reader?.(this, 1); return this.#other; } set other(v: number) { const p = this.#other; if (Component.same(p, v)) return; this.#other = v; this.$changed(1, p); }
-    static { Component.$define(this, ["name", "other"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.text(dom.el(__p, "b"), () => this.other);
-        dom.island(__p, (__b) => __b.addComponent(Child, { label: this.name }));
-      });
-    }
-  }
-  const el = host();
-  const p = mount(Parent, el);
-  expect(el.querySelector("em")!.textContent).toBe("a");
-  p.other = 1;
-  await tick();
-  expect(childRenders).toBe(1);
-  p.name = "b";
-  await tick();
-  expect(el.querySelector("em")!.textContent).toBe("b");
-  expect(childRenders).toBe(2);
-});
-
-test("islands: slot content reading the fine parent re-renders the child that shows it", async () => {
-  class Card extends Component {
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("section");
-      b.addContent((this.slots as { default?: () => unknown }).default?.() ?? null);
-      b.closeElement();
-    }
-  }
-  class Page extends Component {
-    #name = "a"; get name(): string { Component.$reader?.(this, 0); return this.#name; } set name(v: string) { const p = this.#name; if (Component.same(p, v)) return; this.#name = v; this.$changed(0, p); }
-    static { Component.$define(this, ["name"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => dom.island(__p, (__b) => __b.addComponent(Card, {}, { default: () => Component.fragment((__b) => { __b.openElement("i"); __b.addContent(this.name); __b.closeElement(); }) } as never)));
-    }
-  }
-  const el = host();
-  const p = mount(Page, el);
-  expect(el.querySelector("section i")!.textContent).toBe("a");
-  p.name = "b";
-  await tick();
-  expect(el.querySelector("section i")!.textContent).toBe("b");
-});
-
-test("islands: a callback from a child updates the fine parent through its tracked field", async () => {
-  class Btn extends Component {
-    onPick?: (n: number) => unknown;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("button");
-      b.addEventHandler("click", () => this.onPick?.(7));
-      b.closeElement();
-    }
-  }
-  let renders = 0;
-  class Page extends Component {
-    #picked = 0; get picked(): number { Component.$reader?.(this, 0); return this.#picked; } set picked(v: number) { const p = this.#picked; if (Component.same(p, v)) return; this.#picked = v; this.$changed(0, p); }
-    static { Component.$define(this, ["picked"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      renders++;
-      __b.addFine((__p) => {
-        dom.island(__p, (__b) => __b.addComponent(Btn, { onPick: __b.callback((n: number) => (this.picked = n)) }));
-        dom.text(dom.el(__p, "b"), () => this.picked);
-      });
-    }
-  }
-  const el = host();
-  mount(Page, el);
-  el.querySelector("button")!.click();
-  await tick();
-  expect(el.querySelector("b")!.textContent).toBe("7");
-  expect(renders).toBe(1);
-});
-
 test("a markup value in @expr renders as markup and follows what it reads", async () => {
   class Page extends Component {
     #n = 1; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
     static { Component.$define(this, ["n"]); }
     summary = Component.fragment((__b) => { __b.openElement("u"); __b.addContent(this.n); __b.closeElement(); });
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => dom.text(dom.el(__p, "div"), () => this.summary));
+    protected override render(__p: Node): void {
+      dom.text(dom.el(__p, "div"), () => this.summary);
     }
   }
   const el = host();
@@ -289,16 +197,14 @@ test("after its own handler, a fine component re-runs the bindings that read not
   class Page extends Component {
     #count = 0; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
     static { Component.$define(this, ["count"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const _e0 = dom.el(__p, "button");
-        dom.on(_e0, "click", () => {
-          work.changes++;
-          this.count++;
-        });
-        dom.text(dom.el(__p, "i"), () => work.changes);
-        dom.text(dom.el(__p, "b"), () => (tracked++, this.count));
+    protected override render(__p: Node): void {
+      const _e0 = dom.el(__p, "button");
+      dom.on(_e0, "click", () => {
+        work.changes++;
+        this.count++;
       });
+      dom.text(dom.el(__p, "i"), () => work.changes);
+      dom.text(dom.el(__p, "b"), () => (tracked++, this.count));
     }
   }
   const el = host();
@@ -315,8 +221,8 @@ test("a set's hasChanges and hasErrors follow pushes", async () => {
   const el = host();
   const set = EntitySet.track(Worker, [{ name: "a", hours: 1, tax: 0 }]);
   class Flags extends Component {
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => dom.text(__p, () => `${set.hasChanges}/${set.hasErrors}`));
+    protected override render(__p: Node): void {
+      dom.text(__p, () => `${set.hasChanges}/${set.hasErrors}`);
     }
   }
   mount(Flags, el);
@@ -364,10 +270,10 @@ test("bindings inside a region that drops them stop writing", async () => {
   class Parent extends Component {
     #show = true; get show(): boolean { Component.$reader?.(this, 0); return this.#show; } set show(v: boolean) { const p = this.#show; if (Component.same(p, v)) return; this.#show = v; this.$changed(0, p); }
     static { Component.$define(this, ["show"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => dom.region(__p, (__p) => {
+    protected override render(__p: Node): void {
+      dom.region(__p, (__p) => {
         if (this.show) dom.text(dom.el(__p, "p"), () => worker.hours);
-      }));
+      });
     }
   }
   const p = mount(Parent, el);
@@ -391,30 +297,28 @@ test("nested regions and lists in a region change alone: the outer block keeps i
     #items = ["a", "b"]; get items(): string[] { Component.$reader?.(this, 1); return this.#items; } set items(v: string[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(1, p); }
     #text = ""; get text(): string { Component.$reader?.(this, 2); return this.#text; } set text(v: string) { const p = this.#text; if (Component.same(p, v)) return; this.#text = v; this.$changed(2, p); }
     static { Component.$define(this, ["open", "items", "text"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const _e0 = __t0();
-        dom.regionAt(_e0.firstChild!.nextSibling! as Comment, (__p) => {
-          outer++;
-          if (this.open) {
-            const _e2 = __t1() as HTMLDialogElement;
-            const _e3 = _e2.firstChild! as HTMLInputElement;
-            const _e4 = _e3.nextSibling!.nextSibling! as Comment;
-            const _e5 = _e4.nextSibling! as HTMLUListElement;
-            dom.attr(_e3, "value", () => this.text);
-            dom.regionAt(_e4, (__p) => {
-              if (this.text.length > 2) __p.appendChild(__t2());
-            });
-            dom.listAt(_e5.firstChild! as Comment, () => this.items, [(it: string) => it], (__p) => {
-              const _e8 = __t3() as HTMLLIElement;
-              dom.textItem(_e8.firstChild! as Text, 0);
-              __p.appendChild(_e8);
-            });
-            __p.appendChild(_e2);
-          }
-        });
-        __p.appendChild(_e0);
+    protected override render(__p: Node): void {
+      const _e0 = __t0();
+      dom.regionAt(_e0.firstChild!.nextSibling! as Comment, (__p) => {
+        outer++;
+        if (this.open) {
+          const _e2 = __t1() as HTMLDialogElement;
+          const _e3 = _e2.firstChild! as HTMLInputElement;
+          const _e4 = _e3.nextSibling!.nextSibling! as Comment;
+          const _e5 = _e4.nextSibling! as HTMLUListElement;
+          dom.attr(_e3, "value", () => this.text);
+          dom.regionAt(_e4, (__p) => {
+            if (this.text.length > 2) __p.appendChild(__t2());
+          });
+          dom.listAt(_e5.firstChild! as Comment, () => this.items, [(it: string) => it], (__p) => {
+            const _e8 = __t3() as HTMLLIElement;
+            dom.textItem(_e8.firstChild! as Text, 0);
+            __p.appendChild(_e8);
+          });
+          __p.appendChild(_e2);
+        }
       });
+      __p.appendChild(_e0);
     }
   }
   const el = host();
@@ -439,16 +343,14 @@ test("a list's else shows while it has no rows, and leaves with the first one", 
   class Page extends Component {
     #items: string[] = []; get items(): string[] { Component.$reader?.(this, 0); return this.#items; } set items(v: string[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
     static { Component.$define(this, ["items"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const ul = dom.el(__p, "ul");
-        const end = ul.appendChild(document.createComment(""));
-        dom.listAt(end, () => this.items, [(it: string) => it], (__p) => {
-          const li = __p.appendChild(document.createElement("li"));
-          dom.textItem(li.appendChild(document.createTextNode("")), 0);
-        }, (__p) => {
-          dom.textAt(__p.appendChild(document.createElement("p")).appendChild(document.createTextNode("")), () => `none ${this.items.length}`);
-        });
+    protected override render(__p: Node): void {
+      const ul = dom.el(__p, "ul");
+      const end = ul.appendChild(document.createComment(""));
+      dom.listAt(end, () => this.items, [(it: string) => it], (__p) => {
+        const li = __p.appendChild(document.createElement("li"));
+        dom.textItem(li.appendChild(document.createTextNode("")), 0);
+      }, (__p) => {
+        dom.textAt(__p.appendChild(document.createElement("p")).appendChild(document.createTextNode("")), () => `none ${this.items.length}`);
       });
     }
   }
@@ -467,19 +369,17 @@ test("@attr: in a region sets its element while the branch shows, and comes off 
   class Stock extends Component {
     #n = 0; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
     static { Component.$define(this, ["n"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const span = dom.el(__p, "span");
-        span.setAttribute("class", "cell");
-        span.setAttribute("title", "stock");
-        dom.region(span, (__p) => {
-          if (this.n > 0) dom.text(__p, () => this.n);
-          else {
-            dom.attrOf(span, "class", () => "error-text cell");
-            dom.attrOf(span, "title", () => `none ${this.n}`);
-            dom.t(__p, "Agotado");
-          }
-        });
+    protected override render(__p: Node): void {
+      const span = dom.el(__p, "span");
+      span.setAttribute("class", "cell");
+      span.setAttribute("title", "stock");
+      dom.region(span, (__p) => {
+        if (this.n > 0) dom.text(__p, () => this.n);
+        else {
+          dom.attrOf(span, "class", () => "error-text cell");
+          dom.attrOf(span, "title", () => `none ${this.n}`);
+          dom.t(__p, "Agotado");
+        }
       });
     }
   }
@@ -500,20 +400,18 @@ test("keyed passes keep their rows: same key and values keep the nodes, changed 
   class Page extends Component {
     #team: Record<string, number> = { a: 1, b: 2, c: 3 }; get team(): Record<string, number> { Component.$reader?.(this, 0); return this.#team; } set team(v: Record<string, number>) { const p = this.#team; if (Component.same(p, v)) return; this.#team = v; this.$changed(0, p); }
     static { Component.$define(this, ["team"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const ul = dom.el(__p, "ul");
-        dom.keyedAt(ul.appendChild(document.createComment("")), (__pass) => {
-          for (const [k, v] of Object.entries(this.team)) {
-            const __p = __pass(k, [k, v]);
-            if (__p !== undefined) {
-              builds++;
-              __p.appendChild(document.createElement("li")).textContent = `${k}${v}`;
-            }
+    protected override render(__p: Node): void {
+      const ul = dom.el(__p, "ul");
+      dom.keyedAt(ul.appendChild(document.createComment("")), (__pass) => {
+        for (const [k, v] of Object.entries(this.team)) {
+          const __p = __pass(k, [k, v]);
+          if (__p !== undefined) {
+            builds++;
+            __p.appendChild(document.createElement("li")).textContent = `${k}${v}`;
           }
-        }, (__p) => {
-          __p.appendChild(document.createElement("p")).textContent = "none";
-        });
+        }
+      }, (__p) => {
+        __p.appendChild(document.createElement("p")).textContent = "none";
       });
     }
   }
@@ -536,11 +434,9 @@ test("keyed passes keep their rows: same key and values keep the nodes, changed 
 
 test("a keyed run with a duplicate key throws, naming it", () => {
   class Page extends Component {
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.keyedAt(__p.appendChild(document.createComment("")), (__pass) => {
-          for (const x of [1, 2, 1]) __pass(x, [x]);
-        });
+    protected override render(__p: Node): void {
+      dom.keyedAt(__p.appendChild(document.createComment("")), (__pass) => {
+        for (const x of [1, 2, 1]) __pass(x, [x]);
       });
     }
   }
@@ -552,13 +448,11 @@ test("a list keyed by a function keeps a row whose item is replaced by one with 
   class Page extends Component {
     #rows: Row[] = [{ id: 1, name: "a" }, { id: 2, name: "b" }]; get rows(): Row[] { Component.$reader?.(this, 0); return this.#rows; } set rows(v: Row[]) { const p = this.#rows; if (Component.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
     static { Component.$define(this, ["rows"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const ul = dom.el(__p, "ul");
-        dom.listAt(ul.appendChild(document.createComment("")), () => this.rows, [(r: Row) => r.name], (__p) => {
-          dom.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
-        }, undefined, (r) => r.id);
-      });
+    protected override render(__p: Node): void {
+      const ul = dom.el(__p, "ul");
+      dom.listAt(ul.appendChild(document.createComment("")), () => this.rows, [(r: Row) => r.name], (__p) => {
+        dom.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
+      }, undefined, (r) => r.id);
     }
   }
   const el = host();
@@ -580,11 +474,9 @@ test("a list of models matches rows by the model's @Key", async () => {
   class Page extends Component {
     #items: Item[] = [new Item({ id: 1 }), new Item({ id: 2 })]; get items(): Item[] { Component.$reader?.(this, 0); return this.#items; } set items(v: Item[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
     static { Component.$define(this, ["items"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.listAt(__p.appendChild(document.createComment("")), () => this.items, [], (__p, it: Item) => {
-          __p.appendChild(document.createElement("li")).textContent = String(it.id);
-        });
+    protected override render(__p: Node): void {
+      dom.listAt(__p.appendChild(document.createComment("")), () => this.items, [], (__p, it: Item) => {
+        __p.appendChild(document.createElement("li")).textContent = String(it.id);
       });
     }
   }
@@ -617,11 +509,9 @@ test("stateHasChanged re-runs every binding behind shouldRender, then onAfterRen
     protected override onAfterRender(first: boolean): void {
       log.push(`after ${first}`);
     }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.text(dom.el(__p, "b"), () => this.count);
-        dom.text(dom.el(__p, "i"), () => outside.n);
-      });
+    protected override render(__p: Node): void {
+      dom.text(dom.el(__p, "b"), () => this.count);
+      dom.text(dom.el(__p, "i"), () => outside.n);
     }
   }
   const el = host();
@@ -649,19 +539,17 @@ test("@once: read once, untracked, even inside a region", async () => {
     #n = 1; get n(): number { Component.$reader?.(this, 0); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(0, p); }
     #show = true; get show(): boolean { Component.$reader?.(this, 1); return this.#show; } set show(v: boolean) { const p = this.#show; if (Component.same(p, v)) return; this.#show = v; this.$changed(1, p); }
     static { Component.$define(this, ["n", "show"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const t = __p.appendChild(document.createTextNode(""));
-        dom.textOnce(t, () => this.n);
-        dom.region(__p, (__p) => {
-          if (this.show) {
-            dom.onceAt(__p.appendChild(document.createComment("")), (__p) => {
-              const b = __p.appendChild(document.createElement("b"));
-              dom.set(b, "title", this.n);
-              dom.setText(b.appendChild(document.createTextNode("")), this.n);
-            });
-          }
-        });
+    protected override render(__p: Node): void {
+      const t = __p.appendChild(document.createTextNode(""));
+      dom.textOnce(t, () => this.n);
+      dom.region(__p, (__p) => {
+        if (this.show) {
+          dom.onceAt(__p.appendChild(document.createComment("")), (__p) => {
+            const b = __p.appendChild(document.createElement("b"));
+            dom.set(b, "title", this.n);
+            dom.setText(b.appendChild(document.createTextNode("")), this.n);
+          });
+        }
       });
     }
   }
@@ -697,12 +585,10 @@ test("a cached getter runs once per change for all its readers, and is never sta
       return outside.n;
     }
     static { dom.memo(this, ["total", "loose"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.text(dom.el(__p, "b"), () => this.total);
-        dom.text(dom.el(__p, "i"), () => this.total + 1);
-        dom.text(dom.el(__p, "u"), () => `${this.total}/${this.loose}`);
-      });
+    protected override render(__p: Node): void {
+      dom.text(dom.el(__p, "b"), () => this.total);
+      dom.text(dom.el(__p, "i"), () => this.total + 1);
+      dom.text(dom.el(__p, "u"), () => `${this.total}/${this.loose}`);
     }
   }
   const el = host();
@@ -733,10 +619,8 @@ test("a getter with one reader, or read outside bindings, gets no cache", async 
       return this.a * 10;
     }
     static { dom.memo(this, ["total"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.text(dom.el(__p, "b"), () => this.total);
-      });
+    protected override render(__p: Node): void {
+      dom.text(dom.el(__p, "b"), () => this.total);
     }
   }
   const memos = (o: object) => Object.getOwnPropertySymbols(o).filter((s) => s.description === "xzor.dom.memos").length;
@@ -765,13 +649,11 @@ test("@await of a call requests again only when an argument changes, or what the
       requests.push(`${key}/${this.lang}`);
       return Promise.resolve(key);
     }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const end = dom.anchors(__p);
-        dom.awaitCallAt(end, () => [this.key], (__a0) => this.load(__a0), undefined, (__p, v) => {
-          dom.textAt(__p.appendChild(document.createTextNode("")), () => v);
-        }, undefined);
-      });
+    protected override render(__p: Node): void {
+      const end = dom.anchors(__p);
+      dom.awaitCallAt(end, () => [this.key], (__a0) => this.load(__a0), undefined, (__p, v) => {
+        dom.textAt(__p.appendChild(document.createTextNode("")), () => v);
+      }, undefined);
     }
   }
   const el = host();
@@ -802,15 +684,13 @@ test("@await: pending, then the value; a newer promise wins; what then reads re-
       requests++;
       return new Promise((r) => gates.push(() => r([q])));
     }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const end = dom.anchors(__p);
-        dom.awaitAt(end, () => this.load(this.q), (__p) => {
-          __p.appendChild(document.createTextNode("wait"));
-        }, (__p, rows) => {
-          dom.text(__p, () => rows.join() + this.suffix);
-        }, undefined);
-      });
+    protected override render(__p: Node): void {
+      const end = dom.anchors(__p);
+      dom.awaitAt(end, () => this.load(this.q), (__p) => {
+        __p.appendChild(document.createTextNode("wait"));
+      }, (__p, rows) => {
+        dom.text(__p, () => rows.join() + this.suffix);
+      }, undefined);
     }
   }
   const el = host();
@@ -834,15 +714,13 @@ test("@await: pending, then the value; a newer promise wins; what then reads re-
 
 test("@await: a rejection shows catch; a plain value shows then at once", async () => {
   class Page extends Component {
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.awaitAt(dom.anchors(__p), () => Promise.reject(new Error("no")), undefined, undefined, (__p, e) => {
-          __p.appendChild(document.createTextNode(String((e as Error).message)));
-        });
-        dom.awaitAt(dom.anchors(__p), () => 5, undefined, (__p, n) => {
-          __p.appendChild(document.createTextNode(String(n + 1)));
-        }, undefined);
+    protected override render(__p: Node): void {
+      dom.awaitAt(dom.anchors(__p), () => Promise.reject(new Error("no")), undefined, undefined, (__p, e) => {
+        __p.appendChild(document.createTextNode(String((e as Error).message)));
       });
+      dom.awaitAt(dom.anchors(__p), () => 5, undefined, (__p, n) => {
+        __p.appendChild(document.createTextNode(String(n + 1)));
+      }, undefined);
     }
   }
   const el = host();
@@ -856,19 +734,17 @@ test("a branch region keeps its branch's DOM while the chosen branch stays the s
   class Page extends Component {
     #count = 3; get count(): number { Component.$reader?.(this, 0); return this.#count; } set count(v: number) { const p = this.#count; if (Component.same(p, v)) return; this.#count = v; this.$changed(0, p); }
     static { Component.$define(this, ["count"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const end = dom.anchors(__p);
-        dom.branchAt(end, (__p) => {
-          if (!this.count) {
-            if (!__p) return 0;
-            __p.appendChild(document.createElement("p")).textContent = "none";
-          } else {
-            if (!__p) return 1;
-            dom.textAt(__p.appendChild(document.createElement("ul")).appendChild(document.createTextNode("")), () => this.count);
-          }
-          return 2;
-        });
+    protected override render(__p: Node): void {
+      const end = dom.anchors(__p);
+      dom.branchAt(end, (__p) => {
+        if (!this.count) {
+          if (!__p) return 0;
+          __p.appendChild(document.createElement("p")).textContent = "none";
+        } else {
+          if (!__p) return 1;
+          dom.textAt(__p.appendChild(document.createElement("ul")).appendChild(document.createTextNode("")), () => this.count);
+        }
+        return 2;
       });
     }
   }
@@ -897,33 +773,31 @@ test("@show: a chosen branch is built once and kept, the others hidden; hidden o
     #n = 1; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
     #on = true; get on(): boolean { Component.$reader?.(this, 2); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(2, p); }
     static { Component.$define(this, ["tab", "n", "on"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.branchAt(dom.anchors(__p), (__p) => {
-          if (this.on) {
-            if (!__p) return 0;
-            dom.showAt(dom.anchors(__p), (__p) => {
-              if (this.tab === "a") {
-                if (!__p) return 0;
-                builds++;
-                const a = __p.appendChild(document.createElement("section"));
-                a.className = "a";
-                a.setAttribute("style", "display: flex");
-                dom.textAt(a.appendChild(document.createTextNode("")), () => (liveRuns++, this.n));
-              } else {
-                if (!__p) return 1;
-                builds++;
-                const b = __p.appendChild(document.createElement("section"));
-                b.className = "b";
-                dom.pauseAt(dom.anchors(b), (__p) => {
-                  dom.textAt(__p.appendChild(document.createTextNode("")), () => (pausedRuns++, this.n));
-                });
-              }
-              return 2;
-            });
-          }
-          return 1;
-        });
+    protected override render(__p: Node): void {
+      dom.branchAt(dom.anchors(__p), (__p) => {
+        if (this.on) {
+          if (!__p) return 0;
+          dom.showAt(dom.anchors(__p), (__p) => {
+            if (this.tab === "a") {
+              if (!__p) return 0;
+              builds++;
+              const a = __p.appendChild(document.createElement("section"));
+              a.className = "a";
+              a.setAttribute("style", "display: flex");
+              dom.textAt(a.appendChild(document.createTextNode("")), () => (liveRuns++, this.n));
+            } else {
+              if (!__p) return 1;
+              builds++;
+              const b = __p.appendChild(document.createElement("section"));
+              b.className = "b";
+              dom.pauseAt(dom.anchors(b), (__p) => {
+                dom.textAt(__p.appendChild(document.createTextNode("")), () => (pausedRuns++, this.n));
+              });
+            }
+            return 2;
+          });
+        }
+        return 1;
       });
     }
   }
@@ -977,28 +851,26 @@ test("a keyed row whose item is a new object keeps its nodes and takes the new i
   class Page extends Component {
     #lines: Line[] = [{ id: 1, qty: 1 }, { id: 2, qty: 1 }]; get lines(): Line[] { Component.$reader?.(this, 0); return this.#lines; } set lines(v: Line[]) { const p = this.#lines; if (Component.same(p, v)) return; this.#lines = v; this.$changed(0, p); }
     static { Component.$define(this, ["lines"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.listAt(dom.anchors(__p), () => this.lines, [
-          (l: Line) => l.qty,
-          (l: Line) => () => (clicked = l),
-          (l: Line, __p?: Node) => {
-            if (l.qty > 1) {
-              if (!__p) return 0;
-              __p.appendChild(document.createElement("b"));
-            } else {
-              if (!__p) return 1;
-              __p.appendChild(document.createElement("i"));
-            }
-            return 2;
-          },
-        ], (__p) => {
-          const li = __p.appendChild(document.createElement("li"));
-          dom.textItem(li.appendChild(document.createTextNode("")), 0);
-          dom.onItem(li.appendChild(document.createElement("button")), "click", 1);
-          dom.branchItem(dom.anchors(li), 2);
-        }, undefined, (l: Line) => l.id);
-      });
+    protected override render(__p: Node): void {
+      dom.listAt(dom.anchors(__p), () => this.lines, [
+        (l: Line) => l.qty,
+        (l: Line) => () => (clicked = l),
+        (l: Line, __p?: Node) => {
+          if (l.qty > 1) {
+            if (!__p) return 0;
+            __p.appendChild(document.createElement("b"));
+          } else {
+            if (!__p) return 1;
+            __p.appendChild(document.createElement("i"));
+          }
+          return 2;
+        },
+      ], (__p) => {
+        const li = __p.appendChild(document.createElement("li"));
+        dom.textItem(li.appendChild(document.createTextNode("")), 0);
+        dom.onItem(li.appendChild(document.createElement("button")), "click", 1);
+        dom.branchItem(dom.anchors(li), 2);
+      }, undefined, (l: Line) => l.id);
     }
   }
   const el = host();
@@ -1027,12 +899,10 @@ test("rows dropped outside a handler leave nothing in the component's loose list
   class Page extends Component {
     #items: Row[] = rows(); get items(): Row[] { Component.$reader?.(this, 0); return this.#items; } set items(v: Row[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
     static { Component.$define(this, ["items"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.listAt(dom.anchors(__p), () => this.items, [(r: Row) => r.name], (__p) => {
-          dom.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
-        }, undefined, (r: Row) => r.id);
-      });
+    protected override render(__p: Node): void {
+      dom.listAt(dom.anchors(__p), () => this.items, [(r: Row) => r.name], (__p) => {
+        dom.textItem(__p.appendChild(document.createElement("li")).appendChild(document.createTextNode("")), 0);
+      }, undefined, (r: Row) => r.id);
     }
   }
   const p = mount(Page, host());
@@ -1100,15 +970,13 @@ test("a data-leave element removed by its region stays, data-leaving, until its 
   class Page extends Component {
     #open = true; get open(): boolean { Component.$reader?.(this, 0); return this.#open; } set open(v: boolean) { const p = this.#open; if (Component.same(p, v)) return; this.#open = v; this.$changed(0, p); }
     static { Component.$define(this, ["open"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.region(__p, (__p) => {
-          if (this.open) {
-            const d = __p.appendChild(document.createElement("dialog"));
-            d.setAttribute("data-leave", "");
-            (d as unknown as { getAnimations(): unknown[] }).getAnimations = () => (d.hasAttribute("data-leaving") ? [{ finished }] : []);
-          } else __p.appendChild(document.createElement("p"));
-        });
+    protected override render(__p: Node): void {
+      dom.region(__p, (__p) => {
+        if (this.open) {
+          const d = __p.appendChild(document.createElement("dialog"));
+          d.setAttribute("data-leave", "");
+          (d as unknown as { getAnimations(): unknown[] }).getAnimations = () => (d.hasAttribute("data-leaving") ? [{ finished }] : []);
+        } else __p.appendChild(document.createElement("p"));
       });
     }
   }
@@ -1129,12 +997,10 @@ test("class:name toggles one class, leaving the element's others", async () => {
   class Page extends Component {
     #err = ""; get err(): string { Component.$reader?.(this, 0); return this.#err; } set err(v: string) { const p = this.#err; if (Component.same(p, v)) return; this.#err = v; this.$changed(0, p); }
     static { Component.$define(this, ["err"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const d = dom.el(__p, "div");
-        d.setAttribute("class", "field");
-        dom.attr(d, "class:invalid", () => this.err);
-      });
+    protected override render(__p: Node): void {
+      const d = dom.el(__p, "div");
+      d.setAttribute("class", "field");
+      dom.attr(d, "class:invalid", () => this.err);
     }
   }
   const el = host();
@@ -1153,12 +1019,10 @@ test("aria-* attributes write booleans as true and false", async () => {
   class Page extends Component {
     #on = false; get on(): boolean { Component.$reader?.(this, 0); return this.#on; } set on(v: boolean) { const p = this.#on; if (Component.same(p, v)) return; this.#on = v; this.$changed(0, p); }
     static { Component.$define(this, ["on"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        const b = dom.el(__p, "button");
-        dom.attr(b, "aria-pressed", () => this.on);
-        dom.attr(b, "disabled", () => this.on);
-      });
+    protected override render(__p: Node): void {
+      const b = dom.el(__p, "button");
+      dom.attr(b, "aria-pressed", () => this.on);
+      dom.attr(b, "disabled", () => this.on);
     }
   }
   const el = host();
@@ -1176,8 +1040,8 @@ test("a fine child removed by a vdom parent stops writing", async () => {
   const el = host();
   const worker = new Worker({ name: "a", hours: 1, tax: 0 });
   class One extends Component {
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => dom.text(dom.el(__p, "i"), () => worker.hours));
+    protected override render(__p: Node): void {
+      dom.text(dom.el(__p, "i"), () => worker.hours);
     }
   }
   class Parent extends Component {
@@ -1209,37 +1073,35 @@ class Rows extends Component {
   #team = new EntitySet<Worker>(); get team(): EntitySet<Worker> { Component.$reader?.(this, 0); return this.#team; } set team(v: EntitySet<Worker>) { const p = this.#team; if (Component.same(p, v)) return; this.#team = v; this.$changed(0, p); }
   static { Component.$define(this, ["team"]); }
   outer = 0;
-  protected override buildRenderTree(__b: RenderTreeBuilder): void {
-    __b.addFine((__p) => {
-      const _e0 = __ul() as Node;
-      const _e1 = _e0.firstChild! as HTMLElement;
-      const _e2 = _e1.firstChild! as Comment;
-      const _e3 = _e1.nextSibling!.firstChild! as Text;
-      dom.on(_e1, "click", () => this.outer++);
-      dom.listAt(_e2, () => this.team.view, [
-        (w) => w.hours,
-        (w) => (__e: Event) => { w.hours = Component.bindValue(__e, w.hours); },
-        (w) => w.payment.toFixed(2),
-        (w, __p) => {
-          if (w.hours > 24) dom.t(dom.el(__p, "small"), "too many");
-        },
-        (w) => (__e: Event) => { picked.push(w); __e.stopPropagation(); },
-      ], (__p) => {
-        const _e4 = __row() as HTMLLIElement;
-        const _e5 = _e4.firstChild! as HTMLInputElement;
-        const _e6 = _e5.nextSibling!.firstChild! as Text;
-        const _e7 = _e5.nextSibling!.nextSibling!.nextSibling! as Comment;
-        const _e8 = _e7.nextSibling! as HTMLButtonElement;
-        dom.attrItem(_e5, "value", 0);
-        dom.onItem(_e5, "input", 1);
-        dom.textItem(_e6, 2);
-        dom.regionItem(_e7, 3);
-        dom.onItem(_e8, "click", 4);
-        __p.appendChild(_e4);
-      });
-      dom.textAt(_e3, () => this.team.view.length);
-      __p.appendChild(_e0);
+  protected override render(__p: Node): void {
+    const _e0 = __ul() as Node;
+    const _e1 = _e0.firstChild! as HTMLElement;
+    const _e2 = _e1.firstChild! as Comment;
+    const _e3 = _e1.nextSibling!.firstChild! as Text;
+    dom.on(_e1, "click", () => this.outer++);
+    dom.listAt(_e2, () => this.team.view, [
+      (w) => w.hours,
+      (w) => (__e: Event) => { w.hours = Component.bindValue(__e, w.hours); },
+      (w) => w.payment.toFixed(2),
+      (w, __p) => {
+        if (w.hours > 24) dom.t(dom.el(__p, "small"), "too many");
+      },
+      (w) => (__e: Event) => { picked.push(w); __e.stopPropagation(); },
+    ], (__p) => {
+      const _e4 = __row() as HTMLLIElement;
+      const _e5 = _e4.firstChild! as HTMLInputElement;
+      const _e6 = _e5.nextSibling!.firstChild! as Text;
+      const _e7 = _e5.nextSibling!.nextSibling!.nextSibling! as Comment;
+      const _e8 = _e7.nextSibling! as HTMLButtonElement;
+      dom.attrItem(_e5, "value", 0);
+      dom.onItem(_e5, "input", 1);
+      dom.textItem(_e6, 2);
+      dom.regionItem(_e7, 3);
+      dom.onItem(_e8, "click", 4);
+      __p.appendChild(_e4);
     });
+    dom.textAt(_e3, () => this.team.view.length);
+    __p.appendChild(_e0);
   }
 }
 
@@ -1550,10 +1412,10 @@ class Themed extends Component {
 }
 class Provider extends Component {
   theme = "dark";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openCascade("theme", this.theme);
-    b.addFine((__p) => dom.component(dom.anchor(__p), Themed, () => ({})));
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => this.theme, false, (__p) => {
+      dom.component(dom.anchor(__p), Themed, () => ({}));
+    });
   }
 }
 
@@ -1681,7 +1543,7 @@ class Shows extends Component {
   static { Component.$define(this, ["view", "n"]); }
   loose = 0;
   builds = 0;
-  bold: Markup = Component.$fragment((__p) => {
+  bold: Markup = Component.fragment((__p) => {
     this.builds++;
     const _e0 = __bold() as HTMLElement;
     dom.textAt(_e0.firstChild as Text, () => this.n);
@@ -1736,7 +1598,7 @@ test("markup replaced by text disposes its bindings", async () => {
   const el = host();
   const s = mount(Shows, el);
   let runs = 0;
-  s.view = Component.$fragment((__p) => dom.text(__p, () => (runs++, s.n)), s);
+  s.view = Component.fragment((__p) => dom.text(__p, () => (runs++, s.n)), s);
   await tick();
   s.view = "x";
   await tick();
@@ -1772,7 +1634,7 @@ test("perf: an @expr giving the same fragment, re-run 10k times, builds no DOM",
 
 test("a builder island showing a markup value rebuilds when it gives another markup", () => {
   class Page extends Component {
-    view: Markup = Component.$fragment((__p) => dom.text(dom.el(__p, "b"), () => "a"), this);
+    view: Markup = Component.fragment((__p) => dom.text(dom.el(__p, "b"), () => "a"), this);
     protected override buildRenderTree(__b: RenderTreeBuilder): void {
       __b.addContent(this.view);
     }
@@ -1783,7 +1645,7 @@ test("a builder island showing a markup value rebuilds when it gives another mar
   expect(first!.textContent).toBe("a");
   p.stateHasChanged();
   expect(el.querySelector("b")).toBe(first);
-  p.view = Component.$fragment((__p) => dom.text(dom.el(__p, "i"), () => "c"), p);
+  p.view = Component.fragment((__p) => dom.text(dom.el(__p, "i"), () => "c"), p);
   p.stateHasChanged();
   expect(el.querySelector("b")).toBeNull();
   expect(el.querySelector("i")!.textContent).toBe("c");
@@ -1811,13 +1673,13 @@ class Deck extends Component {
   card: Card | undefined;
   protected override render(__p: Node): void {
     dom.component(dom.anchor(__p), Card, () => ({}), undefined, this.filled ? {
-      default: () => Component.$fragment((__p) => {
+      default: () => Component.fragment((__p) => {
         const _e0 = __it() as HTMLElement;
         dom.textAt(_e0.firstChild as Text, () => `${this.label}/${this.untracked}`);
         dom.on(_e0, "click", () => this.loose++);
         __p.appendChild(_e0);
       }, this),
-      title: (n: number) => Component.$fragment((__p) => dom.t(__p, `T${n}`), this),
+      title: (n: number) => Component.fragment((__p) => dom.t(__p, `T${n}`), this),
     } : undefined, (c) => (this.card = c as Card));
     dom.text(__p, () => this.loose);
   }
@@ -1972,7 +1834,7 @@ class OldFrame extends Component {
 class FrameHost extends Deck {
   protected override render(__p: Node): void {
     dom.component(dom.anchor(__p), OldFrame, () => ({}), undefined, {
-      default: () => Component.$fragment((__p) => {
+      default: () => Component.fragment((__p) => {
         const _e0 = __it() as HTMLElement;
         dom.textAt(_e0.firstChild as Text, () => this.label);
         dom.on(_e0, "click", () => this.loose++);
@@ -2415,13 +2277,13 @@ const views: RouteTable = [
 const around =
   (tag: string) =>
   (_route: Route, page: Markup): Markup =>
-    Component.$fragment((__p) => dom.text(dom.el(__p, tag), () => page));
+    Component.fragment((__p) => dom.text(dom.el(__p, tag), () => page));
 
 /** A page-less section: one value read from `route`. */
 const shows =
   (tag: string, read: (route: Route) => unknown) =>
   (route: Route): Markup =>
-    Component.$fragment((__p) => dom.text(dom.el(__p, tag), () => read(route)));
+    Component.fragment((__p) => dom.text(dom.el(__p, tag), () => read(route)));
 
 function routing(sections: DomRouteSection[], table: RouteTable = views) {
   class Shell extends Component {
@@ -2471,7 +2333,7 @@ test("routes through dom: regex and pattern sections give route.match; page-less
       kind: "pattern",
       match: (s) => (s[0] === "docs" ? { area: s[1] ?? "" } : null),
       page: true,
-      render: (route: Route, page: Markup) => Component.$fragment((__p) => {
+      render: (route: Route, page: Markup) => Component.fragment((__p) => {
         const _e0 = dom.el(__p, "i");
         dom.text(_e0, () => route.match.area);
         dom.text(_e0, () => page);
@@ -2593,7 +2455,7 @@ test("routes through dom: route is a cascading value; route.navigate pushes or r
       kind: "default",
       render: (route: Route, page: Markup) => {
         captured = route;
-        return Component.$fragment((__p) => {
+        return Component.fragment((__p) => {
           dom.component(dom.anchor(__p), Crumbs, () => ({}), undefined, undefined, (c) => (crumbs = c as Crumbs));
           dom.text(__p, () => page);
         });
@@ -2981,21 +2843,19 @@ test("a @pause region holding a child component freezes the child while hidden a
     #tab = "a"; get tab(): string { Component.$reader?.(this, 0); return this.#tab; } set tab(v: string) { const p = this.#tab; if (Component.same(p, v)) return; this.#tab = v; this.$changed(0, p); }
     #n = 1; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
     static { Component.$define(this, ["tab", "n"]); }
-    protected override buildRenderTree(__b: RenderTreeBuilder): void {
-      __b.addFine((__p) => {
-        dom.showAt(dom.anchors(__p), (__p) => {
-          if (this.tab === "a") {
-            if (!__p) return 0;
-            __p.appendChild(document.createElement("u"));
-          } else {
-            if (!__p) return 1;
-            const b = __p.appendChild(document.createElement("section"));
-            dom.pauseAt(dom.anchors(b), (__p) => {
-              dom.component(dom.anchor(__p), PKid, () => ({ v: this.n }), undefined, undefined, (c) => (kid = c as PKid));
-            });
-          }
-          return 2;
-        });
+    protected override render(__p: Node): void {
+      dom.showAt(dom.anchors(__p), (__p) => {
+        if (this.tab === "a") {
+          if (!__p) return 0;
+          __p.appendChild(document.createElement("u"));
+        } else {
+          if (!__p) return 1;
+          const b = __p.appendChild(document.createElement("section"));
+          dom.pauseAt(dom.anchors(b), (__p) => {
+            dom.component(dom.anchor(__p), PKid, () => ({ v: this.n }), undefined, undefined, (c) => (kid = c as PKid));
+          });
+        }
+        return 2;
       });
     }
   }

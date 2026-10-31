@@ -11,7 +11,7 @@
 // Importing this module also makes the components that read a model re-render when it changes.
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
 
-import { Component, setRenderObserver } from "./index";
+import { Component } from "./index";
 import { META as meta, MODEL, bitOf, changed, keyName, same } from "./track";
 
 export { EntitySet } from "./entity-set";
@@ -734,36 +734,3 @@ function sweep(own: Reads): void {
     }
   }
 }
-
-setRenderObserver({
-  begin(component: Component): void {
-    stack.push(component);
-    current = component;
-    const own = (currentReads = readsOf(component));
-    if (own !== undefined) {
-      own.epoch++;
-      own.renders++;
-      own.seen = 0;
-    }
-    Component.$reader = read as typeof Component.$reader;
-  },
-
-  end(_component: Component): void {
-    const own = currentReads;
-    if (own !== undefined && own.seen !== own.size) sweep(own);
-    stack.pop();
-    current = stack[stack.length - 1];
-    currentReads = current === undefined ? undefined : readsOf(current);
-    if (current === undefined) Component.$reader = undefined;
-  },
-
-  dispose(component: Component): void {
-    const own = readsOf(component);
-    if (own === undefined) return;
-    if (own.first !== undefined) own.first.model.$unwatch(own.first);
-    if (own.more !== undefined) for (const dep of own.more.values()) dep.model.$unwatch(dep);
-    own.first = own.more = undefined;
-    own.size = 0;
-    own.renders++; // drops a queued re-render
-  },
-});

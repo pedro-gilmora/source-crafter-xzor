@@ -37,14 +37,14 @@ class Page extends Component {
     const _e4 = _e3.nextSibling! as El<"input">;
     const _e5 = _e4.nextSibling! as El<"input">;
     dom.component(_e1, Panel, (): Partial<Panel> => ({}), { onPing: dom.callback(this, (n: number) => (this.pings += n)) }, {
-      default: () => Component.$fragment((__p) => {
+      default: () => Component.fragment((__p) => {
         const _e6 = __t1() as El<"p">;
         dom.textAt(_e6.firstChild as Text, () => this.pings);
         __p.appendChild(_e6);
       }, this),
     });
     dom.component(_e2, Panel, (): Partial<Panel> => ({}), undefined, {
-      header: (n: number) => Component.$fragment((__p) => dom.text(__p, () => n * 2), this),
+      header: (n: number) => Component.fragment((__p) => dom.text(__p, () => n * 2), this),
     });
     dom.attr(_e3, "value", () => this.name);
     dom.on(_e3, "change", (__e) => { this.name = Component.bindValue(__e, this.name); });

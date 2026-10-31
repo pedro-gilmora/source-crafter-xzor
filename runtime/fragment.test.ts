@@ -13,14 +13,14 @@ class Badge extends Component {
 
 class Host extends Component {
   kind: "badge" | "cached" | "none" = "badge";
-  cached: RenderFragment = Component.$fragment((__p) => {
+  cached: RenderFragment = Component.fragment((__p) => {
     __p.appendChild(__t1());
   }, this);
 
   view(kind: Host["kind"]): RenderFragment | null {
     switch (kind) {
       case "badge":
-        return Component.$fragment((__p) => {
+        return Component.fragment((__p) => {
           dom.component(dom.anchor(__p), Badge, (): Partial<Badge> => ({ text: "hi" }));
         }, this);
       case "cached":

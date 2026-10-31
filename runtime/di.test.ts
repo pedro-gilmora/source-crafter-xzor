@@ -70,7 +70,7 @@ class Tree extends Component {
   protected override render(__p: Node): void {
     dom.component(dom.anchor(__p), Middle, (): Partial<Middle> => ({}));
     dom.component(dom.anchor(__p), Holder, (): Partial<Holder> => ({}), undefined, {
-      default: () => Component.$fragment((__p) => {
+      default: () => Component.fragment((__p) => {
         dom.component(dom.anchor(__p), Needs, (): Partial<Needs> => ({}));
       }, this),
     });

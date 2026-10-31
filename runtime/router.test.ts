@@ -100,13 +100,13 @@ const pages: RouteTable = [
 const wrap =
   (tag: string) =>
   (_route: Route, page: Markup): Markup =>
-    Component.$fragment((__p) => dom.text(dom.el(__p, tag), () => page));
+    Component.fragment((__p) => dom.text(dom.el(__p, tag), () => page));
 
 /** A page-less section: renders one value read from `route`. */
 const label =
   (tag: string, read: (route: Route) => unknown) =>
   (route: Route): Markup =>
-    Component.$fragment((__p) => dom.text(dom.el(__p, tag), () => read(route)));
+    Component.fragment((__p) => dom.text(dom.el(__p, tag), () => read(route)));
 
 class MemoryNavigation {
   url: URL;
@@ -241,7 +241,7 @@ test("a pattern section with a page exposes its own segments as route.match", ()
       match: (s) => (s[0] === "docs" ? { area: s[1] ?? "" } : null),
       page: true,
       render: (route: Route, page: Markup) =>
-        Component.$fragment((__p) => {
+        Component.fragment((__p) => {
           const _e0 = dom.el(__p, "i");
           dom.text(_e0, () => route.match.area);
           dom.text(_e0, () => page);
@@ -375,7 +375,7 @@ test("route is cascaded to consumers nested in a section", () => {
     {
       kind: "default",
       render: (_route: Route, page: Markup) =>
-        Component.$fragment((__p) => {
+        Component.fragment((__p) => {
           dom.component(dom.anchor(__p), Crumb, () => ({}), undefined, undefined, (c) => (crumb = c as Crumb));
           dom.text(__p, () => page);
         }),
@@ -437,7 +437,7 @@ const link = (__p: Node, href: string, attrs: Record<string, string> = {}): void
 };
 
 const links = (_route: Route, page: Markup): Markup =>
-  Component.$fragment((__p) => {
+  Component.fragment((__p) => {
     dom.text(__p, () => page);
     link(__p, "/users/2");
     link(__p, "/users/3", { target: "_blank" });
@@ -483,7 +483,7 @@ test("modified clicks and opted-out links are left to the browser", () => {
 });
 
 const hashLinks = (_route: Route, page: Markup): Markup =>
-  Component.$fragment((__p) => {
+  Component.fragment((__p) => {
     dom.text(__p, () => page);
     for (const href of ["#part2", "/users/1#part2", "/users/2#part2"]) link(__p, href);
   });
@@ -1045,13 +1045,13 @@ test("links navigate in the browser and intercept link clicks", () => {
 
 // NavLink is still a builder class: it mounts through the bridge, its slot filled with DOM markup.
 const slot = (text: string) =>
-  ({ default: () => Component.$fragment((__p) => dom.t(__p, text)) }) as unknown as NavLink["slots"];
+  ({ default: () => Component.fragment((__p) => dom.t(__p, text)) }) as unknown as NavLink["slots"];
 
 const navLink = (__p: Node, props: Partial<NavLink>, text: string): void =>
   dom.component(dom.anchor(__p), NavLink, () => props, undefined, slot(text));
 
 const navLinks = (_route: Route, page: Markup): Markup =>
-  Component.$fragment((__p) => {
+  Component.fragment((__p) => {
     dom.text(__p, () => page);
     navLink(__p, { href: "/users" }, "all");
     navLink(__p, { href: "/users", match: "exact" }, "exact");

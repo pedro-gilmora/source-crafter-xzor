@@ -1056,7 +1056,7 @@ impl<'p> Gen<'p> {
         Ok(out)
     }
 
-    /// `__Component.$fragment((__p) => { ... }, this)` for `nodes`, built by the fine emitter. `locals` are extra
+    /// `__Component.fragment((__p) => { ... }, this)` for `nodes`, built by the fine emitter. `locals` are extra
     /// names in scope (slot parameters) that must not get `this.`.
     fn dom_fragment(&mut self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
         let mut sub = self.sub_gen(rewrite, locals);
@@ -1065,7 +1065,7 @@ impl<'p> Gen<'p> {
         self.absorb(&mut sub);
         done?;
         let close = format!("{}}}{})", "  ".repeat(self.depth), if self.ownerless { "" } else { ", this" });
-        Ok(M::lit("__Component.$fragment((__p) => {\n").add(M { text: sub.out, maps: sub.mappings }).lit_then(&close))
+        Ok(M::lit("__Component.fragment((__p) => {\n").add(M { text: sub.out, maps: sub.mappings }).lit_then(&close))
     }
 
     /// A generator for markup inside this one's scope; `absorb` takes back its counters.
@@ -3809,9 +3809,9 @@ mod tests {
         let (doc, _) = parse(src).unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
         // A markup value is a DOM fragment owned by the component.
-        assert!(g.code.contains("  cached = __Component.$fragment((__p) => {\n    const _e0 = __dom.anchor(__p);\n    __dom.component(_e0, B, (): Partial<B> => ({}));\n  }, this);"), "{}", g.code);
+        assert!(g.code.contains("  cached = __Component.fragment((__p) => {\n    const _e0 = __dom.anchor(__p);\n    __dom.component(_e0, B, (): Partial<B> => ({}));\n  }, this);"), "{}", g.code);
         assert!(
-            g.code.contains("return t ? __Component.$fragment((__p) => {\n    const _e1 = __dom.anchor(__p);\n    __dom.component(_e1, A, (): Partial<A> => ({ state: this.state, n: t }));\n  }, this) : this.cached;"),
+            g.code.contains("return t ? __Component.fragment((__p) => {\n    const _e1 = __dom.anchor(__p);\n    __dom.component(_e1, A, (): Partial<A> => ({ state: this.state, n: t }));\n  }, this) : this.cached;"),
             "{}",
             g.code
         );
@@ -3956,16 +3956,16 @@ mod tests {
         has("import { Component as __Component, dom as __dom, type El, type Markup, type Route } from \"@source-crafter/xzor-runtime\";");
         has("import { routes as __routes, type AppRoute as __AppRoute } from \"./routes\";");
         has("    __dom.routesAt(_e0, __routes, [\n");
-        has("      { kind: \"tag\", tag: \"admin\", render: (_route: Route, page: Markup) => __Component.$fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;\n        const _e2 = _e1.firstChild! as Text;\n        __dom.textAt(_e2, () => page);\n        __p.appendChild(_e1);\n      }, this) },\n");
-        has("      { kind: \"regex\", re: C.__re1, page: true, render: (__route: Route<any, any>) => { const route = __route as __AppRoute & { match: { area: string } }; return __Component.$fragment((__p) => {");
+        has("      { kind: \"tag\", tag: \"admin\", render: (_route: Route, page: Markup) => __Component.fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;\n        const _e2 = _e1.firstChild! as Text;\n        __dom.textAt(_e2, () => page);\n        __p.appendChild(_e1);\n      }, this) },\n");
+        has("      { kind: \"regex\", re: C.__re1, page: true, render: (__route: Route<any, any>) => { const route = __route as __AppRoute & { match: { area: string } }; return __Component.fragment((__p) => {");
         has("__dom.textAt(_e4, () => route.match.area);");
-        has("      { kind: \"pattern\", match: C.__m2, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return __Component.$fragment((__p) => {");
+        has("      { kind: \"pattern\", match: C.__m2, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return __Component.fragment((__p) => {");
         has("__dom.textAt(_e6, () => route.params.doc);");
-        has("      { kind: \"notFound\", render: () => __Component.$fragment((__p) => {\n        const _e7 = __t3() as El<\"p\">;\n        __p.appendChild(_e7);\n      }, this) },\n");
+        has("      { kind: \"notFound\", render: () => __Component.fragment((__p) => {\n        const _e7 = __t3() as El<\"p\">;\n        __p.appendChild(_e7);\n      }, this) },\n");
         has("__dom.template([[\"p\", 0, \"Not found\"]]);");
-        has("      { kind: \"catch\", render: (_route: Route, e: unknown) => __Component.$fragment((__p) => {");
+        has("      { kind: \"catch\", render: (_route: Route, e: unknown) => __Component.fragment((__p) => {");
         has("__dom.textAt(_e9, () => e);");
-        has("      { kind: \"default\", render: (_route: Route, page: Markup) => __Component.$fragment((__p) => {");
+        has("      { kind: \"default\", render: (_route: Route, page: Markup) => __Component.fragment((__p) => {");
         has("    ]);\n");
         has("  static readonly __re1 = /^\\/admin\\/(?<area>\\w+)/i;\n");
         has("  static __m2(s: string[]): Record<string, string> | null {\n    if (s.length !== 2) return null;\n");
@@ -3979,7 +3979,7 @@ mod tests {
         let src = "@Routes(route) { @a(page) { <main>@page</main> } @notFound { <p/> } @catch(e) { <p>@e</p> } @\"/x/:id\" { <p/> } @default(page) { <p/> } }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s}\nmissing in\n{}", g.code);
-        has("render: (_route: Route, page: Markup) => __Component.$fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;");
+        has("render: (_route: Route, page: Markup) => __Component.fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;");
         has("{ kind: \"notFound\", render: () => ");
         has("{ kind: \"catch\", render: (_route: Route, e: unknown) => ");
         has("{ kind: \"default\", render: () => ");
@@ -4050,7 +4050,7 @@ mod tests {
         );
         assert!(g.code.contains("__dom.slotAt(_e1, () => this.slots.header, undefined, (__p) => {"), "{}", g.code);
         assert!(g.code.contains("__dom.textAt(_e6, () => this.title);"), "{}", g.code);
-        assert!(g.code.contains(r#"__dom.slotAt(_e7, () => this.slots.item, () => [x, this.n, "s", this.title.length, __Component.$fragment((__p) => {"#), "{}", g.code);
+        assert!(g.code.contains(r#"__dom.slotAt(_e7, () => this.slots.item, () => [x, this.n, "s", this.title.length, __Component.fragment((__p) => {"#), "{}", g.code);
         assert!(g.code.contains("__dom.slotAt(_e3, () => this.slots.extra, () => [(this.n + 1) as number]);"), "{}", g.code);
         assert!(g.code.contains("__dom.slotAt(_e4, () => this.slots.default);"), "{}", g.code);
     }
@@ -4119,10 +4119,10 @@ mod tests {
         let list = "@typeparam T\n@code { items: T[] = []; }\n@slot:item";
         let src = "@code { n = 1; xs = [\"a\"]; }\n<Card title=\"x\">\n  <p>@n</p>\n</Card>\n<List T=\"string\" items=\"@xs\">\n  @slot header { <b>h</b> }\n  @slot item(s, i: number = 0) { @s @n @i }\n</List>\n<Other />";
         let g = gen_with(src, &[("Card", "<p/>"), ("List", list)]);
-        assert!(g.code.contains(r#"__dom.component(_e1, Card, (): Partial<Card> => ({ title: "x" }), undefined, { default: () => __Component.$fragment((__p) => {"#), "{}", g.code);
+        assert!(g.code.contains(r#"__dom.component(_e1, Card, (): Partial<Card> => ({ title: "x" }), undefined, { default: () => __Component.fragment((__p) => {"#), "{}", g.code);
         assert!(g.code.contains("__dom.textAt(_e5, () => this.n);"), "{}", g.code);
-        assert!(g.code.contains("__dom.component(_e2, List<string>, (): Partial<List<string>> => ({ items: this.xs }), undefined, { header: () => __Component.$fragment((__p) => {"), "{}", g.code);
-        assert!(g.code.contains("}, this), item: (s, i: number = 0) => __Component.$fragment((__p) => {"), "{}", g.code);
+        assert!(g.code.contains("__dom.component(_e2, List<string>, (): Partial<List<string>> => ({ items: this.xs }), undefined, { header: () => __Component.fragment((__p) => {"), "{}", g.code);
+        assert!(g.code.contains("}, this), item: (s, i: number = 0) => __Component.fragment((__p) => {"), "{}", g.code);
         assert!(g.code.contains("__dom.textAt(_e8, () => s);") && g.code.contains("__dom.textAt(_e10, () => i);"), "{}", g.code);
         assert!(g.code.contains("__dom.component(_e3, Other, (): Partial<Other> => ({}));"), "{}", g.code);
     }
@@ -4181,7 +4181,7 @@ mod tests {
         assert!(!g.code.contains("gone"), "{}", g.code);
         has("__dom.template([[\"p\", 0, \"ab\"], null, null]);");
         has("const total = this.items.length + this.n;");
-        has("const badge = __Component.$fragment((__p) => {");
+        has("const badge = __Component.fragment((__p) => {");
         has("__dom.textAt(_e3, () => total);");
         has("__dom.template([[\"i\", 0, \"\"]]);");
         has("__dom.template([\"Count: \", \"\", \"!\"]);");
@@ -4209,7 +4209,7 @@ mod tests {
         let g = gen_with(src, &[]);
         let module = g.code.find("export const sizes").expect(&g.code);
         assert!(module < g.code.find("export default class").unwrap(), "{}", g.code);
-        assert!(g.code.contains("const tag = (t: string) => __Component.$fragment((__p) => {"), "{}", g.code);
+        assert!(g.code.contains("const tag = (t: string) => __Component.fragment((__p) => {"), "{}", g.code);
         assert!(!g.code.contains("this.sizes") && !g.code.contains("this.tag"), "{}", g.code);
         assert!(g.code.contains("this.n"), "{}", g.code);
     }
@@ -4567,7 +4567,7 @@ mod tests {
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // A lone component needs no template: its anchor goes straight into the region's fragment.
         has("const _e11 = __dom.anchor(__p);\n        __dom.component(_e11, Card, (): Partial<Card> => ({}));");
-        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: this.n }), undefined, { default: () => __Component.$fragment((__p) => {");
+        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: this.n }), undefined, { default: () => __Component.fragment((__p) => {");
         has("__dom.on(_e2, \"click\", () => this.n++, 1);");
         has("__dom.attrs(_e3, () => this.extra);");
         has("__dom.cascadeAt(_e4, \"theme\", () => this.n, false, (__p) => {");
@@ -4715,10 +4715,10 @@ mod tests {
     fn markup_in_a_static_initializer_has_no_owner() {
         let card = [("Card", "@code { onPick?: EventCallback<number>; }")];
         let g = gen_with("@code {\n  static icon = <b/>;\n  static pick = <Card onPick=\"@(() => 1)\" />;\n  own = <i/>;\n}\n<p/>", &card).code;
-        assert!(g.contains("static icon = __Component.$fragment((__p) => {\n    const _e0 = __t0() as El<\"b\">;\n    __p.appendChild(_e0);\n  });"), "{g}");
+        assert!(g.contains("static icon = __Component.fragment((__p) => {\n    const _e0 = __t0() as El<\"b\">;\n    __p.appendChild(_e0);\n  });"), "{g}");
         assert!(g.contains("{ onPick: __dom.callback(undefined, () => 1) }") && !g.contains("callback(this"), "{g}");
         // An instance member keeps its owner.
-        assert!(g.contains("own = __Component.$fragment((__p) => {\n    const _e2 = __t1() as El<\"i\">;\n    __p.appendChild(_e2);\n  }, this);"), "{g}");
+        assert!(g.contains("own = __Component.fragment((__p) => {\n    const _e2 = __t1() as El<\"i\">;\n    __p.appendChild(_e2);\n  }, this);"), "{g}");
         // Modifiers before `static`, in any order, and markup nested in the initializer's braces or parens.
         let one = |member: &str| gen_with(&format!("@code {{\n  {member}\n}}\n<p/>"), &[]).code;
         for member in [
@@ -4732,7 +4732,7 @@ mod tests {
             "static w = { a: { b: <b/> } }\n  static v = <i/>;",
         ] {
             let g = one(member);
-            assert!(g.contains("$fragment((__p) => {") && !g.contains("}, this)"), "{member}\n{g}");
+            assert!(g.contains("fragment((__p) => {") && !g.contains("}, this)"), "{member}\n{g}");
         }
         // Instance members keep `this`, also right after a static one without a semicolon.
         for member in ["public a = <b/>;", "private readonly b = { a: <b/> };", "static x = { a: 1 }\n  own = <b/>;", "static f() {}\n  own = <b/>;", "static;\n  own = <b/>;"] {
@@ -4778,7 +4778,7 @@ mod tests {
         let g = gen_with(src, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // Values are the typed read; callbacks are statics; then the slots, the `@ref` setter and the key.
-        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: \"t\", count: this.n }), { onSave: __dom.callback(this, this.save.bind(this)), onDone: __dom.callback(this, this.save.bind(this)) }, { header: () => __Component.$fragment((__p) => {");
+        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: \"t\", count: this.n }), { onSave: __dom.callback(this, this.save.bind(this)), onDone: __dom.callback(this, this.save.bind(this)) }, { header: () => __Component.fragment((__p) => {");
         has("}, this) }, (__c) => { this.card = __c; }, this.n);");
         // Without any of them, only the read.
         has("__dom.component(_e2, Card, (): Partial<Card> => ({ title: \"u\" }));");
@@ -4821,11 +4821,11 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("__dom.routesAt(_e0, __routes, [\n");
-        has("{ kind: \"tag\", tag: \"admin\", render: (_route: Route, page: Markup) => __Component.$fragment((__p) => {");
-        has("{ kind: \"pattern\", match: C.__m1, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return __Component.$fragment((__p) => {");
+        has("{ kind: \"tag\", tag: \"admin\", render: (_route: Route, page: Markup) => __Component.fragment((__p) => {");
+        has("{ kind: \"pattern\", match: C.__m1, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return __Component.fragment((__p) => {");
         has("__dom.textAt(_e4, () => route.params.doc);");
-        has("{ kind: \"notFound\", render: () => __Component.$fragment((__p) => {");
-        has("{ kind: \"catch\", render: (_route: Route, e: unknown) => __Component.$fragment((__p) => {");
+        has("{ kind: \"notFound\", render: () => __Component.fragment((__p) => {");
+        has("{ kind: \"catch\", render: (_route: Route, e: unknown) => __Component.fragment((__p) => {");
         has("\n    ]);\n");
         // The section bodies see the route as a local, never as a member.
         assert!(!g.code.contains("this.route") && !g.code.contains("this.page") && !g.code.contains("this.e)"), "{}", g.code);

@@ -273,7 +273,7 @@ const page = (component: unknown): RouteTable => [
 ];
 
 const caught: DomRouteSection[] = [
-  { kind: "catch", render: (_route: Route, error: unknown) => Component.$fragment((__p) => dom.text(__p, () => String(error))) },
+  { kind: "catch", render: (_route: Route, error: unknown) => Component.fragment((__p) => dom.text(__p, () => String(error))) },
 ];
 
 function routed(table: RouteTable, app?: IApplication): void {
