@@ -92,7 +92,7 @@ Editors: VS Code uses the xzor extension. In Zed, the `editors/zed` dev extensio
 | Loop | `@for (const item of items) @key(item.id) { <li>@item.name</li> }` (any JS `for` head; there is no `@foreach`). `<li @key="item.id">` on the body's only top element is the same key; an element `@key` anywhere else is a build error |
 | Switch | `@switch (v) { case "a": <p>A</p> break; default: <p>?</p> }` |
 | Hide instead of remove (tabs, steps) | `@show:if (tab === "a") { <form>…</form> } else { <ol>…</ol> }`, `@show:switch (step) { case 1: <form>…</form> default: <section>…</section> }`: a branch is built once, then hidden (`display: none`) and kept with its state; elements only at a branch's top level. Hidden branches stay live; `@pause` first in a branch (or `@pause { … }` around part of it) stops it while hidden |
-| Statements | `@{ const total = sum(items); }` then `@total` (markup inside `@{ }` is rebuilt with its block when what it reads changes: child components and input state there are recreated) |
+| Statements | `@{ const total = sum(items); }` then `@total` (markup inside `@{ }` is rebuilt with its block when what it reads changes: child components and input state there are recreated; so is the region of a method or getter that returns fresh markup, like `@renderItem(x)`: hold the markup in a field or use a child component to keep them) |
 | No wrapper | `<text>...</text>` |
 | Comment | `@* ... *@` |
 | Attribute | `class="item @kind"`, `disabled="@(!ok)"` (`false`/`null` removes it) |
@@ -335,7 +335,7 @@ export class Worker extends Model {
 
 ## Components: how they update
 
-Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. There is no other mode and no virtual DOM; `@render` was removed (it is a compile error). The base class is `Component` (`ComponentBase` still works as a deprecated alias); in a `.ts` base used through `@inherits`, extend `Component`. Markup is written in `.xzor` only.
+Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. There is no other mode and no virtual DOM; `@render` and `@fine` were removed (both are compile errors). The base class is `Component` (`ComponentBase` still works as a deprecated alias); in a `.ts` base used through `@inherits`, extend `Component`. Markup is written in `.xzor` only.
 
 - Its `@code` fields are tracked like a model's: `count++` in a handler updates the page. Never call `stateHasChanged()` for that; call it only after changing something untracked (a plain array's `push`, an object's property).
 - Put list data in an `EntitySet` (or reassign a plain array) and loop with `@for (const x of list.view)`: rows are kept by identity, or by `@key(x.id)` (then a new object with the same key keeps its row, so immutable updates like `list.map((x) => x.id === id ? { ...x, qty } : x)` patch it in place).

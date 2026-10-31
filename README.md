@@ -554,11 +554,13 @@ See [`examples/counter/pages/Team.xzor`](examples/counter/pages/Team.xzor).
 
 ### No render pass
 
-Components are compiled without a render pass. The DOM is built once; each `@value`, attribute and `@bind` updates on its own when a field it reads changes, and `@for` keeps its rows. Totals are plain expressions:
+Components are compiled without a render pass. The DOM is built once; each `@value`, attribute and `@bind` updates on its own when a field it reads changes, and `@for` keeps its rows. `@render` and `@fine` are build errors: there is no other mode. Totals are plain expressions:
 
 ```xzor
 <b>@team.view.reduce((sum, w) => sum + w.hours, 0)</b>
 ```
+
+One exception: markup made fresh each time is rebuilt. Markup statements in `@{ }` and a method or getter that returns new markup (`@renderItem(x)`) rebuild their region whenever what they read changes, so child components and input state (focus, typed text) inside are created again. Hold the markup in a field, or use a child component, to keep them.
 
 The component's own fields are tracked like a model's, so `count++` in a handler is enough. See [`examples/counter/pages/TeamTracked.xzor`](examples/counter/pages/TeamTracked.xzor).
 
