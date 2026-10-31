@@ -7,8 +7,11 @@ import {
   type Markup,
   type Route,
   type RouteTable,
+  lazy,
   mount,
   setNavigationForTests,
+  setTransitionCapForTests,
+  viewTransitions,
 } from "./index";
 
 // happy-dom starts on about:blank, where relative URLs and pushState are not allowed.
@@ -422,4 +425,382 @@ test("navigate pushes by default and replaces on request", () => {
   captured!.navigate("/users/3", { replace: true });
   expect(memory.calls[1]).toEqual(["/users/3", true]);
   expect(r.html()).toBe("<aside><u>3</u></aside>");
+});
+
+/** A link as a section builds it: static attributes, then its text. */
+const link = (__p: Node, href: string, attrs: Record<string, string> = {}): void => {
+  const a = dom.el(__p, "a");
+  a.setAttribute("href", href);
+  for (const [name, value] of Object.entries(attrs)) a.setAttribute(name, value);
+  dom.t(a, href);
+};
+
+const links = (_route: Route, page: Markup): Markup =>
+  Component.$fragment((__p) => {
+    dom.text(__p, () => page);
+    link(__p, "/users/2");
+    link(__p, "/users/3", { target: "_blank" });
+    link(__p, "/users/4", { download: "" });
+    link(__p, "/users/5", { rel: "noopener external" });
+    link(__p, "http://elsewhere.test/users/6");
+    link(__p, "/users/7", { target: "_self" });
+  });
+
+test("a plain in-app link is intercepted and navigates", () => {
+  history.replaceState(null, "", "/users/1");
+  const r = routed([{ kind: "default", render: links }]);
+
+  expect(r.click(r.host.querySelectorAll("a")[0]!)).toBe(true);
+  expect(location.pathname).toBe("/users/2");
+  expect(r.html()).toContain("<u>2</u>");
+
+  expect(r.click(r.host.querySelectorAll("a")[5]!)).toBe(true);
+  expect(location.pathname).toBe("/users/7");
+});
+
+test("modified clicks and opted-out links are left to the browser", () => {
+  history.replaceState(null, "", "/users/1");
+  const r = routed([{ kind: "default", render: links }]);
+  const anchor = (index: number) => r.host.querySelectorAll("a")[index]!;
+
+  const modifiers: MouseEventInit[] = [
+    { ctrlKey: true },
+    { metaKey: true },
+    { shiftKey: true },
+    { altKey: true },
+    { button: 1 },
+  ];
+  for (const init of modifiers) {
+    expect(r.click(anchor(0), init)).toBe(false);
+  }
+  // target=_blank, download, rel=external and another origin.
+  for (const index of [1, 2, 3, 4]) {
+    expect(r.click(anchor(index))).toBe(false);
+  }
+  expect(location.pathname).toBe("/users/1");
+  expect(r.html()).toContain("<u>1</u>");
+});
+
+const hashLinks = (_route: Route, page: Markup): Markup =>
+  Component.$fragment((__p) => {
+    dom.text(__p, () => page);
+    for (const href of ["#part2", "/users/1#part2", "/users/2#part2"]) link(__p, href);
+  });
+
+test("a link that only moves to a fragment of this page is left to the browser", () => {
+  history.replaceState(null, "", "/users/1");
+  const r = routed([{ kind: "default", render: hashLinks }]);
+  const anchor = (index: number) => r.host.querySelectorAll("a")[index]!;
+
+  expect(r.click(anchor(0))).toBe(false);
+  expect(r.click(anchor(1))).toBe(false);
+  expect(location.pathname).toBe("/users/1");
+
+  expect(r.click(anchor(2))).toBe(true);
+  expect(location.pathname).toBe("/users/2");
+});
+
+test("the navigation listeners go away with the routes block", () => {
+  history.replaceState(null, "", "/users/1");
+  const r = routed([{ kind: "default", render: wrap("aside") }]);
+  const outside = document.createElement("a");
+  outside.setAttribute("href", "/users/9");
+  document.body.append(outside);
+
+  expect(r.click(outside)).toBe(true);
+  expect(location.pathname).toBe("/users/9");
+  expect(r.html()).toBe("<aside><u>9</u></aside>");
+
+  r.drop();
+  expect(r.click(outside)).toBe(false);
+  expect(location.pathname).toBe("/users/9");
+  outside.remove();
+});
+
+test("popstate re-renders the routes block", () => {
+  history.replaceState(null, "", "/users/1");
+  const r = routed([{ kind: "default", render: wrap("aside") }]);
+  expect(r.html()).toBe("<aside><u>1</u></aside>");
+
+  history.replaceState(null, "", "/users/2");
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  expect(r.html()).toBe("<aside><u>2</u></aside>");
+});
+
+test("viewTransitions(true) commits a navigation inside document.startViewTransition", () => {
+  const doc = document as unknown as { startViewTransition?: (cb: () => void) => { ready: Promise<void> } };
+  let called = 0;
+  doc.startViewTransition = (cb) => {
+    called++;
+    cb();
+    // As when the browser skips the animation: the rejection must be handled.
+    return { ready: Promise.reject(new Error("skipped")) };
+  };
+  try {
+    history.replaceState(null, "", "/users/1");
+    const r = routed([{ kind: "default", render: wrap("aside") }]);
+    history.replaceState(null, "", "/users/2");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(called).toBe(0);
+
+    viewTransitions(true);
+    history.replaceState(null, "", "/users/3");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(called).toBe(1);
+    expect(r.html()).toBe("<aside><u>3</u></aside>");
+
+    delete doc.startViewTransition;
+    history.replaceState(null, "", "/users/4");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(r.html()).toBe("<aside><u>4</u></aside>");
+  } finally {
+    viewTransitions(false);
+    delete doc.startViewTransition;
+  }
+});
+
+// A page that renders its heading only once its data arrived, like the blog's Post page.
+const later = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+class LoadOnInit extends Component {
+  #title = "";
+  get title(): string {
+    Component.$reader?.(this, 0);
+    return this.#title;
+  }
+  set title(v: string) {
+    const p = this.#title;
+    if (Component.same(p, v)) return;
+    this.#title = v;
+    this.$changed(0, p);
+  }
+  static {
+    Component.$define(this, ["title"]);
+  }
+  protected override async onInitializedAsync(): Promise<void> {
+    await later(5);
+    this.title = "init";
+  }
+  protected override render(__p: Node): void {
+    dom.region(__p, (__p) => {
+      if (this.title) dom.text(dom.el(__p, "h1"), () => this.title);
+    });
+  }
+}
+
+class LoadOnParams extends Component {
+  id = 0;
+  #title = "";
+  get title(): string {
+    Component.$reader?.(this, 0);
+    return this.#title;
+  }
+  set title(v: string) {
+    const p = this.#title;
+    if (Component.same(p, v)) return;
+    this.#title = v;
+    this.$changed(0, p);
+  }
+  static {
+    Component.$define(this, ["title"]);
+  }
+  protected override async onParametersSetAsync(): Promise<void> {
+    await later(5);
+    this.title = `p${this.id}`;
+  }
+  protected override render(__p: Node): void {
+    dom.region(__p, (__p) => {
+      if (this.title) dom.text(dom.el(__p, "h1"), () => this.title);
+    });
+  }
+}
+
+class Hang extends Component {
+  protected override onInitializedAsync(): Promise<void> {
+    return new Promise<void>(() => {});
+  }
+  protected override render(__p: Node): void {
+    dom.t(__p, "hang");
+  }
+}
+
+const asyncPages: RouteTable = [
+  { tag: undefined, pattern: "/", component: RootPage, match: (s) => (s.length === 0 ? {} : null) },
+  { tag: undefined, pattern: "/init", component: LoadOnInit, match: (s) => (s.length === 1 && s[0] === "init" ? {} : null) },
+  { tag: undefined, pattern: "/hang", component: Hang, match: (s) => (s.length === 1 && s[0] === "hang" ? {} : null) },
+  {
+    tag: undefined,
+    pattern: "/p/:id",
+    component: LoadOnParams,
+    match: (s) => (s.length === 2 && s[0] === "p" ? { id: Number(s[1]) } : null),
+  },
+];
+
+/** Runs `body` with `document.startViewTransition` stubbed; each call's callback result lands in `updates`. */
+async function withTransitions(body: (updates: unknown[]) => Promise<void> | void): Promise<void> {
+  const doc = document as unknown as { startViewTransition?: (cb: () => unknown) => { ready: Promise<void> } };
+  const updates: unknown[] = [];
+  doc.startViewTransition = (cb) => {
+    updates.push(cb());
+    return { ready: Promise.resolve() };
+  };
+  viewTransitions(true);
+  try {
+    await body(updates);
+  } finally {
+    viewTransitions(false);
+    setTransitionCapForTests(undefined);
+    delete doc.startViewTransition;
+  }
+}
+
+test("the transition's update resolves after the new page's onInitializedAsync", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    history.replaceState(null, "", "/init");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(r.html()).toBe("<aside></aside>");
+    expect(updates[0]).toBeInstanceOf(Promise);
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>init</h1></aside>");
+  });
+});
+
+test("the transition's update resolves after 1500 ms at most when the hook never settles", async () => {
+  await withTransitions(async (updates) => {
+    setTransitionCapForTests(20);
+    history.replaceState(null, "", "/");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    history.replaceState(null, "", "/hang");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    const started = performance.now();
+    await updates[0];
+    expect(performance.now() - started).toBeGreaterThanOrEqual(15);
+    expect(r.html()).toBe("<aside>hang</aside>");
+  });
+});
+
+test("a page without async hooks needs no wait: the update returns nothing", async () => {
+  await withTransitions((updates) => {
+    history.replaceState(null, "", "/init");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    history.replaceState(null, "", "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(updates).toEqual([undefined]);
+    expect(r.html()).toBe("<aside><r>root</r></aside>");
+  });
+});
+
+test("onParametersSetAsync on a kept page is awaited too", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/p/1");
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+    await later(20);
+    expect(r.html()).toBe("<aside><h1>p1</h1></aside>");
+
+    history.replaceState(null, "", "/p/2");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(r.html()).toBe("<aside><h1>p1</h1></aside>");
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>p2</h1></aside>");
+  });
+});
+
+const lazyTable = (load: () => Promise<{ default: typeof LoadOnParams }>): RouteTable => [
+  { tag: undefined, pattern: "/", component: RootPage, match: (s) => (s.length === 0 ? {} : null) },
+  {
+    tag: undefined,
+    pattern: "/p/:id",
+    component: lazy(load),
+    match: (s) => (s.length === 2 && s[0] === "p" ? { id: Number(s[1]) } : null),
+  },
+];
+
+test("the transition's update waits for a lazy page's chunk and then its async hooks", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const table = lazyTable(() => later(10).then(() => ({ default: LoadOnParams })));
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table });
+    history.replaceState(null, "", "/p/7");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    expect(updates[0]).toBeInstanceOf(Promise);
+    expect(r.html()).toBe("<aside></aside>");
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>p7</h1></aside>");
+  });
+});
+
+test("the 1500 ms cap holds when a lazy page's import never resolves", async () => {
+  await withTransitions(async (updates) => {
+    setTransitionCapForTests(20);
+    history.replaceState(null, "", "/");
+    const r = routed([{ kind: "default", render: wrap("aside") }], {
+      table: lazyTable(() => new Promise(() => {})),
+    });
+    history.replaceState(null, "", "/p/1");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    const started = performance.now();
+    await updates[0];
+    expect(performance.now() - started).toBeGreaterThanOrEqual(15);
+    expect(r.html()).toBe("<aside></aside>");
+  });
+});
+
+// Loads, then renders a child that loads its own data: the second wait starts in a later re-render.
+class LoadThenChild extends Component {
+  #ready = false;
+  get ready(): boolean {
+    Component.$reader?.(this, 0);
+    return this.#ready;
+  }
+  set ready(v: boolean) {
+    const p = this.#ready;
+    if (Component.same(p, v)) return;
+    this.#ready = v;
+    this.$changed(0, p);
+  }
+  static {
+    Component.$define(this, ["ready"]);
+  }
+  protected override async onInitializedAsync(): Promise<void> {
+    await later(5);
+    this.ready = true;
+  }
+  protected override render(__p: Node): void {
+    dom.region(__p, (__p) => {
+      if (this.ready) dom.component(dom.anchor(__p), LoadOnInit, () => ({}));
+    });
+  }
+}
+
+test("the transition's update also waits for hooks started by the re-render after the page's data", async () => {
+  await withTransitions(async (updates) => {
+    history.replaceState(null, "", "/");
+    const table: RouteTable = [
+      ...asyncPages,
+      { tag: undefined, pattern: "/nested", component: LoadThenChild, match: (s) => (s.length === 1 && s[0] === "nested" ? {} : null) },
+    ];
+    const r = routed([{ kind: "default", render: wrap("aside") }], { table });
+    history.replaceState(null, "", "/nested");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+
+    await updates[0];
+    expect(r.html()).toBe("<aside><h1>init</h1></aside>");
+  });
+});
+
+test("outside a transition the settle path collects nothing", async () => {
+  history.replaceState(null, "", "/");
+  const r = routed([{ kind: "default", render: wrap("aside") }], { table: asyncPages });
+  history.replaceState(null, "", "/init");
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  expect(r.html()).toBe("<aside></aside>");
+  await later(20);
+  expect(r.html()).toBe("<aside><h1>init</h1></aside>");
 });
