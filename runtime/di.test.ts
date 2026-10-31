@@ -484,6 +484,37 @@ test("an arriving component whose onAfterRender throws stays mounted and is remo
   expect(log).toEqual(["hook", "dispose", "asyncDispose"]);
 });
 
+test("a throwing error handler on an arriving component's failure does not stop later after-render hooks", async () => {
+  const handler = new Error("handler failed");
+  class Broken extends Needs {
+    protected override onInitialized(): void {
+      throw new Error("init failed");
+    }
+  }
+  class Page extends Component {
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Needs, (): Partial<Needs> => ({}), undefined, undefined, undefined, undefined, () => {
+        throw handler;
+      });
+    }
+  }
+  const late = deferred();
+  mount(Page, host(), { createComponent: (type) => (type === Needs ? late.promise : undefined) });
+  const thrown = await thrownFrom(async () => {
+    late.resolve(new Broken("x"));
+    await late.promise;
+  });
+  expect(thrown).toEqual([handler]);
+  const log: boolean[] = [];
+  class After extends Hello {
+    protected override onAfterRender(first: boolean): void {
+      log.push(first);
+    }
+  }
+  mount(After, host());
+  expect(log).toEqual([true]);
+});
+
 test("a throwing dispose hook while discarding the partial tree does not lose the original error", async () => {
   const boom = new Error("child failed");
   class Fragile extends Hello {

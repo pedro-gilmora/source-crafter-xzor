@@ -1054,14 +1054,17 @@ function abandon(s: Child, c: Component, err: unknown): void {
     unsubscribeCascades(c, s.scope);
   }
   // The failure first: a dispose error after it must not hide it.
-  fail(s, err);
-  if (mine) {
-    try {
-      releaseDom(c);
-    } catch (disposeErr) {
-      rethrow(disposeErr);
+  try {
+    fail(s, err);
+  } finally {
+    if (mine) {
+      try {
+        releaseDom(c);
+      } catch (disposeErr) {
+        rethrow(disposeErr);
+      }
+      c.$end = undefined;
     }
-    c.$end = undefined;
   }
 }
 
@@ -1092,13 +1095,23 @@ function arriveChild(s: Child, c: Component): void {
   try {
     start(s, c);
   } catch (err) {
-    abandon(s, c, err);
-  }
-  // An after-render hook that throws leaves the component mounted; the error is reported, not thrown into the promise.
-  try {
-    close(mark);
-  } catch (err) {
-    fail(s, err);
+    // A throwing `onError` is reported, not thrown into the promise.
+    try {
+      abandon(s, c, err);
+    } catch (handler) {
+      rethrow(handler);
+    }
+  } finally {
+    // An after-render hook that throws leaves the component mounted; the error is reported, not thrown into the promise.
+    try {
+      close(mark);
+    } catch (err) {
+      try {
+        fail(s, err);
+      } catch (handler) {
+        rethrow(handler);
+      }
+    }
   }
 }
 
