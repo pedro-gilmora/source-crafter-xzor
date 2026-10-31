@@ -549,9 +549,9 @@ export abstract class Component {
     if (subs !== undefined) for (let i = 0; i < subs.length; i++) changed(subs[i]!, index);
   }
 
-  /** Markup as a value (a `RenderFragment`); xzor emits this for markup used as one. Its handlers run in `owner`'s context (else the component building now). */
-  static fragment(build: (parent: Node) => void, owner?: Component): Markup {
-    return markup(build, owner);
+  /** Markup as a value (a `RenderFragment`); xzor emits this for markup used as one. Its handlers run in `owner`'s context (else the component building now). `site` is its markup literal: shown again from the same site, it keeps its DOM. */
+  static fragment(build: (parent: Node) => void, owner?: Component, site?: unknown): Markup {
+    return markup(build, owner, site);
   }
 
   /** Reads a bound input's new value, converted to the bound field's current type. */

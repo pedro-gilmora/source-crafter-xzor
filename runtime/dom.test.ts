@@ -1651,6 +1651,176 @@ test("a markup value in @expr rebuilds when it gives another markup", () => {
   expect(el.querySelector("i")!.textContent).toBe("c");
 });
 
+// Claim mode: a markup value from the same site re-points the old bindings instead of rebuilding.
+const __claim = dom.template([["p", 0, ["b", 0, ""], ["input", 0], ["button", 0, "go"], ["i", 0, ""]]]);
+const __other = {};
+let claimSubs = 0;
+class Claims extends Component {
+  #view: unknown = null; get view(): unknown { Component.$reader?.(this, 0); return this.#view; } set view(v: unknown) { const p = this.#view; if (Component.same(p, v)) return; this.#view = v; this.$changed(0, p); }
+  #n = 0; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+  static { Component.$define(this, ["view", "n"]); }
+  override $watch(dep: object): void { claimSubs++; super.$watch(dep); }
+  override $unwatch(dep: object): void { claimSubs--; super.$unwatch(dep); }
+  log: string[] = [];
+  item(x: string, site: unknown = __claim): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __claim() as HTMLElement;
+      const _e1 = _e0.firstChild! as HTMLElement;
+      const _e2 = _e1.firstChild! as Text;
+      const _e3 = _e1.nextSibling! as HTMLInputElement;
+      const _e4 = _e3.nextSibling! as HTMLElement;
+      const _e5 = _e4.nextSibling!.firstChild! as Text;
+      dom.attr(_e0, "title", () => x);
+      dom.textAt(_e2, () => `${x}${this.n}`);
+      dom.attr(_e3, "placeholder", () => x);
+      dom.attrs(_e3, () => ({ "data-k": x }));
+      dom.on(_e3, "change", () => this.log.push(`change ${x}`), 2);
+      dom.on(_e4, "click", () => this.log.push(`click ${x}`), 1);
+      dom.textOnce(_e5, () => x);
+      dom.attrOf(_e0, "data-of", () => x);
+      __p.appendChild(_e0);
+    }, this, site);
+  }
+  // Same site, other calls: the shape mismatch a codegen bug would cause.
+  odd(x: string): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __claim() as HTMLElement;
+      dom.attr(_e0, "title", () => x);
+      __p.appendChild(_e0);
+    }, this, __claim);
+  }
+  listed(xs: string[]): Markup {
+    return Component.fragment((__p) => {
+      dom.text(dom.el(__p, "u"), () => xs.length);
+      dom.list(__p, () => xs, (p, x) => dom.t(p, x));
+    }, this, __other);
+  }
+  protected override render(__p: Node): void {
+    dom.text(__p, () => this.view);
+  }
+}
+
+test("claim: a same-site markup value keeps every node and shows the new text, attrs and once-text", async () => {
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.item("a");
+  await tick();
+  const p = el.querySelector("p")!;
+  const nodes = [p, ...p.querySelectorAll("*"), p.querySelector("b")!.firstChild, p.querySelector("i")!.firstChild];
+  expect(p.getAttribute("title")).toBe("a");
+  c.view = c.item("b");
+  await tick();
+  expect(el.querySelector("p")).toBe(p);
+  const now = [p, ...p.querySelectorAll("*"), p.querySelector("b")!.firstChild, p.querySelector("i")!.firstChild];
+  expect(now.length).toBe(nodes.length);
+  nodes.forEach((n, i) => expect(n === now[i]).toBe(true));
+  const input = p.querySelector("input")!;
+  expect(p.getAttribute("title")).toBe("b");
+  expect(p.getAttribute("data-of")).toBe("b");
+  expect(p.querySelector("b")!.textContent).toBe("b0");
+  expect(input.getAttribute("placeholder")).toBe("b");
+  expect(input.getAttribute("data-k")).toBe("b");
+  expect(p.querySelector("i")!.textContent).toBe("b");
+  // The re-pointed read is tracked.
+  c.n = 5;
+  await tick();
+  expect(p.querySelector("b")!.textContent).toBe("b5");
+});
+
+test("claim: a focused input keeps focus and its typed value", async () => {
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.item("a");
+  await tick();
+  const input = el.querySelector("input")!;
+  input.focus();
+  input.value = "typed";
+  c.view = c.item("b");
+  await tick();
+  expect(el.querySelector("input")).toBe(input);
+  expect(document.activeElement).toBe(input);
+  expect(input.value).toBe("typed");
+  input.blur();
+});
+
+test("claim: handlers (delegated and not, with modifiers) use the new value", async () => {
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.item("a");
+  await tick();
+  c.view = c.item("b");
+  await tick();
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  el.querySelector("button")!.dispatchEvent(click);
+  expect(click.defaultPrevented).toBe(true);
+  el.querySelector("input")!.dispatchEvent(new Event("change"));
+  expect(c.log).toEqual(["click b", "change b"]);
+});
+
+test("claim: a markup value from another site rebuilds", async () => {
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.item("a");
+  await tick();
+  const p = el.querySelector("p");
+  c.view = c.item("b", __other);
+  await tick();
+  expect(el.querySelector("p")).not.toBe(p);
+  expect(el.querySelector("b")!.textContent).toBe("b0");
+});
+
+test("claim: a shape mismatch at the same site falls back to a rebuild", async () => {
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.item("a");
+  await tick();
+  const p = el.querySelector("p");
+  c.view = c.odd("z");
+  await tick();
+  expect(el.querySelectorAll("p").length).toBe(1);
+  expect(el.querySelector("p")).not.toBe(p);
+  expect(el.querySelector("p")!.getAttribute("title")).toBe("z");
+  expect(el.querySelector("p")!.hasAttribute("data-of")).toBe(false);
+  c.view = c.item("y");
+  await tick();
+  expect(el.querySelector("b")!.textContent).toBe("y0");
+});
+
+test("claim: a markup value holding a list rebuilds (for now)", async () => {
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.listed(["a", "b"]);
+  await tick();
+  const u = el.querySelector("u");
+  expect(el.textContent).toBe("2ab");
+  c.view = c.listed(["c"]);
+  await tick();
+  expect(el.querySelector("u")).not.toBe(u);
+  expect(el.textContent).toBe("1c");
+});
+
+test("claim: 100 claims leave the subscribers as after the first build, and none after it goes", async () => {
+  claimSubs = 0;
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.item("a");
+  await tick();
+  const built = claimSubs;
+  const p = el.querySelector("p");
+  for (let i = 0; i < 100; i++) {
+    c.view = c.item(`x${i}`);
+    c.stateHasChanged();
+  }
+  await tick();
+  expect(el.querySelector("p")).toBe(p);
+  expect(el.querySelector("b")!.textContent).toBe("x990");
+  expect(claimSubs).toBe(built);
+  c.view = "t";
+  await tick();
+  // Only the region's read of `view` is left.
+  expect(claimSubs).toBe(1);
+});
+
 const __card = dom.template([["div", 0, null, null]]);
 const __it = dom.template([["i", 0, ""]]);
 class Card extends Component {

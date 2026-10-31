@@ -15,6 +15,10 @@ const KEYED = 5;
 const EFFECT = 6;
 /** A child component before its end comment: `read` gives its props, `data` is its `Child`. */
 const COMPONENT = 8;
+/** A handler in a markup value: `read` is the handler, `slot` its modifiers; never run. A claim re-points it. */
+const HANDLER = 9;
+/** `@once(expr)` in a markup value: set when built, and again only by a claim. */
+const ONCE = 10;
 /** `model` is a map of deps: the binding read more than one source. */
 const MANY = 32;
 /** In its component's `loose` list: its last run read nothing tracked. */
@@ -36,6 +40,8 @@ const CONTENT = 32768;
 const BAG = 65536;
 /** A REGION that is a `@Routes` block (`data` is `Routes`). */
 const ROUTES = 131072;
+/** The flags a claimed binding must share with the call that claims it. */
+const SHAPE = KIND | ITEM | OWNED | SHOW | PAUSE | CONTENT | BAG | ROUTES;
 
 type Source = { $watch(dep: object): void; $unwatch(dep: object): void };
 type Dep = { model: Source; owner: Binding; mask: number; slot: number };
@@ -63,8 +69,9 @@ type Page = Holder & { start: Comment; end: Comment; key: unknown; child: Child;
 type Routes = Region & { router: Router; table: RouteTable; sections: readonly RouteSection[]; route: Route; section: number; failed: boolean; paged: boolean; page: Page | undefined; markup: Markup };
 
 const MARKUP = Symbol("xzor.markup");
-/** Markup held as a value: builds its nodes into `parent`; its handlers run in the context it was made in. */
-export type Markup = ((parent: Node) => void) & { readonly [MARKUP]: Ctx | null };
+const SITE = Symbol("xzor.site");
+/** Markup held as a value: builds its nodes into `parent`; its handlers run in the context it was made in. `SITE`: the literal it comes from. */
+export type Markup = ((parent: Node) => void) & { readonly [MARKUP]: Ctx | null; readonly [SITE]: unknown };
 const isMarkup = (value: unknown): value is Markup => typeof value === "function" && MARKUP in value;
 // What a content region shows for a value: 1 markup, 2 nothing (a slot's fallback), 0 text.
 const shows = (value: unknown): number => (isMarkup(value) ? 1 : value === null || value === undefined ? 2 : 0);
@@ -85,6 +92,14 @@ export type Props<C> = Partial<Omit<C, keyof Component>>;
 
 let collecting: Binding | undefined;
 let holder: Holder | undefined;
+/** The content region building a markup value right now: its handlers and once-texts are kept as bindings. */
+let markupHolder: Holder | undefined;
+/** Claim mode: the old bindings not taken yet, in creation order; `failed` once a call didn't match. */
+let claiming = false;
+let cursor: Binding | undefined;
+let failed = false;
+/** What a claimed build appends to, and the node `el`/`anchor` give it: nothing is built during a claim. */
+const CLAIM_PARENT = { appendChild: (n: Node): Node => n } as unknown as Node;
 
 function collect(source: Source, index: number): void {
   collectBits(source, bitOf(index));
@@ -200,6 +215,7 @@ class Binding {
     Component.$reader = collect as unknown as typeof Component.$reader;
     this.#reset();
     try {
+      if ((this.flags & BAG) !== 0) return runBag(this);
       return (this.flags & ITEM) !== 0 ? this.read(this.data.item, parent) : this.read(parent);
     } finally {
       collecting = prev;
@@ -321,7 +337,8 @@ class Binding {
   #fill(c: Content, value: unknown): void {
     const kind = shows(value);
     const end = this.node;
-    const text = kind === 0 && c.index !== -1 && shows(c.value) === 0;
+    const prev = c.value;
+    const text = kind === 0 && c.index !== -1 && shows(prev) === 0;
     c.value = value;
     if (text) {
       const node = end.previousSibling as Text;
@@ -331,6 +348,7 @@ class Binding {
     }
     // A new index: `refreshAll` leaves what was just built alone.
     c.index++;
+    if (kind === 1 && isMarkup(prev) && prev[SITE] !== undefined && prev[SITE] === (value as Markup)[SITE] && claim(c, value as Markup)) return;
     disposeAll(c);
     for (let node = c.start.nextSibling!; node !== end; ) {
       const next = node.nextSibling!;
@@ -342,7 +360,7 @@ class Binding {
     else {
       const build = kind === 1 ? (value as Markup) : c.branch;
       c.$ctx = (kind === 1 ? (value as Markup)[MARKUP] : null) ?? c.owner;
-      if (build !== undefined) within(c, () => untracked(() => build(frag)));
+      if (build !== undefined) buildMarkup(c, build, frag, kind === 1);
     }
     end.parentNode!.insertBefore(frag, end);
   }
@@ -382,7 +400,8 @@ function ctxOf(b: Binding): Ctx {
     case COMPONENT:
       return (b.data as Child).ctx;
     case ATTR:
-      if ((flags & (ITEM | BAG)) !== 0) return (b.data as Holder).$ctx;
+      if ((flags & BAG) !== 0) return (b.data as Bag).at.$ctx;
+      if ((flags & ITEM) !== 0) return (b.data as Holder).$ctx;
       if ((flags & OWNED) !== 0) return (b.data as Owned).ctx;
       return ((b.node as Target)[HOLDER] as Holder).$ctx;
     // TEXT: its holder; REGION: its region.
@@ -444,6 +463,89 @@ function track(b: Binding): void {
   b.next = h.$bindings as Binding | undefined;
   h.$bindings = b;
   b.stateHasChanged();
+}
+
+// Builds `c`'s markup (or fallback) untracked, with `c` holding what it binds.
+function buildMarkup(c: Content, build: Build, parent: Node, markup: boolean): void {
+  const prev = collecting;
+  const reader = Component.$reader;
+  const outer = holder;
+  const outerMarkup = markupHolder;
+  collecting = undefined;
+  Component.$reader = undefined;
+  holder = c;
+  if (markup) markupHolder = c;
+  try {
+    build(parent);
+  } finally {
+    collecting = prev;
+    Component.$reader = reader;
+    holder = outer;
+    markupHolder = outerMarkup;
+  }
+}
+
+/**
+ * Runs `value` (from the site `c` shows) against `c`'s old bindings: each `dom.*` call takes the next one and
+ * re-points its read; then they all run once, and equal values touch nothing. False when a call didn't match.
+ */
+function claim(c: Content, value: Markup): boolean {
+  // Bindings are prepended: reversed, the chain is in creation order; each one taken goes back on the front.
+  let first: Binding | undefined;
+  for (let b = c.$bindings; b !== undefined; ) {
+    const next = b.next;
+    b.next = first;
+    first = b;
+    b = next;
+  }
+  c.$bindings = undefined;
+  claiming = true;
+  cursor = first;
+  failed = false;
+  let ok = false;
+  try {
+    c.$ctx = value[MARKUP] ?? c.owner;
+    buildMarkup(c, value, CLAIM_PARENT, true);
+    ok = !failed && cursor === undefined;
+  } finally {
+    // What wasn't taken goes back too, for the rebuild to dispose.
+    for (let b = cursor; b !== undefined; ) {
+      const next = b.next;
+      b.next = c.$bindings;
+      c.$bindings = b;
+      b = next;
+    }
+    claiming = false;
+    cursor = undefined;
+  }
+  if (!ok) return false;
+  for (let b = c.$bindings; b !== undefined; b = b.next) b.stateHasChanged();
+  return true;
+}
+
+/** The next old binding, when its shape is `shape`; else the claim fails. */
+function take(shape: number): Binding | undefined {
+  const b = cursor;
+  if (failed || b === undefined || (b.flags & SHAPE) !== shape) {
+    failed = true;
+    return undefined;
+  }
+  cursor = b.next;
+  const h = holder!;
+  b.next = h.$bindings as Binding | undefined;
+  h.$bindings = b;
+  return b;
+}
+
+function claimRead(shape: number, read: (a?: any, b?: any) => unknown): void {
+  const b = take(shape);
+  if (b !== undefined) b.read = read;
+}
+
+// ponytail: lists, regions, components, slots... can't be claimed yet: the claim fails and the value rebuilds.
+function unclaimable(): boolean {
+  if (claiming) failed = true;
+  return claiming;
 }
 
 function disposeAll(h: Holder): void {
@@ -578,6 +680,16 @@ function setAttr(el: Element, name: string, value: unknown): void {
 
 /** `class` adds the tokens the element lacks; other names keep the element's value to restore. */
 type Owned = { name: string; text: string | undefined; prev: string | null | undefined; added: string[]; ctx: Ctx };
+/** An `@attributes` binding's state: `read` gives the bag; `prev` is the last one. */
+type Bag = { at: Holder; prev: Record<string, unknown> | null | undefined; skip: readonly string[] | undefined; pre: BagPre | undefined };
+
+function runBag(b: Binding): unknown {
+  const s = b.data as Bag;
+  const bag = b.read() as Record<string, unknown> | null | undefined;
+  writeBag(b.node as Element, s.prev, bag, s.skip, s.pre);
+  s.prev = bag;
+  return bag;
+}
 
 // ponytail: two `@attr:class` adding one token share it, so the first undone removes it for both.
 function ownAttr(el: Element, s: Owned, value: unknown): void {
@@ -865,10 +977,24 @@ type Target = Node & Record<symbol, any>;
 function fire(node: Target, e: Event): boolean {
   const handler = node[keys.get(e.type)!];
   if (handler === undefined) return false;
-  const h = node[HOLDER] as Holder & Partial<Row>;
   Object.defineProperty(e, "currentTarget", { configurable: true, value: node });
+  if (handler instanceof Binding) {
+    runHandler(handler, e);
+    return e.cancelBubble;
+  }
+  const h = node[HOLDER] as Holder & Partial<Row>;
   afterHandler(h.$ctx, h.reads !== undefined ? handler(h.item)(e) : handler(e));
   return e.cancelBubble;
+}
+
+// A handler kept as a binding: what it runs is what the last claim gave it.
+function runHandler(b: Binding, e: Event): void {
+  const mods = b.slot;
+  const run = b.read as ((e: Event) => unknown) | undefined;
+  if (run === undefined && mods === 0) return;
+  if ((mods & 1) !== 0) e.preventDefault();
+  if ((mods & 2) !== 0) e.stopPropagation();
+  afterHandler((b.data as Holder).$ctx, run?.(e));
 }
 
 /** Calls the handlers from the target up, as bubbling would; a row's handler comes from its item. */
@@ -908,7 +1034,7 @@ function list(end: Comment, items: () => Iterable<unknown>, reads: Reads | undef
   track(new Binding(LIST, end, items, state));
 }
 
-const anchor = (parent: Node): Comment => parent.appendChild(document.createComment(""));
+const anchor = (parent: Node): Comment => (claiming ? (CLAIM_PARENT as Comment) : parent.appendChild(document.createComment("")));
 
 /** `@await`'s view before `end`; the function it gives shows what a request returned, a promise once it settles. */
 function awaiting<R>(end: Comment, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): (result: R) => void {
@@ -961,6 +1087,8 @@ export const dom = {
       return frag;
     };
     return () => {
+      // A claim navigates the master, never inserted nor changed.
+      if (claiming) return (node ??= build());
       if (node !== undefined) return node.cloneNode(true);
       if (!used) {
         used = true;
@@ -972,14 +1100,35 @@ export const dom = {
   },
 
   el<K extends string>(parent: Node, tag: K): El<K> {
+    if (claiming) return CLAIM_PARENT as El<K>;
     return parent.appendChild(inSvg(parent) ? document.createElementNS(SVG, tag) : document.createElement(tag)) as El<K>;
   },
 
   /** A handler; afterwards the component re-runs its bindings that read nothing tracked. `mods`: 1 preventDefault, 2 stopPropagation. */
   on(el: Element, event: string, handler: ((e: any) => unknown) | undefined, mods = 0): void {
+    const h = holder!;
+    // In a markup value: kept as a binding, so a claim gives it the new handler.
+    if (h === markupHolder) {
+      if (claiming) {
+        const b = take(HANDLER);
+        if (b !== undefined) {
+          b.read = handler as Binding["read"];
+          b.slot = mods;
+        }
+        return;
+      }
+      const b = new Binding(HANDLER, el, handler as Binding["read"], h);
+      b.slot = mods;
+      track(b);
+      if (DELEGATED.has(event)) {
+        const target = el as unknown as Record<symbol, unknown>;
+        target[keyOf(event)] = b;
+        target[HOLDER] = h;
+      } else el.addEventListener(event, (e) => runHandler(b, e));
+      return;
+    }
     if (mods !== 0) handler = modified(handler, mods);
     else if (handler === undefined) return;
-    const h = holder!;
     const run = handler;
     // The dispatcher asks a row with shared reads for the handler of its item.
     on(el, event, (h as Partial<Row>).reads !== undefined && DELEGATED.has(event) ? () => run : run, h);
@@ -1016,15 +1165,18 @@ export const dom = {
 
   /** Static text. */
   t(parent: Node, text: string): void {
+    if (claiming) return;
     parent.appendChild(document.createTextNode(text));
   },
 
   /** Text that follows `read()`; markup (a `RenderFragment`) renders as markup. */
   text(parent: Node, read: () => unknown): void {
+    if (claiming) return claimRead(TEXT, read);
     dom.textAt(parent.appendChild(document.createTextNode("")), read);
   },
 
   textAt(node: Text, read: () => unknown): void {
+    if (claiming) return claimRead(TEXT, read);
     track(new Binding(TEXT, node, read, holder!));
   },
 
@@ -1035,6 +1187,7 @@ export const dom = {
 
   /** Attribute `name` of `el` that follows `read()`; `false`/`null`/`undefined` remove it. */
   attr(el: Element, name: string, read: () => unknown): void {
+    if (claiming) return claimRead(ATTR, read);
     // Its element remembers the holder, so the binding finds its component wherever it re-runs.
     (el as unknown as Target)[HOLDER] = holder!;
     track(new Binding(ATTR, el, read, name));
@@ -1049,60 +1202,82 @@ export const dom = {
 
   /** `@attributes="bag"` on `el`: the bag's values set as `attr`'s; keys the next bag lacks are removed. `skip` names the attributes written after it, which win; `pre` the ones written before it as `name, value | read` pairs (restored when the bag drops the key), plus every `class:x` as `"class:x", on | read`. */
   attrs(el: Element, read: () => Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
-    let prev: Record<string, unknown> | null | undefined;
-    track(
-      new Binding(ATTR | BAG, el, () => {
-        const bag = read();
-        writeBag(el, prev, bag, skip, pre);
-        prev = bag;
-        return bag;
-      }, holder),
-    );
+    if (claiming) {
+      const b = take(ATTR | BAG);
+      if (b === undefined) return;
+      b.read = read;
+      const s = b.data as Bag;
+      s.skip = skip;
+      s.pre = pre;
+      return;
+    }
+    track(new Binding(ATTR | BAG, el, read, { at: holder!, prev: undefined, skip, pre } satisfies Bag));
   },
 
   /** `@attributes` inside `@once`: the bag set once, then the `class:x` toggles of `pre`. */
   setAttrs(el: Element, bag: Record<string, unknown> | null | undefined, skip?: readonly string[], pre?: BagPre): void {
+    if (unclaimable()) return;
     writeBag(el, undefined, bag, skip, pre);
   },
 
   /** `@attr:name` on the enclosing `el`, taken back off when the region or row holding it goes. */
   attrOf(el: Element, name: string, read: () => unknown): void {
+    if (claiming) {
+      const b = take(ATTR | OWNED);
+      if (b === undefined) return;
+      b.read = read;
+      (b.data as Owned).ctx = holder!.$ctx;
+      return;
+    }
     track(new Binding(ATTR | OWNED, el, read, { name, text: undefined, prev: undefined, added: [], ctx: holder!.$ctx } satisfies Owned));
   },
 
   /** `@if`, `@switch`, a `@for` that is not a plain list, `@{ }`: rebuilt whenever what `build` read changes. */
   region(parent: Node, build: Build): void {
+    if (unclaimable()) return;
     region(anchor(parent), anchor(parent), build, undefined, 0);
   },
 
   /** A region between `end` and the comment before it. */
   regionAt(end: Comment, build: Build): void {
+    if (unclaimable()) return;
     region(end.previousSibling as Comment, end, build, undefined, 0);
   },
 
   /** `@if`/`@switch` before `end`: `run()` gives the branch's index, `run(parent)` builds it; rebuilt only when the index changes. */
   branchAt(end: Comment, run: (parent?: Node) => number): void {
+    if (unclaimable()) return;
     region(end.previousSibling as Comment, end, run, undefined, 0, run as Build);
   },
 
   /** `@show:if`/`@show:switch` before `end`: `run()` picks a branch, `run(parent)` builds the one picked; see `#show`. */
   showAt(end: Comment, run: (parent?: Node) => number): void {
+    if (unclaimable()) return;
     const show: Show = { ctx: holder!.$ctx, scope: holder!.$scope, start: end.previousSibling as Comment, index: -1, build: run, branches: [] };
     track(new Binding(REGION | SHOW, end, run, show));
   },
 
   /** `@pause { }` in a show branch, before `end`: built once; what it holds stops while the branch is hidden. */
   pauseAt(end: Comment, build: Build): void {
+    if (unclaimable()) return;
     region(end.previousSibling as Comment, end, () => 0, undefined, PAUSE, build);
   },
 
-  /** `@once(expr)`: `read()` once, untracked, into `node`. */
+  /** `@once(expr)`: `read()` once, untracked, into `node`; in a markup value, again when a claim gives a new `read`. */
   textOnce(node: Text, read: () => unknown): void {
-    node.data = textOf(untracked(read));
+    if (claiming) {
+      const b = take(ONCE);
+      if (b === undefined) return;
+      b.read = read;
+      node = b.node as Text;
+    } else if (holder === markupHolder) track(new Binding(ONCE, node, read, holder!));
+    const text = textOf(untracked(read));
+    if (node.data !== text) node.data = text;
   },
 
   /** `@once { }`: `build` once, untracked, before `end`; its values are set, not bound. */
   onceAt(end: Comment, build: Build): void {
+    if (unclaimable()) return;
     const frag = document.createDocumentFragment();
     untracked(() => build(frag));
     end.parentNode!.insertBefore(frag, end);
@@ -1110,11 +1285,13 @@ export const dom = {
 
   /** An attribute set once, inside `@once`. */
   set(el: Element, name: string, value: unknown): void {
+    if (unclaimable()) return;
     setAttr(el, name, value);
   },
 
   /** Text set once, inside `@once`. */
   setText(node: Text, value: unknown): void {
+    if (unclaimable()) return;
     node.data = textOf(value);
   },
 
@@ -1160,6 +1337,7 @@ export const dom = {
    * on their own reads like a region's. A rejection without `catch` is reported.
    */
   awaitAt<R>(end: Comment, read: () => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
+    if (unclaimable()) return;
     const show = awaiting(end, pending, then, fail);
     track(new Binding(EFFECT, end, () => show(read()), undefined));
   },
@@ -1169,6 +1347,7 @@ export const dom = {
    * what `f` itself reads does, not on every change to what the arguments read.
    */
   awaitCallAt<A extends unknown[], R>(end: Comment, args: () => [...A], call: (...args: A) => R, pending: Build | undefined, then: ((parent: Node, value: Awaited<R>) => void) | undefined, fail: ((parent: Node, error: unknown) => void) | undefined): void {
+    if (unclaimable()) return;
     const show = awaiting(end, pending, then, fail);
     let last: A | undefined;
     const request = new Binding(EFFECT, end, () => show(call(...last!)), undefined);
@@ -1210,16 +1389,19 @@ export const dom = {
 
   /** `@for (const item of items)`: one row per item, matched by identity; a row is built once. */
   list<T>(parent: Node, items: () => Iterable<T>, build: (parent: Node, item: T) => void): void {
+    if (unclaimable()) return;
     list(anchor(parent), items, undefined, build);
   },
 
   /** A list before `end`; its rows' bindings use `reads`, shared by the rows. `empty` builds its `else`; `key` matches rows. */
   listAt<T>(end: Comment, items: () => Iterable<T>, reads: readonly ((item: T, x?: any) => any)[], build: (parent: Node, item: T) => void, empty?: Build, key?: (item: T) => unknown): void {
+    if (unclaimable()) return;
     list(end, items, reads, build, empty, key);
   },
 
   /** A loop before `end` run in place: `run` calls `pass` once per pass; `empty` builds its `else`. */
   keyedAt(end: Comment, run: (pass: Pass) => void, empty?: Build): void {
+    if (unclaimable()) return;
     const state: Keyed = { at: holder!, rows: undefined, order: NO_ROWS, empty };
     track(new Binding(KEYED, end, () => runKeyed(state, end, run), state));
   },
@@ -1229,6 +1411,7 @@ export const dom = {
    * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
    */
   component<C extends Component>(end: Comment, type: new (...args: any[]) => C, props: () => Props<C>, statics?: Props<C>, slots?: C["slots"], ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+    if (unclaimable()) return;
     const h = holder!;
     const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics: statics as Child["statics"], slots, ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: undefined };
     track(new Binding(COMPONENT, end, props as () => Record<string, unknown>, child));
@@ -1251,6 +1434,7 @@ export const dom = {
    * argument (`Object.is`) changed.
    */
   slotAt<A extends unknown[]>(end: Comment, fill: () => ((...args: A) => RenderFragment | null | undefined) | null | undefined, args?: () => [...A], fallback?: Build): void {
+    if (unclaimable()) return;
     const ctx = holder!.$ctx;
     let last: ((...args: A) => unknown) | null | undefined;
     let lastArgs: readonly unknown[] = NO_ARGS;
@@ -1272,6 +1456,7 @@ export const dom = {
    * `value()` under `name`. A change reaches them (assigned, `onParametersSet`, a pass); `fixed` keeps the first value.
    */
   cascadeAt(end: Comment, name: string, value: () => unknown, fixed: boolean, build: Build): void {
+    if (unclaimable()) return;
     const h = holder!;
     const record: CascadeRecord = { name, value: undefined, fixed, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
     if (fixed) record.value = untracked(value);
@@ -1297,6 +1482,7 @@ export const dom = {
    * as a child keyed by its route family; `route` is cascaded. A section is kept while it stays the matching one.
    */
   routesAt(end: Comment, table: RouteTable, sections: readonly RouteSection[]): void {
+    if (unclaimable()) return;
     const h = holder!;
     const ctx = h.$ctx;
     const record: CascadeRecord = { name: "route", value: undefined, fixed: false, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
@@ -1430,9 +1616,11 @@ function mountPage(s: Routes, page: Page, entry: RouteEntry): void {
   within(page, () => track(new Binding(COMPONENT, page.end, () => r.params, child)));
 }
 
-/** @internal Brands `build` as markup made in `owner`'s context (else the one building now). */
-export function markup(build: (parent: Node) => void, owner: Component | undefined): Markup {
-  (build as unknown as Record<symbol, Ctx | null>)[MARKUP] = owner ?? holder?.$ctx ?? null;
+/** @internal Brands `build` as markup made in `owner`'s context (else the one building now), from markup literal `site`. */
+export function markup(build: (parent: Node) => void, owner: Component | undefined, site?: unknown): Markup {
+  const m = build as unknown as Record<symbol, unknown>;
+  m[MARKUP] = owner ?? holder?.$ctx ?? null;
+  m[SITE] = site;
   return build as Markup;
 }
 
