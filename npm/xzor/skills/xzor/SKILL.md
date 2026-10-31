@@ -67,7 +67,7 @@ Editors: VS Code uses the xzor extension. In Zed, the `editors/zed` dev extensio
 @code {
   title = "Todos";                        // a field is a prop the parent can set
   todos: Todo[] = [];
-  changed?: EventCallback<number>;        // callback prop; calling it re-renders the parent
+  changed?: EventCallback<number>;        // callback prop; the parent's untracked reads re-check after it runs
 
   add(text: string) {                     // inside @code it is plain TypeScript: use this.
     this.todos.push({ text, done: false });
@@ -92,7 +92,7 @@ Editors: VS Code uses the xzor extension. In Zed, the `editors/zed` dev extensio
 | Loop | `@for (const item of items) @key(item.id) { <li>@item.name</li> }` (any JS `for` head; there is no `@foreach`). `<li @key="item.id">` on the body's only top element is the same key; an element `@key` anywhere else is a build error |
 | Switch | `@switch (v) { case "a": <p>A</p> break; default: <p>?</p> }` |
 | Hide instead of remove (tabs, steps) | `@show:if (tab === "a") { <form>…</form> } else { <ol>…</ol> }`, `@show:switch (step) { case 1: <form>…</form> default: <section>…</section> }`: a branch is built once, then hidden (`display: none`) and kept with its state; elements only at a branch's top level. Hidden branches stay live; `@pause` first in a branch (or `@pause { … }` around part of it) stops it while hidden |
-| Statements | `@{ const total = sum(items); }` then `@total` |
+| Statements | `@{ const total = sum(items); }` then `@total` (markup inside `@{ }` is rebuilt with its block when what it reads changes: child components and input state there are recreated) |
 | No wrapper | `<text>...</text>` |
 | Comment | `@* ... *@` |
 | Attribute | `class="item @kind"`, `disabled="@(!ok)"` (`false`/`null` removes it) |
@@ -100,7 +100,7 @@ Editors: VS Code uses the xzor extension. In Zed, the `editors/zed` dev extensio
 | Two-way binding | `<input @bind="text" />`, `@bind:event="oninput"`, checkbox `@bind="todo.done"`, numbers stay numbers |
 | Bind a component | `<Stepper @bind-value="n" />` (child has `value` and `valueChanged?: EventCallback<T>`) |
 | DOM/instance ref | `@ref="input"` with a field `input?: HTMLInputElement;` |
-| Spread attributes | `@attributes="attrs"` |
+| Spread attributes | `@attributes="attrs"` (attributes written after it win; those before it give way to the bag's keys; on a component the props spread in written order) |
 | Inline SVG | `<svg viewBox="0 0 24 24"><path d="@d" /></svg>` (keep the `<svg>` and its children in one place, not split across an `@if`/`@for`) |
 
 Props on a child: `<Child title="text" count="n + 1" onSave="save" />`. A callback prop (`onSave?: EventCallback<T>`) can also be set like a DOM event: `@onsave="save"`. A prop typed `string`, a union of string literals, an imported alias of string literals (`type Size = "s" | "m"`), or given a string default (`name: Kind = "a"`) takes text; any other type takes a TypeScript expression. Misspelled or mistyped props are build errors.
@@ -129,7 +129,7 @@ A tracked field written anywhere (this component's handler, another component, a
 
 ## Lifecycle
 
-`protected override onInitialized()` / `onInitializedAsync()` once; `onParametersSet()` / `onParametersSetAsync()` on mount and when props change; then render; then `onAfterRender(first: boolean)`. `shouldRender()` can skip a render, `dispose()` runs on removal. A resolved `...Async` promise re-renders.
+`protected override onInitialized()` / `onInitializedAsync()` once; `onParametersSet()` / `onParametersSetAsync()` on mount and when a prop changes; then build; then `onAfterRender(first: boolean)`. `shouldRender()` can skip a `stateHasChanged()` pass, `dispose()` runs on removal. A resolved `...Async` promise runs a pass.
 
 ## Slots (layouts and wrappers)
 
@@ -327,24 +327,24 @@ export class Worker extends Model {
 
 - Write plain fields. The build turns them into tracked ones, and warns on stderr when a class is not tracked: fix every warning.
 - Extend `Model`, or another model class (its fields continue after the base's). Build one with `new Worker(data)` (state Unchanged) or `new Worker()` (Detached; the first edit makes it Added). If you write a constructor, call `this.assign(data)` in it.
-- A component that reads a model while it renders draws again when that value changes, even if the change comes from a service or a timer. Do not call `stateHasChanged()` for models.
+- A binding that reads a model (a `@value`, an attribute, an `@if`) runs again when that value changes, even if the change comes from a service or a timer. Do not call `stateHasChanged()` for models.
 - `hasState(State.Modified | ...)` (`State.Detached | Unchanged | Added | Deleted | Modified`, from `.../model`; there is no `state` property), `markAdded()`/`markModified()`/`markUnchanged()`/`markDeleted()`, `changes` (what to send to the server, `null` if nothing; the state is sent as `$$`, and `$$` in constructor data sets it), `revertChanges()`, `confirmChanges(serverValues?)`, `hasErrors`, `errors` (messages per field, filled after the first edit), `hasValidChanges`.
 - Decorators: `@Validate(...)`, `@Persist` (a getter sent with the fields), `@Ignore` (kept out of `changes`), `@Untracked` (a plain field). Validators: `required`, `email`, `phone`, `maxLength`, `minLength`, `requiredIdValue`, `nonZero`, `minValue`, `maxValue`.
 - `EntitySet.track(Type, items)` is a list of models: `delete(item)`, `view` (without deleted), `changes`, `hasChanges`, `hasErrors`, `revertChanges()`, `confirmChanges(serverItems?)`. Change it with `push`, `splice`, ...; `set[i] = x` is not noticed. Read it through `view` or `for...of` (not `length`, an index or `set.map`) so the reader follows pushes and deletes.
 - Needs `"ESNext.Decorators"` in the tsconfig `lib`. Not supported: plain object graphs with cycles, one set held by two models.
 
-## Fine components
+## Components: how they update
 
-Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. There is no other mode: `@render` was removed (it is a compile error), and `@fine` is a compile error too.
+Every component is compiled with no render pass: the DOM is built once and each dynamic part updates alone when a field it reads changes. There is no other mode and no virtual DOM; `@render` was removed (it is a compile error). The base class is `Component` (`ComponentBase` still works as a deprecated alias); in a `.ts` base used through `@inherits`, extend `Component`. Markup is written in `.xzor` only.
 
 - Its `@code` fields are tracked like a model's: `count++` in a handler updates the page. Never call `stateHasChanged()` for that; call it only after changing something untracked (a plain array's `push`, an object's property).
 - Put list data in an `EntitySet` (or reassign a plain array) and loop with `@for (const x of list.view)`: rows are kept by identity, or by `@key(x.id)` (then a new object with the same key keeps its row, so immutable updates like `list.map((x) => x.id === id ? { ...x, qty } : x)` patch it in place).
 - Totals and other derived values are plain expressions (`@team.view.reduce((s, w) => s + w.hours, 0)`); no extra fields or setters.
-- The tsconfig `paths` (when used) must map `@source-crafter/xzor-runtime/model` as well as `@source-crafter/xzor-runtime`.
+- The tsconfig `paths` (when used) must map `@source-crafter/xzor-runtime`, and `@source-crafter/xzor-runtime/model` too when the app uses models.
 
 ## Hot reload and PWA
 
-- `xzor dev` hot reload: saving a `.xzor` patches the changed components in the open page and keeps their state; other changes reload. A `#private` member, a new import or a changed base class reload too, and arrow-function fields keep old code until a reload.
+- `xzor dev` hot reload: saving a `.xzor` patches the changed components in the open page and keeps their fields; a component whose template changed has its DOM rebuilt from them (focus and scroll inside it start over). Other changes reload. A `#private` member, a new import or a changed base class reload too, and arrow-function fields keep old code until a reload.
 - To make the app installable and offline, add `manifest.webmanifest` next to `index.html` (`name`, `short_name`, `start_url: "./"`, `scope: "./"`, `display`, a 192x192 and a 512x512 icon, both files must exist) and `<link rel="manifest" href="manifest.webmanifest">` in `index.html`. No decorator or code is needed.
 - `xzor build` then writes `sw.js` beside `index.html` and registers it (never in `xzor dev`). Don't edit it: it is generated and gitignored, but it must be deployed with the app. Offline loads fall back to the cached app; a new deploy shows up on the second load (the first fetches it in the background). Fix any `xzor: manifest.webmanifest: ...` warning.
 

@@ -411,7 +411,7 @@ An element marked `@leave` stays in the page with `data-leaving` until the anima
 
 ### Hot reload in `xzor dev`
 
-Save a `.xzor` file and the open page shows the change at once. Only the components you changed are updated in place, and they keep their state (field values, focus, scroll). Any other change reloads the page. A `#private` member, a new import or a changed base class also reload, and arrow-function fields keep their old code until a reload. A failed build keeps the last working page.
+Save a `.xzor` file and the open page shows the change at once. Only the components you changed are updated in place, and they keep their state (field values; a component whose template changed has its DOM rebuilt from them, so focus and scroll inside it start over). Any other change reloads the page. A `#private` member, a new import or a changed base class also reload, and arrow-function fields keep their old code until a reload. A failed build keeps the last working page.
 
 ### Installable and offline
 
@@ -545,7 +545,7 @@ ada.changes;        // { $$: 16, name: "Ada", hours: 10, payment: 200 }
 ada.revertChanges();  // back to 8; or ada.confirmChanges() after saving
 ```
 
-- **Components update by themselves.** A component that reads `ada.hours` while it renders draws again when that value changes, from anywhere: a service, a timer or another component. Several changes in a row draw once.
+- **Components update by themselves.** A binding that reads `ada.hours` (a `@value`, an attribute, an `@if`) runs again when that value changes, from anywhere: a service, a timer or another component. Several changes in a row run it once.
 - **Checks.** `@Validate(...)` fields fill `errors` (messages per field) and `hasErrors`. `hasValidChanges` tells you when it is safe to save.
 - **Lists.** `EntitySet.track(Worker, items)` is an array of models. `delete(item)`, `view` (without deleted ones), `changes`, `hasErrors`, `revertChanges()` and `confirmChanges()` work on the whole list.
 - **Limits.** `set[i] = x` is not noticed (use `push`, `splice`, ...). Read the list through `view` or `for...of` so its readers follow pushes and deletes. Add `"ESNext.Decorators"` to `lib` in `tsconfig.json`.
@@ -600,10 +600,10 @@ Counter.xzor ──xzor──▶ .xzor/Counter.xzor.ts ──tsc──▶ type e
 | Piece | Job |
 |---|---|
 | `src/parser.rs` | Reads `.xzor` into a syntax tree that remembers source positions |
-| `src/codegen.rs` | Writes the TypeScript class (`buildRenderTree`), with source maps back to your file |
+| `src/codegen.rs` | Writes the TypeScript class (`render`), with source maps back to your file |
 | `src/build.rs` | Writes `.xzor/` (components, route table, DI), runs `tsc`, then bundles with Bun |
 | `src/di.ts` | Reads your services with TypeScript's API and generates the code that creates them |
-| `runtime/index.ts` | The render tree, the diff, components, the router and the DI types |
+| `runtime/index.ts` | `Component`, the router and the DI types; `runtime/dom.ts` holds the bindings the generated code calls |
 | `src/lsp/` | The language server behind the VS Code and Zed extensions |
 
 The rules the project follows:

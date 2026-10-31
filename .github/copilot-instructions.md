@@ -39,7 +39,7 @@ When the user says deploy, deployment, release or publish, the pushed head commi
 
 - Memory and performance first: generated code and the runtime allocate no more than hand-written code would. Prefer fields on existing objects over `WeakMap`s, wrappers or extra closures.
 - Zero Rust dependencies so far. The local GNU toolchain has no `dlltool`, so crates that depend on `windows-sys` (clap, etc.) fail to build. Avoid them.
-- Pipeline: `parser.rs` (AST with `Src` spans, plus token spans) → `codegen.rs` (TypeScript class with `buildRenderTree`, plus source `Mapping`s) → `build.rs` (writes `<project>/.xzor/*.xzor.ts`, writes the route table `.xzor/routes.ts` from the `@page`s (`src/routes.rs`), runs DI analysis (`src/di.ts` → `src/di/` → `.xzor/<entry>` and `.xzor/**/*.provider.ts`), runs the tsc check, then `src/bundle.ts` via Bun).
+- Pipeline: `parser.rs` (AST with `Src` spans, plus token spans) → `codegen.rs` (TypeScript class with `render(parent)`, plus source `Mapping`s) → `build.rs` (writes `<project>/.xzor/*.xzor.ts`, writes the route table `.xzor/routes.ts` from the `@page`s (`src/routes.rs`), runs DI analysis (`src/di.ts` → `src/di/` → `.xzor/<entry>` and `.xzor/**/*.provider.ts`), runs the tsc check, then `src/bundle.ts` via Bun).
 - DI analysis goes through a persistent `di.ts --serve` process per root (`src/analyzer.rs`). `--watch` is event-driven (`src/watch.ts`, `build::watch_plan`). Both helper scripts are written to `<root>/node_modules/.cache/xzor/`.
 - Generic component uses without `T=` hoist props into `const __pN` and infer `T` with a conditional type (zero runtime cost).
 - Component styles (`src/style.rs`): `lib.rs::component_style` lowers the top-level `<style>` or sibling `X.css.xzor` and injects `data-xz` plus `--<id>-<n>`/`data-<id>-<n>` attributes into the AST's top elements, so the normal attribute codegen binds them; `build.rs` writes `.xzor/X.xzor.css` and `bundle.ts` appends its import at bundle time (never in the type-checked code).
@@ -48,5 +48,5 @@ When the user says deploy, deployment, release or publish, the pushed head commi
 - The repo's own TypeScript (`src`, `runtime`, `tests`, ...) is typed by the root `jsconfig.json`: any `tsconfig.json` would be taken for an app root.
 - Project tsconfigs need `"rootDirs": [".", ".xzor"]` and `".xzor/**/*.ts"` in `include`; DI projects also need `"ESNext.Disposable"` in `lib`.
 - A `.xzor` must not import from `./main`: `rootDirs` resolves it to the generated `.xzor/main.ts`.
-- The runtime is `runtime/index.ts`. Keep the generated code and the `RenderTreeBuilder` API in sync.
+- The runtime is `runtime/index.ts` (`Component`, router, `mount`) and `runtime/dom.ts` (the `dom` bindings). Keep the generated code and the `dom` API in sync.
 - Generated `.xzor/` folders are gitignored. Never edit them by hand.

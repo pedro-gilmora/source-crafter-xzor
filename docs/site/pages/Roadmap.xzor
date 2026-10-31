@@ -9,7 +9,7 @@
       tone: "success",
       items: [
         ["Compiler", "Razor-style .xzor to typed TypeScript classes, with source maps and a tsc check on every build."],
-        ["Fine components", "Every component: the DOM is built once and bindings update only what changed. @if and @switch keep their branch; keyed rows keep their DOM, nested rows and child components across immutable updates."],
+        ["Components", "Every component: the DOM is built once and bindings update only what changed. @if and @switch keep their branch; keyed rows keep their DOM, nested rows and child components across immutable updates."],
         ["Template features", "Keyed loops and loop else, @attr:, class: toggles, aria-* booleans, @bind:input and @bind:debounce, @await, @leave, @once."],
         ["Show and hide", "@show:if and @show:switch hide branches instead of removing them; @pause stops a hidden one."],
         ["Less work", "Cached getters (@Volatile opts out), @async and @cached components, xzor build --minify with a chunk per page."],

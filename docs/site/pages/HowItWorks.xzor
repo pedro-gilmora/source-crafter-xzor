@@ -4,10 +4,10 @@
 @code {
   readonly pieces = [
     ["parser.rs", "Reads .xzor into a syntax tree that remembers source positions."],
-    ["codegen.rs", "Writes the TypeScript class (buildRenderTree), with source maps back to your file."],
+    ["codegen.rs", "Writes the TypeScript class (render), with source maps back to your file."],
     ["build.rs", "Writes .xzor/ (components, route table, DI), runs tsc, then bundles with Bun."],
     ["di.ts", "Reads your services with TypeScript's API and generates the code that creates them."],
-    ["runtime", "The render tree, the diff, components, the router and the DI types."],
+    ["runtime", "Component, the bindings the generated code calls, the router and the DI types."],
     ["lsp", "The language server behind the VS Code extension."],
   ] as const;
 }
