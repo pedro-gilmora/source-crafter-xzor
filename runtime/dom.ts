@@ -32,7 +32,7 @@ const PAUSED = 8192;
 const STALE = 16384;
 /** A REGION that shows a value (`data` is `Content`): markup builds, else text; rebuilt only when the value is another. */
 const CONTENT = 32768;
-/** An ATTR that sets a bag (`@attributes`); `data` is the last bag. */
+/** An ATTR that sets a bag (`@attributes`); `data` is its holder. */
 const BAG = 65536;
 /** A REGION that is a `@Routes` block (`data` is `Routes`). */
 const ROUTES = 131072;
@@ -132,7 +132,7 @@ class Binding {
     public node: Node,
     /** TEXT and ATTR: the value; REGION: builds into its argument; LIST: the items. */
     public read: (a?: any, b?: any) => unknown,
-    /** TEXT: its holder; ATTR: the attribute (ITEM: its row); REGION: its `Region`; LIST: its `ListState`. */
+    /** TEXT: its holder; ATTR: its name (ITEM: its row; BAG: its holder); REGION: its `Region`; LIST: its `ListState`. */
     public data: any,
   ) {}
 
@@ -185,9 +185,9 @@ class Binding {
   // Nothing tracked tells it about changes: its component re-runs it after each of its handlers.
   #loose(): void {
     const kind = this.flags & KIND;
-    if ((this.flags & (LOOSE | DEAD | PAUSE)) !== 0 || kind === EFFECT || kind === MEMO || holder === undefined) return;
+    if ((this.flags & (LOOSE | DEAD | PAUSE)) !== 0 || kind === EFFECT || kind === MEMO) return;
     this.flags |= LOOSE;
-    ((holder.$ctx.$loose ??= []) as Binding[]).push(this);
+    (ctxOf(this).$loose ??= []).push(this);
   }
 
   #run(parent?: Node): unknown {
@@ -358,9 +358,33 @@ class Binding {
     else if (kind === LIST || kind === KEYED) for (const row of (this.data as ListState | Keyed).order) disposeAll(row);
     else if (kind === COMPONENT) $dropChild(this.data as Child);
     else if ((this.flags & OWNED) !== 0) undoAttr(this.node as Element, this.data as Owned);
+    // Dead first, so dropping its sources does not make it loose.
+    this.flags |= DEAD;
     this.#reset();
     this.#sweep();
     this.flags = DEAD;
+  }
+}
+
+/** The component `b` was built in, from its data: the same wherever it re-runs. */
+function ctxOf(b: Binding): Ctx {
+  const flags = b.flags;
+  if ((flags & CONTENT) !== 0) return (b.data as Content).owner;
+  if ((flags & SHOW) !== 0) return (b.data as Show).ctx;
+  switch (flags & KIND) {
+    case LIST:
+      return (b.data as ListState).ctx;
+    case KEYED:
+      return (b.data as Keyed).at.$ctx;
+    case COMPONENT:
+      return (b.data as Child).ctx;
+    case ATTR:
+      if ((flags & (ITEM | BAG)) !== 0) return (b.data as Holder).$ctx;
+      if ((flags & OWNED) !== 0) return (b.data as Owned).ctx;
+      return ((b.node as Target)[HOLDER] as Holder).$ctx;
+    // TEXT: its holder; REGION: its region.
+    default:
+      return (b.data as Holder).$ctx;
   }
 }
 
@@ -550,7 +574,7 @@ function setAttr(el: Element, name: string, value: unknown): void {
 }
 
 /** `class` adds the tokens the element lacks; other names keep the element's value to restore. */
-type Owned = { name: string; text: string | undefined; prev: string | null | undefined; added: string[] };
+type Owned = { name: string; text: string | undefined; prev: string | null | undefined; added: string[]; ctx: Ctx };
 
 // ponytail: two `@attr:class` adding one token share it, so the first undone removes it for both.
 function ownAttr(el: Element, s: Owned, value: unknown): void {
@@ -1008,6 +1032,8 @@ export const dom = {
 
   /** Attribute `name` of `el` that follows `read()`; `false`/`null`/`undefined` remove it. */
   attr(el: Element, name: string, read: () => unknown): void {
+    // Its element remembers the holder, so the binding finds its component wherever it re-runs.
+    (el as unknown as Target)[HOLDER] = holder!;
     track(new Binding(ATTR, el, read, name));
   },
 
@@ -1027,7 +1053,7 @@ export const dom = {
         writeBag(el, prev, bag, skip, pre);
         prev = bag;
         return bag;
-      }, undefined),
+      }, holder),
     );
   },
 
@@ -1038,7 +1064,7 @@ export const dom = {
 
   /** `@attr:name` on the enclosing `el`, taken back off when the region or row holding it goes. */
   attrOf(el: Element, name: string, read: () => unknown): void {
-    track(new Binding(ATTR | OWNED, el, read, { name, text: undefined, prev: undefined, added: [] } satisfies Owned));
+    track(new Binding(ATTR | OWNED, el, read, { name, text: undefined, prev: undefined, added: [], ctx: holder!.$ctx } satisfies Owned));
   },
 
   /** `@if`, `@switch`, a `@for` that is not a plain list, `@{ }`: rebuilt whenever what `build` read changes. */

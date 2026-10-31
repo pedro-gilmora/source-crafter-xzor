@@ -2813,3 +2813,60 @@ test("a @pause region holding a child component freezes the child while hidden a
   await tick();
   expect(el.querySelector("i")!.textContent).toBe("4:5");
 });
+
+
+// A binding that goes loose joins the list of the component it was built in, wherever it is re-run.
+class LooseKid extends Component {
+  declare slots: { default?: () => Markup };
+  protected override render(__p: Node): void {
+    dom.slotAt(dom.anchors(__p), () => this.slots.default);
+  }
+}
+class LooseHost extends Component {
+  #t = "t"; get t(): string { Component.$reader?.(this, 0); return this.#t; } set t(v: string) { const p = this.#t; if (Component.same(p, v)) return; this.#t = v; this.$changed(0, p); }
+  static { Component.$define(this, ["t"]); }
+  mode = true;
+  plain = "p";
+  protected override render(__p: Node): void {
+    // The child binding reads tracked state, so it is not what refreshes the slot content after a handler.
+    dom.component(dom.anchor(__p), LooseKid, () => ({ x: this.t }), undefined, {
+      default: () => Component.fragment((__p) => dom.text(dom.el(__p, "b"), () => (this.mode ? this.t : this.plain)), this),
+    });
+    const button = dom.el(__p, "button");
+    dom.on(button, "click", () => (this.plain = "z"));
+  }
+}
+
+test("slot content that goes loose in the child's pass is refreshed after the parent's handlers", () => {
+  const el = host();
+  const h = mount(LooseHost, el);
+  expect(el.querySelector("b")!.textContent).toBe("t");
+  h.mode = false;
+  h.stateHasChanged();
+  expect(el.querySelector("b")!.textContent).toBe("p");
+  el.querySelector("button")!.click();
+  expect(el.querySelector("b")!.textContent).toBe("z");
+});
+
+class QueuedLoose extends Component {
+  #t = 1; get t(): number { Component.$reader?.(this, 0); return this.#t; } set t(v: number) { const p = this.#t; if (Component.same(p, v)) return; this.#t = v; this.$changed(0, p); }
+  static { Component.$define(this, ["t"]); }
+  flag = true;
+  plain = "p";
+  protected override render(__p: Node): void {
+    dom.text(dom.el(__p, "b"), () => (this.flag ? this.t : this.plain));
+    dom.on(dom.el(__p, "button"), "click", () => (this.plain = "z"));
+  }
+}
+
+test("a binding that goes loose in a queued flush is refreshed after its component's next handler", async () => {
+  const el = host();
+  const c = mount(QueuedLoose, el);
+  expect(el.querySelector("b")!.textContent).toBe("1");
+  c.flag = false;
+  c.t = 2;
+  await tick();
+  expect(el.querySelector("b")!.textContent).toBe("p");
+  el.querySelector("button")!.click();
+  expect(el.querySelector("b")!.textContent).toBe("z");
+});
