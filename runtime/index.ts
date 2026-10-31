@@ -1721,10 +1721,15 @@ function start(s: Child, c: Component): void {
 
 // `@catch`: the nodes of the failed build never reached the DOM, so only the anchor stays.
 function abandon(s: Child, c: Component, err: unknown): void {
-  if (s.instance === c) {
+  const mine = s.instance === c;
+  if (mine) {
     s.instance = undefined;
     s.phase = FAILED;
     unsubscribeCascades(c, s.scope);
+  }
+  // The failure first: a dispose error after it must not hide it.
+  fail(s, err);
+  if (mine) {
     try {
       fineHooks.dispose(c);
     } catch (disposeErr) {
@@ -1732,7 +1737,6 @@ function abandon(s: Child, c: Component, err: unknown): void {
     }
     c.$end = undefined;
   }
-  fail(s, err);
 }
 
 function wait(s: Child, made: Promise<Component>): void {
@@ -1770,8 +1774,12 @@ function arriveChild(s: Child, c: Component): void {
     start(s, c);
   } catch (err) {
     abandon(s, c, err);
-  } finally {
+  }
+  // An after-render hook that throws leaves the component mounted; the error is reported, not thrown into the promise.
+  try {
     close(mark);
+  } catch (err) {
+    fail(s, err);
   }
 }
 

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import {
   Component,
   type IApplication,
+  type El,
   type RenderFragment,
-  type RenderTreeBuilder,
   Import,
   Run,
   Scoped,
@@ -11,6 +11,7 @@ import {
   SharedInstance,
   Singleton,
   Transient,
+  dom,
   mount,
   polyfillDisposeSymbols,
 } from "./index";
@@ -32,10 +33,8 @@ test("polyfillDisposeSymbols fills missing dispose symbols and keeps native ones
 // Written the way xzor emits components that take injected services.
 
 class Hello extends Component {
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("p");
-    b.addText("hello");
-    b.closeElement();
+  protected override render(__p: Node): void {
+    __p.appendChild(__hello());
   }
 }
 
@@ -44,41 +43,46 @@ class Needs extends Component {
   constructor(readonly dep: string) {
     super();
   }
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("b");
-    b.addContent(this.dep);
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __needs() as El<"b">;
+    dom.textAt(_e0.firstChild as Text, () => this.dep);
+    __p.appendChild(_e0);
   }
 }
 
 class Holder extends Component {
   declare slots: { default?: () => RenderFragment };
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("div");
-    b.addContent(this.slots.default?.() ?? null);
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __holder() as El<"div">;
+    const _e1 = _e0.firstChild!.nextSibling as Comment;
+    dom.slotAt(_e1, () => this.slots.default);
+    __p.appendChild(_e0);
   }
 }
 
 class Middle extends Component {
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.addComponent(Needs, {});
+  protected override render(__p: Node): void {
+    dom.component(dom.anchor(__p), Needs, (): Partial<Needs> => ({}));
   }
 }
 
 class Tree extends Component {
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.addComponent(Middle, {});
-    b.addComponent(Holder, {}, {
-      default: () => Component.fragment((__b) => {
-        __b.addComponent(Needs, {});
-      }),
+  protected override render(__p: Node): void {
+    dom.component(dom.anchor(__p), Middle, (): Partial<Middle> => ({}));
+    dom.component(dom.anchor(__p), Holder, (): Partial<Holder> => ({}), undefined, {
+      default: () => Component.$fragment((__p) => {
+        dom.component(dom.anchor(__p), Needs, (): Partial<Needs> => ({}));
+      }, this),
     });
   }
 }
 
+const __hello = dom.template([["p", 0, "hello"]]);
+const __needs = dom.template([["b", 0, ""]]);
+const __holder = dom.template([["div", 0, null, null]]);
+
 const host = () => document.createElement("div");
-// Components keep an empty anchor comment after their nodes; compare markup without them.
+// Components keep empty anchor comments around their nodes; compare markup without them.
 const html = (el: Element) => el.innerHTML.replaceAll("<!---->", "");
 
 test("mount accepts an element id", () => {
@@ -153,20 +157,24 @@ test("decorators are no-ops", () => {
   expect(typeof SharedInstance).toBe("symbol");
 });
 
+// `<i>before</i>`, a region holding `Needs`, `<u>after</u>`.
 class Late extends Component {
   show = true;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("i");
-    b.addText("before");
-    b.closeElement();
-    b.openRegion();
-    if (this.show) b.addComponent(Needs, {});
-    b.closeRegion();
-    b.openElement("u");
-    b.addText("after");
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __late();
+    const _e1 = _e0.firstChild!.nextSibling!.nextSibling as Comment;
+    dom.branchAt(_e1, (__p) => {
+      if (this.show) {
+        if (!__p) return 0;
+        dom.component(dom.anchor(__p), Needs, (): Partial<Needs> => ({}));
+      }
+      return 1;
+    });
+    __p.appendChild(_e0);
   }
 }
+
+const __late = dom.template([["i", 0, "before"], null, null, ["u", 0, "after"]]);
 
 test("async component fills its place when it arrives", async () => {
   const arrival = Promise.resolve(new Needs("late"));
@@ -207,14 +215,14 @@ test("async component keeps the latest props and lifecycle when it arrives", asy
     protected override onAfterRender(first: boolean): void {
       log.push(`after ${this.text} ${first}`);
     }
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addContent(this.text);
+    protected override render(__p: Node): void {
+      dom.text(__p, () => this.text);
     }
   }
   class Outer extends Component {
     text = "one";
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addComponent(Label, { text: this.text });
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Label, (): Partial<Label> => ({ text: this.text }));
     }
   }
   let resolve!: (c: Component) => void;
@@ -271,18 +279,26 @@ test("components implementing Disposable are disposed on removal", () => {
       log.push("asyncDispose");
       return Promise.resolve();
     }
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addText("x");
+    protected override render(__p: Node): void {
+      dom.t(__p, "x");
     }
   }
   class Switch extends Component {
     show = true;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openRegion();
-      if (this.show) b.addComponent(Both, {});
-      b.closeRegion();
+    protected override render(__p: Node): void {
+      const _e0 = __switch();
+      const _e1 = _e0.firstChild!.nextSibling as Comment;
+      dom.branchAt(_e1, (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Both, (): Partial<Both> => ({}));
+        }
+        return 1;
+      });
+      __p.appendChild(_e0);
     }
   }
+  const __switch = dom.template([null, null]);
   const page = mount(Switch, host());
   page.show = false;
   page.stateHasChanged();
@@ -334,20 +350,30 @@ const trackedNeeds = (log: string[]) =>
 
 class Shell extends Component {
   show = true;
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openRegion();
-    if (this.show) b.addComponent(Wrapper, {});
-    b.closeRegion();
+  protected override render(__p: Node): void {
+    const _e0 = __shell();
+    const _e1 = _e0.firstChild!.nextSibling as Comment;
+    dom.branchAt(_e1, (__p) => {
+      if (this.show) {
+        if (!__p) return 0;
+        dom.component(dom.anchor(__p), Wrapper, (): Partial<Wrapper> => ({}));
+      }
+      return 1;
+    });
+    __p.appendChild(_e0);
   }
 }
 
 class Wrapper extends Component {
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("section");
-    b.addComponent(Needs, {});
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __wrapper() as El<"section">;
+    dom.component(_e0.firstChild as Comment, Needs, (): Partial<Needs> => ({}));
+    __p.appendChild(_e0);
   }
 }
+
+const __shell = dom.template([null, null]);
+const __wrapper = dom.template([["section", 0, null]]);
 
 test("pending component inside a removed ancestor is disposed once and nothing is inserted", async () => {
   const log: string[] = [];
@@ -374,29 +400,26 @@ test("[Symbol.asyncDispose] runs once for a component removed before arrival", a
   expect(log.filter((entry) => entry === "asyncDispose")).toHaveLength(1);
 });
 
-test("pending component moved by a keyed diff arrives in its new position", async () => {
+test("pending component in a keyed row that moved arrives in its new position", async () => {
+  type Row = { id: number; pending: boolean };
   class Keyed extends Component {
-    flip = false;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      const item = () => {
-        b.openElement("i");
-        b.setKey(2);
-        b.addText("x");
-        b.closeElement();
-      };
-      if (this.flip) {
-        item();
-        b.addComponent(Needs, {}, undefined, { key: 1 });
-      } else {
-        b.addComponent(Needs, {}, undefined, { key: 1 });
-        item();
-      }
+    rows: Row[] = [{ id: 1, pending: true }, { id: 2, pending: false }];
+    protected override render(__p: Node): void {
+      const _e0 = __keyed();
+      const _e1 = _e0.firstChild!.nextSibling as Comment;
+      dom.listAt(_e1, () => this.rows, [], (__p, row: Row) => {
+        if (row.pending) dom.component(dom.anchor(__p), Needs, (): Partial<Needs> => ({}));
+        else __p.appendChild(__item());
+      }, undefined, (row) => row.id);
+      __p.appendChild(_e0);
     }
   }
+  const __keyed = dom.template([null, null]);
+  const __item = dom.template([["i", 0, "x"]]);
   const late = deferred();
   const el = host();
   const page = mount(Keyed, el, { createComponent: (type) => (type === Needs ? late.promise : undefined) });
-  page.flip = true;
+  page.rows = [...page.rows].reverse();
   page.stateHasChanged();
   late.resolve(new Needs("late"));
   await late.promise;
@@ -475,14 +498,14 @@ test("a throwing dispose hook while discarding the partial tree does not lose th
   }
   class Parent extends Component {
     static readonly inject = ["dep"] as const;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addComponent(Fragile, {});
-      b.addComponent(Faulty, {});
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Fragile, (): Partial<Fragile> => ({}));
+      dom.component(dom.anchor(__p), Faulty, (): Partial<Faulty> => ({}));
     }
   }
   class Host extends Component {
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addComponent(Parent, {});
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Parent, (): Partial<Parent> => ({}));
     }
   }
   const late = deferred();
@@ -510,19 +533,27 @@ test("an arriving component whose child throws can be removed and disposes the c
   }
   class Parent extends Component {
     static readonly inject = ["dep"] as const;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.addComponent(Sound, {});
-      b.addComponent(Faulty, {});
+    protected override render(__p: Node): void {
+      dom.component(dom.anchor(__p), Sound, (): Partial<Sound> => ({}));
+      dom.component(dom.anchor(__p), Faulty, (): Partial<Faulty> => ({}));
     }
   }
   class Host extends Component {
     show = true;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openRegion();
-      if (this.show) b.addComponent(Parent, {});
-      b.closeRegion();
+    protected override render(__p: Node): void {
+      const _e0 = __host();
+      const _e1 = _e0.firstChild!.nextSibling as Comment;
+      dom.branchAt(_e1, (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Parent, (): Partial<Parent> => ({}));
+        }
+        return 1;
+      });
+      __p.appendChild(_e0);
     }
   }
+  const __host = dom.template([null, null]);
   const late = deferred();
   const el = host();
   const page = mount(Host, el, { createComponent: (type) => (type === Parent ? late.promise : undefined) });
@@ -553,12 +584,20 @@ test("a rejected [Symbol.asyncDispose] surfaces the error", async () => {
   }
   class Switch extends Component {
     show = true;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openRegion();
-      if (this.show) b.addComponent(Failing, {});
-      b.closeRegion();
+    protected override render(__p: Node): void {
+      const _e0 = __switch();
+      const _e1 = _e0.firstChild!.nextSibling as Comment;
+      dom.branchAt(_e1, (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Failing, (): Partial<Failing> => ({}));
+        }
+        return 1;
+      });
+      __p.appendChild(_e0);
     }
   }
+  const __switch = dom.template([null, null]);
   const page = mount(Switch, host());
   const thrown = await thrownFrom(() => {
     page.show = false;
