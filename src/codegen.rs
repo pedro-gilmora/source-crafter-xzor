@@ -1033,11 +1033,26 @@ impl<'p> Gen<'p> {
     /// decorators (`blanks`) blanked out.
     fn code_block(&mut self, parts: &[CodePart], blanks: &[(usize, usize)]) -> Result<M, String> {
         let mut out = M::default();
+        // The statement being scanned: a `static` member's markup has no instance to own it.
+        let mut statement = String::new();
+        let outer = self.ownerless;
         for part in parts {
             out = match part {
-                CodePart::Ts(s) => out.add(blanked(s, blanks)),
+                CodePart::Ts(s) => {
+                    match s.rfind([';', '{', '}']) {
+                        Some(end) => statement = s[end + 1..].to_string(),
+                        None => statement.push_str(s),
+                    }
+                    out.add(blanked(s, blanks))
+                }
                 // Markup in `@code` is plain TypeScript scope: no `this.` rewriting.
-                CodePart::Markup(el) => out.add(self.dom_fragment(std::slice::from_ref(&Node::Element(el.clone())), false, &[])?),
+                CodePart::Markup(el) => {
+                    let in_static = statement.trim_start().strip_prefix("static").is_some_and(|r| r.starts_with(char::is_whitespace));
+                    self.ownerless = outer || in_static;
+                    let fragment = self.dom_fragment(std::slice::from_ref(&Node::Element(el.clone())), false, &[]);
+                    self.ownerless = outer;
+                    out.add(fragment?)
+                }
                 CodePart::Render(_) => return Err("markup statements and `@:` lines belong in `@{ }`, not `@code`".into()),
             };
         }
@@ -4601,6 +4616,25 @@ mod tests {
         // A markup value held in a member is an expression: it is read, not set once.
         let held = one("<Card header=\"@frag\" />");
         assert!(held.contains("(): Partial<Card> => ({ header: this.frag }));"), "{held}");
+    }
+
+    #[test]
+    fn markup_in_a_static_initializer_has_no_owner() {
+        let card = [("Card", "@code { onPick?: EventCallback<number>; }")];
+        let g = gen_with("@code {\n  static icon = <b/>;\n  static pick = <Card onPick=\"@(() => 1)\" />;\n  own = <i/>;\n}\n<p/>", &card).code;
+        assert!(g.contains("static icon = __Component.$fragment((__p) => {\n    const _e0 = __t0() as El<\"b\">;\n    __p.appendChild(_e0);\n  });"), "{g}");
+        assert!(g.contains("{ onPick: __dom.callback(undefined, () => 1) }") && !g.contains("callback(this"), "{g}");
+        // An instance member keeps its owner.
+        assert!(g.contains("own = __Component.$fragment((__p) => {\n    const _e2 = __t1() as El<\"i\">;\n    __p.appendChild(_e2);\n  }, this);"), "{g}");
+    }
+
+    #[test]
+    fn markup_valued_props_literal_markup_is_not_an_attribute_form() {
+        let card = [("Card", "@code { header?: RenderFragment; }")];
+        let one = |tag: &str| gen_with(&format!("@code {{ pick(t: number) {{ return t ? <i/> : <u/>; }} }}\n{tag}"), &card).code;
+        // An expression yielding markup is read on each pass.
+        let read = one("<Card header=\"@pick(1)\" />");
+        assert!(read.contains("(): Partial<Card> => ({ header: this.pick(1) }));"), "{read}");
     }
 
     #[test]
