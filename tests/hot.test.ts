@@ -148,6 +148,49 @@ test("a template edit shows after apply with the instance's state kept", () => {
   expect(calls.reload).toBe(0);
 });
 
+/** A component as codegen emits it: static markup in a module-level `__t0`, so an edit to it leaves `render` as it was. */
+const templated = (text: string) => {
+  const __t0 = dom.template([["b", 0, text, ""]]);
+  return class C extends Component {
+    n = 0;
+
+    protected override render(__p: Node): void {
+      const b = __t0() as Element;
+      dom.textAt(b.lastChild as Text, () => this.n);
+      __p.appendChild(b);
+      const button = dom.el(__p, "button");
+      dom.on(button, "click", () => (this.n = 5));
+    }
+  };
+};
+
+test("a static text edit inside a template shows after apply with the state kept", () => {
+  const { host, hot, calls } = setup();
+  const C = templated("n:");
+  hot.register(ID, C, imports);
+  const root = mount(C, host);
+  click(host.querySelector("button")!);
+  expect(host.textContent).toBe("n:5");
+
+  const update = (text: string) => ({
+    id: ID,
+    code: `class C extends Component {
+      n = 0;
+      ${String((C.prototype as any).render)}
+    }
+const __t0 = dom.template([["b", 0, ${JSON.stringify(text)}, ""]]);
+return C;`,
+    imports: IMPORTS,
+  });
+  expect(hot.apply([update("count:")])).toBe(true);
+  expect(host.textContent).toBe("count:5");
+  expect(root.n).toBe(5);
+  // The next edit compares with this one, not with the original.
+  expect(hot.apply([update("total:")])).toBe(true);
+  expect(host.textContent).toBe("total:5");
+  expect(calls.reload).toBe(0);
+});
+
 test("an edited child is rebuilt in place and keeps its instance and state", () => {
   const { host, hot } = setup();
   const kids: Kid[] = [];

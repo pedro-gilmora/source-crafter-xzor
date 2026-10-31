@@ -16,9 +16,13 @@ export type HotRegistry = {
   apply(updates: HotUpdate[]): boolean;
 };
 
-type Entry = { cls: Function; imports: () => Record<string, unknown> };
+// `templates`: the `const __tN = ...template(...)` lines of the last applied update; none until one is.
+type Entry = { cls: Function; imports: () => Record<string, unknown>; templates?: string };
 type Instance = { stateHasChanged(): void };
-type Patch = { cls: Function; fresh: Function; fields: string[]; template: boolean };
+type Patch = { entry: Entry; cls: Function; fresh: Function; fields: string[]; template: boolean; templates: string };
+
+// Static markup lives in module-level constants after the class, not in `render`'s source.
+const TEMPLATES = /^const __t\d+ = .*$/gm;
 
 // `#private` names are per class body: the new methods could not reach the live instances' fields.
 const PRIVATE = /(^|[^\w$"'`])#[A-Za-z_$]/;
@@ -81,9 +85,11 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
       if (Object.getPrototypeOf(fresh) !== Object.getPrototypeOf(entry.cls)) return undefined;
       // The new field initializers; a component that needs constructor arguments contributes none.
       const probe = construct(fresh);
-      // A template edit changes `render`: its DOM is built again, not just re-run.
-      const template = String(entry.cls.prototype.render) !== String(fresh.prototype.render);
-      return { cls: entry.cls, fresh, fields: probe ? Object.keys(probe) : [], template };
+      // A template edit changes `render` or its template constants: its DOM is built again, not just re-run.
+      // The first update has no earlier constants to compare with, so any template counts as edited.
+      const templates = (update.code.match(TEMPLATES) ?? []).join("\n");
+      const template = String(entry.cls.prototype.render) !== String(fresh.prototype.render) || (entry.templates ?? "") !== templates;
+      return { entry, cls: entry.cls, fresh, fields: probe ? Object.keys(probe) : [], template, templates };
     } catch {
       return undefined;
     }
@@ -97,7 +103,8 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
       patches.push(patch);
     }
     try {
-      for (const { cls, fresh } of patches) {
+      for (const { entry, cls, fresh, templates } of patches) {
+        entry.templates = templates;
         copyOwn(fresh.prototype, cls.prototype, (key) => key === "constructor");
         copyOwn(fresh, cls, (key) => typeof key === "string" && STATICS.has(key));
         observe(cls);
