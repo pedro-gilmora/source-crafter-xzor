@@ -86,3 +86,4 @@ mounts with 32% less script and holds 69-71% less heap, and updates 1000-7000 ti
 
 - 2026-10-29: an element `@key="expr"` that is the only top element (or component) of a `@for`/`@while` body keys that loop, like `@key(expr)` after the head (both at once is an error); any other element `@key` is a build error instead of being ignored.
 - 2026-10-30: fine components are the only components: the virtual DOM, islands, `@fine`, `FineComponent` and `buildRenderTree` are gone; child components, slots, markup values, `@cascade`, `@Routes`, `@attributes` and event modifiers are bindings; `runtime/fine.ts` is `runtime/dom.ts` (`dom`), see docs/superpowers/specs/2026-10-30-one-renderer-design.md.
+- 2026-10-30: markup values and markup statements in `@{ }` keep their DOM (sites, claims, pieces) instead of rebuilding their region, see docs/superpowers/specs/2026-10-30-markup-keeps-dom-design.md.

@@ -560,7 +560,7 @@ Components are compiled without a render pass. The DOM is built once; each `@val
 <b>@team.view.reduce((sum, w) => sum + w.hours, 0)</b>
 ```
 
-One exception: markup made fresh each time is rebuilt. Markup statements in `@{ }` and a method or getter that returns new markup (`@renderItem(x)`) rebuild their region whenever what they read changes, so child components and input state (focus, typed text) inside are created again. Hold the markup in a field, or use a child component, to keep them.
+Markup made at run time keeps its DOM too. A method or getter that returns markup (`@renderItem(x)`), a slot fill and the markup statements in `@{ }` update the nodes they built when what they read changes, so child components and input state (focus, typed text, scroll) inside stay. Only showing markup from another place in the template builds it anew.
 
 The component's own fields are tracked like a model's, so `count++` in a handler is enough. See [`examples/counter/pages/TeamTracked.xzor`](examples/counter/pages/TeamTracked.xzor).
 

@@ -180,3 +180,7 @@ Gates: the fine cells do not regress on heap, change, keystroke or grow+sHC; the
 - `runtime/router.test.ts` and `runtime/index.test.ts` are large and written against the builder; porting them is most of the work. Mitigation: port mechanically to `render(parent)` components, keep assertions.
 - Slot content and handlers crossing components (owner context) is where subtle bugs hide: fragments carry their creator's context (above), with tests for a handler in slot content updating the parent's loose bindings.
 - Hot reload of templates: covered by `tests/hot.test.ts` and `bundle-hot`.
+
+## Later changes
+
+- 2026-10-30: Ruling 10's rebuild of same-site markup is superseded: same-site markup keeps its DOM, see docs/superpowers/specs/2026-10-30-markup-keeps-dom-design.md.
