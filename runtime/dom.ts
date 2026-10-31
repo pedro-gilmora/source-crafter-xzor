@@ -19,6 +19,8 @@ const COMPONENT = 8;
 const HANDLER = 9;
 /** `@once(expr)` in a markup value: set when built, and again only by a claim. */
 const ONCE = 10;
+/** An element `@ref` in a markup value: `read` sets the target, `node` is the element; a claim sets the new target to it. */
+const REF = 11;
 /** `model` is a map of deps: the binding read more than one source. */
 const MANY = 32;
 /** In its component's `loose` list: its last run read nothing tracked. */
@@ -334,6 +336,7 @@ class Binding {
         return;
       case HANDLER:
       case ONCE:
+      case REF:
         return;
       default:
         this.stateHasChanged();
@@ -1376,6 +1379,19 @@ export const dom = {
   el<K extends string>(parent: Node, tag: K): El<K> {
     if (claiming) return CLAIM_PARENT as El<K>;
     return parent.appendChild(inSvg(parent) ? document.createElementNS(SVG, tag) : document.createElement(tag)) as El<K>;
+  },
+
+  /** `@ref` on an element: `set` gives the target the element. In a markup value a claim gives the new target the element it kept. */
+  ref<E extends Element>(el: E, set: (el: E) => void): void {
+    if (claiming) {
+      const b = take(REF);
+      if (b === undefined) return;
+      b.read = set as Binding["read"];
+      set(b.node as E);
+      return;
+    }
+    if (marking) track(new Binding(REF, el, set as Binding["read"], holder!));
+    set(el);
   },
 
   /** A handler; afterwards the component re-runs its bindings that read nothing tracked. `mods`: 1 preventDefault, 2 stopPropagation. */

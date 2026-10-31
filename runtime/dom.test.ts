@@ -1662,6 +1662,7 @@ class Claims extends Component {
   override $watch(dep: object): void { claimSubs++; super.$watch(dep); }
   override $unwatch(dep: object): void { claimSubs--; super.$unwatch(dep); }
   log: string[] = [];
+  refs: Record<string, Element> = {};
   item(x: string, site: unknown = __claim): Markup {
     return Component.fragment((__p) => {
       const _e0 = __claim() as HTMLElement;
@@ -1674,6 +1675,7 @@ class Claims extends Component {
       dom.textAt(_e2, () => `${x}${this.n}`);
       dom.attr(_e3, "placeholder", () => x);
       dom.attrs(_e3, () => ({ "data-k": x }));
+      dom.ref(_e3, (e) => { this.refs[x] = e; });
       dom.on(_e3, "change", () => this.log.push(`change ${x}`), 2);
       dom.on(_e4, "click", () => this.log.push(`click ${x}`), 1);
       dom.textOnce(_e5, () => x);
@@ -1741,6 +1743,20 @@ test("claim: a focused input keeps focus and its typed value", async () => {
   expect(document.activeElement).toBe(input);
   expect(input.value).toBe("typed");
   input.blur();
+});
+
+test("claim: a ref is the element the value keeps, never the template's master", async () => {
+  const el = host();
+  const c = mount(Claims, el);
+  c.view = c.item("a");
+  await tick();
+  const input = el.querySelector("input")!;
+  expect(c.refs.a).toBe(input);
+  c.view = c.item("b");
+  await tick();
+  // The new target (another key) gets the element on screen.
+  expect(c.refs.b).toBe(input);
+  expect(el.querySelector("input")).toBe(input);
 });
 
 test("claim: handlers (delegated and not, with modifiers) use the new value", async () => {
