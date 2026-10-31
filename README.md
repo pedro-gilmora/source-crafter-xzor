@@ -560,7 +560,7 @@ Components are compiled without a render pass. The DOM is built once; each `@val
 <b>@team.view.reduce((sum, w) => sum + w.hours, 0)</b>
 ```
 
-The component's own fields are tracked like a model's, so `count++` in a handler is enough. See [`examples/counter/pages/TeamFine.xzor`](examples/counter/pages/TeamFine.xzor).
+The component's own fields are tracked like a model's, so `count++` in a handler is enough. See [`examples/counter/pages/TeamTracked.xzor`](examples/counter/pages/TeamTracked.xzor).
 
 ## A design kit: xzor-ui
 

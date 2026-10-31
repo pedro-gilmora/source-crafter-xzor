@@ -191,7 +191,7 @@ test("a markup value in @expr renders as markup and follows what it reads", asyn
   expect(el.querySelector("div u")!.textContent).toBe("2");
 });
 
-test("after its own handler, a fine component re-runs the bindings that read nothing tracked", async () => {
+test("after its own handler, a component re-runs the bindings that read nothing tracked", async () => {
   const work = { changes: 0 };
   let tracked = 0;
   class Page extends Component {

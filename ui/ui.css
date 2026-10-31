@@ -95,7 +95,7 @@
     --xz-dur-2: 200ms;
     --xz-dur-3: 320ms;
 
-    /* What glass has to blur: one light from above, two quiet washes of color, and a fine grain. */
+    /* What glass has to blur: one light from above, two quiet washes of color, and a faint grain. */
     --xz-backdrop:
       radial-gradient(90% 55% at 50% -12%, light-dark(oklch(100% 0 0 / 0.9), oklch(34% 0.05 var(--xz-hue) / 0.55)), transparent 70%),
       radial-gradient(45% 50% at 100% 8%, light-dark(oklch(72% 0.13 var(--xz-hue) / 0.22), oklch(60% 0.13 var(--xz-hue) / 0.22)), transparent 70%),

@@ -1,4 +1,4 @@
-@page "/team-fine"
+@page "/team-tracked"
 @import { EntitySet } from "@source-crafter/xzor-runtime/model"
 @import { Worker } from "../models/worker"
 
@@ -34,7 +34,7 @@
 }
 
 <div class="team">
-  <h2>Team (fine)</h2>
+  <h2>Team (tracked fields)</h2>
   @for (const worker of team.view) {
     <div class="worker">
       <input class="name" @bind="worker.name" @bind:event="oninput" />

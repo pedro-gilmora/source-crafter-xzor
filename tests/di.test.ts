@@ -1279,7 +1279,7 @@ test.each([
   expect(out).toContain("Posts is an @Endpoints class: use import type");
 });
 
-test("import type of an @Endpoints class in browser code is fine", () => {
+test("import type of an @Endpoints class in browser code is allowed", () => {
   const theme = 'import type { Posts } from "./api/posts";\n\nexport class Theme {\n  dark = false;\n  posts?: Posts;\n}\n';
   const dir = serverProject("value-type", { ...leakFiles, "app.ts": leakApp(""), "theme.ts": theme });
   const { code, out } = xzorBuild(dir);

@@ -10,10 +10,6 @@
 @typeparam T extends object
 <!-- <~--------- keyword.control.directive.xzor
 <!--       ^ entity.name.type.parameter.xzor
-@fine // no render pass
-<!-- <- keyword.control.transition.xzor
-<!-- <~---- keyword.control.directive.xzor
-<!--  ^^^^^^^^^^^^^^^^^ comment.line.double-slash.xzor
 @async
 <!-- <~----- keyword.control.directive.xzor
 @cached

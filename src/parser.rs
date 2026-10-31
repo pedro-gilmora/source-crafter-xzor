@@ -46,7 +46,7 @@ pub fn parse(src: &str) -> PResult<(Document, Vec<Token>)> {
         b: src.as_bytes(),
         pos: 0,
         tokens: Vec::new(),
-        doc: Document { fine: true, ..Document::default() },
+        doc: Document::default(),
         case_break: false,
         in_component: false,
         bound: Vec::new(),
@@ -554,8 +554,8 @@ impl<'a> Parser<'a> {
                 match word {
                     "async" => self.doc.lazy = true,
                     "cached" => self.doc.cached = true,
-                    "render" => return Err(ParseError { message: "@render was removed: every component is compiled with fine bindings; delete this line".into(), offset: at }),
-                    _ => {}
+                    "render" => return Err(ParseError { message: "@render was removed: every component is compiled with DOM bindings; delete this line".into(), offset: at }),
+                    _ => return Err(ParseError { message: "`@fine` no longer exists: every component renders this way; remove it".into(), offset: at }),
                 }
                 while matches!(self.peek(), Some(b' ' | b'\t')) {
                     self.pos += 1;
@@ -2049,14 +2049,13 @@ after"#;
     }
 
     #[test]
-    fn fine_directive_marks_the_document() {
-        let (doc, _) = parse("@fine // no render pass\n<p>@x</p>").unwrap();
-        assert!(doc.fine);
-        assert_eq!(doc.nodes.len(), 1);
-        // Every component is fine; `@fine` is a leftover that changes nothing, `@render` is gone.
-        assert!(parse("<p/>").unwrap().0.fine);
+    fn removed_directives_are_errors() {
+        let msg = "`@fine` no longer exists: every component renders this way; remove it";
+        let err = parse("<p/>\n@fine // no render pass\n<p>@x</p>").unwrap_err();
+        assert_eq!(err.message, msg);
+        assert_eq!(err.offset, 5);
+        assert_eq!(parse("@fine x\n<p/>").unwrap_err().message, msg);
         assert!(parse("@render\n<p/>").unwrap_err().message.contains("@render was removed"));
-        assert!(parse("@fine x\n<p/>").is_err());
     }
 
     #[test]

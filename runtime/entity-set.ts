@@ -24,7 +24,7 @@ export class EntitySet<T extends Model> extends Array<T> {
   #original: T[] | undefined;
   #owner: Model | undefined;
   #index = 0;
-  /** Renders and fine bindings that read the membership, as the model tracker's deps. */
+  /** Renders and bindings that read the membership, as the model tracker's deps. */
   #subs: object[] | undefined;
 
   /** @internal The model this set belongs to, and the index of the field holding it. */

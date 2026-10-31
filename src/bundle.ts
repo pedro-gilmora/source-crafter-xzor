@@ -332,15 +332,15 @@ type Field = {
 type ClassHead = { name: string; model: string; open: number; close: number };
 
 /** Local names bound to `Model`, a component base (`Component`, or the deprecated `ComponentBase`) and `Untracked` by value imports from the runtime. */
-function modelLocals(src: string): { model: Set<string>; fine: Set<string>; untracked: Set<string> } {
+function modelLocals(src: string): { model: Set<string>; bases: Set<string>; untracked: Set<string> } {
   const model = new Set<string>();
-  const fine = new Set<string>();
+  const bases = new Set<string>();
   const untracked = new Set<string>();
   for (const m of src.matchAll(RUNTIME_IMPORT)) {
     if (m[1]) continue;
     for (const spec of m[2]!.split(",")) {
       const [name, as, alias] = spec.trim().split(/\s+/);
-      if (name === "Component" || name === "ComponentBase") fine.add(as === "as" && alias ? alias : name);
+      if (name === "Component" || name === "ComponentBase") bases.add(as === "as" && alias ? alias : name);
     }
   }
   for (const m of src.matchAll(MODEL_IMPORT)) {
@@ -355,14 +355,14 @@ function modelLocals(src: string): { model: Set<string>; fine: Set<string>; untr
       else if (name === "Untracked") untracked.add(local);
     }
   }
-  return { model, fine, untracked };
+  return { model, bases, untracked };
 }
 
 /** Reads the source of a module a project file imports relatively, so `extends` can be followed into it. */
 export type ModelResolver = (spec: string, from: string) => string | undefined;
 
 type Imported = { spec: string; name: string };
-type Imports = { model: Set<string>; fine: Set<string>; untracked: Set<string>; imports: Map<string, Imported> };
+type Imports = { model: Set<string>; bases: Set<string>; untracked: Set<string>; imports: Map<string, Imported> };
 type FileModels = Imports & { bases: Map<string, string> };
 // `files` caches one analysis per resolved path (shared across a build); `open` stops import cycles.
 type Scope = { resolve: ModelResolver | undefined; files: Map<string, FileModels | undefined>; open: Set<string> };
@@ -388,7 +388,7 @@ const NAMESPACE_IMPORT = /\bimport\s+\*\s+as\s+([\w$]+)\s+from\s*["']([^"']+)["'
 
 /** The runtime locals and the names a file's imports bind (a namespace import binds `*`). */
 function fileImports(src: string): Imports {
-  const { model, fine, untracked } = modelLocals(src);
+  const { model, bases, untracked } = modelLocals(src);
   const imports = new Map<string, Imported>();
   for (const m of src.matchAll(NAMESPACE_IMPORT)) imports.set(m[1]!, { spec: m[2]!, name: "*" });
   for (const m of src.matchAll(BINDING_IMPORT)) {
@@ -402,7 +402,7 @@ function fileImports(src: string): Imports {
       imports.set(as === "as" && alias ? alias : name!, { spec, name: name! });
     }
   }
-  return { model, fine, untracked, imports };
+  return { model, bases, untracked, imports };
 }
 
 /** `head` plus every class's base. */
@@ -428,12 +428,12 @@ function fileModels(src: string, head: Imports = fileImports(src)): FileModels {
 }
 
 /**
- * Whether `name` in `file` is a model class (`"fine"` for a fine component, tracked the same way); the import
+ * Whether `name` in `file` is a model class (`"component"` for a component, tracked the same way); the import
  * that could not be followed when it may be one.
  */
-function modelOf(info: FileModels, file: string, name: string, scope: Scope): boolean | "fine" | Imported {
+function modelOf(info: FileModels, file: string, name: string, scope: Scope): boolean | "component" | Imported {
   if (info.model.has(name)) return true;
-  if (info.fine.has(name)) return "fine";
+  if (info.bases.has(name)) return "component";
   const key = `${file}|${name}`;
   if (scope.open.has(key)) return false;
   scope.open.add(key);
@@ -474,7 +474,7 @@ function extendsRelative(src: string, head: Imports, resolve: ModelResolver | un
 export function trackModelFields(src: string, file?: string, resolve?: ModelResolver, files: Map<string, FileModels | undefined> = new Map()): string {
   if (!src.includes("extends")) return src;
   const head = fileImports(src);
-  if (head.model.size === 0 && head.fine.size === 0 && !extendsRelative(src, head, resolve)) return src;
+  if (head.model.size === 0 && head.bases.size === 0 && !extendsRelative(src, head, resolve)) return src;
   const info = fileModels(src, head);
   const scope: Scope = { resolve, files, open: new Set() };
   const from = file ?? "";
@@ -492,12 +492,12 @@ export function trackModelFields(src: string, file?: string, resolve?: ModelReso
       const kind = head ? modelOf(info, from, head.base, scope) : false;
       if (head && kind !== false) {
         const name = head.name || "an anonymous class";
-        const derived = !info.model.has(head.base) && !info.fine.has(head.base);
+        const derived = !info.model.has(head.base) && !info.bases.has(head.base);
         // A component is built by the runtime (or its injector), never from server data.
-        const component = kind === "fine";
-        if (kind !== true && kind !== "fine") {
+        const component = kind === "component";
+        if (kind !== true && kind !== "component") {
           // A package base only matters to a component or a file that uses the model runtime.
-          if (kind.spec.startsWith(".") || info.fine.size > 0 || [...info.imports.values()].some((i) => i.spec === MODEL)) {
+          if (kind.spec.startsWith(".") || info.bases.size > 0 || [...info.imports.values()].some((i) => i.spec === MODEL)) {
             warn(src, i, file, `${name} is not tracked: its base ${head.base} comes from "${kind.spec}" and could not be followed`);
           }
         } else if (derived && !head.name) {

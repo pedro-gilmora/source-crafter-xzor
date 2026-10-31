@@ -85,7 +85,7 @@
         { "include": "#module-block" },
         { "include": "#statements" },
         { "include": "#class-directives" },
-        { "include": "#fine" },
+        { "include": "#load-directives" },
         { "include": "#line-text" },
         { "include": "#routes-block" },
         { "include": "#page" },
@@ -140,9 +140,9 @@
       "contentName": "meta.embedded.line.typescript",
       "patterns": [{ "include": "#directive-comment" }, { "include": "source.ts#expression" }]
     },
-    "fine": {
-      "comment": "@fine (a leftover: every component has DOM bindings and no render pass), @async (loaded on first use), @cached (kept when it leaves the tree).",
-      "begin": "(?<![[:alnum:]])(@)(fine|async|cached)(?![[:alnum:]_$])",
+    "load-directives": {
+      "comment": "@async (loaded on first use), @cached (kept when it leaves the tree).",
+      "begin": "(?<![[:alnum:]])(@)(async|cached)(?![[:alnum:]_$])",
       "beginCaptures": {
         "1": { "name": "keyword.control.transition.xzor" },
         "2": { "name": "keyword.control.directive.xzor" }

@@ -276,7 +276,7 @@ pub fn generate_in(
     let mut cascades: Vec<(String, String)> = Vec::new();
     let mut blanks: Vec<(usize, usize)> = Vec::new();
     let mut list_keys = HashMap::new();
-    // A fine component's own instance getters, cached unless `@Volatile`.
+    // A component's own instance getters, cached unless `@Volatile`.
     let mut memos: Vec<String> = Vec::new();
     for (code, decls) in doc.code.iter().zip(&decls) {
         cascade_members(code, decls, &mut cascades, &mut blanks).map_err(|(message, _)| message)?;
@@ -314,7 +314,7 @@ pub fn generate_in(
         raw_text: false,
         props_ids: std::cell::Cell::new(0),
         route_types: std::cell::Cell::new(0),
-        fine_ids: 0,
+        node_ids: 0,
         in_region: false,
         in_loop: false,
         owner: None,
@@ -458,7 +458,7 @@ pub fn generate_in(
     }
     g.line("protected override render(__p: Node): void {");
     g.depth = 2;
-    g.fine_nodes(&doc.nodes, "__p")?;
+    g.emit_nodes(&doc.nodes, "__p")?;
     g.depth = 1;
     g.line("}");
     g.depth = 0;
@@ -682,8 +682,8 @@ struct Gen<'p> {
     raw_text: bool,
     /// Which of `Route`, `__AppRoute`, `__RouteParams` and `RenderFragment` the route sections reference (`ROUTE_*` bits).
     route_types: std::cell::Cell<u8>,
-    /// Next `_e<N>` node variable of a `@fine` template.
-    fine_ids: usize,
+    /// Next `_e<N>` node variable of a template.
+    node_ids: usize,
     /// Emitting inside a `dom.region`: its bindings close over their values instead of sharing a row's reads.
     in_region: bool,
     /// Emitting a plain loop's body in a region: nested structure stays inline, the region rebuilds it whole.
@@ -696,11 +696,11 @@ struct Gen<'p> {
     pass_locals: Option<Vec<String>>,
     /// Emitting an `@once` block: values are set, not bound.
     once: bool,
-    /// The next `@if`/`@switch` of `fine_flow` is a `branchAt`'s: each branch first returns its index without a parent.
+    /// The next `@if`/`@switch` of `emit_flow` is a `branchAt`'s: each branch first returns its index without a parent.
     branching: bool,
     /// Emitting the branches of a show block, where `@pause { }` may go.
     in_show: usize,
-    /// The specs of the `@fine` templates, emitted after the class as `__t<N>`.
+    /// The specs of the templates, emitted after the class as `__t<N>`.
     templates: Vec<String>,
     /// The row being emitted, whose bindings go through its list's shared reads.
     reads: Option<Reads>,
@@ -712,7 +712,7 @@ struct Gen<'p> {
     ownerless: bool,
 }
 
-/// A node of a `@fine` template.
+/// A node of a template.
 enum Tpl {
     Text(String),
     /// The empty text a `@expr` binds.
@@ -723,7 +723,7 @@ enum Tpl {
 }
 
 /// What binds a node of a template clone.
-enum FinePart<'n> {
+enum TplPart<'n> {
     Expr(&'n Src),
     /// Attribute bindings, handlers, `@bind`, `@ref`.
     Element(&'n Element),
@@ -1056,12 +1056,12 @@ impl<'p> Gen<'p> {
         Ok(out)
     }
 
-    /// `__Component.fragment((__p) => { ... }, this)` for `nodes`, built by the fine emitter. `locals` are extra
+    /// `__Component.fragment((__p) => { ... }, this)` for `nodes`, built by the template emitter. `locals` are extra
     /// names in scope (slot parameters) that must not get `this.`.
     fn dom_fragment(&mut self, nodes: &[Node], rewrite: bool, locals: &[String]) -> Result<M, String> {
         let mut sub = self.sub_gen(rewrite, locals);
         sub.depth += 1;
-        let done = sub.fine_nodes(nodes, "__p");
+        let done = sub.emit_nodes(nodes, "__p");
         self.absorb(&mut sub);
         done?;
         let close = format!("{}}}{})", "  ".repeat(self.depth), if self.ownerless { "" } else { ", this" });
@@ -1082,7 +1082,7 @@ impl<'p> Gen<'p> {
             raw_text: self.raw_text,
             props_ids: std::cell::Cell::new(self.props_ids.get()),
             route_types: std::cell::Cell::new(self.route_types.get()),
-            fine_ids: self.fine_ids,
+            node_ids: self.node_ids,
             in_region: false,
             in_loop: false,
             owner: None,
@@ -1102,7 +1102,7 @@ impl<'p> Gen<'p> {
     fn absorb(&mut self, sub: &mut Gen) {
         self.props_ids.set(sub.props_ids.get());
         self.route_types.set(sub.route_types.get());
-        self.fine_ids = sub.fine_ids;
+        self.node_ids = sub.node_ids;
         self.templates = std::mem::take(&mut sub.templates);
         self.uses_el |= sub.uses_el;
     }
@@ -1313,57 +1313,57 @@ impl<'p> Gen<'p> {
         }
     }
 
-    /// `@fine`: statements that append `nodes` to `parent` (an element, or the fragment a region or row builds).
+    /// Statements that append `nodes` to `parent` (an element, or the fragment a region or row builds).
     /// Outside regions, `nodes` is one template clone: elements and static text are in the template, and each
     /// dynamic part binds the node it has in place (a text hole for `@expr`, comments for the rest).
     /// `@if`/`@while`/`@switch`/`for(;;)` are regions, `@for...of` a keyed list, and a `@{ }` block a region
     /// holding it and the siblings after it, so its locals stay current. Inside a region the same holds, so
     /// nested structure tracks its own reads, except that a plain `@{ }` runs inline in the region. In a plain
     /// loop's body (a region per pass would cost more than the rebuild) structure is plain control flow.
-    fn fine_nodes(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
+    fn emit_nodes(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         if !self.in_region {
-            return self.fine_run(nodes, parent);
+            return self.emit_run(nodes, parent);
         }
         if self.in_loop {
-            return self.fine_inline(nodes, parent);
+            return self.emit_inline(nodes, parent);
         }
         let mut i = 0;
         while i < nodes.len() {
             if let Node::Code(parts) = &nodes[i]
                 && is_plain_code(parts)
             {
-                let block = self.fine_code_block(parts)?;
+                let block = self.emit_code_block(parts)?;
                 self.emit_block(block);
                 i += 1;
                 continue;
             }
             let end = nodes[i..].iter().position(is_plain_code_node).map_or(nodes.len(), |n| i + n);
-            self.fine_run(&nodes[i..end], parent)?;
+            self.emit_run(&nodes[i..end], parent)?;
             i = end;
         }
         Ok(())
     }
 
     /// `nodes` in a plain loop's body: structure as plain control flow, the runs between as templates.
-    fn fine_inline(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
+    fn emit_inline(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         let mut i = 0;
         while i < nodes.len() {
             let node = &nodes[i];
             match node {
                 Node::Code(parts) if is_plain_code(parts) => {
-                    let block = self.fine_code_block(parts)?;
+                    let block = self.emit_code_block(parts)?;
                     self.emit_block(block);
                 }
-                Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => self.fine_flow(node, parent)?,
-                Node::Element(el) if is_flow(node) && &*el.name.text == "text" => self.fine_inline(&el.children, parent)?,
-                Node::Element(el) if is_flow(node) => self.fine_element(el, parent)?,
+                Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => self.emit_flow(node, parent)?,
+                Node::Element(el) if is_flow(node) && &*el.name.text == "text" => self.emit_inline(&el.children, parent)?,
+                Node::Element(el) if is_flow(node) => self.emit_element(el, parent)?,
                 _ => {
                     // A `@{ }` block holds the rest of the run in its region, so the run takes it all.
                     let end = match nodes[i..].iter().position(|n| is_flow(n) || matches!(n, Node::Code(_))) {
                         Some(n) if is_flow(&nodes[i + n]) => i + n,
                         _ => nodes.len(),
                     };
-                    self.fine_run(&nodes[i..end], parent)?;
+                    self.emit_run(&nodes[i..end], parent)?;
                     i = end;
                     continue;
                 }
@@ -1374,49 +1374,49 @@ impl<'p> Gen<'p> {
     }
 
     /// An element whose children hold control flow, in a plain loop: created on its own.
-    fn fine_element(&mut self, el: &Element, parent: &str) -> Result<(), String> {
-        let var = self.fine_var();
+    fn emit_element(&mut self, el: &Element, parent: &str) -> Result<(), String> {
+        let var = self.node_var();
         self.line(&format!("const {var} = __dom.el({parent}, {});", js_string(&el.name)));
-        self.fine_attrs(el, &var, true)?;
+        self.emit_attrs(el, &var, true)?;
         let raw = std::mem::replace(&mut self.raw_text, matches!(&*el.name.to_ascii_lowercase(), "script" | "style"));
         let owner = self.owner.replace(var.clone());
-        let r = self.fine_inline(&el.children, &var);
+        let r = self.emit_inline(&el.children, &var);
         self.owner = owner;
         self.raw_text = raw;
         r
     }
 
     /// `nodes` as one template clone appended to `parent`, with the bindings of its dynamic parts.
-    fn fine_run(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
+    fn emit_run(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         let mut kids = Vec::new();
         let mut parts = Vec::new();
         self.tpl_nodes(nodes, &[], self.raw_text, &mut kids, &mut parts)?;
         if kids.is_empty() {
             // Only `@attr:`s: no clone, they bind the owner.
             for (_, part) in &parts {
-                let FinePart::ParentAttr(a) = part else { unreachable!("other parts have a node") };
+                let TplPart::ParentAttr(a) = part else { unreachable!("other parts have a node") };
                 let owner = self.owner.clone().ok_or_else(|| format!("@attr:{} needs an enclosing element", &*a.name))?;
-                self.fine_part(part, &owner)?;
+                self.emit_part(part, &owner)?;
             }
             return Ok(());
         }
         // One control-flow block alone: its anchors go straight in, with no template to clone.
         if parts.len() == 1 && kids.iter().all(|k| matches!(k, Tpl::Anchor)) {
             let part = &parts[0].1;
-            if let FinePart::Region(node) = part
+            if let TplPart::Region(node) = part
                 && self.reads_only_pass(node)
             {
-                return self.fine_flow(node, parent);
+                return self.emit_flow(node, parent);
             }
-            let var = self.fine_var();
+            let var = self.node_var();
             let call = if kids.len() == 2 { "anchors" } else { "anchor" };
             self.line(&format!("const {var} = __dom.{call}({parent});"));
-            return self.fine_part(part, &var);
+            return self.emit_part(part, &var);
         }
         let t = self.templates.len();
         self.templates.push(kids.iter().map(spec_js).collect::<Vec<_>>().join(", "));
         // A single element is cloned alone; anything else comes in a fragment, so anchors have a parent.
-        let root = self.fine_var();
+        let root = self.node_var();
         let alone = kids.len() == 1 && matches!(kids[0], Tpl::El { .. });
         let cast = if alone { self.cast(&kids[0]) } else { String::new() };
         self.line(&format!("const {root} = __t{t}(){cast};"));
@@ -1427,31 +1427,31 @@ impl<'p> Gen<'p> {
             // A part's `@attr:`s set the element holding it: the run's own owner at its top level.
             let owner = |g: &mut Self, vars: &mut Vec<(Vec<usize>, String)>, up: &[usize]| match up {
                 [] => g.owner.clone(),
-                up => Some(g.fine_path(&kids, up, vars)),
+                up => Some(g.node_path(&kids, up, vars)),
             };
             let target = match part {
-                FinePart::ParentAttr(a) => match owner(self, &mut vars, path) {
+                TplPart::ParentAttr(a) => match owner(self, &mut vars, path) {
                     Some(var) => (var, None),
                     None => return Err(format!("@attr:{} needs an enclosing element", &*a.name)),
                 },
-                FinePart::Region(node) if has_parent_attr(std::slice::from_ref(*node)) => {
-                    let var = self.fine_path(&kids, path, &mut vars);
+                TplPart::Region(node) if has_parent_attr(std::slice::from_ref(*node)) => {
+                    let var = self.node_path(&kids, path, &mut vars);
                     (var, owner(self, &mut vars, &path[..path.len() - 1]))
                 }
-                FinePart::Code(_, rest) if has_parent_attr(rest) => {
-                    let var = self.fine_path(&kids, path, &mut vars);
+                TplPart::Code(_, rest) if has_parent_attr(rest) => {
+                    let var = self.node_path(&kids, path, &mut vars);
                     (var, owner(self, &mut vars, &path[..path.len() - 1]))
                 }
-                FinePart::List(Node::For { body, otherwise, .. }) if has_parent_attr(body) || otherwise.as_deref().is_some_and(has_parent_attr) => {
-                    let var = self.fine_path(&kids, path, &mut vars);
+                TplPart::List(Node::For { body, otherwise, .. }) if has_parent_attr(body) || otherwise.as_deref().is_some_and(has_parent_attr) => {
+                    let var = self.node_path(&kids, path, &mut vars);
                     (var, owner(self, &mut vars, &path[..path.len() - 1]))
                 }
                 // Its `@attr:`s set the element it is appended to.
-                FinePart::Flow(_) => {
-                    let var = self.fine_path(&kids, path, &mut vars);
+                TplPart::Flow(_) => {
+                    let var = self.node_path(&kids, path, &mut vars);
                     (var.clone(), Some(var))
                 }
-                _ => (self.fine_path(&kids, path, &mut vars), None),
+                _ => (self.node_path(&kids, path, &mut vars), None),
             };
             targets.push(target);
         }
@@ -1460,7 +1460,7 @@ impl<'p> Gen<'p> {
                 Some(o) => self.owner.replace(o.clone()),
                 None => self.owner.clone(),
             };
-            let r = self.fine_part(part, var);
+            let r = self.emit_part(part, var);
             self.owner = outer;
             r?;
         }
@@ -1469,24 +1469,24 @@ impl<'p> Gen<'p> {
     }
 
     /// The template of `nodes` into `kids`, and their dynamic parts with the path of the node each binds.
-    fn tpl_nodes<'n>(&self, nodes: &'n [Node], path: &[usize], raw: bool, kids: &mut Vec<Tpl>, parts: &mut Vec<(Vec<usize>, FinePart<'n>)>) -> Result<(), String> {
+    fn tpl_nodes<'n>(&self, nodes: &'n [Node], path: &[usize], raw: bool, kids: &mut Vec<Tpl>, parts: &mut Vec<(Vec<usize>, TplPart<'n>)>) -> Result<(), String> {
         let at = |kids: &Vec<Tpl>| [path, &[kids.len()]].concat();
         for (i, node) in nodes.iter().enumerate() {
             match node {
                 Node::Code(code) => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Code(code, &nodes[i + 1..])));
+                    parts.push((at(kids), TplPart::Code(code, &nodes[i + 1..])));
                     kids.push(Tpl::Anchor);
                     return Ok(());
                 }
                 Node::Text(t) => kids.push(Tpl::Text(if raw { t.clone() } else { crate::entities::decode(t).into_owned() })),
                 Node::Expr(e) => {
-                    parts.push((at(kids), FinePart::Expr(e)));
+                    parts.push((at(kids), TplPart::Expr(e)));
                     kids.push(Tpl::Hole);
                 }
                 Node::Element(el) if &*el.name.text == "text" => self.tpl_nodes(&el.children, path, raw, kids, parts)?,
                 Node::Element(el) if el.is_component() => {
-                    parts.push((at(kids), FinePart::Component(el)));
+                    parts.push((at(kids), TplPart::Component(el)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::Element(el) => {
@@ -1507,7 +1507,7 @@ impl<'p> Gen<'p> {
                         }
                     }
                     if dynamic {
-                        parts.push((here.clone(), FinePart::Element(el)));
+                        parts.push((here.clone(), TplPart::Element(el)));
                     }
                     let mut sub = Vec::new();
                     let raw = matches!(&*el.name.to_ascii_lowercase(), "script" | "style");
@@ -1515,70 +1515,70 @@ impl<'p> Gen<'p> {
                     kids.push(Tpl::El { tag: el.name.text.to_string(), attrs, kids: sub });
                 }
                 Node::For { head, .. } if for_of(head).is_some_and(|(b, _)| !b.starts_with(['[', '{'])) => {
-                    parts.push((at(kids), FinePart::List(node)));
+                    parts.push((at(kids), TplPart::List(node)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::If { .. } | Node::Switch { .. } if self.reads_only_pass(node) => {
                     // Built once with its row: as an element's last child it appends to it, else it replaces an anchor.
                     if i + 1 == nodes.len() && !path.is_empty() {
-                        parts.push((path.to_vec(), FinePart::Flow(node)));
+                        parts.push((path.to_vec(), TplPart::Flow(node)));
                     } else {
-                        parts.push((at(kids), FinePart::Region(node)));
+                        parts.push((at(kids), TplPart::Region(node)));
                         kids.push(Tpl::Anchor);
                     }
                 }
                 // Destructured items (entries, tuples) are new on every run: keyed passes, not a list.
                 // A keyed loop places its rows before its end: one anchor.
                 Node::For { .. } | Node::While { .. } if keyable(node) => {
-                    parts.push((at(kids), FinePart::Region(node)));
+                    parts.push((at(kids), TplPart::Region(node)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::If { .. } | Node::For { .. } | Node::While { .. } | Node::Switch { .. } => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Region(node)));
+                    parts.push((at(kids), TplPart::Region(node)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::Slot(slot) => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Slot(slot)));
+                    parts.push((at(kids), TplPart::Slot(slot)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::Cascade { .. } => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Cascade(node)));
+                    parts.push((at(kids), TplPart::Cascade(node)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::Routes { .. } => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Routes(node)));
+                    parts.push((at(kids), TplPart::Routes(node)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::SlotFill(_) => return Err("`@slot name { }` fills a slot and must be a direct child of a component tag".into()),
                 Node::Await { .. } => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Await(node)));
+                    parts.push((at(kids), TplPart::Await(node)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::Show(inner) => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Show(inner)));
+                    parts.push((at(kids), TplPart::Show(inner)));
                     kids.push(Tpl::Anchor);
                 }
                 Node::Pause(None) => return Err("bare @pause goes first in a @show branch; use @pause { } for a part of it".into()),
                 Node::Pause(Some(_)) if self.in_show == 0 => return Err("@pause belongs in a @show:if or @show:switch branch".into()),
                 Node::Pause(Some(body)) => {
                     kids.push(Tpl::Anchor);
-                    parts.push((at(kids), FinePart::Pause(body)));
+                    parts.push((at(kids), TplPart::Pause(body)));
                     kids.push(Tpl::Anchor);
                 }
-                Node::ParentAttr(a) => parts.push((path.to_vec(), FinePart::ParentAttr(a))),
+                Node::ParentAttr(a) => parts.push((path.to_vec(), TplPart::ParentAttr(a))),
                 Node::Once(body) => match body.as_slice() {
                     [Node::Expr(e)] => {
-                        parts.push((at(kids), FinePart::OnceText(e)));
+                        parts.push((at(kids), TplPart::OnceText(e)));
                         kids.push(Tpl::Hole);
                     }
                     _ => {
-                        parts.push((at(kids), FinePart::Once(body)));
+                        parts.push((at(kids), TplPart::Once(body)));
                         kids.push(Tpl::Anchor);
                     }
                 },
@@ -1587,9 +1587,9 @@ impl<'p> Gen<'p> {
         Ok(())
     }
 
-    fn fine_var(&mut self) -> String {
-        self.fine_ids += 1;
-        format!("_e{}", self.fine_ids - 1)
+    fn node_var(&mut self) -> String {
+        self.node_ids += 1;
+        format!("_e{}", self.node_ids - 1)
     }
 
     fn cast(&mut self, node: &Tpl) -> String {
@@ -1606,12 +1606,12 @@ impl<'p> Gen<'p> {
 
     /// The variable of the node at `path` of a clone, declared (with its ancestors) on first use: reached from
     /// the nearest declared sibling before it, else from its parent's first child.
-    fn fine_path(&mut self, kids: &[Tpl], path: &[usize], vars: &mut Vec<(Vec<usize>, String)>) -> String {
+    fn node_path(&mut self, kids: &[Tpl], path: &[usize], vars: &mut Vec<(Vec<usize>, String)>) -> String {
         if let Some((_, v)) = vars.iter().find(|(p, _)| p == path) {
             return v.clone();
         }
         let (&last, up) = path.split_last().expect("the root has a variable");
-        let parent = self.fine_path(kids, up, vars);
+        let parent = self.node_path(kids, up, vars);
         let before = vars.iter().filter(|(p, _)| p.len() == path.len() && p[..up.len()] == *up && p[up.len()] < last).max_by_key(|(p, _)| p[up.len()]);
         let expr = match before {
             Some((p, v)) => format!("{v}{}", ".nextSibling!".repeat(last - p[up.len()])),
@@ -1622,60 +1622,60 @@ impl<'p> Gen<'p> {
             let Tpl::El { kids, .. } = node else { unreachable!("only elements have children") };
             node = &kids[i];
         }
-        let var = self.fine_var();
+        let var = self.node_var();
         let cast = self.cast(node);
         self.line(&format!("const {var} = {expr}{cast};"));
         vars.push((path.to_vec(), var.clone()));
         var
     }
 
-    fn fine_part(&mut self, part: &FinePart, var: &str) -> Result<(), String> {
+    fn emit_part(&mut self, part: &TplPart, var: &str) -> Result<(), String> {
         match *part {
-            FinePart::Expr(e) => {
+            TplPart::Expr(e) => {
                 let read = self.expr(e);
-                self.fine_bound("text", var, read);
+                self.emit_bound("text", var, read);
             }
-            FinePart::Element(el) => self.fine_attrs(el, var, false)?,
-            FinePart::Region(node) if self.reads_only_pass(node) => {
+            TplPart::Element(el) => self.emit_attrs(el, var, false)?,
+            TplPart::Region(node) if self.reads_only_pass(node) => {
                 // Its pass's values keep the row only while they are the same: a region would add nothing.
-                let f = self.fine_var();
+                let f = self.node_var();
                 self.line(&format!("const {f} = document.createDocumentFragment();"));
-                self.fine_flow(node, &f)?;
+                self.emit_flow(node, &f)?;
                 self.line(&format!("{var}.replaceWith({f});"));
             }
-            FinePart::Region(node) if keyable(node) => self.fine_keyed(node, var)?,
-            FinePart::Region(node) if !self.row_level() && branchable(node) => {
+            TplPart::Region(node) if keyable(node) => self.emit_keyed(node, var)?,
+            TplPart::Region(node) if !self.row_level() && branchable(node) => {
                 self.line(&format!("__dom.branchAt({var}, (__p) => {{"));
                 let outer = std::mem::replace(&mut self.in_region, true);
                 let pass = self.pass_locals.take();
                 self.depth += 1;
                 self.branching = true;
-                let r = self.fine_flow(node, "__p");
+                let r = self.emit_flow(node, "__p");
                 self.depth -= 1;
                 self.pass_locals = pass;
                 self.in_region = outer;
                 r?;
                 self.line("});");
             }
-            FinePart::Region(node) if branchable(node) => self.fine_region(var, true, |g| {
+            TplPart::Region(node) if branchable(node) => self.emit_region(var, true, |g| {
                 g.branching = true;
-                g.fine_flow(node, "__p")
+                g.emit_flow(node, "__p")
             })?,
-            FinePart::Region(node) => self.fine_region(var, false, |g| g.fine_flow(node, "__p"))?,
-            FinePart::Code(code, rest) => {
+            TplPart::Region(node) => self.emit_region(var, false, |g| g.emit_flow(node, "__p"))?,
+            TplPart::Code(code, rest) => {
                 let scope = self.locals.len();
-                let r = self.fine_region(var, false, |g| {
-                    let block = g.fine_code_block(code)?;
+                let r = self.emit_region(var, false, |g| {
+                    let block = g.emit_code_block(code)?;
                     g.emit_block(block);
-                    g.fine_nodes(rest, "__p")
+                    g.emit_nodes(rest, "__p")
                 });
                 self.locals.truncate(scope);
                 r?;
             }
-            FinePart::List(node) => self.fine_list(node, var)?,
-            FinePart::Component(el) => self.fine_component(el, var)?,
-            FinePart::Await(node) => self.fine_await(node, var)?,
-            FinePart::Show(node) => {
+            TplPart::List(node) => self.emit_list(node, var)?,
+            TplPart::Component(el) => self.emit_component(el, var)?,
+            TplPart::Await(node) => self.emit_await(node, var)?,
+            TplPart::Show(node) => {
                 let node = show_branches(node)?;
                 self.line(&format!("__dom.showAt({var}, (__p) => {{"));
                 let outer = std::mem::replace(&mut self.in_region, true);
@@ -1683,7 +1683,7 @@ impl<'p> Gen<'p> {
                 self.depth += 1;
                 self.in_show += 1;
                 self.branching = true;
-                let r = self.fine_flow(&node, "__p");
+                let r = self.emit_flow(&node, "__p");
                 self.in_show -= 1;
                 self.depth -= 1;
                 self.pass_locals = pass;
@@ -1691,37 +1691,37 @@ impl<'p> Gen<'p> {
                 r?;
                 self.line("});");
             }
-            FinePart::Pause(body) => {
+            TplPart::Pause(body) => {
                 self.line(&format!("__dom.pauseAt({var}, (__p) => {{"));
                 let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
                 let pass = self.pass_locals.take();
-                let r = self.fine_block(body, "__p");
+                let r = self.emit_body(body, "__p");
                 self.pass_locals = pass;
                 (self.in_region, self.in_loop) = flags;
                 r?;
                 self.line("});");
             }
-            FinePart::Flow(node) => self.fine_flow(node, var)?,
-            FinePart::OnceText(e) => {
+            TplPart::Flow(node) => self.emit_flow(node, var)?,
+            TplPart::OnceText(e) => {
                 let read = self.expr(e);
                 self.emit(M::lit(&format!("__dom.textOnce({var}, () => ")).add(read).lit_then(");"));
             }
-            FinePart::Once(body) => {
+            TplPart::Once(body) => {
                 self.line(&format!("__dom.onceAt({var}, (__p) => {{"));
                 // Plain control flow, and values set rather than bound.
                 let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, true), std::mem::replace(&mut self.once, true));
                 let pass = self.pass_locals.take();
-                let r = self.fine_block(body, "__p");
+                let r = self.emit_body(body, "__p");
                 self.pass_locals = pass;
                 (self.in_region, self.in_loop, self.once) = flags;
                 r?;
                 self.line("});");
             }
-            FinePart::ParentAttr(a) => {
+            TplPart::ParentAttr(a) => {
                 let read = self.value(&a.value);
                 self.emit(M::lit(&format!("__dom.attrOf({var}, {}, () => ", js_string(&a.name))).add(read).lit_then(");"));
             }
-            FinePart::Cascade(Node::Cascade { name, value, fixed, body }) => {
+            TplPart::Cascade(Node::Cascade { name, value, fixed, body }) => {
                 let quoted = js_string(name);
                 // The mapping stays on the name only while the literal is a straight copy of it.
                 let literal = if quoted[1..quoted.len() - 1] == *name.text {
@@ -1733,13 +1733,13 @@ impl<'p> Gen<'p> {
                 self.emit(head.lit_then(&format!(", {}, (__p) => {{", fixed)));
                 let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
                 let pass = self.pass_locals.take();
-                let r = self.fine_block(body, "__p");
+                let r = self.emit_body(body, "__p");
                 self.pass_locals = pass;
                 (self.in_region, self.in_loop) = flags;
                 r?;
                 self.line("});");
             }
-            FinePart::Routes(Node::Routes { var: route, sections }) => {
+            TplPart::Routes(Node::Routes { var: route, sections }) => {
                 self.line(&format!("__dom.routesAt({var}, __routes, ["));
                 self.depth += 1;
                 for (i, section) in sections.iter().enumerate() {
@@ -1749,9 +1749,9 @@ impl<'p> Gen<'p> {
                 self.depth -= 1;
                 self.line("]);");
             }
-            FinePart::Cascade(_) | FinePart::Routes(_) => unreachable!("built from their own nodes"),
+            TplPart::Cascade(_) | TplPart::Routes(_) => unreachable!("built from their own nodes"),
             // The slot's fallback is built by a binding that patches it when what it reads changes.
-            FinePart::Slot(slot) => {
+            TplPart::Slot(slot) => {
                 let name = match &slot.name {
                     Some(n) => M::src(n, n.at),
                     None => M::lit("default"),
@@ -1774,7 +1774,7 @@ impl<'p> Gen<'p> {
                         self.emit(head.lit_then(if args.is_some() { ", (__p) => {" } else { ", undefined, (__p) => {" }));
                         let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
                         let pass = self.pass_locals.take();
-                        let r = self.fine_block(body, "__p");
+                        let r = self.emit_body(body, "__p");
                         self.pass_locals = pass;
                         (self.in_region, self.in_loop) = flags;
                         r?;
@@ -1802,7 +1802,7 @@ impl<'p> Gen<'p> {
     }
 
     /// A text (`call` "text") or attribute ("attr", `args` naming it too) binding to `read`.
-    fn fine_bound(&mut self, call: &str, args: &str, read: M) {
+    fn emit_bound(&mut self, call: &str, args: &str, read: M) {
         if self.once {
             let call = if call == "text" { "setText" } else { "set" };
             self.emit(M::lit(&format!("__dom.{call}({args}, ")).add(read).lit_then(");"));
@@ -1816,7 +1816,7 @@ impl<'p> Gen<'p> {
     }
 
     /// A handler (or none, for modifiers alone) with `mods` (1 preventDefault, 2 stopPropagation).
-    fn fine_on(&mut self, var: &str, event: &str, handler: Option<M>, mods: u8) {
+    fn emit_on(&mut self, var: &str, event: &str, handler: Option<M>, mods: u8) {
         let tail = if mods == 0 { String::new() } else { format!(", {mods}") };
         match handler {
             Some(handler) if self.row_level() => {
@@ -1855,7 +1855,7 @@ impl<'p> Gen<'p> {
     }
 
     /// `@on<event>`, with its modifiers, or the modifiers of an event that has no handler.
-    fn fine_event(&mut self, el: &Element, var: &str, a: &Attr, event: &str) -> Result<(), String> {
+    fn emit_event(&mut self, el: &Element, var: &str, a: &Attr, event: &str) -> Result<(), String> {
         let modifier = |x: &Attr| x.name.strip_prefix("@on").and_then(|r| r.split_once(':')).is_some_and(|(e, _)| e == event);
         let handler = el.attrs.iter().find(|x| x.name.strip_prefix("@on") == Some(event));
         // The handler's attribute emits them all; without one, the first modifier does.
@@ -1881,13 +1881,13 @@ impl<'p> Gen<'p> {
                 None => wrapped.lit_then("}"),
             });
         }
-        self.fine_on(var, event, run, mods);
+        self.emit_on(var, event, run, mods);
         Ok(())
     }
 
     /// A region before comment `end` (after the comment before it), whose `body` is plain control flow; with
     /// `branch`, an `@if`/`@switch` emitted for `branchAt`/`branchItem`.
-    fn fine_region(&mut self, end: &str, branch: bool, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<(), String> {
+    fn emit_region(&mut self, end: &str, branch: bool, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<(), String> {
         let row = self.row_level();
         let outer = std::mem::replace(&mut self.in_region, true);
         // A region is its own binding: its conditions are tracked, whatever they read.
@@ -1913,7 +1913,7 @@ impl<'p> Gen<'p> {
     }
 
     /// `@for (const item of items)` before comment `end`: its rows' bindings share the reads it collects.
-    fn fine_list(&mut self, node: &Node, end: &str) -> Result<(), String> {
+    fn emit_list(&mut self, node: &Node, end: &str) -> Result<(), String> {
         let Node::For { head, key, body, otherwise } = node else { unreachable!("a list is a for") };
         let (binding, source) = for_of(head).expect("a list is a for...of");
         let scope = self.locals.len();
@@ -1932,7 +1932,7 @@ impl<'p> Gen<'p> {
         let in_region = std::mem::replace(&mut self.in_region, false);
         let pass = self.pass_locals.take();
         self.row_roots.extend(root);
-        let row = self.capture(|g| g.fine_block(body, "__p"));
+        let row = self.capture(|g| g.emit_body(body, "__p"));
         self.row_roots.truncate(self.row_roots.len() - usize::from(root.is_some()));
         self.pass_locals = pass;
         self.in_region = in_region;
@@ -1943,7 +1943,7 @@ impl<'p> Gen<'p> {
         let empty = match otherwise {
             Some(body) => {
                 let in_region = std::mem::replace(&mut self.in_region, true);
-                let empty = self.capture(|g| g.fine_block(body, "__p"));
+                let empty = self.capture(|g| g.emit_body(body, "__p"));
                 self.in_region = in_region;
                 Some(empty?)
             }
@@ -2010,7 +2010,7 @@ impl<'p> Gen<'p> {
 
     /// A `@for`/`@while` that is not a plain list, run in place: each pass keeps its row by key (`@key`, else a
     /// pass counter) while it sees the same loop variables. Its body is a region per pass.
-    fn fine_keyed(&mut self, node: &Node, end: &str) -> Result<(), String> {
+    fn emit_keyed(&mut self, node: &Node, end: &str) -> Result<(), String> {
         let (key, body, otherwise, locals) = match node {
             Node::For { head, key, body, otherwise } => (key, body, otherwise, loop_locals(head)),
             Node::While { key, body, otherwise, .. } => (key, body, otherwise, Vec::new()),
@@ -2038,7 +2038,7 @@ impl<'p> Gen<'p> {
         let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
         let outer_pass = self.pass_locals.replace(locals.clone());
         self.row_roots.extend(root);
-        let r = self.fine_block(body, "__p");
+        let r = self.emit_body(body, "__p");
         self.row_roots.truncate(self.row_roots.len() - usize::from(root.is_some()));
         self.pass_locals = outer_pass;
         self.locals.truncate(scope);
@@ -2050,7 +2050,7 @@ impl<'p> Gen<'p> {
             match otherwise {
                 Some(body) => {
                     self.line("}, (__p) => {");
-                    self.fine_block(body, "__p")?;
+                    self.emit_body(body, "__p")?;
                     self.line("});");
                 }
                 None => self.line("});"),
@@ -2062,7 +2062,7 @@ impl<'p> Gen<'p> {
     }
 
     /// `@await` before comment `end`: the promise as a read, and each arm a region body taking its value.
-    fn fine_await(&mut self, node: &Node, end: &str) -> Result<(), String> {
+    fn emit_await(&mut self, node: &Node, end: &str) -> Result<(), String> {
         let Node::Await { promise, pending, then, catch } = node else { unreachable!("an @await") };
         let head = match call_parts(&promise.text) {
             // Its arguments are a binding of their own: the call runs again only when one of them changes.
@@ -2084,7 +2084,7 @@ impl<'p> Gen<'p> {
         let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
         let pass = self.pass_locals.take();
         let r = (|| {
-            self.fine_block(pending, "__p")?;
+            self.emit_body(pending, "__p")?;
             // Whether an arm's function body is open, to be closed by what comes next.
             let mut open = true;
             for arm in [then, catch] {
@@ -2103,7 +2103,7 @@ impl<'p> Gen<'p> {
                     None => M::lit(&format!("{close}(__p) => {{")),
                 };
                 self.emit(head);
-                let r = self.fine_block(body, "__p");
+                let r = self.emit_body(body, "__p");
                 self.locals.truncate(scope);
                 r?;
                 open = true;
@@ -2136,7 +2136,7 @@ impl<'p> Gen<'p> {
 
     /// The statements of a `@{ }` block; its declarations become locals of the enclosing scope. Markup
     /// statements append to the region's `__p` as a plain loop's body does, markup values are fragments.
-    fn fine_code_block(&mut self, parts: &[CodePart]) -> Result<M, String> {
+    fn emit_code_block(&mut self, parts: &[CodePart]) -> Result<M, String> {
         let mut block = M::default();
         for part in parts {
             block = match part {
@@ -2152,7 +2152,7 @@ impl<'p> Gen<'p> {
                     let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, true));
                     let pass = self.pass_locals.take();
                     let scope = self.locals.len();
-                    let r = self.capture(|g| g.fine_nodes(nodes, "__p"));
+                    let r = self.capture(|g| g.emit_nodes(nodes, "__p"));
                     self.locals.truncate(scope);
                     self.pass_locals = pass;
                     (self.in_region, self.in_loop) = flags;
@@ -2169,17 +2169,17 @@ impl<'p> Gen<'p> {
     }
 
     /// A branch of a control-flow statement, with its own scope for locals.
-    fn fine_block(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
+    fn emit_body(&mut self, nodes: &[Node], parent: &str) -> Result<(), String> {
         self.depth += 1;
         let scope = self.locals.len();
-        let r = self.fine_nodes(nodes, parent);
+        let r = self.emit_nodes(nodes, parent);
         self.locals.truncate(scope);
         self.depth -= 1;
         r
     }
 
     /// Structure as plain control flow, inside a region.
-    fn fine_flow(&mut self, node: &Node, p: &str) -> Result<(), String> {
+    fn emit_flow(&mut self, node: &Node, p: &str) -> Result<(), String> {
         let branching = std::mem::take(&mut self.branching);
         let pick = |g: &mut Self, i: usize| {
             if branching {
@@ -2195,12 +2195,12 @@ impl<'p> Gen<'p> {
                     let line = M::lit(kw).add(self.expr(cond)).lit_then(") {");
                     self.emit(line);
                     pick(self, i);
-                    self.fine_block(body, p)?;
+                    self.emit_body(body, p)?;
                 }
                 if let Some(body) = otherwise {
                     self.line("} else {");
                     pick(self, branches.len());
-                    self.fine_block(body, p)?;
+                    self.emit_body(body, p)?;
                 }
                 self.line("}");
                 if branching {
@@ -2219,14 +2219,14 @@ impl<'p> Gen<'p> {
                     self.mark_pass();
                 }
                 let in_loop = std::mem::replace(&mut self.in_loop, true);
-                let r = self.fine_block(body, p);
+                let r = self.emit_body(body, p);
                 self.in_loop = in_loop;
                 self.locals.truncate(scope);
                 r?;
                 self.line("}");
                 if let Some(body) = otherwise {
                     self.line("if (__none) {");
-                    self.fine_block(body, p)?;
+                    self.emit_body(body, p)?;
                     self.close_none();
                 }
             }
@@ -2240,13 +2240,13 @@ impl<'p> Gen<'p> {
                     self.mark_pass();
                 }
                 let in_loop = std::mem::replace(&mut self.in_loop, true);
-                let r = self.fine_block(body, p);
+                let r = self.emit_body(body, p);
                 self.in_loop = in_loop;
                 r?;
                 self.line("}");
                 if let Some(body) = otherwise {
                     self.line("if (__none) {");
-                    self.fine_block(body, p)?;
+                    self.emit_body(body, p)?;
                     self.close_none();
                 }
             }
@@ -2264,7 +2264,7 @@ impl<'p> Gen<'p> {
                         self.emit(label.lit_then(if i + 1 == count { ": {" } else { ":" }));
                     }
                     pick(self, n);
-                    self.fine_block(&case.body, p)?;
+                    self.emit_body(&case.body, p)?;
                     self.depth += 1;
                     self.line("break;");
                     self.depth -= 1;
@@ -2282,7 +2282,7 @@ impl<'p> Gen<'p> {
     }
 
     /// The attributes of `el` (in `var`) that need code: bindings, handlers, `@ref`; the static ones with `all`.
-    fn fine_attrs(&mut self, el: &Element, var: &str, all: bool) -> Result<(), String> {
+    fn emit_attrs(&mut self, el: &Element, var: &str, all: bool) -> Result<(), String> {
         let directive = |n: &str| el.attrs.iter().find(|a| &*a.name.text == n).map(|a| &a.value);
         let bag_at = el.attrs.iter().position(|a| &*a.name.text == "@attributes");
         let plain = |n: &str| !n.starts_with('@') && !n.contains(':');
@@ -2294,7 +2294,7 @@ impl<'p> Gen<'p> {
                 continue;
             }
             match name {
-                name @ ("@bind" | "@bind:input") => self.fine_bind(el, var, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
+                name @ ("@bind" | "@bind:input") => self.emit_bind(el, var, a, bind_event(name, directive("@bind:event"))?, directive("@bind:after"))?,
                 "@bind:event" | "@bind:after" | "@bind:debounce" => {}
                 "@key" if self.row_roots.contains(&(el as *const Element)) => {}
                 "@key" => return Err(STRAY_KEY.into()),
@@ -2350,7 +2350,7 @@ impl<'p> Gen<'p> {
                 }
                 _ if name.starts_with("@on") => {
                     let event = name[3..].split(':').next().unwrap_or_default();
-                    self.fine_event(el, var, a, event)?;
+                    self.emit_event(el, var, a, event)?;
                 }
                 _ if name.starts_with('@') => return Err(format!("unknown directive attribute {name}")),
                 _ if name.starts_with("class:") => {
@@ -2358,7 +2358,7 @@ impl<'p> Gen<'p> {
                         AttrValue::Empty => M::lit("true"),
                         v => self.value(v),
                     };
-                    self.fine_bound("attr", &format!("{var}, {}", js_string(name)), on);
+                    self.emit_bound("attr", &format!("{var}, {}", js_string(name)), on);
                 }
                 _ => match &a.value {
                     AttrValue::Empty if all => self.line(&format!("{var}.setAttribute({}, \"\");", js_string(name))),
@@ -2369,7 +2369,7 @@ impl<'p> Gen<'p> {
                     AttrValue::Empty | AttrValue::Static(_) => {}
                     v => {
                         let read = self.value(v);
-                        self.fine_bound("attr", &format!("{var}, {}", js_string(name)), read);
+                        self.emit_bound("attr", &format!("{var}, {}", js_string(name)), read);
                     }
                 },
             }
@@ -2378,16 +2378,16 @@ impl<'p> Gen<'p> {
     }
 
     /// `@bind`: an attribute binding plus a listener that writes the field back.
-    fn fine_bind(&mut self, el: &Element, var: &str, a: &Attr, event: String, after: Option<&AttrValue>) -> Result<(), String> {
+    fn emit_bind(&mut self, el: &Element, var: &str, a: &Attr, event: String, after: Option<&AttrValue>) -> Result<(), String> {
         let AttrValue::Expr(target) = &a.value else { return Err("@bind requires an expression".into()) };
         let is_check = el.attrs.iter().any(|x| {
             &*x.name.text == "type" && matches!(&x.value, AttrValue::Static(s) if matches!(&*s.text, "checkbox" | "radio"))
         });
         let prop = if is_check { "checked" } else { "value" };
         let read = self.expr(target);
-        self.fine_bound("attr", &format!("{var}, \"{prop}\""), read);
+        self.emit_bound("attr", &format!("{var}, \"{prop}\""), read);
         let handler = self.bind_handler(el, target, after)?;
-        self.fine_on(var, &event, Some(handler), 0);
+        self.emit_on(var, &event, Some(handler), 0);
         Ok(())
     }
 
@@ -2576,7 +2576,7 @@ impl<'p> Gen<'p> {
 
     /// A child component before comment `end`: `__dom.component` with its props as a read, callbacks as statics and
     /// slot fills, or in a list row `__dom.componentItem` with those as the list's shared reads.
-    fn fine_component(&mut self, el: &Element, end: &str) -> Result<(), String> {
+    fn emit_component(&mut self, el: &Element, end: &str) -> Result<(), String> {
         let ChildParts { name, type_args, infer, type_names, props, extra, fills } = self.component_parts(el)?;
         let row = self.row_level();
         let (values, statics): (Vec<_>, Vec<_>) = props.into_iter().partition(|(_, once)| !once);
@@ -3586,15 +3586,7 @@ pub fn class_name(stem: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Every test runs the one emitter; a leading `@render` or `@fine` (until `@fine` is a parse error) is blanked out.
-    fn parse(src: &str) -> Result<(Document, Vec<crate::parser::Token>), crate::parser::ParseError> {
-        let src = ["@render\n", "@fine\n"]
-            .iter()
-            .find_map(|m| src.strip_prefix(m).map(|s| format!("{}{s}", " ".repeat(m.len()))))
-            .unwrap_or_else(|| src.to_string());
-        crate::parser::parse(&src)
-    }
+    use crate::parser::parse;
 
     fn rw(src: &str, members: &[&str]) -> String {
         rewrite(src, &|w| members.contains(&w))
@@ -4234,7 +4226,7 @@ mod tests {
 
     #[test]
     fn components_build_the_dom_once_with_bindings() {
-        let src = "@fine\n@code {\ncount = 0;\nlabel = \"\";\nok = false;\nteam: Worker[] = [];\nel?: HTMLElement;\ninc() { this.count++; }\n}\n<div class=\"team\" title=\"n @label\">\n<button @onclick=\"inc\" @ref=\"el\">@count</button>\n<input @bind=\"label\" @bind:event=\"oninput\" />\n<input type=\"checkbox\" @bind=\"ok\" />\n@if (count > 1) {\n<p>many</p>\n} else {\n<p>few</p>\n}\n@for (const w of team) {\n<li>@w.name <b>@(w.hours * 2)</b></li>\n}\n@for (let i = 0; i < count; i++) {\n<i>@i</i>\n}\n@for (const [k, v] of Object.entries(team)) {\n@if (v) {\n<u>@k</u>\n}\n}\n@{ const total = count * 2; }\n<span>@total</span>\n</div>";
+        let src = "@code {\ncount = 0;\nlabel = \"\";\nok = false;\nteam: Worker[] = [];\nel?: HTMLElement;\ninc() { this.count++; }\n}\n<div class=\"team\" title=\"n @label\">\n<button @onclick=\"inc\" @ref=\"el\">@count</button>\n<input @bind=\"label\" @bind:event=\"oninput\" />\n<input type=\"checkbox\" @bind=\"ok\" />\n@if (count > 1) {\n<p>many</p>\n} else {\n<p>few</p>\n}\n@for (const w of team) {\n<li>@w.name <b>@(w.hours * 2)</b></li>\n}\n@for (let i = 0; i < count; i++) {\n<i>@i</i>\n}\n@for (const [k, v] of Object.entries(team)) {\n@if (v) {\n<u>@k</u>\n}\n}\n@{ const total = count * 2; }\n<span>@total</span>\n</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("import { Component as __Component, dom as __dom, type El } from \"@source-crafter/xzor-runtime\";");
@@ -4285,7 +4277,7 @@ mod tests {
 
     #[test]
     fn getters_are_cached_unless_volatile() {
-        let src = "@fine\n@code {\n  n = 1;\n  get total(): number { return this.n * 2; }\n  @Volatile get now(): number { return Date.now(); }\n  static get shared(): number { return 1; }\n  set total2(v: number) {}\n}\n<p>@total @now</p>";
+        let src = "@code {\n  n = 1;\n  get total(): number { return this.n * 2; }\n  @Volatile get now(): number { return Date.now(); }\n  static get shared(): number { return 1; }\n  set total2(v: number) {}\n}\n<p>@total @now</p>";
         let g = gen_with(src, &[]);
         assert!(g.code.contains("static { __dom.memo(this, [\"total\"]); }"), "{}", g.code);
         assert!(!g.code.contains("@Volatile"), "{}", g.code);
@@ -4293,7 +4285,7 @@ mod tests {
 
     #[test]
     fn await_blocks_show_pending_then_and_catch() {
-        let src = "@fine\n@code { q = \"\"; load(q: string): Promise<string[]> { return Promise.resolve([q]); } }\n<ul>@await (load(q)) {<li>…</li>} then (rows) {@for (const r of rows) {<li>@r</li>}} catch (e) {<li>@String(e)</li>}</ul>";
+        let src = "@code { q = \"\"; load(q: string): Promise<string[]> { return Promise.resolve([q]); } }\n<ul>@await (load(q)) {<li>…</li>} then (rows) {@for (const r of rows) {<li>@r</li>}} catch (e) {<li>@String(e)</li>}</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("__dom.awaitCallAt(_e1, () => [this.q], (__a0) => this.load(__a0), (__p) => {");
@@ -4302,11 +4294,11 @@ mod tests {
         has("}, (__p, e) => {");
         has("() => String(e)");
         // Arguments with nested calls, strings and commas; a callee through a member chain.
-        let g = gen_with("@fine\n@code { q = \"\"; api = { find: (a: string, b: number[]) => Promise.resolve(a) }; }\n@await (api.find(q.trim(), [1, 2])) {} then (v) {@v}", &[]);
+        let g = gen_with("@code { q = \"\"; api = { find: (a: string, b: number[]) => Promise.resolve(a) }; }\n@await (api.find(q.trim(), [1, 2])) {} then (v) {@v}", &[]);
         assert!(g.code.contains("__dom.awaitCallAt(_e0, () => [this.q.trim(), [1, 2]], (__a0, __a1) => this.api.find(__a0, __a1), "), "{}", g.code);
         // Anything else, or a call without arguments, runs whole on every change.
         for promise in ["load()", "q ? load(q) : load(\"\")", "load(q).then((r) => r)", "load(...qs)", "load(`${q}`)"] {
-            let g = gen_with(&format!("@fine\n@code {{ q = \"\"; qs: string[] = []; load(...a: string[]) {{ return Promise.resolve(a); }} }}\n@await ({promise}) {{}}"), &[]);
+            let g = gen_with(&format!("@code {{ q = \"\"; qs: string[] = []; load(...a: string[]) {{ return Promise.resolve(a); }} }}\n@await ({promise}) {{}}"), &[]);
             assert!(g.code.contains("__dom.awaitAt(") && !g.code.contains("awaitCallAt"), "{promise}:\n{}", g.code);
         }
         // Inside a component's content (a slot fill) it builds like anywhere else.
@@ -4355,7 +4347,7 @@ mod tests {
 
     #[test]
     fn once_builds_without_bindings() {
-        let src = "@fine\n@code { n = 0; xs: string[] = []; show = true; }\n<p>at @once(n) now @n</p>\n@if (show) {\n@once {\n<b title=\"@n\">@n</b>\n@for (const x of xs) {<i>@x</i>}\n}\n}";
+        let src = "@code { n = 0; xs: string[] = []; show = true; }\n<p>at @once(n) now @n</p>\n@if (show) {\n@once {\n<b title=\"@n\">@n</b>\n@for (const x of xs) {<i>@x</i>}\n}\n}";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // A value read once into its hole; the other `@n` stays bound.
@@ -4375,7 +4367,7 @@ mod tests {
 
     #[test]
     fn parent_attributes_set_the_enclosing_element() {
-        let src = "@fine\n@code { n = 0; items: string[] = []; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text\" none }</span>\n<ul>@for (const it of items) {<li>@if (it) { @attr:title=\"@it\" }</li>}</ul>";
+        let src = "@code { n = 0; items: string[] = []; }\n<span>@if (n > 0) { @n } else { @attr:class=\"error-text\" none }</span>\n<ul>@for (const it of items) {<li>@if (it) { @attr:title=\"@it\" }</li>}</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("__dom.attrOf(_e1, \"class\", () => \"error-text\");");
@@ -4386,7 +4378,7 @@ mod tests {
         has("__dom.branchAt(");
         has("__dom.attrOf(_e");
         has(", \"title\", () => it);");
-        let doc = parse("@fine\n@attr:class=\"x\"").unwrap().0;
+        let doc = parse("@attr:class=\"x\"").unwrap().0;
         let err = generate_with(&doc, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
         assert!(err.contains("@attr:class needs an enclosing element"), "{err}");
     }
@@ -4404,7 +4396,7 @@ mod tests {
 
     #[test]
     fn keyed_loops_render_their_else_when_no_pass_ran() {
-        let src = "@fine\n@code { xs: string[] = []; }\n<ul>\n@for (const x of xs) {\n<li>@x</li>\n} else {\n<li>@xs.length</li>\n}\n</ul>\n@for (let i = 0; i < xs.length; i++) {\n<b>@i</b>\n} else {\n<u/>\n}";
+        let src = "@code { xs: string[] = []; }\n<ul>\n@for (const x of xs) {\n<li>@x</li>\n} else {\n<li>@xs.length</li>\n}\n</ul>\n@for (let i = 0; i < xs.length; i++) {\n<b>@i</b>\n} else {\n<u/>\n}";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The else is the list's empty build: its bindings close over their values, as in a region.
@@ -4417,7 +4409,7 @@ mod tests {
 
     #[test]
     fn loops_key_their_passes() {
-        let src = "@fine\n@code {\n  @Key(\"sku\") lines: { sku: string; qty: number }[] = [];\n  team: Record<string, number> = {};\n  n = 0;\n}\n<ul>@for (const l of lines.filter((x) => x.qty > 0)) {<li>@l.sku</li>}</ul>\n<ol>@for (const [k, v] of Object.entries(team)) {<li>@k @if (v > 1) {<b>many</b>}</li>} else {<p>none</p>}</ol>\n<p>@for (let i = 0; i < n; i++) @key(i * 2) {<i>@i</i>}</p>\n@for (const r of lines) @key(r.sku + r.qty) {<s>@r.sku</s>}\n@for (const [a, b] of Object.entries(team)) { @{ const c = b; } <u>@a @c</u> }";
+        let src = "@code {\n  @Key(\"sku\") lines: { sku: string; qty: number }[] = [];\n  team: Record<string, number> = {};\n  n = 0;\n}\n<ul>@for (const l of lines.filter((x) => x.qty > 0)) {<li>@l.sku</li>}</ul>\n<ol>@for (const [k, v] of Object.entries(team)) {<li>@k @if (v > 1) {<b>many</b>}</li>} else {<p>none</p>}</ol>\n<p>@for (let i = 0; i < n; i++) @key(i * 2) {<i>@i</i>}</p>\n@for (const r of lines) @key(r.sku + r.qty) {<s>@r.sku</s>}\n@for (const [a, b] of Object.entries(team)) { @{ const c = b; } <u>@a @c</u> }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The field's `@Key` keys the loops over it, through array methods that keep its items.
@@ -4444,7 +4436,7 @@ mod tests {
 
     #[test]
     fn a_row_elements_key_keys_its_loop() {
-        let src = "@fine\n@code { rows: { id: number }[] = []; n = 0; }\n<ul>@for (const r of rows) {\n  <li @key=\"r.id\">@r.id</li>\n}</ul>\n<p>@for (let i = 0; i < n; i++) {<i @key=\"i * 2\">@i</i>}</p>\n<div>@for (const r of rows) {<Row @key=\"r.id\" />}</div>";
+        let src = "@code { rows: { id: number }[] = []; n = 0; }\n<ul>@for (const r of rows) {\n  <li @key=\"r.id\">@r.id</li>\n}</ul>\n<p>@for (let i = 0; i < n; i++) {<i @key=\"i * 2\">@i</i>}</p>\n<div>@for (const r of rows) {<Row @key=\"r.id\" />}</div>";
         let g = gen_with(src, &[("Row", "")]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("}, undefined, (r) => r.id);");
@@ -4454,7 +4446,7 @@ mod tests {
 
     #[test]
     fn an_element_key_that_keys_no_row_is_an_error() {
-        let rows = "@fine\n@code { rows: { id: number }[] = []; }\n";
+        let rows = "@code { rows: { id: number }[] = []; }\n";
         for body in [
             "<p @key=\"1\">x</p>",
             "<ul>@for (const r of rows) {<li><b @key=\"r.id\">x</b></li>}</ul>",
@@ -4468,7 +4460,7 @@ mod tests {
 
     #[test]
     fn a_lone_control_flow_block_takes_its_place_without_a_template() {
-        let src = "@fine\n@code { items: { done: boolean }[] = []; team: Record<string, number> = {}; sel = \"\"; }\n<ul>@for (const it of items) {@if (it.done) {<li>done</li>}}</ul>\n<ol>@for (const [k, v] of Object.entries(team)) {@if (sel === k) {<li>@k</li>}}</ol>\n<div>@for (const [k, v] of Object.entries(team)) {@if (v > 1) {<b>@k</b>}}</div>";
+        let src = "@code { items: { done: boolean }[] = []; team: Record<string, number> = {}; sel = \"\"; }\n<ul>@for (const it of items) {@if (it.done) {<li>done</li>}}</ul>\n<ol>@for (const [k, v] of Object.entries(team)) {@if (sel === k) {<li>@k</li>}}</ol>\n<div>@for (const [k, v] of Object.entries(team)) {@if (v > 1) {<b>@k</b>}}</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // No two-comment templates: the anchors go straight in.
@@ -4479,13 +4471,13 @@ mod tests {
         // A row that is only a pass-only `@if` builds it straight into the row.
         has("const __p = __pass(__i++, [k, v]);\n        if (__p !== undefined) {\n          if (v > 1) {");
         // A member of a pass value can change while the value stays: `t.done` and `else if` conditions keep a region.
-        let g = gen_with("@fine\n@code { m: Record<string, { done: boolean }> = {}; }\n<ol>@for (const [k, t] of Object.entries(m)) {@if (k === \"a\") {<b/>} else if (t.done) {<i/>}}</ol>", &[]);
+        let g = gen_with("@code { m: Record<string, { done: boolean }> = {}; }\n<ol>@for (const [k, t] of Object.entries(m)) {@if (k === \"a\") {<b/>} else if (t.done) {<i/>}}</ol>", &[]);
         assert!(g.code.contains("dom.branchAt("), "{}", g.code);
     }
 
     #[test]
     fn nested_flow_in_a_region_gets_its_own_regions_and_lists() {
-        let src = "@fine\n@code { open = false; items = [\"a\"]; text = \"\"; }\n@if (open) {\n<dialog>\n<input @bind=\"text\" />\n@if (text.length > 2) {\n<p>long</p>\n}\n<ul>\n@for (const it of items) {\n<li>@it</li>\n}\n</ul>\n</dialog>\n}";
+        let src = "@code { open = false; items = [\"a\"]; text = \"\"; }\n@if (open) {\n<dialog>\n<input @bind=\"text\" />\n@if (text.length > 2) {\n<p>long</p>\n}\n<ul>\n@for (const it of items) {\n<li>@it</li>\n}\n</ul>\n</dialog>\n}";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // The outer region only reads `open`: the nested `@if` and `@for` bind on their own.
@@ -4497,7 +4489,7 @@ mod tests {
 
     #[test]
     fn show_blocks_hide_their_branches_and_pause_what_asks() {
-        let src = "@fine\n@code { tab = \"a\"; n = 1; }\n@show:if (tab === \"a\") {\n<p>@n</p>\n} else {\n@pause\n<section>@n</section>\n}\n<div>@show:switch (n) { case 1: <b>one</b> default: <i>@pause { <u>@n</u> }</i> }</div>";
+        let src = "@code { tab = \"a\"; n = 1; }\n@show:if (tab === \"a\") {\n<p>@n</p>\n} else {\n@pause\n<section>@n</section>\n}\n<div>@show:switch (n) { case 1: <b>one</b> default: <i>@pause { <u>@n</u> }</i> }</div>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("__dom.showAt(_e1, (__p) => {\n      if (this.tab === \"a\") {\n        if (!__p) return 0;\n");
@@ -4506,7 +4498,7 @@ mod tests {
         // Bare `@pause` takes the whole branch; `@pause { }` its block, at any depth.
         assert_eq!(g.code.matches("__dom.pauseAt(").count(), 2, "{}", g.code);
         has("case 1: {\n          if (!__p) return 0;\n");
-        let err = |src: &str| generate_with(&parse(&format!("@fine\n@code {{ a = 1; }}\n{src}")).unwrap().0, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
+        let err = |src: &str| generate_with(&parse(&format!("@code {{ a = 1; }}\n{src}")).unwrap().0, "C", "C.xzor", &HashMap::new(), &HashSet::new(), "./routes").unwrap_err();
         for top in ["text", "@a", "@if (a) {<b/>}", "<Child />"] {
             assert!(err(&format!("@show:if (a) {{ {top} }}")).contains("wrap it in an element"), "{top}");
         }
@@ -4519,7 +4511,7 @@ mod tests {
 
     #[test]
     fn if_and_switch_rebuild_only_when_their_branch_changes() {
-        let src = "@fine\n@code { count = 3; list: { id: number }[] = []; kind = \"a\"; }\n@if (!count) {\n<p>none</p>\n} else if (count > 9) {\n<b>many</b>\n} else {\n<ul>@for (const n of list) @key(n.id) {<li>@n.id</li>}</ul>\n}\n@switch (kind) { case \"a\": case \"b\": <i>ab</i> default: <u>other</u> }";
+        let src = "@code { count = 3; list: { id: number }[] = []; kind = \"a\"; }\n@if (!count) {\n<p>none</p>\n} else if (count > 9) {\n<b>many</b>\n} else {\n<ul>@for (const n of list) @key(n.id) {<li>@n.id</li>}</ul>\n}\n@switch (kind) { case \"a\": case \"b\": <i>ab</i> default: <u>other</u> }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // Called without a parent it only picks the branch: same branch, same DOM.
@@ -4531,20 +4523,20 @@ mod tests {
         has("default: {\n          if (!__p) return 1;\n");
         has("      }\n      return 2;\n    });");
         // Code run while a branch builds would go stale in a kept branch: that one stays a plain region.
-        let g = gen_with("@fine\n@code { n = 1; }\n@if (n > 0) {\n@{ const twice = n * 2; }\n<p>@twice</p>\n}", &[]);
+        let g = gen_with("@code { n = 1; }\n@if (n > 0) {\n@{ const twice = n * 2; }\n<p>@twice</p>\n}", &[]);
         assert!(g.code.contains("dom.regionAt(") && !g.code.contains("branchAt"), "{}", g.code);
         // A row's `@if` picks its branch from the row's item, so a row that takes a new item keeps it too.
-        let g = gen_with("@fine\n@code { lines: { qty: number }[] = []; }\n<ul>@for (const l of lines) {<li>@if (l.qty > 1) {<b/>} else {<i/>}</li>}</ul>", &[]);
+        let g = gen_with("@code { lines: { qty: number }[] = []; }\n<ul>@for (const l of lines) {<li>@if (l.qty > 1) {<b/>} else {<i/>}</li>}</ul>", &[]);
         assert!(g.code.contains("dom.branchItem(") && g.code.contains("(l, __p) => {\n"), "{}", g.code);
         assert!(g.code.contains("if (!__p) return 0;"), "{}", g.code);
         // A row whose nested list or child component closes over the item can be given a new one (#6).
-        let g = gen_with("@fine\n@code { people: { id: number; roles: string[] }[] = []; ROLES = [\"a\"]; }\n<ul>@for (const p of people) @key(p.id) {<li>@for (const r of ROLES) @key(r) {<b>@(p.roles.includes(r) ? r : \"\")</b>}</li>}</ul>", &[]);
+        let g = gen_with("@code { people: { id: number; roles: string[] }[] = []; ROLES = [\"a\"]; }\n<ul>@for (const p of people) @key(p.id) {<li>@for (const r of ROLES) @key(r) {<b>@(p.roles.includes(r) ? r : \"\")</b>}</li>}</ul>", &[]);
         assert!(g.code.contains("], (__p, p) => {\n      __dom.rowItem((__v: typeof p) => { p = __v; });\n"), "{}", g.code);
     }
 
     #[test]
     fn rows_share_their_reads_and_handlers() {
-        let src = "@fine\n@code { team: Worker[] = []; pick(w: Worker) {} }\n<ul>\n@for (const w of team) {\n<li class=\"@w.kind\" @onclick=\"() => pick(w)\"><input @bind=\"w.name\" />@if (w.late) {\n<b>@w.name</b>\n}\n<i @onclick=\"pick\">@team.length</i></li>\n}\n</ul>";
+        let src = "@code { team: Worker[] = []; pick(w: Worker) {} }\n<ul>\n@for (const w of team) {\n<li class=\"@w.kind\" @onclick=\"() => pick(w)\"><input @bind=\"w.name\" />@if (w.late) {\n<b>@w.name</b>\n}\n<i @onclick=\"pick\">@team.length</i></li>\n}\n</ul>";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("__dom.listAt(_e1, () => this.team, [\n      (w) => w.kind,\n      (w): ((e: any) => unknown) => () => this.pick(w),\n      (w) => w.name,\n      (w): ((e: any) => unknown) => (__e) => { w.name = __Component.bindValue(__e, w.name); },\n      (w, __p) => {\n        if (w.late) {");
@@ -4562,7 +4554,7 @@ mod tests {
     #[test]
     fn components_slots_cascades_and_attributes_bind_in_place() {
         let card = "@code { title = \"\"; }\n<section>@title</section>";
-        let src = "@fine\n@code { n = 1; show = true; extra = {}; }\n<div>\n<Card title=\"@(n)\"><b>@n</b></Card>\n<p @onclick:preventDefault @onclick=\"() => n++\">x</p>\n<p @attributes=\"extra\" />\n@cascade:theme(n) { <i>@n</i> }\n@slot\n@if (show) {\n<Card />\n}\n</div>";
+        let src = "@code { n = 1; show = true; extra = {}; }\n<div>\n<Card title=\"@(n)\"><b>@n</b></Card>\n<p @onclick:preventDefault @onclick=\"() => n++\">x</p>\n<p @attributes=\"extra\" />\n@cascade:theme(n) { <i>@n</i> }\n@slot\n@if (show) {\n<Card />\n}\n</div>";
         let g = gen_with(src, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // A lone component needs no template: its anchor goes straight into the region's fragment.

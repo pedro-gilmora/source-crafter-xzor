@@ -41,15 +41,15 @@ test("every field of a model class becomes a private slot with a getter and a se
 
 test("project sources and generated components get tracked fields; other generated files do not", () => {
   const root = join(repo, "examples", "counter");
-  const fineText = `import { dom } from "@source-crafter/xzor-runtime";`;
+  const plainText = `import { dom } from "@source-crafter/xzor-runtime";`;
   expect(tracksFields(join(root, "models", "worker.ts"), root, "")).toBe(true);
-  expect(tracksFields(join(root, ".xzor", "pages", "TeamFine.xzor.ts"), root, fineText)).toBe(true);
+  expect(tracksFields(join(root, ".xzor", "pages", "TeamTracked.xzor.ts"), root, plainText)).toBe(true);
   expect(tracksFields(join(root, ".xzor", "pages", "Team.xzor.ts"), root, "class Team extends ComponentBase {}")).toBe(true);
-  expect(tracksFields(join(root, ".xzor", "routes.ts"), root, fineText)).toBe(false);
-  expect(tracksFields(join(root, "node_modules", "x", "y.xzor.ts"), root, fineText)).toBe(false);
+  expect(tracksFields(join(root, ".xzor", "routes.ts"), root, plainText)).toBe(false);
+  expect(tracksFields(join(root, "node_modules", "x", "y.xzor.ts"), root, plainText)).toBe(false);
 });
 
-const FINE = `import { ComponentBase, dom } from "@source-crafter/xzor-runtime";
+const COMPONENT = `import { ComponentBase, dom } from "@source-crafter/xzor-runtime";
 export default class Counter extends ComponentBase {
   count = 0;
   static inject = [];
@@ -63,8 +63,8 @@ export class Twice extends Counter {
 `;
 
 test("a component's fields are tracked like a model's, with no generated constructor", () => {
-  const out = trackModelFields(FINE);
-  expect(out.split("\n")).toHaveLength(FINE.split("\n").length);
+  const out = trackModelFields(COMPONENT);
+  expect(out.split("\n")).toHaveLength(COMPONENT.split("\n").length);
   expect(out).toContain(`export default class Counter extends ComponentBase {\n  #count = 0; get count() { ComponentBase.$reader?.(this, 0); return this.#count; } set count(v) { const p = this.#count; if (ComponentBase.same(p, v)) return; this.#count = v; this.$changed(0, p); }\n`);
   expect(out).toContain(`static { ComponentBase.$define(this, ["count"]); } }`);
   // The derived class continues after its base's fields, through the offset `$define` returns.
@@ -74,7 +74,7 @@ test("a component's fields are tracked like a model's, with no generated constru
 });
 
 test("a component extending Component gets tracked fields, aliased or not", () => {
-  const src = FINE.replaceAll("ComponentBase", "Component");
+  const src = COMPONENT.replaceAll("ComponentBase", "Component");
   const out = trackModelFields(src);
   expect(out).toContain(`get count() { Component.$reader?.(this, 0); return this.#count; }`);
   expect(out).toContain(`static { Component.$define(this, ["count"]); } }`);
@@ -83,7 +83,7 @@ test("a component extending Component gets tracked fields, aliased or not", () =
 });
 
 test("a component extending an aliased ComponentBase gets tracked fields too", () => {
-  const src = FINE.replace(`import { ComponentBase, dom }`, `import { ComponentBase as Base, dom }`).replace("extends ComponentBase", "extends Base");
+  const src = COMPONENT.replace(`import { ComponentBase, dom }`, `import { ComponentBase as Base, dom }`).replace("extends ComponentBase", "extends Base");
   expect(src).toContain("extends Base {");
   const out = trackModelFields(src);
   expect(out).toContain(`get count() { Base.$reader?.(this, 0); return this.#count; }`);
