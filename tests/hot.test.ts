@@ -309,6 +309,43 @@ test("a second patch applies on top of the first", () => {
   expect(host.querySelector("i")).toBe(null);
 });
 
+test("a template edit with a @cached instance kept off-screen does not reload", () => {
+  const { host, hot, calls } = setup();
+  class Kid extends Component {
+    static readonly cached = true;
+    n = 0;
+    protected override render(__p: Node): void {
+      dom.t(dom.el(__p, "b"), "old");
+    }
+  }
+  class Page extends Component {
+    show = true;
+    protected override render(__p: Node): void {
+      dom.branchAt(dom.anchors(__p), (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Kid, () => ({}));
+        }
+        return 1;
+      });
+    }
+  }
+  hot.register(".xzor/Kid.xzor.ts", Kid, imports);
+  const page = mount(Page, host);
+  page.show = false;
+  page.stateHasChanged();
+  expect(host.textContent).toBe("");
+
+  const code = `class Kid extends Component {
+    static cached = true;
+    n = 0;
+    render(__p) { dom.t(dom.el(__p, "i"), "new"); }
+  }
+  return Kid;`;
+  expect(hot.apply([{ id: ".xzor/Kid.xzor.ts", code, imports: IMPORTS }])).toBe(true);
+  expect(calls.reload).toBe(0);
+});
+
 test("a component that is not on the page renders the new markup when it mounts", () => {
   const { host, hot } = setup();
   const C = counter();

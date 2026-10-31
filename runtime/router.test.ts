@@ -1043,7 +1043,7 @@ test("links navigate in the browser and intercept link clicks", () => {
   expect(location.pathname).toBe("/users/2");
 });
 
-// NavLink is still a builder class: it mounts through the bridge, its slot filled with DOM markup.
+// NavLink's slot is filled with DOM markup.
 const slot = (text: string) =>
   ({ default: () => Component.fragment((__p) => dom.t(__p, text)) }) as unknown as NavLink["slots"];
 

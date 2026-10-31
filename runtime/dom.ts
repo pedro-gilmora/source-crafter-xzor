@@ -454,8 +454,11 @@ function refreshAll(h: Holder): void {
     const kept = kind === REGION ? (b.data as Region).index : -1;
     if (kind === EFFECT) {
       refreshing = b.data;
-      b.stateHasChanged();
-      refreshing = undefined;
+      try {
+        b.stateHasChanged();
+      } finally {
+        refreshing = undefined;
+      }
       if (b.data !== undefined && (b.data as CascadeRecord).held) owed = b.data as CascadeRecord;
     } else b.stateHasChanged();
     if ((b.flags & SHOW) !== 0) for (const branch of (b.data as Show).branches) branch !== undefined && refreshAll(branch);
@@ -1086,7 +1089,7 @@ export const dom = {
     node.data = textOf(value);
   },
 
-  /** A comment appended to `parent`: where a lone list, keyed loop or island goes. */
+  /** A comment appended to `parent`: where a lone list or keyed loop goes. */
   anchor,
 
   /**

@@ -486,3 +486,45 @@ test("two members bound to one name are set together and subscribe once", () => 
   expect(html(el)).toBe("light/light");
   expect(root.consumer!.renders).toBe(2);
 });
+
+class Tracked extends Component {
+  #theme = "dark";
+  get theme(): string {
+    Component.$reader?.(this, 0);
+    return this.#theme;
+  }
+  set theme(v: string) {
+    const p = this.#theme;
+    if (Component.same(p, v)) return;
+    this.#theme = v;
+    this.$changed(0, p);
+  }
+  static {
+    Component.$define(this, ["theme"]);
+  }
+  fail = false;
+  consumer?: Themed;
+  protected override render(__p: Node): void {
+    dom.cascadeAt(dom.anchors(__p), "theme", () => {
+      const theme = this.theme;
+      if (this.fail) throw new Error("value failed");
+      return theme;
+    }, false, (__p) => {
+      dom.component(dom.anchor(__p), Themed, (): Partial<Themed> => ({}), undefined, undefined, (__c) => { this.consumer = __c; });
+    });
+  }
+}
+
+test("a cascade value that throws during a whole pass does not hold back later changes", async () => {
+  const el = host();
+  const root = mount(Tracked, el);
+  root.fail = true;
+  try {
+    root.stateHasChanged();
+  } catch {}
+  root.fail = false;
+  root.theme = "light";
+  await Promise.resolve();
+  expect(el.querySelector("span")!.textContent).toBe("light");
+  expect(root.consumer!.theme).toBe("light");
+});

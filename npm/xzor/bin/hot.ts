@@ -18,7 +18,7 @@ export type HotRegistry = {
 
 // `templates`: the `const __tN = ...template(...)` lines of the last applied update; none until one is.
 type Entry = { cls: Function; imports: () => Record<string, unknown>; templates?: string };
-type Instance = { stateHasChanged(): void };
+type Instance = { stateHasChanged(): void; $end?: Node };
 type Patch = { entry: Entry; cls: Function; fresh: Function; fields: string[]; template: boolean; templates: string };
 
 // Static markup lives in module-level constants after the class, not in `render`'s source.
@@ -126,6 +126,8 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
           if (probe) for (const key of missing) (instance as any)[key] = probe[key];
         }
         if (template) {
+          // A `@cached` instance kept off-screen has no DOM to rebuild: it shows its old markup when revived.
+          if (instance.$end?.parentNode === null) continue;
           if (!rebuild?.(instance)) return reload();
         } else if (patched) instance.stateHasChanged();
       }
