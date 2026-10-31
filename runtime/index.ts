@@ -5,7 +5,7 @@ import { dom, markup, refreshPass, releaseDom, renderInto, type Markup } from ".
 import { changed, same as equal } from "./track";
 
 /** @internal What generated code calls to build a component's DOM. */
-export { dom, type El, type Markup } from "./dom";
+export { dom, type El, type Markup, type Props } from "./dom";
 
 /** One `@cascade:name(value)` provider; created on the region's first render and carried across the next ones. */
 export type CascadeRecord = {

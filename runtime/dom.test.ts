@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Component, dom, lazy, mount, type Markup, NavLink, type Route, type RouteTable, type RouteSection, setNavigationForTests, setTransitionCapForTests, viewTransitions } from "./index";
+import { Component, dom, lazy, mount, type Markup, NavLink, type Props, type Route, type RouteTable, type RouteSection, setNavigationForTests, setTransitionCapForTests, viewTransitions } from "./index";
 import { EntitySet, Key, Model } from "./model";
 
 // Models and components are written the way the bundle and codegen emit them.
@@ -1812,7 +1812,25 @@ test("dom.component and componentItem type their props against the component", (
   expect(Owner).toBeDefined();
 });
 
-// `@cascade:name(value[, fixed])`, as codegen will emit it.
+// The attribute syntax can name `$pass` (the prop-typing test builds that), so this pins the type itself: the `$`
+// members and the public ones of `Component` are not props, and the component's own are.
+test("dom.component and componentItem do not take the runtime's fields as props", () => {
+  class Owner extends Component {
+    protected override render(__p: Node): void {
+      // @ts-expect-error `$pass` is the runtime's
+      dom.component(dom.anchor(__p), Pick, (): Props<Pick> => ({ $pass: 1 }));
+      // @ts-expect-error `$ctx` is the runtime's
+      dom.component(dom.anchor(__p), Pick, (): Props<Pick> => ({ name: "x", $ctx: this }));
+      // @ts-expect-error `$bindings` is the runtime's, as a callback too
+      dom.component(dom.anchor(__p), Pick, () => ({}), { $bindings: 1 });
+      // @ts-expect-error `slots` is its own argument
+      dom.component(dom.anchor(__p), Pick, (): Props<Pick> => ({ slots: {} }));
+      dom.component(dom.anchor(__p), Pick, (): Props<Pick> => ({ name: "ok" }), { name: "also" });
+    }
+  }
+  expect(Owner).toBeDefined();
+});
+
 let seen: string[] = [];
 type Scope = { name: string; value: unknown; consumers: Set<Component> | undefined };
 class Reader extends Component {

@@ -8,7 +8,7 @@ fn example_components_compile() {
     assert!(ts.contains("import Counter from \"../Counter.xzor\";"));
     assert!(ts.contains("export default class Home extends __Component {"));
     assert!(ts.contains("static readonly route = \"/\";"));
-    assert!(ts.contains("__dom.component(_e11, Counter, (): Partial<Counter> => ({ label: \"Fives\", step: 5 }));"), "{ts}");
+    assert!(ts.contains("__dom.component(_e11, Counter, (): __Props<Counter> => ({ label: \"Fives\", step: 5 }));"), "{ts}");
     assert!(app.contains("step=\"5\""));
     assert!(ts.contains("__dom.listAt(_e3, () => this.steps, ["), "{ts}");
     assert!(ts.contains("__dom.textAt("), "{ts}");
@@ -47,7 +47,7 @@ fn non_string_component_props_take_expressions() {
     let ts = xzor::compile(app, &dir.join("App.xzor")).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(
-        ts.contains(r#"__dom.component(_e0, Child, (): Partial<Child> => ({ label: "5", step: 5, mode: "b", count: this.n + 1, title: "x" }), { on: () => this.n++ });"#),
+        ts.contains(r#"__dom.component(_e0, Child, (): __Props<Child> => ({ label: "5", step: 5, mode: "b", count: this.n + 1, title: "x" }), { on: () => this.n++ });"#),
         "{ts}"
     );
 }

@@ -326,6 +326,7 @@ pub fn generate_in(
         templates: Vec::new(),
         reads: None,
         uses_el: false,
+        uses_props: false,
         row_roots: Vec::new(),
         ownerless: false,
     };
@@ -391,10 +392,11 @@ pub fn generate_in(
         g.line("static readonly cached = true;");
     }
     if !doc.type_params.is_empty() {
+        g.uses_props = true;
         // Types only: callers infer the type arguments from a props object as a call would, under the constraints written here.
         let decls: Vec<&str> = doc.type_params.iter().map(|t| &**t).collect();
         let names: Vec<&str> = decls.iter().map(|d| d.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$')).next().unwrap_or_default()).collect();
-        g.line(&format!("declare static readonly $fit: <{}>(p: Partial<{class_name}<{}>>) => void;", decls.join(", "), names.join(", ")));
+        g.line(&format!("declare static readonly $fit: <{}>(p: __Props<{class_name}<{}>>) => void;", decls.join(", "), names.join(", ")));
     }
     if !memos.is_empty() {
         let names: Vec<String> = memos.iter().map(|n| js_string(n)).collect();
@@ -486,6 +488,9 @@ pub fn generate_in(
     }
     if g.uses_el {
         names.push("type El");
+    }
+    if g.uses_props {
+        names.push("type Props as __Props");
     }
     if !remotes.is_empty() {
         names.push("type Remote");
@@ -712,6 +717,8 @@ struct Gen<'p> {
     reads: Option<Reads>,
     /// A node variable is cast with the runtime's `El` type.
     uses_el: bool,
+    /// A child component's props are typed with the runtime's `Props`.
+    uses_props: bool,
     /// The rows being emitted whose `@key` keys their loop: the elements that may carry one.
     row_roots: Vec<*const Element>,
     /// Emitting `@module` code, whose markup has no component to own it.
@@ -1100,6 +1107,7 @@ impl<'p> Gen<'p> {
             templates: std::mem::take(&mut self.templates),
             reads: None,
             uses_el: false,
+            uses_props: false,
             row_roots: Vec::new(),
             ownerless: self.ownerless,
         }
@@ -1111,6 +1119,7 @@ impl<'p> Gen<'p> {
         self.node_ids = sub.node_ids;
         self.templates = std::mem::take(&mut sub.templates);
         self.uses_el |= sub.uses_el;
+        self.uses_props |= sub.uses_props;
     }
 
     /// One section of a routes block as its `RouteSection` descriptor. `RouteSection.render` takes a
@@ -2573,7 +2582,7 @@ impl<'p> Gen<'p> {
     /// would infer them (props that disagree on one fail) and, with `keys`, it has only props; else `never`.
     fn fit(class: &str, type_names: &[String], p: &str, keys: bool) -> String {
         let any = vec!["any"; type_names.len()].join(", ");
-        let only = if keys { format!(" & {{ [K in Exclude<keyof {p}, keyof Partial<{class}<{any}>>>]: never }}") } else { String::new() };
+        let only = if keys { format!(" & {{ [K in Exclude<keyof {p}, keyof __Props<{class}<{any}>>>]: never }}") } else { String::new() };
         format!("typeof {class}.$fit extends (p: {p}) => void ? {p}{only} : never")
     }
 
@@ -2592,6 +2601,7 @@ impl<'p> Gen<'p> {
     /// slot fills, or in a list row `__dom.componentItem` with those as the list's shared reads.
     fn emit_component(&mut self, el: &Element, end: &str) -> Result<(), String> {
         let ChildParts { name, type_args, infer, type_names, props, extra, fills } = self.component_parts(el)?;
+        self.uses_props = true;
         let row = self.row_level();
         // A spread's keys are unknown, so they are not checked as props.
         let spread = props.iter().any(|(p, _)| p.text.starts_with("..."));
@@ -2620,7 +2630,7 @@ impl<'p> Gen<'p> {
             let infers = type_names.iter().map(|n| format!("infer {n}")).collect::<Vec<_>>().join(", ");
             let types: Vec<String> = type_names
                 .iter()
-                .map(|t| format!("ReturnType<typeof {var}> extends Partial<{class}<{infers}>> ? {t} : unknown"))
+                .map(|t| format!("ReturnType<typeof {var}> extends __Props<{class}<{infers}>> ? {t} : unknown"))
                 .collect();
             head = head.lit_then(&format!("<{}>", types.join(", ")));
             let fit = Self::fit(class, &type_names, &format!("ReturnType<typeof {var}>"), !spread);
@@ -2632,21 +2642,21 @@ impl<'p> Gen<'p> {
             let var = format!("__p{id}");
             let fit = Self::fit(class, &type_names, &format!("typeof {var}"), !spread);
             let body = M::lit(&format!("{{ const {var} = ")).add(values).lit_then(&format!("; return {var} satisfies {fit}; }}"));
-            let i = self.push_read(&format!("): (Partial<{ty}>"), body);
+            let i = self.push_read(&format!("): (__Props<{ty}>"), body);
             args = args.add(head).lit_then(&format!(", {i}"));
         } else if row {
-            let i = self.push_read(&format!("): (Partial<{ty}>"), M::lit("(").add(values).lit_then(")"));
+            let i = self.push_read(&format!("): (__Props<{ty}>"), M::lit("(").add(values).lit_then(")"));
             args = args.add(head).lit_then(&format!(", {i}"));
         } else {
             // Typed here: inferred through the call, a literal would widen to `string`.
-            args = args.add(head).lit_then(&format!(", (): Partial<{ty}> => (")).add(values).lit_then(")");
+            args = args.add(head).lit_then(&format!(", (): __Props<{ty}> => (")).add(values).lit_then(")");
         }
         let statics = (!statics.is_empty()).then(|| Self::object_of(statics.into_iter().map(|(p, _)| p)));
         let slots = (!fills.is_empty()).then(|| Self::object_of(fills.into_iter().map(|(_, f)| f)));
         // Trailing arguments left out; a gap is `undefined`.
         let mut rest: Vec<Option<M>> = Vec::new();
         if row {
-            let statics = statics.map(|s| self.push_read(&format!("): (Partial<{ty}>"), M::lit("(").add(s).lit_then(")")));
+            let statics = statics.map(|s| self.push_read(&format!("): (__Props<{ty}>"), M::lit("(").add(s).lit_then(")")));
             let slots = slots.map(|s| self.push_read(&format!("): ({ty}[\"slots\"]"), M::lit("(").add(s).lit_then(")")));
             rest.push(statics.map(|i| M::lit(&i.to_string())));
             rest.push(slots.map(|i| M::lit(&i.to_string())));
@@ -3827,9 +3837,9 @@ mod tests {
         let (doc, _) = parse(src).unwrap();
         let g = generate(&doc, "C", "C.xzor").unwrap();
         // A markup value is a DOM fragment owned by the component.
-        assert!(g.code.contains("  cached = __Component.fragment((__p) => {\n    const _e0 = __dom.anchor(__p);\n    __dom.component(_e0, B, (): Partial<B> => ({}));\n  }, this);"), "{}", g.code);
+        assert!(g.code.contains("  cached = __Component.fragment((__p) => {\n    const _e0 = __dom.anchor(__p);\n    __dom.component(_e0, B, (): __Props<B> => ({}));\n  }, this);"), "{}", g.code);
         assert!(
-            g.code.contains("return t ? __Component.fragment((__p) => {\n    const _e1 = __dom.anchor(__p);\n    __dom.component(_e1, A, (): Partial<A> => ({ state: this.state, n: t }));\n  }, this) : this.cached;"),
+            g.code.contains("return t ? __Component.fragment((__p) => {\n    const _e1 = __dom.anchor(__p);\n    __dom.component(_e1, A, (): __Props<A> => ({ state: this.state, n: t }));\n  }, this) : this.cached;"),
             "{}",
             g.code
         );
@@ -4060,7 +4070,7 @@ mod tests {
     fn slot_definitions_declare_typed_slots_and_render_with_fallbacks() {
         let src = "@typeparam T\n@code { title = \"\"; items: T[] = []; n = 1; }\n<section>\n  @slot:header { <h3>@title</h3> }\n  @for (const x of items) {\n    @slot:item(x, n, \"s\", this.title.length, <b/>)\n  }\n  @slot:extra((n + 1) as number)\n  @slot\n</section>";
         let g = gen_with(src, &[]);
-        assert!(g.code.contains("import { Component as __Component, dom as __dom, type El, type RenderFragment } from \"@source-crafter/xzor-runtime\";"), "{}", g.code);
+        assert!(g.code.contains("import { Component as __Component, dom as __dom, type El, type Props as __Props, type RenderFragment } from \"@source-crafter/xzor-runtime\";"), "{}", g.code);
         assert!(
             g.code.contains(r#"  declare slots: { header?: () => RenderFragment; item?: (x: this["items"][number], n: this["n"], arg2: string, length: this["title"]["length"], arg4: RenderFragment) => RenderFragment; extra?: (arg0: number) => RenderFragment; default?: () => RenderFragment };"#),
             "{}",
@@ -4137,12 +4147,12 @@ mod tests {
         let list = "@typeparam T\n@code { items: T[] = []; }\n@slot:item";
         let src = "@code { n = 1; xs = [\"a\"]; }\n<Card title=\"x\">\n  <p>@n</p>\n</Card>\n<List T=\"string\" items=\"@xs\">\n  @slot header { <b>h</b> }\n  @slot item(s, i: number = 0) { @s @n @i }\n</List>\n<Other />";
         let g = gen_with(src, &[("Card", "<p/>"), ("List", list)]);
-        assert!(g.code.contains(r#"__dom.component(_e1, Card, (): Partial<Card> => ({ title: "x" }), undefined, { default: () => __Component.fragment((__p) => {"#), "{}", g.code);
+        assert!(g.code.contains(r#"__dom.component(_e1, Card, (): __Props<Card> => ({ title: "x" }), undefined, { default: () => __Component.fragment((__p) => {"#), "{}", g.code);
         assert!(g.code.contains("__dom.textAt(_e5, () => this.n);"), "{}", g.code);
-        assert!(g.code.contains("__dom.component(_e2, List<string>, (): Partial<List<string>> => ({ items: this.xs }), undefined, { header: () => __Component.fragment((__p) => {"), "{}", g.code);
+        assert!(g.code.contains("__dom.component(_e2, List<string>, (): __Props<List<string>> => ({ items: this.xs }), undefined, { header: () => __Component.fragment((__p) => {"), "{}", g.code);
         assert!(g.code.contains("}, this), item: (s, i: number = 0) => __Component.fragment((__p) => {"), "{}", g.code);
         assert!(g.code.contains("__dom.textAt(_e8, () => s);") && g.code.contains("__dom.textAt(_e10, () => i);"), "{}", g.code);
-        assert!(g.code.contains("__dom.component(_e3, Other, (): Partial<Other> => ({}));"), "{}", g.code);
+        assert!(g.code.contains("__dom.component(_e3, Other, (): __Props<Other> => ({}));"), "{}", g.code);
     }
 
     #[test]
@@ -4150,11 +4160,11 @@ mod tests {
         let list = "@typeparam T\n@typeparam U = string\n@code { items: T[] = []; }\n@slot:item";
         let src = "@code { xs = [\"a\"]; }\n<List items=\"@xs\">\n  @slot item(x) { @x }\n</List>\n<List items=\"@xs\" />";
         let g = gen_with(src, &[("List", list)]);
-        let fit = |p: &str| format!("typeof List.$fit extends (p: {p}) => void ? {p} & {{ [K in Exclude<keyof {p}, keyof Partial<List<any, any>>>]: never }} : never");
+        let fit = |p: &str| format!("typeof List.$fit extends (p: {p}) => void ? {p} & {{ [K in Exclude<keyof {p}, keyof __Props<List<any, any>>>]: never }} : never");
         let infer = |p: &str| {
             let i = "infer T, infer U";
             let ret = format!("ReturnType<typeof {p}>");
-            format!("List<{ret} extends Partial<List<{i}>> ? T : unknown, {ret} extends Partial<List<{i}>> ? U : unknown>, {p} satisfies (() => {})", fit(&ret))
+            format!("List<{ret} extends __Props<List<{i}>> ? T : unknown, {ret} extends __Props<List<{i}>> ? U : unknown>, {p} satisfies (() => {})", fit(&ret))
         };
         assert!(g.code.contains("const __p0 = () => ({ items: this.xs });"), "{}", g.code);
         assert!(g.code.contains(&format!("__dom.component(_e1, {}, undefined, {{ item: (x) =>", infer("__p0"))), "{}", g.code);
@@ -4168,9 +4178,9 @@ mod tests {
         let list = "@typeparam T\n@code { items: T[] = []; }";
         let src = "@code { xs = [[\"a\"]]; }\n@for (const x of xs) {\n  <List items=\"@x\" />\n  <List T=\"string\" items=\"@x\" />\n}";
         let g = gen_with(src, &[("List", list)]);
-        let fit = "typeof List.$fit extends (p: typeof __p0) => void ? typeof __p0 & { [K in Exclude<keyof typeof __p0, keyof Partial<List<any>>>]: never } : never";
-        assert!(g.code.contains(&format!("(x): (Partial<List<any>>) => {{ const __p0 = {{ items: x }}; return __p0 satisfies {fit}; }},")), "{}", g.code);
-        assert!(g.code.contains("(x): (Partial<List<string>>) => ({ items: x }),"), "{}", g.code);
+        let fit = "typeof List.$fit extends (p: typeof __p0) => void ? typeof __p0 & { [K in Exclude<keyof typeof __p0, keyof __Props<List<any>>>]: never } : never";
+        assert!(g.code.contains(&format!("(x): (__Props<List<any>>) => {{ const __p0 = {{ items: x }}; return __p0 satisfies {fit}; }},")), "{}", g.code);
+        assert!(g.code.contains("(x): (__Props<List<string>>) => ({ items: x }),"), "{}", g.code);
         assert!(!g.code.contains("const __p1"), "{}", g.code);
     }
 
@@ -4190,8 +4200,8 @@ mod tests {
         let list = "@typeparam T\n@code { items: T[] = []; }";
         let src = "@code { xs = [\"a\"]; }\n<List T=\"string\" items=\"@xs\" />\n<Card title=\"x\" />";
         let g = gen_with(src, &[("List", list), ("Card", "<p/>")]);
-        assert!(g.code.contains("__dom.component(_e1, List<string>, (): Partial<List<string>> => ({ items: this.xs }));"), "{}", g.code);
-        assert!(g.code.contains("__dom.component(_e2, Card, (): Partial<Card> => ({ title: \"x\" }));"), "{}", g.code);
+        assert!(g.code.contains("__dom.component(_e1, List<string>, (): __Props<List<string>> => ({ items: this.xs }));"), "{}", g.code);
+        assert!(g.code.contains("__dom.component(_e2, Card, (): __Props<Card> => ({ title: \"x\" }));"), "{}", g.code);
         assert!(!g.code.contains("const __p0"), "{}", g.code);
     }
 
@@ -4199,7 +4209,7 @@ mod tests {
     fn ref_assigns_elements_and_components() {
         let src = "@code { input?: HTMLInputElement; child?: Counter; }\n<input @ref=\"input\" />\n<Counter @ref=\"child\" label=\"a\" />\n<my-el @ref=\"input\" />";
         let g = gen_with(src, &[("Counter", "@code { label = \"\"; }")]);
-        for m in ["this.input = _e1;", "__dom.component(_e2, Counter, (): Partial<Counter> => ({ label: \"a\" }), undefined, undefined, (__c) => { this.child = __c; });", "this.input = _e3;"] {
+        for m in ["this.input = _e1;", "__dom.component(_e2, Counter, (): __Props<Counter> => ({ label: \"a\" }), undefined, undefined, (__c) => { this.child = __c; });", "this.input = _e3;"] {
             assert!(g.code.contains(m), "{m} missing in\n{}", g.code);
         }
     }
@@ -4222,7 +4232,7 @@ mod tests {
         has("__dom.textAt(_e10, () => total);");
         assert!(!g.code.contains("[\"text\""), "{}", g.code);
         has("__dom.attrs(_e11, () => this.extra, [\"class\"]);\n      __dom.on(_e11, \"submit\", undefined, 1);\n      __dom.on(_e11, \"click\", (__e: any) => { if (this.stop) __e.stopPropagation(); });");
-        has("__dom.component(_e12, Card, (): Partial<Card> => ({ ...this.extra, title: \"t\" }));");
+        has("__dom.component(_e12, Card, (): __Props<Card> => ({ ...this.extra, title: \"t\" }));");
     }
 
     #[test]
@@ -4230,7 +4240,7 @@ mod tests {
         let counter = "@code { onChange?: EventCallback<number>; onReset?: EventCallback; value = 0; valueChanged?: EventCallback<number>; }";
         let src = "@code { n = 1; name = \"\"; ok = false; save() {} }\n<Counter onChange=\"save\" onReset=\"() => n = 0\" @bind-value=\"n\" />\n<input @bind=\"name\" />\n<input type=\"checkbox\" @bind=\"ok\" @bind:event=\"oninput\" @bind:after=\"save\" />";
         let g = gen_with(src, &[("Counter", counter)]);
-        assert!(g.code.contains("__dom.component(_e1, Counter, (): Partial<Counter> => ({ value: this.n }), { onChange: __dom.callback(this, this.save.bind(this)), onReset: __dom.callback(this, () => this.n = 0), valueChanged: __dom.callback(this, (__v) => { this.n = __v; }) });"), "{}", g.code);
+        assert!(g.code.contains("__dom.component(_e1, Counter, (): __Props<Counter> => ({ value: this.n }), { onChange: __dom.callback(this, this.save.bind(this)), onReset: __dom.callback(this, () => this.n = 0), valueChanged: __dom.callback(this, (__v) => { this.n = __v; }) });"), "{}", g.code);
         assert!(g.code.contains("__dom.attr(_e2, \"value\", () => this.name);\n    __dom.on(_e2, \"change\", (__e) => { this.name = __Component.bindValue(__e, this.name); });"), "{}", g.code);
         assert!(g.code.contains("__dom.attr(_e3, \"checked\", () => this.ok);\n    __dom.on(_e3, \"input\", (__e) => { this.ok = __Component.bindValue(__e, this.ok); return this.save(); });"), "{}", g.code);
     }
@@ -4250,7 +4260,7 @@ mod tests {
     fn dom_event_syntax_on_a_component_sets_its_callback() {
         let counter = "@code { onChange?: EventCallback<number>; label = \"\"; }";
         let g = gen_with("@code { save() {} }\n<Counter @onchange=\"save\" />", &[("Counter", counter)]);
-        assert!(g.code.contains("__dom.component(_e0, Counter, (): Partial<Counter> => ({}), { onChange: __dom.callback(this, this.save.bind(this)) });"), "{}", g.code);
+        assert!(g.code.contains("__dom.component(_e0, Counter, (): __Props<Counter> => ({}), { onChange: __dom.callback(this, this.save.bind(this)) });"), "{}", g.code);
         let doc = parse("<Counter @onlabel=\"x\" />").unwrap().0;
         let infos = HashMap::from([("Counter".to_string(), component_info(counter))]);
         let err = generate_with(&doc, "C", "C.xzor", &infos, &HashSet::new(), "./routes").unwrap_err();
@@ -4262,7 +4272,7 @@ mod tests {
         let (doc, _) = parse("@typeparam T extends object\n@typeparam U\n<p/>").unwrap();
         let g = generate(&doc, "Grid", "Grid.xzor").unwrap();
         assert!(g.code.contains("export default class Grid<T extends object, U> extends __Component {"), "{}", g.code);
-        assert!(g.code.contains("declare static readonly $fit: <T extends object, U>(p: Partial<Grid<T, U>>) => void;"), "{}", g.code);
+        assert!(g.code.contains("declare static readonly $fit: <T extends object, U>(p: __Props<Grid<T, U>>) => void;"), "{}", g.code);
     }
 
     #[test]
@@ -4309,10 +4319,10 @@ mod tests {
         let chart = "@async\n@code { label = \"\"; }\n<p>@label</p>";
         let g = gen_with("@import Chart from \"./Chart.xzor\"\n@cached\n<Chart label=\"x\" />", &[("Chart", chart)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("import { Component as __Component, dom as __dom, lazy as __lazy } from \"@source-crafter/xzor-runtime\";");
+        has("import { Component as __Component, dom as __dom, lazy as __lazy, type Props as __Props } from \"@source-crafter/xzor-runtime\";");
         // The class stays a type for the props; the tree gets its loader.
         has("import type Chart from \"./Chart.xzor\";\nconst __lazy_Chart = __lazy<typeof Chart>(() => import(\"./Chart.xzor\"));");
-        has("__dom.component(_e0, __lazy_Chart, (): Partial<Chart> => ({ label: \"x\" }));");
+        has("__dom.component(_e0, __lazy_Chart, (): __Props<Chart> => ({ label: \"x\" }));");
         has("static readonly cached = true;");
     }
 
@@ -4599,8 +4609,8 @@ mod tests {
         let g = gen_with(src, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // A lone component needs no template: its anchor goes straight into the region's fragment.
-        has("const _e11 = __dom.anchor(__p);\n        __dom.component(_e11, Card, (): Partial<Card> => ({}));");
-        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: this.n }), undefined, { default: () => __Component.fragment((__p) => {");
+        has("const _e11 = __dom.anchor(__p);\n        __dom.component(_e11, Card, (): __Props<Card> => ({}));");
+        has("__dom.component(_e1, Card, (): __Props<Card> => ({ title: this.n }), undefined, { default: () => __Component.fragment((__p) => {");
         has("__dom.on(_e2, \"click\", () => this.n++, 1);");
         has("__dom.attrs(_e3, () => this.extra);");
         has("__dom.cascadeAt(_e4, \"theme\", () => this.n, false, (__p) => {");
@@ -4704,7 +4714,7 @@ mod tests {
         // written before it is given as pairs, so the bag can restore it.
         has("__dom.attrs(_e1, () => this.bag, [\"id\", \"data-x\"], [\"class\", \"a\"]);");
         // On a component the bag spreads in written order, so the later `size` wins.
-        has("__dom.component(_e2, Card, (): Partial<Card> => ({ title: \"t\", ...this.bag, size: \"s\" }));");
+        has("__dom.component(_e2, Card, (): __Props<Card> => ({ title: \"t\", ...this.bag, size: \"s\" }));");
         let last = gen_with("@code { bag = {}; }\n<p id=\"b\" @attributes=\"bag\"></p>", &[]);
         assert!(last.code.contains("__dom.attrs(_e0, () => this.bag, undefined, [\"id\", \"b\"]);"), "{}", last.code);
         let alone = gen_with("@code { bag = {}; }\n<p @attributes=\"bag\"></p>", &[]);
@@ -4736,12 +4746,12 @@ mod tests {
         assert!(one("<Card @onpick=\"this.save\" />").contains("({}), { onPick: __dom.callback(this, this.save) });"));
         // Read again on each pass, so what it gives is current: a conditional, a factory call.
         let cond = one("<Card onPick=\"@(editing ? save : cancel)\" />");
-        assert!(cond.contains("(): Partial<Card> => ({ onPick: __dom.callback(this, this.editing ? this.save : this.cancel) }));"), "{cond}");
+        assert!(cond.contains("(): __Props<Card> => ({ onPick: __dom.callback(this, this.editing ? this.save : this.cancel) }));"), "{cond}");
         let call = one("<Card onPick=\"@handlerFor('a')\" />");
-        assert!(call.contains("(): Partial<Card> => ({ onPick: __dom.callback(this, this.handlerFor('a')) }));"), "{call}");
+        assert!(call.contains("(): __Props<Card> => ({ onPick: __dom.callback(this, this.handlerFor('a')) }));"), "{call}");
         // A markup value held in a member is an expression: it is read, not set once.
         let held = one("<Card header=\"@frag\" />");
-        assert!(held.contains("(): Partial<Card> => ({ header: this.frag }));"), "{held}");
+        assert!(held.contains("(): __Props<Card> => ({ header: this.frag }));"), "{held}");
     }
 
     #[test]
@@ -4780,7 +4790,7 @@ mod tests {
         let one = |tag: &str| gen_with(&format!("@code {{ pick(t: number) {{ return t ? <i/> : <u/>; }} }}\n{tag}"), &card).code;
         // An expression yielding markup is read on each pass.
         let read = one("<Card header=\"@pick(1)\" />");
-        assert!(read.contains("(): Partial<Card> => ({ header: this.pick(1) }));"), "{read}");
+        assert!(read.contains("(): __Props<Card> => ({ header: this.pick(1) }));"), "{read}");
     }
 
     #[test]
@@ -4811,16 +4821,16 @@ mod tests {
         let g = gen_with(src, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         // Values are the typed read; callbacks are statics; then the slots, the `@ref` setter and the key.
-        has("__dom.component(_e1, Card, (): Partial<Card> => ({ title: \"t\", count: this.n }), { onSave: __dom.callback(this, this.save.bind(this)), onDone: __dom.callback(this, this.save.bind(this)) }, { header: () => __Component.fragment((__p) => {");
+        has("__dom.component(_e1, Card, (): __Props<Card> => ({ title: \"t\", count: this.n }), { onSave: __dom.callback(this, this.save.bind(this)), onDone: __dom.callback(this, this.save.bind(this)) }, { header: () => __Component.fragment((__p) => {");
         has("}, this) }, (__c) => { this.card = __c; }, this.n);");
         // Without any of them, only the read.
-        has("__dom.component(_e2, Card, (): Partial<Card> => ({ title: \"u\" }));");
+        has("__dom.component(_e2, Card, (): __Props<Card> => ({ title: \"u\" }));");
         // In a row each part is one of the list's shared reads, typed against the component.
         let rows = "@code { rows = [1]; save() {} }\n<ul>@for (const r of rows) {<Card title=\"@r\" count=\"@r\" @onsave=\"save\" @key=\"r\" />}</ul>";
         let g = gen_with(rows, &[("Card", card)]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
-        has("(r): (Partial<Card>) => ({ title: r, count: r }),");
-        has("(_): (Partial<Card>) => ({ onSave: __dom.callback(this, this.save.bind(this)) }),");
+        has("(r): (__Props<Card>) => ({ title: r, count: r }),");
+        has("(_): (__Props<Card>) => ({ onSave: __dom.callback(this, this.save.bind(this)) }),");
         has("__dom.componentItem(_e2, Card, 0, 1, undefined, undefined, r);");
     }
 

@@ -80,6 +80,9 @@ const EMPTY = Symbol("xzor.dom.empty");
 /** The element type of tag `K`. */
 export type El<K extends string> = K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : HTMLElement;
 
+/** What a parent sets on child `C`: its own members, never `Component`'s (the runtime's `$` fields, `slots`). */
+export type Props<C> = Partial<Omit<C, keyof Component>>;
+
 let collecting: Binding | undefined;
 let holder: Holder | undefined;
 
@@ -1225,7 +1228,7 @@ export const dom = {
    * A child component before `end` (its end comment): `props` gives its value props, diffed against the last ones;
    * `statics` (callbacks) and `slots` are assigned once. `key` keys a `@cached` one; `onError` is `@catch`'s.
    */
-  component<C extends Component>(end: Comment, type: new (...args: any[]) => C, props: () => Partial<C>, statics?: Partial<C>, slots?: C["slots"], ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
+  component<C extends Component>(end: Comment, type: new (...args: any[]) => C, props: () => Props<C>, statics?: Props<C>, slots?: C["slots"], ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
     const h = holder!;
     const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics: statics as Child["statics"], slots, ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: undefined };
     track(new Binding(COMPONENT, end, props as () => Record<string, unknown>, child));
