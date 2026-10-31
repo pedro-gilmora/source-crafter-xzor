@@ -38,7 +38,7 @@ The generated build reaches nodes by template paths (`firstChild`/`nextSibling`)
 - `template()()` returns the template's master node during a claim (never cloned, never inserted); one module-level `CLAIM_PARENT` stand-in makes `__p.appendChild`, `anchor`, `anchors`, `el`, `t` no-ops that hand back placeholders, so the generated paths always resolve.
 - Each `dom.*` binding call ignores the node it is given, takes the next old binding, checks its kind (and template identity for roots), sets its `read` (and row reads/build for lists, child type/props for components) to the new one and re-runs it: equal values touch nothing, a list reconciles its rows (kept rows re-point their reads), a component at that position keeps its instance when the type matches (props per Ruling 5), regions and kept branches re-point the bindings under them the same way.
 - Handlers: in markup values, handlers are registered through a handler record kept in the same chain (like `onItem` for rows), so a claim re-points the element's handler instead of needing the element.
-- A markup literal is straight-line code, so one site always issues the same calls in the same order: a kind mismatch cannot happen for markup values; it is asserted and falls back to a full rebuild.
+- A markup literal is straight-line code, so one site always issues the same calls in the same order: a kind mismatch cannot happen for markup values; it is asserted and falls back to a full rebuild. (Corrected 2026-10-31: false for structure decided by plain code, `@while` and unkeyed loops; those are pieces regions now, see Later changes.)
 - Nothing moves in the document, so focus, selection, typed text and scroll stay.
 
 ### `@{ }` markup statements
@@ -79,3 +79,7 @@ Runtime tests (generated-code style): same-site value keeps nodes/focus/child in
 - Generated code shape: site constants; compiler and runtime ship together.
 - Perf and memory: one site constant per markup literal; no per-update allocation beyond bindings.
 - Docs: design.md, README, SKILL, features.md row (Components).
+
+## Later changes
+
+- 2026-10-31 (final review): structure decided by plain code (`@while`, unkeyed loops, loops and branches running `@{ }` code) renders as pieces regions matched by (site, order), never by call count. A piece whose claim fails builds anew in the same run: user code runs once per update. A claimed piece runs again right after its statement, reading locals as a fresh one does. `@ref` in anything a claim re-runs points at the live element. A claim from another owner rebuilds. Pieces carry no key: state follows position. Site and row scans are linear (per-site cursor on the site, stamped with a run number unique across blocks).
