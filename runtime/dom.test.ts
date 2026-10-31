@@ -2270,6 +2270,276 @@ test("claim: 100 claims of each structure leave no subscribers once the value go
   expect(nestSubs).toBe(1);
 });
 
+// `@{ }` pieces: each markup statement of a code block claims last run's next piece of its site.
+type Itm = { id: number; name: string };
+const __sLi = {};
+const __sYes = {};
+const __sNo = {};
+const __sLeaf = {};
+const __sRowP = {};
+const __sMvP = {};
+const __pul = dom.template([["ul", 0, null, null]]);
+const __pli = dom.template([["li", 0, ["input", 0], " ", ""]]);
+const __pb = dom.template([["b", 0, "yes"]]);
+const __pno = dom.template(["no ", ""]);
+let pieceSubs = 0;
+let pieceLeaves: Leaf[] = [];
+class Pcs extends Component {
+  #items: Itm[] = []; get items(): Itm[] { Component.$reader?.(this, 0); return this.#items; } set items(v: Itm[]) { const p = this.#items; if (Component.same(p, v)) return; this.#items = v; this.$changed(0, p); }
+  #flag = true; get flag(): boolean { Component.$reader?.(this, 1); return this.#flag; } set flag(v: boolean) { const p = this.#flag; if (Component.same(p, v)) return; this.#flag = v; this.$changed(1, p); }
+  #leaves = false; get leaves(): boolean { Component.$reader?.(this, 2); return this.#leaves; } set leaves(v: boolean) { const p = this.#leaves; if (Component.same(p, v)) return; this.#leaves = v; this.$changed(2, p); }
+  static { Component.$define(this, ["items", "flag", "leaves"]); }
+  override $watch(dep: object): void { pieceSubs++; super.$watch(dep); }
+  override $unwatch(dep: object): void { pieceSubs--; super.$unwatch(dep); }
+  log: string[] = [];
+  protected override render(__p: Node): void {
+    const _e0 = __pul() as HTMLElement;
+    const _e1 = _e0.lastChild! as Comment;
+    dom.piecesAt(_e1, (__p) => {
+      for (const x of this.items) {
+        const __p0 = dom.piece(__sLi);
+        const _e2 = __pli() as HTMLElement;
+        const _e3 = _e2.lastChild! as Text;
+        dom.textAt(_e3, () => x.name);
+        dom.on(_e2, "click", () => this.log.push(x.name));
+        __p0.appendChild(_e2);
+      }
+      if (this.flag) {
+        const __p1 = dom.piece(__sYes);
+        const _e4 = __pb() as HTMLElement;
+        __p1.appendChild(_e4);
+      } else {
+        const __p2 = dom.piece(__sNo);
+        const _e5 = __pno();
+        const _e6 = _e5.lastChild! as Text;
+        dom.textAt(_e6, () => this.items.length);
+        __p2.appendChild(_e5);
+      }
+      if (this.leaves)
+        for (const x of this.items) {
+          const __p3 = dom.piece(__sLeaf);
+          dom.component(dom.anchor(__p3), Leaf, () => ({ label: x.name }), undefined, undefined, (c) => pieceLeaves.push(c));
+        }
+    });
+    __p.appendChild(_e0);
+  }
+}
+
+const itms = (...names: string[]): Itm[] => names.map((name, id) => ({ id, name }));
+
+test("pieces: a loop going N -> N+1 -> N-1 keeps the common <li>/<input> and their typed values", async () => {
+  const el = host();
+  const c = mount(Pcs, el);
+  c.items = itms("a", "b");
+  await tick();
+  const ul = el.querySelector("ul")!;
+  const lis = [...el.querySelectorAll("li")];
+  const inputs = [...el.querySelectorAll("input")];
+  inputs[0]!.value = "typed0";
+  inputs[1]!.value = "typed1";
+  inputs[1]!.focus();
+  expect(ul.textContent).toBe(" a byes");
+  c.items = itms("A", "B", "C");
+  await tick();
+  let now = [...el.querySelectorAll("li")];
+  expect(now.length).toBe(3);
+  expect(now[0] === lis[0]!).toBe(true);
+  expect(now[1] === lis[1]!).toBe(true);
+  expect(now.map((li) => li.textContent)).toEqual([" A", " B", " C"]);
+  expect(el.querySelectorAll("input")[1]!.value).toBe("typed1");
+  expect(document.activeElement === inputs[1]!).toBe(true);
+  // The <b> after the loop stays last, and is the same node.
+  expect(ul.lastElementChild!.tagName).toBe("B");
+  c.items = itms("x");
+  await tick();
+  now = [...el.querySelectorAll("li")];
+  expect(now.length).toBe(1);
+  expect(now[0] === lis[0]!).toBe(true);
+  expect(now[0]!.textContent).toBe(" x");
+  expect(el.querySelector("input")!.value).toBe("typed0");
+  expect(el.querySelector("ul") === ul).toBe(true);
+  // Handlers are the new run's.
+  now[0]!.click();
+  expect(c.log).toEqual(["x"]);
+  inputs[1]!.blur();
+});
+
+test("pieces: an if switching which site it emits builds the new piece and disposes the old one", async () => {
+  pieceSubs = 0;
+  const el = host();
+  const c = mount(Pcs, el);
+  c.items = itms("a");
+  await tick();
+  const li = el.querySelector("li")!;
+  const b = el.querySelector("b")!;
+  const subs = pieceSubs;
+  c.flag = false;
+  await tick();
+  expect(el.querySelector("li") === li).toBe(true);
+  expect(el.querySelector("b")).toBeNull();
+  expect(el.querySelector("ul")!.textContent).toBe(" ano 1");
+  // The new piece's text binding reads `items`.
+  expect(pieceSubs).toBe(subs + 1);
+  c.items = itms("a", "b");
+  await tick();
+  expect(el.querySelector("ul")!.textContent).toBe(" a bno 2");
+  c.flag = true;
+  await tick();
+  expect(el.querySelector("ul")!.textContent).toBe(" a byes");
+  expect(el.querySelector("b") === b).toBe(false);
+  expect(pieceSubs).toBe(subs);
+});
+
+test("pieces: a child component in a piece keeps its instance and takes the new props", async () => {
+  leafMade = 0;
+  pieceLeaves = [];
+  const el = host();
+  const c = mount(Pcs, el);
+  c.items = itms("a", "b");
+  c.leaves = true;
+  await tick();
+  expect(leafMade).toBe(2);
+  const [a, b] = pieceLeaves;
+  const ems = [...el.querySelectorAll("em")];
+  c.items = itms("c", "d");
+  await tick();
+  expect(leafMade).toBe(2);
+  expect(pieceLeaves.slice(-2)).toEqual([a!, b!]);
+  expect([...el.querySelectorAll("em")].every((em, i) => em === ems[i])).toBe(true);
+  expect([...el.querySelectorAll("em")].map((em) => em.textContent)).toEqual(["c", "d"]);
+  c.items = itms("e");
+  await tick();
+  expect(leafMade).toBe(2);
+  expect(el.querySelectorAll("em").length).toBe(1);
+  expect(el.querySelector("em") === ems[0]!).toBe(true);
+});
+
+test("pieces: 100 re-runs leave the subscribers as after the first", async () => {
+  pieceSubs = 0;
+  const el = host();
+  const c = mount(Pcs, el);
+  c.items = itms("a", "b");
+  c.flag = false;
+  c.leaves = true;
+  await tick();
+  const built = pieceSubs;
+  const ul = el.querySelector("ul");
+  for (let i = 0; i < 100; i++) {
+    c.items = itms(`${i}`, "b", ...(i % 2 === 0 ? ["c"] : []));
+    c.flag = i % 3 !== 0;
+    await tick();
+  }
+  c.items = itms("z", "b");
+  c.flag = false;
+  await tick();
+  expect(el.querySelector("ul") === ul).toBe(true);
+  expect(el.querySelector("ul")!.textContent).toBe(" z bno 2zb");
+  expect(pieceSubs).toBe(built);
+});
+
+const __prow = dom.template([["li", 0, null, null]]);
+const __pi = dom.template([["i", 0, ""]]);
+class PcsRows extends Component {
+  #rows: Itm[] = []; get rows(): Itm[] { Component.$reader?.(this, 0); return this.#rows; } set rows(v: Itm[]) { const p = this.#rows; if (Component.same(p, v)) return; this.#rows = v; this.$changed(0, p); }
+  #n = 1; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+  static { Component.$define(this, ["rows", "n"]); }
+  protected override render(__p: Node): void {
+    dom.listAt(dom.anchor(__p), () => this.rows, [
+      (r: Itm, __p: Node) => {
+        for (let i = 0; i < this.n; i++) {
+          const __p0 = dom.piece(__sRowP);
+          const _e0 = __pi() as HTMLElement;
+          dom.textAt(_e0.firstChild as Text, () => `${r.name}${i}`);
+          __p0.appendChild(_e0);
+        }
+      },
+    ], (__p) => {
+      const _e0 = __prow() as HTMLElement;
+      dom.piecesItem(_e0.lastChild as Comment, 0);
+      __p.appendChild(_e0);
+    }, undefined, (r: Itm) => r.id);
+  }
+}
+const __sMv = {};
+const piecesValue = (owner: Component, x: string, n: number): Markup =>
+  Component.fragment((__p) => {
+    const _e0 = __pul() as HTMLElement;
+    dom.piecesAt(_e0.lastChild as Comment, (__p) => {
+      for (let i = 0; i < n; i++) {
+        const __p0 = dom.piece(__sMvP);
+        const _e1 = __pi() as HTMLElement;
+        dom.textAt(_e1.firstChild as Text, () => `${x}${i}`);
+        __p0.appendChild(_e1);
+      }
+    });
+    __p.appendChild(_e0);
+  }, owner, __sMv);
+
+test("pieces: a row's block keeps its pieces when the row's item is replaced and when it re-runs", async () => {
+  const el = host();
+  const c = mount(PcsRows, el);
+  c.rows = itms("a", "b");
+  await tick();
+  const is = [...el.querySelectorAll("i")];
+  expect(el.textContent).toBe("a0b0");
+  c.rows = [{ id: 0, name: "A" }, c.rows[1]!];
+  c.n = 2;
+  await tick();
+  expect(el.textContent).toBe("A0A1b0b1");
+  const now = [...el.querySelectorAll("i")];
+  expect(now[0] === is[0]!).toBe(true);
+  expect(now[2] === is[1]!).toBe(true);
+});
+
+const __sOdd = {};
+class PcsOdd extends PcsRows {
+  protected override render(__p: Node): void {
+    dom.piecesAt(dom.anchors(__p), (__p) => {
+      for (let i = 0; i < 3; i++) {
+        const __p0 = dom.piece(__sOdd);
+        const _e0 = __pi() as HTMLElement;
+        // Another shape for one site: what a codegen bug would cause.
+        if (i === 1 && this.n === 2) dom.attr(_e0, "title", () => "odd");
+        else dom.textAt(_e0.firstChild as Text, () => `${i}${this.n}`);
+        __p0.appendChild(_e0);
+      }
+    });
+  }
+}
+
+test("pieces: a claim that doesn't match rebuilds the block", async () => {
+  const el = host();
+  const c = mount(PcsOdd, el);
+  await tick();
+  const is = [...el.querySelectorAll("i")];
+  expect(el.textContent).toBe("011121");
+  c.n = 2;
+  await tick();
+  const now = [...el.querySelectorAll("i")];
+  expect(now.length).toBe(3);
+  expect(now[0] === is[0]!).toBe(false);
+  expect(now[1]!.getAttribute("title")).toBe("odd");
+  expect(el.textContent).toBe("0222");
+  c.n = 3;
+  await tick();
+  expect(el.querySelectorAll("i").length).toBe(3);
+  expect(el.textContent).toBe("031323");
+});
+
+test("pieces: a block inside a claimed markup value keeps its pieces", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = piecesValue(c, "a", 2);
+  await tick();
+  const is = [...el.querySelectorAll("i")];
+  c.view = piecesValue(c, "b", 3);
+  await tick();
+  const now = [...el.querySelectorAll("i")];
+  expect(now.map((i) => i.textContent)).toEqual(["b0", "b1", "b2"]);
+  expect(now[0] === is[0]!).toBe(true);
+  expect(now[1] === is[1]!).toBe(true);
+});
+
 const __card = dom.template([["div", 0, null, null]]);
 const __it = dom.template([["i", 0, ""]]);
 class Card extends Component {
