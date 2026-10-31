@@ -46,7 +46,7 @@ const ROUTES = 131072;
 const MARKED = 262144;
 /** A REGION that is a `@{ }` block with markup statements (`data` is `Pieces`): a run claims last run's pieces. */
 const PIECES = 524288;
-/** Made by a markup statement reading the block's `let`s: they change only when the block runs again, so never loose. */
+/** Made by a markup statement reading the block's `let`s: its reads subscribe the block (`local`), so it never runs alone nor is loose. */
 const LOCAL = 1048576;
 /** The flags a claimed binding must share with the call that claims it. */
 const SHAPE = KIND | ITEM | OWNED | SHOW | PAUSE | CONTENT | BAG | ROUTES | PIECES;
@@ -123,8 +123,13 @@ let reclaim = false;
 let pieces: Pieces | undefined;
 /** The last `@{ }` block run's number: unique across blocks, so a site's scan cursor can't be mistaken for another run's. */
 let runs = 0;
-/** Building or claiming a markup statement that reads the block's `let`s: what it binds is `LOCAL`. */
-let local = false;
+/**
+ * Building or claiming a markup statement that reads the block's `let`s: the block's binding. What it binds is
+ * `LOCAL` and its reads subscribe the block, which runs again (and claims) instead of the binding alone.
+ */
+let local: Binding | undefined;
+/** The binding a markup statement of the `@{ }` block running now makes `local`: the block, or the one it runs through. */
+let block: Binding | undefined;
 /**
  * The node every build call gives during a claim (`template`, `el`, `anchor`, `frag`): what generated code does to
  * it (navigate, append, replace, set a static attribute) does nothing, so a claim never touches a template's master.
@@ -243,7 +248,7 @@ class Binding {
   #run(parent?: Node): unknown {
     const prev = collecting;
     const reader = Component.$reader;
-    collecting = this;
+    collecting = (this.flags & LOCAL) !== 0 && local !== undefined ? local : this;
     Component.$reader = collect as unknown as typeof Component.$reader;
     this.#reset();
     try {
@@ -348,9 +353,11 @@ class Binding {
     const prev = pieces;
     const outer = holder;
     const was = marking;
+    const target = block;
     pieces = s;
     holder = s;
     marking = true;
+    block = (this.flags & LOCAL) !== 0 && local !== undefined ? local : this;
     try {
       this.#run(CLAIM_PARENT);
     } finally {
@@ -358,6 +365,7 @@ class Binding {
       pieces = prev;
       holder = outer;
       marking = was;
+      block = target;
       for (let i = 0; i < old.length; i++) if (old[i]!.run !== s.run) dropRow(old[i]!);
       place(this.node, old, s.now);
       old.length = 0;
@@ -650,7 +658,7 @@ function within(h: Holder, run: () => void, mark = marking): void {
 function track(b: Binding): void {
   const h = holder!;
   if (marking) b.flags |= MARKED;
-  if (local) b.flags |= LOCAL;
+  if (local !== undefined) b.flags |= LOCAL;
   b.next = h.$bindings as Binding | undefined;
   h.$bindings = b;
   b.stateHasChanged();
@@ -1629,7 +1637,7 @@ export const dom = {
     // A statement run after its block's run (a timer's callback) builds into a fragment nothing shows.
     if (s === undefined) return build(document.createDocumentFragment());
     const was = local;
-    local = own;
+    local = own ? block : undefined;
     try {
       const old = s.old;
       const run = s.run;
@@ -2160,7 +2168,7 @@ export function renderInto(c: Component, parent: Node): void {
   holder = c;
   // A child first built under a markup value is not markup: its handlers are plain, its bindings may be loose.
   marking = false;
-  local = false;
+  local = undefined;
   try {
     (c as unknown as { render(parent: Node): void }).render(parent);
   } finally {

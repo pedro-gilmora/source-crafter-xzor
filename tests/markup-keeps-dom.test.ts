@@ -742,3 +742,75 @@ test("master stays pristine: a row built after a claim is identical to a first-b
   await tick();
   expect(html()).toEqual([...built, ...built]);
 }, 120000);
+
+test("a piece binding reading a block's let and a tracked field updates through the block", async () => {
+  const { app: c, host } = await load<{ n: number }>("let-binding", {
+    "App.xzor": `@code {
+  items = ["a", "b", "c"];
+  n = 0;
+}
+
+<ul>@{
+  let i = 0;
+  for (const x of items) {
+    <li>@x @(i + n)</li>
+    i++;
+  }
+}</ul>
+`,
+  });
+  expect(texts(host, "li")).toEqual(["a 0", "b 1", "c 2"]);
+  const first = [...host.querySelectorAll("li")];
+  c.n = 10;
+  await tick();
+  expect(texts(host, "li")).toEqual(["a 10", "b 11", "c 12"]);
+  expect([...host.querySelectorAll("li")].every((li, i) => li === first[i])).toBe(true);
+}, 120000);
+
+test("a branch in a piece reading a block's let builds later with the let's value at its statement", async () => {
+  const { app: c, host } = await load<{ on: boolean }>("let-branch", {
+    "App.xzor": `@code {
+  items = ["a", "b"];
+  on = false;
+}
+
+<ul>@{
+  let i = 0;
+  for (const x of items) {
+    <li>@x @if (on) { <b>@i</b> }</li>
+    i++;
+  }
+}</ul>
+`,
+  });
+  const first = [...host.querySelectorAll("li")];
+  c.on = true;
+  await tick();
+  expect(texts(host, "b")).toEqual(["0", "1"]);
+  expect([...host.querySelectorAll("li")].every((li, i) => li === first[i])).toBe(true);
+}, 120000);
+
+test("a @while after a block reading its let updates through the block: code runs once per pass, rows and typed inputs stay", async () => {
+  (globalThis as any).calls = 0;
+  const { app: c, host } = await load<{ n: number }>("let-while", {
+    "App.xzor": `@code {
+  n = 3;
+}
+
+<ul>@{ let i = 0; }@while (i < n) {
+  <li><input/>@i</li>
+  @{ i++; (globalThis as any).calls++; }
+}</ul>
+`,
+  });
+  expect(texts(host, "li")).toEqual(["0", "1", "2"]);
+  expect((globalThis as any).calls).toBe(3);
+  const first = [...host.querySelectorAll("li")];
+  first[0]!.querySelector("input")!.value = "typed";
+  c.n = 4;
+  await tick();
+  expect(texts(host, "li")).toEqual(["0", "1", "2", "3"]);
+  expect((globalThis as any).calls).toBe(7);
+  expect([...host.querySelectorAll("li")].slice(0, 3).every((li, i) => li === first[i])).toBe(true);
+  expect(host.querySelector("input")!.value).toBe("typed");
+}, 120000);
