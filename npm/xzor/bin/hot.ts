@@ -127,7 +127,7 @@ export function installHot(target: { __xzorHot?: unknown; location?: { reload():
         }
         if (template) {
           // A `@cached` instance kept off-screen has no DOM to rebuild: it shows its old markup when revived.
-          if (instance.$end?.parentNode === null) continue;
+          if (!instance.$end?.parentNode) continue;
           if (!rebuild?.(instance)) return reload();
         } else if (patched) instance.stateHasChanged();
       }

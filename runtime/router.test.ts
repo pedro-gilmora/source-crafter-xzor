@@ -356,6 +356,43 @@ test("navigating to another route pattern builds a new page", () => {
   expect(lastUser).not.toBe(page);
 });
 
+class KeptPage extends Component {
+  static cached = true;
+  label = "old";
+  afterRenders = 0;
+  protected override onAfterRender(): void {
+    this.afterRenders++;
+  }
+  protected override render(__p: Node): void {
+    keptPage = this;
+    dom.text(dom.el(__p, "k"), () => this.label);
+  }
+}
+let keptPage: KeptPage | undefined;
+
+test("a @cached page kept off-screen by a navigation in its section is not refreshed", () => {
+  const memory = nav("/a");
+  const table: RouteTable = [
+    { tag: undefined, pattern: "/a", component: KeptPage, match: (s) => (s.length === 1 && s[0] === "a" ? {} : null) },
+    { tag: undefined, pattern: "/b", component: RootPage, match: (s) => (s.length === 1 && s[0] === "b" ? {} : null) },
+  ];
+  const r = routed([{ kind: "default", render: wrap("aside") }], { table });
+  const a = keptPage!;
+  const shown = a.afterRenders;
+  memory.go("/b");
+  expect(r.html()).toBe("<aside><r>root</r></aside>");
+
+  a.label = "new";
+  a.stateHasChanged();
+  expect(a.afterRenders).toBe(shown);
+  expect(r.html()).toBe("<aside><r>root</r></aside>");
+
+  // Back: the same instance, shown again and current.
+  memory.go("/a");
+  expect(keptPage).toBe(a);
+  expect(r.html()).toBe("<aside><k>new</k></aside>");
+});
+
 class Crumb extends Component {
   static readonly cascades = [["route", "route"]] as const;
   route: Route | undefined;

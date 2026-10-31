@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { $hot, Component, dom, mount } from "../runtime/index";
+import { $hot, Component, dom, mount, setNavigationForTests, type Markup, type RouteTable } from "../runtime/index";
 import { installHot } from "../npm/xzor/bin/hot";
 
 const ID = ".xzor/C.xzor.ts";
@@ -344,6 +344,55 @@ test("a template edit with a @cached instance kept off-screen does not reload", 
   return Kid;`;
   expect(hot.apply([{ id: ".xzor/Kid.xzor.ts", code, imports: IMPORTS }])).toBe(true);
   expect(calls.reload).toBe(0);
+});
+
+test("a template edit with a @cached page kept off-screen by a navigation does not reload", () => {
+  const { host, hot, calls } = setup();
+  let url = new URL("http://localhost/a");
+  const subs = new Set<() => void>();
+  setNavigationForTests({
+    current: () => url,
+    navigate: () => {},
+    subscribe: (fn) => (subs.add(fn), () => subs.delete(fn)),
+  });
+  class A extends Component {
+    static readonly cached = true;
+    protected override render(__p: Node): void {
+      dom.t(dom.el(__p, "b"), "old");
+    }
+  }
+  class B extends Component {
+    protected override render(__p: Node): void {
+      dom.t(dom.el(__p, "u"), "b");
+    }
+  }
+  const table: RouteTable = [
+    { tag: undefined, pattern: "/a", component: A, match: (s) => (s.length === 1 && s[0] === "a" ? {} : null) },
+    { tag: undefined, pattern: "/b", component: B, match: (s) => (s.length === 1 && s[0] === "b" ? {} : null) },
+  ];
+  class Shell extends Component {
+    protected override render(__p: Node): void {
+      dom.routesAt(dom.anchors(__p), table, [{ kind: "default", render: (_r: unknown, page: Markup) => page }] as never);
+    }
+  }
+  try {
+    hot.register(".xzor/A.xzor.ts", A, imports);
+    mount(Shell, host);
+    url = new URL("http://localhost/b");
+    for (const fn of [...subs]) fn();
+    expect(host.textContent).toBe("b");
+
+    const code = `class A extends Component {
+      static cached = true;
+      render(__p) { dom.t(dom.el(__p, "i"), "new"); }
+    }
+    return A;`;
+    expect(hot.apply([{ id: ".xzor/A.xzor.ts", code, imports: IMPORTS }])).toBe(true);
+    expect(calls.reload).toBe(0);
+    expect(host.textContent).toBe("b");
+  } finally {
+    setNavigationForTests(undefined);
+  }
 });
 
 test("a component that is not on the page renders the new markup when it mounts", () => {

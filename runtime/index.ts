@@ -1126,6 +1126,8 @@ function keepChild(s: Child, c: Component): void {
   if (byKey === undefined) keptChildren.set(s.type, (byKey = new Map()));
   if (!byKey.has(s.key)) keptChildCount++;
   byKey.set(s.key, { instance: c, nodes });
+  // The anchor stays in the page for whatever comes next; `reviveChild` sets it again.
+  c.$end = undefined;
 }
 
 function reviveChild(s: Child): boolean {
