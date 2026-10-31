@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { $leave, Component, HttpError, type Remote, type RenderTreeBuilder, call, lazy, mount, segment } from "./index";
+import { $leave, Component, type El, HttpError, type Remote, call, dom, lazy, mount, segment } from "./index";
 import { HttpError as ServerHttpError } from "./server";
 
 const realFetch = globalThis.fetch;
@@ -106,39 +106,37 @@ test("Remote<T> makes every method async and the rest never", () => {
 
 let renders: Record<string, number>;
 const rendered = (key: string) => (renders[key] = (renders[key] ?? 0) + 1);
+let params: string[];
 
 class Counter extends Component {
   label = "";
   count = 0;
 
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
+  protected override onParametersSet(): void {
+    params.push(this.label);
+  }
+
+  protected override render(__p: Node): void {
     rendered(this.label);
-    b.openElement("div");
-    b.openElement("span");
-    b.addContent(this.count);
-    b.closeElement();
-    b.openElement("button");
-    b.addEventHandler("click", () => this.count++);
-    b.addText("+");
-    b.closeElement();
-    b.openElement("button");
-    b.addEventHandler("click", () => (this.count = 0));
-    b.addText("0");
-    b.closeElement();
-    b.openElement("input");
-    b.closeElement();
-    b.openRegion();
-    if (this.count > 0) {
-      b.openElement("p");
-      b.addText("positive");
-      b.closeElement();
-    }
-    b.closeRegion();
-    b.openElement("i");
-    b.addAttribute("data-zero", this.count === 0);
-    b.addText("end");
-    b.closeElement();
-    b.closeElement();
+    const _e0 = __counter() as El<"div">;
+    const _e1 = _e0.firstChild as El<"span">;
+    const _e2 = _e1.nextSibling as El<"button">;
+    const _e3 = _e2.nextSibling as El<"button">;
+    const _e4 = _e3.nextSibling!.nextSibling!.nextSibling as Comment;
+    const _e5 = _e4.nextSibling as El<"i">;
+    dom.textAt(_e1.firstChild as Text, () => this.count);
+    dom.on(_e2, "click", () => this.count++);
+    dom.on(_e3, "click", () => (this.count = 0));
+    dom.branchAt(_e4, (__p) => {
+      if (this.count > 0) {
+        if (!__p) return 0;
+        const _e6 = __positive() as El<"p">;
+        __p.appendChild(_e6);
+      }
+      return 1;
+    });
+    dom.attr(_e5, "data-zero", () => this.count === 0);
+    __p.appendChild(_e0);
   }
 }
 
@@ -147,27 +145,34 @@ class App extends Component {
   firstLabel = "a";
   items = ["x", "y"];
 
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
+  protected override render(__p: Node): void {
     rendered("app");
-    b.openElement("h1");
-    b.addContent(this.title);
-    b.closeElement();
-    b.addComponent(Counter, { label: this.firstLabel });
-    b.addComponent(Counter, { label: "b" });
-    b.openElement("ul");
-    b.openRegion();
-    for (const item of this.items) {
-      b.openElement("li");
-      b.addContent(item);
-      b.closeElement();
-    }
-    b.closeRegion();
-    b.closeElement();
+    const _e0 = __app();
+    const _e1 = _e0.firstChild as El<"h1">;
+    const _e2 = _e1.nextSibling as Comment;
+    const _e3 = _e2.nextSibling as Comment;
+    const _e4 = _e3.nextSibling as El<"ul">;
+    const _e5 = _e4.firstChild!.nextSibling as Comment;
+    dom.textAt(_e1.firstChild as Text, () => this.title);
+    dom.component(_e2, Counter, (): Partial<Counter> => ({ label: this.firstLabel }));
+    dom.component(_e3, Counter, (): Partial<Counter> => ({ label: "b" }));
+    dom.listAt(_e5, () => this.items, [(item) => item], (__p) => {
+      const _e6 = __li() as El<"li">;
+      dom.textItem(_e6.firstChild as Text, 0);
+      __p.appendChild(_e6);
+    });
+    __p.appendChild(_e0);
   }
 }
 
+const __counter = dom.template([["div", 0, ["span", 0, ""], ["button", 0, "+"], ["button", 0, "0"], ["input", 0], null, null, ["i", 0, "end"]]]);
+const __positive = dom.template([["p", 0, "positive"]]);
+const __app = dom.template([["h1", 0, ""], null, null, ["ul", 0, null, null]]);
+const __li = dom.template([["li", 0, ""]]);
+
 function setup() {
   renders = {};
+  params = [];
   const host = document.createElement("main");
   document.body.replaceChildren(host);
   const app = mount(App, host);
@@ -181,24 +186,27 @@ const tags = (el: Element) => Array.from(el.children, (c) => c.tagName.toLowerCa
 
 beforeEach(() => document.body.replaceChildren());
 
-test("a data-leave element the diff removes leaves when its animations finish; without any, at once", async () => {
+test("a data-leave element the region removes leaves when its animations finish; without any, at once", async () => {
   Component.$leaves = true;
   let finish!: () => void;
   const finished = new Promise<void>((r) => (finish = r));
   class Toast extends Component {
     show = true;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openRegion();
-      if (this.show) {
-        b.openElement("output");
-        b.addAttribute("data-leave", "");
-        b.closeElement();
-        b.openElement("b");
-        b.closeElement();
-      }
-      b.closeRegion();
+    protected override render(__p: Node): void {
+      const _e0 = __toast();
+      const _e1 = _e0.firstChild!.nextSibling as Comment;
+      dom.branchAt(_e1, (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          __p.appendChild(__leaving());
+        }
+        return 1;
+      });
+      __p.appendChild(_e0);
     }
   }
+  const __toast = dom.template([null, null]);
+  const __leaving = dom.template([["output", ["data-leave", ""]], ["b", 0]]);
   const host = document.createElement("main");
   document.body.append(host);
   const t = mount(Toast, host);
@@ -238,16 +246,16 @@ test("a leaving element waits only for the finite animations its leaving started
   expect(dialog.isConnected).toBe(false);
 });
 
-test("toggleClass adds to the element's class while on", () => {
+test("class:name adds to the element's class while on", () => {
   class Field extends Component {
     err = false;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("div");
-      b.addAttribute("class", "field");
-      b.toggleClass("invalid", this.err);
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __field() as El<"div">;
+      dom.attr(_e0, "class:invalid", () => this.err);
+      __p.appendChild(_e0);
     }
   }
+  const __field = dom.template([["div", ["class", "field"]]]);
   const host = document.createElement("main");
   document.body.append(host);
   const f = mount(Field, host);
@@ -261,13 +269,14 @@ test("toggleClass adds to the element's class while on", () => {
 test("aria-* attributes write booleans as true and false", () => {
   class Toggle extends Component {
     open = false;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("button");
-      b.addAttribute("aria-expanded", this.open);
-      b.addAttribute("hidden", this.open);
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __toggle() as El<"button">;
+      dom.attr(_e0, "aria-expanded", () => this.open);
+      dom.attr(_e0, "hidden", () => this.open);
+      __p.appendChild(_e0);
     }
   }
+  const __toggle = dom.template([["button", 0]]);
   const host = document.createElement("main");
   document.body.append(host);
   const t = mount(Toggle, host);
@@ -298,26 +307,27 @@ test("debounce runs the last call after a pause, once, and settles every call's 
 test("a lazy component holds its place until its module arrives, then mounts there; later uses mount at once", async () => {
   class Chart extends Component {
     label = "";
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("em");
-      b.addContent(this.label);
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __chart() as El<"em">;
+      dom.textAt(_e0.firstChild as Text, () => this.label);
+      __p.appendChild(_e0);
     }
   }
+  const __chart = dom.template([["em", 0, ""]]);
   let loads = 0;
   const LazyChart = lazy(async () => (loads++, { default: Chart }));
   class Page extends Component {
     n = 1;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("p");
-      b.addText("a");
-      b.closeElement();
-      for (let i = 0; i < this.n; i++) b.addComponent(LazyChart, { label: `c${i}` });
-      b.openElement("p");
-      b.addText("b");
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __page();
+      const _e1 = _e0.firstChild!.nextSibling!.nextSibling as Comment;
+      dom.listAt(_e1, () => Array.from({ length: this.n }, (_, i) => `c${i}`), [(label: string): Partial<Chart> => ({ label })], (__p) => {
+        dom.componentItem(dom.anchor(__p), LazyChart, 0);
+      });
+      __p.appendChild(_e0);
     }
   }
+  const __page = dom.template([["p", 0, "a"], null, null, ["p", 0, "b"]]);
   const host = document.createElement("main");
   document.body.append(host);
   const page = mount(Page, host);
@@ -344,21 +354,34 @@ test("a cached component leaving the tree keeps its instance and nodes, and come
     protected override dispose(): void {
       disposed++;
     }
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("button");
-      b.addEventHandler("click", () => this.clicks++);
-      b.addContent(`${this.label}${this.clicks}`);
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __tab() as El<"button">;
+      dom.on(_e0, "click", () => this.clicks++);
+      dom.textAt(_e0.firstChild as Text, () => `${this.label}${this.clicks}`);
+      __p.appendChild(_e0);
     }
   }
+  const __tab = dom.template([["button", 0, ""]]);
   class Tabs extends Component {
     show = true;
     label = "a";
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      if (this.show) b.addComponent(Tab, { label: this.label });
-      else b.addText("none");
+    protected override render(__p: Node): void {
+      const _e0 = __tabs();
+      const _e1 = _e0.firstChild!.nextSibling as Comment;
+      dom.branchAt(_e1, (__p) => {
+        if (this.show) {
+          if (!__p) return 0;
+          dom.component(dom.anchor(__p), Tab, (): Partial<Tab> => ({ label: this.label }), undefined, undefined, undefined, "k");
+        } else {
+          if (!__p) return 1;
+          dom.t(__p, "none");
+        }
+        return 2;
+      });
+      __p.appendChild(_e0);
     }
   }
+  const __tabs = dom.template([null, null]);
   const host = document.createElement("main");
   document.body.append(host);
   const tabs = mount(Tabs, host);
@@ -379,20 +402,25 @@ test("a cached component leaving the tree keeps its instance and nodes, and come
 test("@attr: sets the nearest open element past regions, and class adds to its own", () => {
   class Stock extends Component {
     n = 0;
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("span");
-      b.addAttribute("class", "cell");
-      b.openRegion();
-      if (this.n > 0) b.addContent(this.n);
-      else {
-        b.addParentAttribute("class", "error-text");
-        b.addParentAttribute("title", "none");
-        b.addText("Agotado");
-      }
-      b.closeRegion();
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __stock() as El<"span">;
+      const _e1 = _e0.firstChild!.nextSibling as Comment;
+      dom.branchAt(_e1, (__p) => {
+        if (this.n > 0) {
+          if (!__p) return 0;
+          dom.text(__p, () => this.n);
+        } else {
+          if (!__p) return 1;
+          dom.attrOf(_e0, "class", () => "error-text");
+          dom.attrOf(_e0, "title", () => "none");
+          dom.t(__p, "Agotado");
+        }
+        return 2;
+      });
+      __p.appendChild(_e0);
     }
   }
+  const __stock = dom.template([["span", ["class", "cell"], null, null]]);
   const host = document.createElement("main");
   document.body.append(host);
   const c = mount(Stock, host);
@@ -406,7 +434,7 @@ test("@attr: sets the nearest open element past regions, and class adds to its o
   expect(span.hasAttribute("title")).toBe(false);
 });
 
-test("an event re-renders only the owning component and patches nodes in place", () => {
+test("an event updates only the owning component's nodes, in place, and builds nothing again", () => {
   const { host, a, b, buttons } = setup();
   const span = a.querySelector("span")!;
   const text = span.firstChild;
@@ -414,28 +442,33 @@ test("an event re-renders only the owning component and patches nodes in place",
   const h1 = host.querySelector("h1")!;
   const bSpanText = b.querySelector("span")!.firstChild;
   expect(renders).toEqual({ app: 1, a: 1, b: 1 });
+  params.length = 0;
 
   click(buttons(a)[0]!);
 
-  expect(renders).toEqual({ app: 1, a: 2, b: 1 });
+  expect(renders).toEqual({ app: 1, a: 1, b: 1 });
+  expect(params).toEqual([]);
   expect(span.textContent).toBe("1");
   expect(span.firstChild).toBe(text);
   expect(a.querySelector("input")).toBe(input);
   expect(host.querySelector("h1")).toBe(h1);
   expect(host.querySelectorAll("div")[0]).toBe(a);
   expect(b.querySelector("span")!.firstChild).toBe(bSpanText);
+  expect(b.querySelector("span")!.textContent).toBe("0");
 });
 
 class Styled extends Component {
   width = 10;
 
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("div");
-    b.addAttribute("--w", this.width === 0 ? null : this.width + "px");
-    b.addEventHandler("click", () => (this.width = this.width ? 0 : 5));
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __styled() as El<"div">;
+    dom.attr(_e0, "--w", () => (this.width === 0 ? null : this.width + "px"));
+    dom.on(_e0, "click", () => (this.width = this.width ? 0 : 5));
+    __p.appendChild(_e0);
   }
 }
+
+const __styled = dom.template([["div", 0]]);
 
 test("a -- attribute writes a custom property in the render pass, and null removes it", () => {
   const host = document.createElement("main");
@@ -475,50 +508,56 @@ test("boolean attributes are added and removed", () => {
   expect(i.getAttribute("data-zero")).toBe("");
 });
 
-test("parent re-render skips children whose props did not change", () => {
+test("a parent update leaves children whose props did not change alone, and hands the changed ones their new props", () => {
   const { host, app, a } = setup();
+  expect(params).toEqual(["a", "b"]);
+  params.length = 0;
   app.title = "changed";
   app.stateHasChanged();
-  expect(renders).toEqual({ app: 2, a: 1, b: 1 });
+  expect(params).toEqual([]);
   expect(host.querySelector("h1")!.textContent).toBe("changed");
 
   app.firstLabel = "a2";
   app.stateHasChanged();
-  expect(renders).toEqual({ app: 3, a: 1, b: 1, a2: 1 });
+  expect(params).toEqual(["a2"]);
+  expect(renders).toEqual({ app: 1, a: 1, b: 1 });
   expect(host.querySelectorAll("div")[0]).toBe(a);
 });
 
-test("loops grow and shrink in place", () => {
+test("loops grow and shrink in place, keeping the rows that stay", () => {
   const { host, app } = setup();
   const ul = host.querySelector("ul")!;
-  const first = ul.querySelector("li")!;
+  const [x, y] = Array.from(ul.querySelectorAll("li"));
 
   app.items = ["x", "y", "z"];
   app.stateHasChanged();
   expect(Array.from(ul.querySelectorAll("li"), (li) => li.textContent)).toEqual(["x", "y", "z"]);
-  expect(ul.querySelector("li")).toBe(first);
+  expect(ul.querySelector("li")).toBe(x!);
 
-  app.items = ["w"];
+  app.items = ["x"];
   app.stateHasChanged();
-  expect(Array.from(ul.querySelectorAll("li"), (li) => li.textContent)).toEqual(["w"]);
-  expect(ul.querySelector("li")).toBe(first);
+  expect(Array.from(ul.querySelectorAll("li"), (li) => li.textContent)).toEqual(["x"]);
+  expect(ul.querySelector("li")).toBe(x!);
+  expect(y!.isConnected).toBe(false);
 });
 
-test("async handlers re-render again when they settle", async () => {
+test("async handlers update again when they settle", async () => {
   class Loader extends Component {
     state = "idle";
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("button");
-      b.addEventHandler("click", async () => {
+    protected override render(__p: Node): void {
+      const _e0 = __loader() as El<"button">;
+      dom.on(_e0, "click", async () => {
         this.state = "loading";
         await Promise.resolve();
         this.state = "done";
       });
-      b.addContent(this.state);
-      b.closeElement();
+      dom.textAt(_e0.firstChild as Text, () => this.state);
+      __p.appendChild(_e0);
     }
   }
+  const __loader = dom.template([["button", 0, ""]]);
   const host = document.createElement("div");
+  document.body.append(host);
   mount(Loader, host);
   const button = host.querySelector("button")!;
   click(button);
@@ -528,20 +567,17 @@ test("async handlers re-render again when they settle", async () => {
   expect(host.querySelector("button")).toBe(button);
 });
 
-test("render-tree <svg> elements and their children are created in the SVG namespace", () => {
+test("<svg> elements and their children in a template are created in the SVG namespace", () => {
   class Icon extends Component {
     d = "M0 0";
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("svg");
-      b.addAttribute("viewBox", "0 0 24 24");
-      b.openRegion();
-      b.openElement("path");
-      b.addAttribute("d", this.d);
-      b.closeElement();
-      b.closeRegion();
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __icon() as El<"svg">;
+      dom.attr(_e0.firstChild as Element, "d", () => this.d);
+      __p.appendChild(_e0);
     }
   }
+  // An SVG child alone in a region is HTML, so the <svg> stays in the same template.
+  const __icon = dom.template([["svg", ["viewBox", "0 0 24 24"], ["path", 0]]]);
   const host = document.createElement("div");
   const c = mount(Icon, host);
   const SVG = "http://www.w3.org/2000/svg";
