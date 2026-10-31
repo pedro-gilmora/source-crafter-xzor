@@ -1,7 +1,7 @@
 // xzor runtime: the RenderTreeBuilder that generated components call into, and a DOM
 // renderer that re-renders one component at a time and patches only what changed.
 
-import { fineHooks, type Markup } from "./dom";
+import { dom, fineHooks, type Markup } from "./dom";
 import { changed, same as equal } from "./track";
 
 /** @internal What generated code calls to build a component's DOM. */
@@ -2079,14 +2079,11 @@ export class NavLink extends Component {
     return path === target || path.startsWith(target.endsWith("/") ? target : `${target}/`);
   }
 
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("a");
-    b.addAttribute("href", this.href);
-    if (this.#active()) {
-      b.addAttribute("class", this.activeClass);
-      b.addAttribute("aria-current", "page");
-    }
-    b.addContent(this.slots.default?.() ?? null);
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const a = dom.el(__p, "a");
+    dom.attr(a, "href", () => this.href);
+    dom.attr(a, "class", () => (this.#active() ? this.activeClass : null));
+    dom.attr(a, "aria-current", () => (this.#active() ? "page" : null));
+    dom.slotAt(dom.anchors(a), () => this.slots.default);
   }
 }
