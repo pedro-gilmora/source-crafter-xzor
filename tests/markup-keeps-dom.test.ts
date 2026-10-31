@@ -492,3 +492,156 @@ test("a markup statement that runs after its block's run builds nothing and does
   expect((globalThis as any).late).toBe("ok");
   expect(host.querySelector("ul")!.textContent).toBe("now");
 }, 120000);
+
+test("a plain @while in a markup value claims its passes by site: new passes and branches show", async () => {
+  const { app: c, host } = await load<{ n: number }>("while-value", {
+    "App.xzor": `@code {
+  n = 1;
+  rows(k: number) {
+    let i = 0;
+    return <ul>@while ((i += 1) <= k) { <li>@if (k > 1) { <b/> }</li> }</ul>;
+  }
+}
+
+@rows(n)
+`,
+  });
+  const ul = host.querySelector("ul")!;
+  const li = host.querySelector("li")!;
+  const bs = () => [...ul.querySelectorAll("li")].map((l) => l.querySelectorAll("b").length);
+  expect(bs()).toEqual([0]);
+  c.n = 2;
+  await tick();
+  expect(host.querySelector("ul") === ul).toBe(true);
+  expect(host.querySelector("li") === li).toBe(true);
+  expect(bs()).toEqual([1, 1]);
+  c.n = 1;
+  await tick();
+  expect(host.querySelector("li") === li).toBe(true);
+  expect(bs()).toEqual([0]);
+}, 120000);
+
+test("a claimed loop pass whose element has a static attribute never throws", async () => {
+  const errors: unknown[] = [];
+  const queue = globalThis.queueMicrotask;
+  globalThis.queueMicrotask = (run) =>
+    queue(() => {
+      try {
+        run();
+      } catch (e) {
+        errors.push(e);
+      }
+    });
+  try {
+    const { app: c, host } = await load<{ n: number }>("while-attr", {
+      "App.xzor": `@code {
+  n = 1;
+  rows(k: number) {
+    let i = 0;
+    return <ul>@while ((i += 1) <= k) { <li class="a" @leave>@if (k > 1) { <b/> }</li> }</ul>;
+  }
+}
+
+@rows(n)
+`,
+    });
+    c.n = 2;
+    await tick();
+    await tick();
+    expect(errors.map(String)).toEqual([]);
+    expect([...host.querySelectorAll("li.a")].map((l) => l.querySelectorAll("b").length)).toEqual([1, 1]);
+  } finally {
+    globalThis.queueMicrotask = queue;
+  }
+}, 120000);
+
+test("a @while after a block reads the block's locals once per update: its loop code never runs twice", async () => {
+  (globalThis as any).runs = 0;
+  (globalThis as any).passes = 0;
+  const { app: c, host } = await load<{ n: number; t: string }>("while-locals", {
+    "App.xzor": `@code { n = 2; t = "x"; }
+<div>@{ (globalThis as any).runs++; let i = 0; const max = n; const tt = t; }<ul>@while (((globalThis as any).passes++, (i += 1) <= max)) { <li>@tt</li> }</ul></div>
+`,
+  });
+  const g = globalThis as any;
+  const lis = () => [...host.querySelectorAll("li")].map((l) => l.textContent);
+  expect(lis()).toEqual(["x", "x"]);
+  expect([g.runs, g.passes]).toEqual([1, 3]);
+  const first = host.querySelector("li");
+  c.n = 3;
+  await tick();
+  expect(lis()).toEqual(["x", "x", "x"]);
+  expect(host.querySelector("li") === first).toBe(true);
+  expect([g.runs, g.passes]).toEqual([2, 7]);
+  c.t = "y";
+  await tick();
+  expect(lis()).toEqual(["y", "y", "y"]);
+  expect([g.runs, g.passes]).toEqual([3, 11]);
+}, 120000);
+
+test("a claimed piece reads the block's locals when its statement runs, and a no-op handler changes nothing", async () => {
+  const { app: c, host } = await load<{ items: string[] }>("piece-locals", {
+    "App.xzor": `@code { items = ["a", "b", "c"]; }
+<button class="noop" @onclick="() => {}">n</button>
+<ul>@{
+  let i = 0;
+  let odd = false;
+  for (const x of items) {
+    i++;
+    odd = !odd;
+    <li>@i @x @if (odd) {<b>odd</b>}</li>
+  }
+}</ul>
+`,
+  });
+  const texts = () => [...host.querySelectorAll("li")].map((l) => l.textContent!.trim());
+  expect(texts()).toEqual(["1 a odd", "2 b", "3 c odd"]);
+  (host.querySelector("button.noop") as HTMLButtonElement).click();
+  await tick();
+  expect(texts()).toEqual(["1 a odd", "2 b", "3 c odd"]);
+  const first = host.querySelector("li");
+  c.items = [...c.items, "d"];
+  await tick();
+  expect(texts()).toEqual(["1 a odd", "2 b", "3 c odd", "4 d"]);
+  expect(host.querySelector("li") === first).toBe(true);
+  (host.querySelector("button.noop") as HTMLButtonElement).click();
+  await tick();
+  expect(texts()).toEqual(["1 a odd", "2 b", "3 c odd", "4 d"]);
+}, 120000);
+
+test("an element @ref in a markup statement is the element on the page after a claim", async () => {
+  const { app: c, host } = await load<{ n: number; refs: { a?: HTMLInputElement } }>("piece-ref", {
+    "App.xzor": `@code { refs: { a?: HTMLInputElement } = {}; n = 1; }
+<div>@{ const k = n; <label><input @ref="refs.a" /> @k</label> }</div>
+`,
+  });
+  const input = host.querySelector("input")!;
+  expect(c.refs.a === input).toBe(true);
+  c.n = 2;
+  await tick();
+  expect(host.querySelector("label")!.textContent).toBe(" 2");
+  expect(host.querySelector("input") === input).toBe(true);
+  expect(c.refs.a === input).toBe(true);
+  expect(c.refs.a!.isConnected).toBe(true);
+}, 120000);
+
+test("@once holding plain control flow in a markup value: a claim builds it anew instead of running it in claim mode", async () => {
+  (globalThis as any).onceRuns = 0;
+  const { app: c, host } = await load<{ n: number }>("once-flow", {
+    "App.xzor": `@code {
+  n = 1;
+  view(k: number) {
+    return <p>@once { <span class="a">@if (((globalThis as any).onceRuns++, k > 1)) { <b/> }</span> }</p>;
+  }
+}
+
+@view(n)
+`,
+  });
+  expect(host.querySelectorAll("span.a b").length).toBe(0);
+  c.n = 2;
+  await tick();
+  expect(host.querySelectorAll("span.a").length).toBe(1);
+  expect(host.querySelectorAll("span.a b").length).toBe(1);
+  expect((globalThis as any).onceRuns).toBe(2);
+}, 120000);

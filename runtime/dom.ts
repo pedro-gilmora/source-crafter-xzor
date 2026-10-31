@@ -46,6 +46,8 @@ const ROUTES = 131072;
 const MARKED = 262144;
 /** A REGION that is a `@{ }` block with markup statements (`data` is `Pieces`): a run claims last run's pieces. */
 const PIECES = 524288;
+/** Made by a markup statement reading the block's `let`s: they change only when the block runs again, so never loose. */
+const LOCAL = 1048576;
 /** The flags a claimed binding must share with the call that claims it. */
 const SHAPE = KIND | ITEM | OWNED | SHOW | PAUSE | CONTENT | BAG | ROUTES | PIECES;
 
@@ -79,9 +81,9 @@ type Routes = Region & { router: Router; table: RouteTable; sections: readonly R
 type Piece = { $bindings: Binding | undefined; $ctx: Ctx; $scope: unknown; head: Node; tail: Node; site: unknown; run: number };
 /**
  * A `@{ }` block's region: last run's pieces (`old`, taken from `at` on) and this run's (`now`), the two arrays
- * swapped each run; `open` is the piece being built (or claimed, `claimed`); `again` once a claim failed.
+ * swapped each run.
  */
-type Pieces = Region & { old: Piece[]; now: Piece[]; run: number; at: number; open: Piece | undefined; claimed: boolean; again: boolean };
+type Pieces = Region & { old: Piece[]; now: Piece[]; run: number; at: number };
 
 const MARKUP = Symbol("xzor.markup");
 const SITE = Symbol("xzor.site");
@@ -117,6 +119,8 @@ let failed = false;
 let reclaim = false;
 /** The `@{ }` block running now: where `dom.piece` takes its pieces. */
 let pieces: Pieces | undefined;
+/** Building or claiming a markup statement that reads the block's `let`s: what it binds is `LOCAL`. */
+let local = false;
 /** What a claimed build appends to, and the node `el`/`anchor` give it: nothing is built during a claim. */
 const CLAIM_PARENT = { appendChild: (n: Node): Node => n } as unknown as Node;
 
@@ -222,7 +226,7 @@ class Binding {
   // Nothing tracked tells it about changes: its component re-runs it after each of its handlers.
   #loose(): void {
     const kind = this.flags & KIND;
-    if ((this.flags & (LOOSE | DEAD | PAUSE)) !== 0 || kind === EFFECT || kind === MEMO) return;
+    if ((this.flags & (LOOSE | DEAD | PAUSE | LOCAL)) !== 0 || kind === EFFECT || kind === MEMO) return;
     this.flags |= LOOSE;
     (ctxOf(this).$loose ??= []).push(this);
   }
@@ -324,15 +328,14 @@ class Binding {
   }
 
   // A `@{ }` block runs: each `dom.piece` claims last run's next piece of its site, else builds one; the pieces
-  // not taken go, and the run's are put in order. A failed claim (a codegen bug) runs the block again `anew`.
-  #pieces(anew = false): void {
+  // not taken go, and the run's are put in order.
+  #pieces(): void {
     const s = this.data as Pieces;
     const old = s.now;
     s.now = s.old;
     s.old = old;
     s.run++;
-    s.at = anew ? old.length : 0;
-    s.again = false;
+    s.at = 0;
     const prev = pieces;
     const outer = holder;
     const was = marking;
@@ -342,19 +345,14 @@ class Binding {
     try {
       this.#run(CLAIM_PARENT);
     } finally {
-      // The last piece's re-run may throw too: the globals and the pieces are set right whatever it does.
-      try {
-        closePiece(s);
-      } finally {
-        pieces = prev;
-        holder = outer;
-        marking = was;
-        for (let i = 0; i < old.length; i++) if (old[i]!.run !== s.run) dropRow(old[i]!);
-        place(this.node, old, s.now);
-        old.length = 0;
-      }
+      // A throw in the block's code or a piece's binding: the globals and the pieces are set right whatever it does.
+      pieces = prev;
+      holder = outer;
+      marking = was;
+      for (let i = 0; i < old.length; i++) if (old[i]!.run !== s.run) dropRow(old[i]!);
+      place(this.node, old, s.now);
+      old.length = 0;
     }
-    if (s.again) this.#pieces(true);
   }
 
   /** @internal After a claim re-pointed it: runs once; a region, list or loop claims what it holds the same way. */
@@ -636,6 +634,7 @@ function within(h: Holder, run: () => void, mark = marking): void {
 function track(b: Binding): void {
   const h = holder!;
   if (marking) b.flags |= MARKED;
+  if (local) b.flags |= LOCAL;
   b.next = h.$bindings as Binding | undefined;
   h.$bindings = b;
   b.stateHasChanged();
@@ -1397,24 +1396,8 @@ function claimItemRegion(row: Row, i: number, flags = 0): void {
 
 function pieced(start: Comment, end: Comment, build: (a?: any, b?: any) => unknown, item: unknown, flags: number): void {
   const h = holder!;
-  const s: Pieces = { $bindings: undefined, $ctx: h.$ctx, $scope: h.$scope, start, item, branch: undefined, index: -1, old: [], now: [], run: 0, at: 0, open: undefined, claimed: false, again: false };
+  const s: Pieces = { $bindings: undefined, $ctx: h.$ctx, $scope: h.$scope, start, item, branch: undefined, index: -1, old: [], now: [], run: 0, at: 0 };
   track(new Binding(REGION | PIECES | flags, end, build, s));
-}
-
-// The piece built or claimed last ends: a claim re-runs its bindings, or fails and drops it.
-function closePiece(s: Pieces): void {
-  const p = s.open;
-  if (p === undefined) return;
-  s.open = undefined;
-  if (!s.claimed) {
-    seal(p, p.head as DocumentFragment);
-    holder = s;
-    return;
-  }
-  if (claimEnd(p, s)) return rerun(p);
-  dropRow(p);
-  s.now.pop();
-  s.again = true;
 }
 
 /**
@@ -1626,36 +1609,53 @@ export const dom = {
   },
 
   /**
-   * A markup statement from markup literal `site`, in the block running now: where it builds. Last run's next
-   * piece of the same site, not taken yet, is claimed (a stand-in comes back and its bindings are re-pointed);
-   * else a new piece builds into a fragment. Both end at the next statement, or with the run.
+   * A markup statement from markup literal `site`, in the block running now: `build` builds its nodes. Last run's
+   * next piece of the same site, not taken yet, is claimed (`build` runs against its bindings, which then run
+   * again); else, or when the claim doesn't match, a new piece builds into a fragment. Either way it is done when
+   * this returns, so it reads the block's locals as the statement sees them. `own`: it reads the block's `let`s.
    */
-  piece(site: unknown): Node {
+  piece(site: unknown, build: Build, own = false): void {
     const s = pieces;
     // A statement run after its block's run (a timer's callback) builds into a fragment nothing shows.
-    if (s === undefined) return document.createDocumentFragment();
-    closePiece(s);
-    const old = s.old;
-    const run = s.run;
-    let i = s.at;
-    while (i < old.length && (old[i]!.site !== site || old[i]!.run === run)) i++;
-    if (i < old.length) {
-      const p = old[i]!;
-      p.run = run;
-      if (i === s.at) while (++s.at < old.length && old[s.at]!.run === run);
+    if (s === undefined) return build(document.createDocumentFragment());
+    const was = local;
+    local = own;
+    try {
+      const old = s.old;
+      const run = s.run;
+      let i = s.at;
+      while (i < old.length && (old[i]!.site !== site || old[i]!.run === run)) i++;
+      if (i < old.length) {
+        const p = old[i]!;
+        p.run = run;
+        if (i === s.at) while (++s.at < old.length && old[s.at]!.run === run);
+        s.now.push(p);
+        claimBegin(p);
+        let ok = false;
+        try {
+          build(CLAIM_PARENT);
+          ok = true;
+        } finally {
+          ok = claimEnd(p, s) && ok;
+        }
+        if (ok) return rerun(p);
+        // Another shape: this piece builds anew, the others keep theirs.
+        dropRow(p);
+        s.now.pop();
+      }
+      const frag = document.createDocumentFragment();
+      const p: Piece = { $bindings: undefined, $ctx: s.$ctx, $scope: s.$scope, head: frag, tail: frag, site, run };
       s.now.push(p);
-      s.open = p;
-      s.claimed = true;
-      claimBegin(p);
-      return CLAIM_PARENT;
+      holder = p;
+      try {
+        build(frag);
+      } finally {
+        seal(p, frag);
+        holder = s;
+      }
+    } finally {
+      local = was;
     }
-    const frag = document.createDocumentFragment();
-    const p: Piece = { $bindings: undefined, $ctx: s.$ctx, $scope: s.$scope, head: frag, tail: frag, site, run };
-    s.now.push(p);
-    s.open = p;
-    s.claimed = false;
-    holder = p;
-    return frag;
   },
 
   /** `@if`/`@switch` before `end`: `run()` gives the branch's index, `run(parent)` builds it; rebuilt only when the index changes. */
@@ -1701,9 +1701,16 @@ export const dom = {
     if (node.data !== text) node.data = text;
   },
 
-  /** `@once { }`: `build` once, untracked, before `end`; its values are set, not bound (in a markup value, set again by a claim). */
-  onceAt(end: Comment, build: Build): void {
-    if (claiming) return untracked(() => build(CLAIM_PARENT));
+  /**
+   * `@once { }`: `build` once, untracked, before `end`; its values are set, not bound (in a markup value, set again
+   * by a claim). `plain`: its structure is plain control flow, which a claim can't match: the claim fails first.
+   */
+  onceAt(end: Comment, build: Build, plain = false): void {
+    if (claiming) {
+      if (plain) failed = true;
+      else untracked(() => build(CLAIM_PARENT));
+      return;
+    }
     const frag = document.createDocumentFragment();
     untracked(() => build(frag));
     end.parentNode!.insertBefore(frag, end);
@@ -2133,11 +2140,13 @@ export function renderInto(c: Component, parent: Node): void {
   const reader = Component.$reader;
   const outer = holder;
   const was = marking;
+  const own = local;
   collecting = undefined;
   Component.$reader = undefined;
   holder = c;
-  // A child first built under a markup value is not markup: its handlers are plain.
+  // A child first built under a markup value is not markup: its handlers are plain, its bindings may be loose.
   marking = false;
+  local = false;
   try {
     (c as unknown as { render(parent: Node): void }).render(parent);
   } finally {
@@ -2145,6 +2154,7 @@ export function renderInto(c: Component, parent: Node): void {
     Component.$reader = reader;
     holder = outer;
     marking = was;
+    local = own;
   }
 }
 

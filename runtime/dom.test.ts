@@ -2297,28 +2297,32 @@ class Pcs extends Component {
     const _e1 = _e0.lastChild! as Comment;
     dom.piecesAt(_e1, (__p) => {
       for (const x of this.items) {
-        const __p0 = dom.piece(__sLi);
-        const _e2 = __pli() as HTMLElement;
-        const _e3 = _e2.lastChild! as Text;
-        dom.textAt(_e3, () => x.name);
-        dom.on(_e2, "click", () => this.log.push(x.name));
-        __p0.appendChild(_e2);
+        dom.piece(__sLi, (__p0) => {
+          const _e2 = __pli() as HTMLElement;
+          const _e3 = _e2.lastChild! as Text;
+          dom.textAt(_e3, () => x.name);
+          dom.on(_e2, "click", () => this.log.push(x.name));
+          __p0.appendChild(_e2);
+        });
       }
       if (this.flag) {
-        const __p1 = dom.piece(__sYes);
-        const _e4 = __pb() as HTMLElement;
-        __p1.appendChild(_e4);
+        dom.piece(__sYes, (__p1) => {
+          const _e4 = __pb() as HTMLElement;
+          __p1.appendChild(_e4);
+        });
       } else {
-        const __p2 = dom.piece(__sNo);
-        const _e5 = __pno();
-        const _e6 = _e5.lastChild! as Text;
-        dom.textAt(_e6, () => this.items.length);
-        __p2.appendChild(_e5);
+        dom.piece(__sNo, (__p2) => {
+          const _e5 = __pno();
+          const _e6 = _e5.lastChild! as Text;
+          dom.textAt(_e6, () => this.items.length);
+          __p2.appendChild(_e5);
+        });
       }
       if (this.leaves)
         for (const x of this.items) {
-          const __p3 = dom.piece(__sLeaf);
-          dom.component(dom.anchor(__p3), Leaf, () => ({ label: x.name }), undefined, undefined, (c) => pieceLeaves.push(c));
+          dom.piece(__sLeaf, (__p3) => {
+            dom.component(dom.anchor(__p3), Leaf, () => ({ label: x.name }), undefined, undefined, (c) => pieceLeaves.push(c));
+          });
         }
     });
     __p.appendChild(_e0);
@@ -2447,10 +2451,11 @@ class PcsRows extends Component {
     dom.listAt(dom.anchor(__p), () => this.rows, [
       (r: Itm, __p: Node) => {
         for (let i = 0; i < this.n; i++) {
-          const __p0 = dom.piece(__sRowP);
-          const _e0 = __pi() as HTMLElement;
-          dom.textAt(_e0.firstChild as Text, () => `${r.name}${i}`);
-          __p0.appendChild(_e0);
+          dom.piece(__sRowP, (__p0) => {
+            const _e0 = __pi() as HTMLElement;
+            dom.textAt(_e0.firstChild as Text, () => `${r.name}${i}`);
+            __p0.appendChild(_e0);
+          });
         }
       },
     ], (__p) => {
@@ -2466,10 +2471,11 @@ const piecesValue = (owner: Component, x: string, n: number): Markup =>
     const _e0 = __pul() as HTMLElement;
     dom.piecesAt(_e0.lastChild as Comment, (__p) => {
       for (let i = 0; i < n; i++) {
-        const __p0 = dom.piece(__sMvP);
-        const _e1 = __pi() as HTMLElement;
-        dom.textAt(_e1.firstChild as Text, () => `${x}${i}`);
-        __p0.appendChild(_e1);
+        dom.piece(__sMvP, (__p0) => {
+          const _e1 = __pi() as HTMLElement;
+          dom.textAt(_e1.firstChild as Text, () => `${x}${i}`);
+          __p0.appendChild(_e1);
+        });
       }
     });
     __p.appendChild(_e0);
@@ -2492,22 +2498,26 @@ test("pieces: a row's block keeps its pieces when the row's item is replaced and
 });
 
 const __sOdd = {};
+let oddRuns = 0;
 class PcsOdd extends PcsRows {
   protected override render(__p: Node): void {
     dom.piecesAt(dom.anchors(__p), (__p) => {
+      oddRuns++;
       for (let i = 0; i < 3; i++) {
-        const __p0 = dom.piece(__sOdd);
-        const _e0 = __pi() as HTMLElement;
-        // Another shape for one site: what a codegen bug would cause.
-        if (i === 1 && this.n === 2) dom.attr(_e0, "title", () => "odd");
-        else dom.textAt(_e0.firstChild as Text, () => `${i}${this.n}`);
-        __p0.appendChild(_e0);
+        dom.piece(__sOdd, (__p0) => {
+          const _e0 = __pi() as HTMLElement;
+          // Another shape for one site: what a codegen bug would cause.
+          if (i === 1 && this.n === 2) dom.attr(_e0, "title", () => "odd");
+          else dom.textAt(_e0.firstChild as Text, () => `${i}${this.n}`);
+          __p0.appendChild(_e0);
+        });
       }
     });
   }
 }
 
-test("pieces: a claim that doesn't match rebuilds the block", async () => {
+test("pieces: a claim that doesn't match builds that piece anew, keeps the others, and runs the block once", async () => {
+  oddRuns = 0;
   const el = host();
   const c = mount(PcsOdd, el);
   await tick();
@@ -2515,13 +2525,17 @@ test("pieces: a claim that doesn't match rebuilds the block", async () => {
   expect(el.textContent).toBe("011121");
   c.n = 2;
   await tick();
+  expect(oddRuns).toBe(2);
   const now = [...el.querySelectorAll("i")];
   expect(now.length).toBe(3);
-  expect(now[0] === is[0]!).toBe(false);
+  expect(now[0] === is[0]!).toBe(true);
+  expect(now[1] === is[1]!).toBe(false);
+  expect(now[2] === is[2]!).toBe(true);
   expect(now[1]!.getAttribute("title")).toBe("odd");
   expect(el.textContent).toBe("0222");
   c.n = 3;
   await tick();
+  expect(oddRuns).toBe(3);
   expect(el.querySelectorAll("i").length).toBe(3);
   expect(el.textContent).toBe("031323");
 });

@@ -63,7 +63,7 @@ export function flush(): void {
   spare = run;
 }
 
-/** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, models by identity. */
+/** Values a tracked field considers the same: dates by time, arrays and plain objects deeply, other objects (models, elements, class instances) by identity. */
 export function same(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
@@ -74,12 +74,18 @@ export function same(a: unknown, b: unknown): boolean {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
     return a.every((value, i) => same(value, b[i]));
   }
+  if (!plain(a) || !plain(b)) return false;
   const left = a as Record<string, unknown>;
   const right = b as Record<string, unknown>;
   const names = Object.keys(left);
   if (names.length !== Object.keys(right).length) return false;
   return names.every((name) => same(left[name], right[name]));
 }
+
+const plain = (o: object): boolean => {
+  const proto = Object.getPrototypeOf(o);
+  return proto === Object.prototype || proto === null;
+};
 
 /** The `@Key` member of `item`'s class, from the class's tracked-field record. */
 export const keyName = (item: unknown): string | undefined =>

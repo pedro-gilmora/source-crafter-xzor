@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { changed, flush, QUEUED } from "./track";
+import { changed, flush, QUEUED, same } from "./track";
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -38,4 +38,14 @@ test("a binding that throws does not drop the ones queued after it; the error is
     process.off("uncaughtException", onError);
   }
   expect(errors.map(String)).toEqual(["Error: boom"]);
+});
+
+test("same: plain objects and arrays compare deeply, other objects (elements, class instances) by identity", () => {
+  expect(same({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] })).toBe(true);
+  expect(same(Object.assign(Object.create(null), { a: 1 }), { a: 1 })).toBe(true);
+  const a = document.createElement("input");
+  expect(same(a, a)).toBe(true);
+  expect(same(a, document.createElement("input"))).toBe(false);
+  class P { x = 1; }
+  expect(same(new P(), new P())).toBe(false);
 });
