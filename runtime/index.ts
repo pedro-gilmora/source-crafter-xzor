@@ -1,29 +1,11 @@
-// xzor runtime: the RenderTreeBuilder that generated components call into, and a DOM
-// renderer that re-renders one component at a time and patches only what changed.
+// xzor runtime: a component builds its DOM once (`render`, through the `dom` primitives of `dom.ts`), and
+// bindings keep it current. This module holds the component lifecycle, routing state and the mount entry.
 
-import { dom, fineHooks, type Markup } from "./dom";
+import { dom, markup, refreshPass, releaseDom, renderInto, type Markup } from "./dom";
 import { changed, same as equal } from "./track";
 
 /** @internal What generated code calls to build a component's DOM. */
 export { dom, type El, type Markup } from "./dom";
-
-type Handler = (e: Event) => unknown;
-type Modifier = "preventDefault" | "stopPropagation";
-type Modifiers = Partial<Record<Modifier, boolean>>;
-
-export type VText = { kind: "text"; text: string; dom?: Text };
-
-export type VElement = {
-  kind: "element";
-  tag: string;
-  attrs: Record<string, string>;
-  events: Record<string, Handler>;
-  modifiers: Record<string, Modifiers>;
-  children: VNode[];
-  key?: unknown;
-  ref?: (el: Element) => void;
-  dom?: Element;
-};
 
 /** One `@cascade:name(value)` provider; created on the region's first render and carried across the next ones. */
 export type CascadeRecord = {
@@ -36,90 +18,12 @@ export type CascadeRecord = {
   held: boolean;
 };
 
-/** Output of one `@if`/`@for`/`@switch`/`@cascade`; its contents are diffed in isolation. */
-export type VRegion = {
-  kind: "region";
-  children: VNode[];
-  anchor?: Comment;
-  // `@cascade:name(value)` describes its provider with plain fields; `cascade` is the record they create.
-  name?: string;
-  value?: unknown;
-  fixed?: boolean;
-  cascade?: CascadeRecord;
-};
-
-/** A child component; the diff decides whether it keeps its previous instance. */
-export type VComponent = {
-  kind: "component";
-  type: Ctor<Component>;
-  props: Record<string, unknown>;
-  slots?: object;
-  key?: unknown;
-  ref?: (c: Component) => void;
-  instance?: Component;
-  mounted?: Mounted;
-  // `@catch`: set on a routed page, it takes the failures the page itself causes instead of `rethrow`.
-  onError?: (err: unknown, nav: number) => void;
-  // The navigation that put this page here; a patch refreshes its params whenever it moves on.
-  nav?: number;
-};
-
-export type VNode = VText | VElement | VRegion | VComponent | VFine;
-
-/** A `@fine` component's DOM: built once by `dom.ts`, between two comments; patches only refresh it. */
-export type VFine = { kind: "fine"; build: (parent: Node) => void; root?: FineRoot; value?: true };
-
-/** @internal What `dom.ts` keeps for one fine vnode. */
-export type FineRoot = { $bindings: unknown; start: Comment; end: Comment };
-
-/** @internal On a component whose fine root was built (its fine context): its handlers and callbacks write tracked fields, so nothing re-renders it. */
-export const FINE: unique symbol = Symbol("xzor.fine");
-
-const isFine = (c: Component): boolean => c.$end !== undefined || (c as unknown as Record<symbol, unknown>)[FINE] !== undefined;
-
 const FIELDS = Symbol("xzor.fields");
 type Watcher = { slot: number };
-
-/**
- * @internal A virtual-DOM island inside a fine template: renders `build` before `end`, patching `old`.
- * `scope` is the cascade scope the fine component was mounted in.
- */
-export function patchIsland(
-  owner: Component,
-  app: IApplication | undefined,
-  scope: unknown,
-  end: Node,
-  old: VNode[],
-  build: (b: RenderTreeBuilder) => void,
-): VNode[] {
-  const builder = new RenderTreeBuilder(owner);
-  build(builder);
-  const next = builder.nodes;
-  batch(() => patchList(end.parentNode!, old, next, end, owner, app, scope as CascadeRecord | undefined));
-  return next;
-}
-
-/** @internal Disposes an island's tree; its DOM goes with the region that holds it. */
-export function disposeIsland(tree: VNode[]): void {
-  for (const v of tree) dispose(v);
-}
-
-/** @internal Whether a value is markup (`RenderFragment`). */
-export const $isFragment = (value: unknown): boolean => isFragment(value);
 
 export const SVG = "http://www.w3.org/2000/svg";
 /** Whether children of `parent` belong to the SVG namespace (`<foreignObject>` holds HTML). */
 export const $inSvg = (parent: Node): boolean => (parent as Element).namespaceURI === SVG && parent.nodeName !== "foreignObject";
-const inSvg = $inSvg;
-
-function fineNodes(root: FineRoot): Node[] {
-  const nodes: Node[] = [];
-  for (let n: Node | null = root.start; n !== null; n = n.nextSibling) {
-    nodes.push(n);
-    if (n === root.end) break;
-  }
-  return nodes;
-}
 
 /** One entry of the generated `.xzor/routes.ts` table; `match` converts the path segments or rejects them. */
 export type RouteEntry = {
@@ -208,9 +112,8 @@ type Section<F> =
   | { kind: "catch"; render: (route: Route, error: unknown) => F }
   | { kind: "default"; render: (route: Route, page: F) => F };
 
-export type RouteSection = Section<RenderFragment>;
-/** A section of a `@Routes` block rendered through `dom.routesAt`. */
-export type DomRouteSection = Section<Markup>;
+/** A section of a `@Routes` block, rendered by `dom.routesAt`. */
+export type RouteSection = Section<Markup>;
 
 /** How navigation reaches the browser's history; `setNavigationForTests` swaps it. */
 export type Navigation = {
@@ -354,9 +257,6 @@ export type Router = {
   failed: boolean;
 };
 
-const ROUTER: unique symbol = Symbol("xzor.router");
-type Routed = { [ROUTER]?: Router };
-
 function segmentsOf(pathname: string): string[] {
   const rest = pathname.startsWith("/") ? pathname.slice(1) : pathname;
   return rest === "" ? [] : rest.split("/");
@@ -489,18 +389,6 @@ function resolveRoute(router: Router, table: RouteTable, sections: readonly Sect
 }
 
 type Ctor<C extends Component> = new (...args: any[]) => C;
-// `latest` is the current vnode of a component still waiting for its instance; cleared on arrival or removal.
-type Mounted = {
-  tree: VNode[];
-  anchor: Comment;
-  app: IApplication | undefined;
-  scope: CascadeRecord | undefined;
-  latest: VComponent | undefined;
-  // The render pass that last refreshed this component's parameters; a cascade skips it then.
-  pass: number;
-  // A routed page kept across navigations: the latest one it belongs to.
-  nav?: number;
-};
 
 /** Builds components that need injected services; generated by xzor from `@Run` and `@ServiceProvider`. */
 export interface IApplication {
@@ -594,18 +482,8 @@ export const Scoped: ServiceDecorator = () => noop;
 export const Transient: ServiceDecorator = () => noop;
 export const SharedInstance: unique symbol = Symbol("xzor.sharedInstance");
 
-const mountedComponents = new WeakMap<Component, Mounted>();
-const elementHandlers = new WeakMap<
-  Element,
-  { owner: Component; events: Record<string, Handler>; modifiers: Record<string, Modifiers>; listening: Set<string> }
->();
-
-const FRAGMENT: unique symbol = Symbol("xzor.fragment");
-
-type Fragment = ((builder: RenderTreeBuilder) => void) & { readonly [FRAGMENT]: true };
-
-/** Markup held as a value (Blazor's RenderFragment); render it with `@member`. Builder fragments go with the virtual DOM. */
-export type RenderFragment = Fragment | Markup;
+/** Markup held as a value (Blazor's RenderFragment); render it with `@member`. */
+export type RenderFragment = Markup;
 export type Renderer = RenderFragment;
 
 /** A component event; invoking it re-renders the component that passed it in. */
@@ -617,10 +495,6 @@ export type ElementOf<T extends string> = T extends keyof HTMLElementTagNameMap
   : T extends keyof SVGElementTagNameMap
     ? SVGElementTagNameMap[T]
     : HTMLElement;
-
-function isFragment(value: unknown): value is Fragment {
-  return typeof value === "function" && FRAGMENT in value;
-}
 
 /** A pending `@bind:debounce` write, on the input it came from. */
 type Debounced = { timer: ReturnType<typeof setTimeout>; settle: (value: unknown) => void };
@@ -675,14 +549,9 @@ export abstract class Component {
     if (subs !== undefined) for (let i = 0; i < subs.length; i++) changed(subs[i]!, index);
   }
 
-  /** Wraps builder calls as a RenderFragment; xzor emits this for markup used as a value. */
-  static fragment(build: (builder: RenderTreeBuilder) => void): Fragment {
-    return Object.assign(build, { [FRAGMENT]: true as const });
-  }
-
-  /** @internal Markup as a DOM build (`dom`); its handlers run in `owner`'s context (else the component building now). */
-  static $fragment(build: (parent: Node) => void, owner?: Component): Markup {
-    return fineHooks.markup(build, owner);
+  /** Markup as a value (a `RenderFragment`); xzor emits this for markup used as one. Its handlers run in `owner`'s context (else the component building now). */
+  static fragment(build: (parent: Node) => void, owner?: Component): Markup {
+    return markup(build, owner);
   }
 
   /** Reads a bound input's new value, converted to the bound field's current type. */
@@ -738,15 +607,7 @@ export abstract class Component {
   $pass = 0;
 
   /** Builds this component's DOM into `parent`; xzor generates it from the template. */
-  protected render(_parent: Node): void {
-    throw new Error(`xzor: ${this.constructor.name} has no render`);
-  }
-
-  protected buildRenderTree(builder: RenderTreeBuilder): void {
-    // A virtual-DOM parent (an island) mounting a component that builds its own DOM.
-    if (rendersDom(this.constructor)) return builder.addFine((parent) => this.render(parent));
-    throw new Error(`xzor: ${this.constructor.name} has no buildRenderTree`);
-  }
+  protected abstract render(parent: Node): void;
 
   // Lifecycle, in Blazor's order. `...Async` results re-render the component when they settle.
   protected onInitialized(): void {}
@@ -773,7 +634,6 @@ export const ComponentBase = Component;
 export type ComponentBase = Component;
 
 type Hooks = {
-  buildRenderTree(b: RenderTreeBuilder): void;
   onInitialized(): void;
   onInitializedAsync(): Promise<void> | void;
   onParametersSet(): void;
@@ -785,245 +645,6 @@ type Hooks = {
 };
 
 const hooks = (c: Component) => c as unknown as Hooks;
-
-export class RenderTreeBuilder {
-  readonly #root: VNode[] = [];
-  readonly #open: (VElement | VRegion)[] = [];
-
-  constructor(private readonly owner: Component) {}
-
-  get nodes(): VNode[] {
-    return this.#root;
-  }
-
-  #append(node: VNode): void {
-    (this.#open.at(-1)?.children ?? this.#root).push(node);
-  }
-
-  #current(): VElement {
-    const el = this.#open.at(-1);
-    if (el?.kind !== "element") throw new Error("xzor: attribute outside of an element");
-    return el;
-  }
-
-  openElement(tag: string): void {
-    const el: VElement = { kind: "element", tag, attrs: {}, events: {}, modifiers: {}, children: [] };
-    this.#append(el);
-    this.#open.push(el);
-  }
-
-  closeElement(): void {
-    this.#open.pop();
-  }
-
-  openRegion(): void {
-    const region: VRegion = { kind: "region", children: [] };
-    this.#append(region);
-    this.#open.push(region);
-  }
-
-  /** `@cascade:name(value)`: a region whose children see `value` under `name`; `fixed` keeps the first value. */
-  openCascade(name: string, value: unknown, fixed?: boolean): void {
-    const region: VRegion = { kind: "region", children: [], name, value, fixed: fixed === true };
-    this.#append(region);
-    this.#open.push(region);
-  }
-
-  closeRegion(): void {
-    this.#open.pop();
-  }
-
-  /** `@Routes`: renders the section that matches the current navigation. */
-  addRoutes(table: RouteTable, sections: readonly RouteSection[]): void {
-    const owner = this.owner as Component & Routed;
-    const state = (owner[ROUTER] ??= $router(sections, () => update(owner)));
-    $resolve(state, table, sections);
-    const route = state.route!;
-    const section = sections[state.section];
-    const page = state.page;
-    this.openCascade("route", route);
-    if (state.failed) {
-      (state.caught!.render(route, state.error) as Fragment)(this);
-    } else if (page) {
-      const entry = page;
-      const fragment = Component.fragment((b) => b.#addPage(entry, state));
-      if (section) (section.render as (r: Route, p: Fragment) => Fragment)(route, fragment)(this);
-      else fragment(this);
-    } else if (section) {
-      (section.render as (r: Route) => Fragment)(route)(this);
-    }
-    this.closeRegion();
-  }
-
-  // Keyed by route family: navigating between routes of one family (or params only) keeps the page instance.
-  #addPage(entry: RouteEntry, router: Router): void {
-    this.#append({
-      kind: "component",
-      type: entry.component as Ctor<Component>,
-      props: router.params,
-      key: entry.family ?? entry.pattern,
-      onError: router.onError,
-      nav: router.id,
-    });
-  }
-
-  addAttribute(name: string, value: unknown): void {
-    const el = this.#current();
-    // `aria-*` states are the strings "true" and "false".
-    if (typeof value === "boolean" && name.startsWith("aria-")) value = String(value);
-    if (value === false || value == null) delete el.attrs[name];
-    else el.attrs[name] = value === true ? "" : String(value);
-  }
-
-  /** `class:name="@on"`: adds `name` to the open element's class while `on` is truthy. */
-  toggleClass(name: string, on: unknown): void {
-    if (!on) return;
-    const attrs = this.#current().attrs;
-    const own = attrs["class"];
-    attrs["class"] = own ? `${own} ${name}` : name;
-  }
-
-  /** `@attributes`: each entry is added in order, so later attributes override it. */
-  addAttributes(attrs: Record<string, unknown> | null | undefined): void {
-    for (const [name, value] of Object.entries(attrs ?? {})) this.addAttribute(name, value);
-  }
-
-  /** `@attr:name`: an attribute of the nearest open element; `class` adds to its classes. */
-  addParentAttribute(name: string, value: unknown): void {
-    const open = this.#open;
-    let i = open.length - 1;
-    while (i >= 0 && open[i]!.kind !== "element") i--;
-    if (i < 0) throw new Error(`xzor: @attr:${name} outside of an element`);
-    const el = open[i] as VElement;
-    const own = el.attrs[name];
-    if (name === "class" && own && value !== false && value != null) el.attrs["class"] = `${own} ${value === true ? "" : String(value)}`.trimEnd();
-    else if (value === false || value == null) delete el.attrs[name];
-    else el.attrs[name] = value === true ? "" : String(value);
-  }
-
-  /** `@onclick:preventDefault` and `@onclick:stopPropagation`, with or without a handler. */
-  addEventModifier(event: string, modifier: Modifier, enabled: boolean): void {
-    const el = this.#current();
-    (el.modifiers[event] ??= {})[modifier] = enabled;
-  }
-
-  /** `@key`: list diffs match this element by key instead of position. */
-  setKey(key: unknown): void {
-    this.#current().key = key;
-  }
-
-  /** `@ref`: receives the DOM element (typed from its tag) after each render. */
-  setRef<T extends string>(_tag: T, ref: (el: ElementOf<T>) => void): void {
-    this.#current().ref = ref as (el: Element) => void;
-  }
-
-  addEventHandler<K extends keyof HTMLElementEventMap>(
-    event: K,
-    handler: (e: HTMLElementEventMap[K]) => unknown,
-  ): void;
-  addEventHandler(event: string, handler: Handler): void;
-  addEventHandler(event: string, handler: (e: never) => unknown): void {
-    this.#current().events[event] = handler as Handler;
-  }
-
-  addText(text: string): void {
-    this.#append({ kind: "text", text });
-  }
-
-  /** `@fine`: the whole template, built once into the DOM; its bindings keep it current. */
-  addFine(build: (parent: Node) => void): void {
-    this.#append({ kind: "fine", build });
-  }
-
-  addContent(value: unknown): void {
-    if (fineHooks.isMarkup(value)) return this.#append({ kind: "fine", build: value, value: true });
-    if (isFragment(value)) {
-      this.openRegion();
-      value(this);
-      this.closeRegion();
-      return;
-    }
-    // An empty text node keeps the slot, so siblings stay aligned when content comes and goes.
-    if (value === false || value == null) value = "";
-    this.#append({ kind: "text", text: String(value) });
-  }
-
-  addComponent<C extends Component>(
-    type: Ctor<C>,
-    props: Partial<C>,
-    slots?: C["slots"],
-    extra?: { key?: unknown; ref?: (c: C) => void },
-  ): void {
-    this.#append({
-      kind: "component",
-      type,
-      props: props as Record<string, unknown>,
-      slots,
-      key: extra?.key,
-      ref: extra?.ref as ((c: Component) => void) | undefined,
-    });
-  }
-
-  /** Wraps a handler passed to a child as an EventCallback (re-renders this owner). */
-  callback<T>(handler: (arg: T) => unknown): EventCallback<T> {
-    const owner = this.owner;
-    if (isFine(owner))
-      return (arg: T) => {
-        const result = handler(arg);
-        fineHooks.handled(owner, result);
-        return result;
-      };
-    return (arg: T) => {
-      const result = handler(arg);
-      update(owner);
-      if (result instanceof Promise) void result.then(() => update(owner));
-      return result;
-    };
-  }
-}
-
-// Inputs keep live state in properties, so bound attributes are mirrored onto them. `--name` is a custom property.
-function setAttr(el: Element, name: string, value: string): void {
-  if (name.charCodeAt(0) === 45 && name.charCodeAt(1) === 45) return (el as HTMLElement).style.setProperty(name, value);
-  el.setAttribute(name, value);
-  if (name === "value" && "value" in el) (el as HTMLInputElement).value = value;
-  if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = true;
-}
-
-function removeAttr(el: Element, name: string): void {
-  if (name.charCodeAt(0) === 45 && name.charCodeAt(1) === 45) return void (el as HTMLElement).style.removeProperty(name);
-  el.removeAttribute(name);
-  if (name === "value" && "value" in el) (el as HTMLInputElement).value = "";
-  if (name === "checked" && "checked" in el) (el as HTMLInputElement).checked = false;
-}
-
-/** What `@source-crafter/xzor-runtime/model` installs to learn which models a render read. */
-export type RenderObserver = {
-  begin(component: Component): void;
-  end(component: Component): void;
-  dispose(component: Component): void;
-};
-
-let observer: RenderObserver | undefined;
-
-/** @internal Set by the model entry; the renderer costs one null check while none is installed. */
-export function setRenderObserver(o: RenderObserver | undefined): void {
-  observer = o;
-}
-
-function render(component: Component): VNode[] {
-  const builder = new RenderTreeBuilder(component);
-  if (observer === undefined) hooks(component).buildRenderTree(builder);
-  else {
-    observer.begin(component);
-    try {
-      hooks(component).buildRenderTree(builder);
-    } finally {
-      observer.end(component);
-    }
-  }
-  return builder.nodes;
-}
 
 // After-render hooks wait until the outermost render pass has touched the DOM.
 let depth = 0;
@@ -1087,12 +708,12 @@ function collect(fn: () => void): Promise<unknown> {
   return Promise.allSettled(started);
 }
 
-/** What `@catch` reports a failure through: a routed page's vnode or child binding. */
-type Failing = { onError?: ((err: unknown, nav: number) => void) | undefined; nav?: number | undefined; mounted?: { nav?: number } | undefined };
+/** What `@catch` reports a failure through: a routed page's child binding. */
+type Failing = { onError?: ((err: unknown, nav: number) => void) | undefined; nav?: number | undefined };
 
 /** `@catch`: the failure is reported with the navigation the page belongs to, so a late one can be dropped. */
 function fail(v: Failing, err: unknown): void {
-  if (v.onError) v.onError(err, v.mounted?.nav ?? v.nav ?? 0);
+  if (v.onError) v.onError(err, v.nav ?? 0);
   else rethrow(err);
 }
 
@@ -1146,14 +767,8 @@ function assignCascade(record: CascadeRecord, consumers: readonly Component[]): 
 // A changed cascade takes the same path as a changed prop: onParametersSet, then re-render.
 function notifyCascade(consumers: readonly Component[]): void {
   for (const consumer of consumers) {
-    if (consumer.$end !== undefined) {
-      if (consumer.$pass === pass) continue;
-      consumer.$pass = pass;
-    } else {
-      const m = mountedComponents.get(consumer);
-      if (!m || m.pass === pass) continue;
-      m.pass = pass;
-    }
+    if (consumer.$pass === pass) continue;
+    consumer.$pass = pass;
     try {
       parametersSet(consumer);
       update(consumer);
@@ -1204,48 +819,15 @@ function queueAfterRender(component: Component, first: boolean): void {
 
 function update(component: Component): void {
   const end = component.$end;
-  if (end !== undefined) {
-    // Kept detached (`@cached`): nothing to show it in.
-    if (end.parentNode === null || !hooks(component).shouldRender()) return;
-    const mark = open();
-    try {
-      fineHooks.refresh(component);
-      queueAfterRender(component, false);
-    } finally {
-      close(mark);
-    }
-    return;
-  }
-  batch(() => {
-    const m = mountedComponents.get(component);
-    const parent = m?.anchor.parentNode;
-    if (!m || !parent || !hooks(component).shouldRender()) return;
-    const next = render(component);
-    patchList(parent, m.tree, next, m.anchor, component, m.app, m.scope);
-    m.tree = next;
+  // Not mounted, or kept detached (`@cached`): nothing to show it in.
+  if (end === undefined || end.parentNode === null || !hooks(component).shouldRender()) return;
+  const mark = open();
+  try {
+    refreshPass(component);
     queueAfterRender(component, false);
-  });
-}
-
-// `into` is the placeholder left by an async component; it keeps its anchor and the nodes go before it.
-function mountComponent(
-  component: Component,
-  app: IApplication | undefined,
-  scope: CascadeRecord | undefined,
-  into?: Mounted,
-  node?: VComponent,
-): { nodes: Node[]; mounted: Mounted } {
-  hooks(component).onInitialized();
-  settle(component, hooks(component).onInitializedAsync(), node);
-  parametersSet(component);
-  const tree = render(component);
-  const mounted = into ?? { tree, anchor: document.createComment(""), app, scope, latest: undefined, pass };
-  if (into) into.tree = tree;
-  mountedComponents.set(component, mounted);
-  const nodes = tree.flatMap((v) => create(v, component, app, scope));
-  queueAfterRender(component, true);
-  if (!into) nodes.push(mounted.anchor);
-  return { nodes, mounted };
+  } finally {
+    close(mark);
+  }
 }
 
 const LAZY = Symbol("xzor.lazy");
@@ -1278,288 +860,12 @@ function construct(type: Ctor<Component>, app: IApplication | undefined): Compon
   throw new Error(`xzor: ${type.name} needs injected services (${inject.join(", ")}) but has no application`);
 }
 
-function arrive(mounted: Mounted, instance: Component): void {
-  const v = mounted.latest;
-  const parent = mounted.anchor.parentNode;
-  mounted.latest = undefined;
-  // No vnode: removed before arrival. No parent: the anchor was detached without a dispose.
-  if (!v || !parent) {
-    disposeInstance(instance);
-    return;
-  }
-  try {
-    batch(() => {
-      applyProps(instance, v);
-      resolveCascades(instance, mounted.scope);
-      v.ref?.(instance);
-      for (const node of mountComponent(instance, mounted.app, mounted.scope, mounted, v).nodes)
-        parent.insertBefore(node, mounted.anchor);
-      v.instance = instance;
-    });
-  } catch (err) {
-    fail(v, err);
-    if (!v.instance) {
-      mountedComponents.delete(instance);
-      observer?.dispose(instance);
-      unsubscribeCascades(instance, mounted.scope);
-      // Nodes of the failed render were never inserted; keep only the empty placeholder.
-      const partial = mounted.tree;
-      mounted.tree = [];
-      for (const node of partial) {
-        try {
-          dispose(node);
-        } catch (disposeErr) {
-          rethrow(disposeErr);
-        }
-      }
-    }
-  }
-}
-
-function applyProps(instance: Component, v: VComponent): void {
-  Object.assign(instance, v.props);
-  if (v.slots) instance.slots = v.slots;
-}
-
-function propsChanged(o: VComponent, n: VComponent): boolean {
-  // Slot lambdas are recreated on every parent render, so a child with slots always refreshes.
-  if (n.slots) return true;
-  for (const [key, value] of Object.entries(n.props)) {
-    // Like Blazor, objects may have been mutated, so they always count as changed.
-    if (!Object.is(o.props[key], value) || (typeof value === "object" && value !== null)) return true;
-  }
-  return false;
-}
-
-const eventNames = (v: VElement) => new Set([...Object.keys(v.events), ...Object.keys(v.modifiers)]);
-
-function listen(el: Element, event: string): void {
-  elementHandlers.get(el)!.listening.add(event);
-  el.addEventListener(event, (e) => {
-    const record = elementHandlers.get(el);
-    if (!record) return;
-    const mods = record.modifiers[event];
-    if (mods?.preventDefault) e.preventDefault();
-    if (mods?.stopPropagation) e.stopPropagation();
-    const handler = record.events[event];
-    if (!handler) return;
-    const result = handler(e);
-    if (isFine(record.owner)) return fineHooks.handled(record.owner, result);
-    update(record.owner);
-    if (result instanceof Promise) void result.then(() => update(record.owner));
-  });
-}
-
-function create(
-  v: VNode,
-  owner: Component,
-  app: IApplication | undefined,
-  scope: CascadeRecord | undefined,
-  svg = false,
-): Node[] {
-  switch (v.kind) {
-    case "text":
-      v.dom = document.createTextNode(v.text);
-      return [v.dom];
-    case "element": {
-      const el = svg || v.tag === "svg" ? document.createElementNS(SVG, v.tag) : document.createElement(v.tag);
-      for (const [name, value] of Object.entries(v.attrs)) setAttr(el, name, value);
-      elementHandlers.set(el, { owner, events: v.events, modifiers: v.modifiers, listening: new Set() });
-      for (const event of eventNames(v)) listen(el, event);
-      const inner = inSvg(el);
-      for (const child of v.children) el.append(...create(child, owner, app, scope, inner));
-      v.dom = el;
-      v.ref?.(el);
-      return [el];
-    }
-    case "region": {
-      v.anchor = document.createComment("");
-      // The record outlives the vnode: later renders carry it over in `patch`.
-      const inner =
-        v.name === undefined
-          ? scope
-          : (v.cascade = { name: v.name, value: v.value, fixed: v.fixed === true, consumers: undefined, parent: scope, held: false });
-      return [...v.children.flatMap((c) => create(c, owner, app, inner, svg)), v.anchor];
-    }
-    case "component": {
-      if (!v.onError) return createComponent(v, app, scope);
-      try {
-        return createComponent(v, app, scope);
-      } catch (err) {
-        return failedComponent(v, err, app, scope);
-      }
-    }
-    case "fine":
-      return fineNodes((v.root = fineHooks.create(v.build, owner, app, scope)));
-  }
-}
-
-// `@cached` components that left the tree, by type and key; their nodes stay built, detached.
-// ponytail: never evicted; one entry per type and key, so a page with keyed routes keeps one per family.
-const kept = new WeakMap<Function, Map<unknown, VComponent>>();
-let keptCount = 0;
-
-function keep(v: VComponent): void {
-  let byKey = kept.get(v.type);
-  if (byKey === undefined) kept.set(v.type, (byKey = new Map()));
-  if (!byKey.has(v.key)) keptCount++;
-  byKey.set(v.key, v);
-}
-
-/** The nodes of a kept instance of `v`'s type and key, patched to `v`'s props; `undefined` if none is kept. */
-function revive(v: VComponent, app: IApplication | undefined, scope: CascadeRecord | undefined): Node[] | undefined {
-  if (keptCount === 0) return undefined;
-  const byKey = kept.get(v.type);
-  const old = byKey?.get(v.key);
-  if (old === undefined) return undefined;
-  byKey!.delete(v.key);
-  keptCount--;
-  const instance = (v.instance = old.instance!);
-  const mounted = (v.mounted = old.mounted!);
-  mounted.app = app;
-  mounted.scope = scope;
-  applyProps(instance, v);
-  resolveCascades(instance, scope);
-  v.ref?.(instance);
-  // Re-rendered in a fragment: `update` patches before the anchor, which needs a parent.
-  const frag = document.createDocumentFragment();
-  for (const node of nodesOf(old)) frag.appendChild(node);
-  mounted.pass = pass;
-  parametersSet(instance);
-  update(instance);
-  return [...frag.childNodes];
-}
-
-function createComponent(v: VComponent, app: IApplication | undefined, scope: CascadeRecord | undefined): Node[] {
-  const revived = revive(v, app, scope);
-  if (revived !== undefined) return revived;
-  const made = construct(v.type, app);
-  if (made instanceof Promise) {
-    const mounted: Mounted = (v.mounted = {
-      tree: [],
-      anchor: document.createComment(""),
-      app,
-      scope,
-      latest: v,
-      pass,
-    });
-    // Inside a transition's update, the chunk and the hooks of the page that arrives with it are awaited too.
-    const outer = awaiting;
-    const arrived = made.then(
-      (instance) => (outer ? collect(() => arrive(mounted, instance)) : arrive(mounted, instance)),
-      (err) => {
-        const latest = mounted.latest;
-        mounted.latest = undefined;
-        if (latest) fail(latest, err);
-        // A routed page we already left: its failure is stale, like any other.
-        else if (!v.onError) rethrow(err);
-      },
-    );
-    if (outer) outer.push(arrived.then(noop));
-    return [mounted.anchor];
-  }
-  v.instance = made;
-  applyProps(made, v);
-  resolveCascades(made, scope);
-  v.ref?.(made);
-  const { nodes, mounted } = mountComponent(made, app, scope, undefined, v);
-  v.mounted = mounted;
-  return nodes;
-}
-
-// `@catch`: the page's nodes never reached the DOM, so only an anchor stays until the block re-renders.
-function failedComponent(
-  v: VComponent,
-  err: unknown,
-  app: IApplication | undefined,
-  scope: CascadeRecord | undefined,
-): Node[] {
-  const instance = v.instance;
-  v.instance = undefined;
-  if (instance) {
-    // Children the page had already mounted go with it, or they keep taking cascades and hooks.
-    const partial = mountedComponents.get(instance);
-    mountedComponents.delete(instance);
-    observer?.dispose(instance);
-    unsubscribeCascades(instance, scope);
-    for (const node of partial?.tree ?? []) {
-      try {
-        dispose(node);
-      } catch (disposeErr) {
-        rethrow(disposeErr);
-      }
-    }
-  }
-  v.mounted = { tree: [], anchor: document.createComment(""), app, scope, latest: undefined, pass };
-  fail(v, err);
-  return [v.mounted.anchor];
-}
-
-function nodesOf(v: VNode): Node[] {
-  switch (v.kind) {
-    case "text":
-    case "element":
-      return [v.dom!];
-    case "region":
-      return [...v.children.flatMap(nodesOf), v.anchor!];
-    case "component":
-      return [...v.mounted!.tree.flatMap(nodesOf), v.mounted!.anchor];
-    case "fine":
-      return fineNodes(v.root!);
-  }
-}
-
-function same(o: VNode, n: VNode): boolean {
-  if (o.kind !== n.kind) return false;
-  if (o.kind === "element") return o.tag === (n as VElement).tag && o.key === (n as VElement).key;
-  if (o.kind === "component") return o.type === (n as VComponent).type && o.key === (n as VComponent).key;
-  // A provider is only ever patched against the same provider; anything else replaces it.
-  if (o.kind === "region") return o.name === (n as VRegion).name && o.fixed === (n as VRegion).fixed;
-  // Markup given as a value is the same node only while it is the same markup.
-  if (o.kind === "fine") return (n as VFine).value !== true || (o as VFine).build === (n as VFine).build;
-  return true;
-}
-
-function dispose(v: VNode): void {
-  switch (v.kind) {
-    case "element":
-      v.children.forEach(dispose);
-      return;
-    case "region":
-      // The provider goes away with its region, so its consumers need not unsubscribe one by one.
-      if (v.cascade) v.cascade.consumers = undefined;
-      v.children.forEach(dispose);
-      return;
-    case "component":
-      if (!v.instance) {
-        if (v.mounted) v.mounted.latest = undefined;
-        return;
-      }
-      unsubscribeCascades(v.instance, v.mounted?.scope);
-      if ((v.instance.constructor as { cached?: boolean }).cached === true) return keep(v);
-      v.mounted?.tree.forEach(dispose);
-      mountedComponents.delete(v.instance);
-      disposeInstance(v.instance);
-      return;
-    case "fine":
-      fineHooks.dispose(v.root!, !fineHooks.isMarkup(v.build));
-      return;
-  }
-}
-
 function disposeInstance(c: Component): void {
-  observer?.dispose(c);
-  (c as Routed)[ROUTER]?.off?.();
   hooks(c).dispose();
   const d = c as unknown as Record<symbol, (() => unknown) | undefined>;
   d[wellKnown.dispose]?.();
   surface(d[wellKnown.asyncDispose]?.());
 }
-
-const baseRender = (Component.prototype as unknown as { render: unknown }).render;
-
-/** Whether `type` builds its DOM with `render`; a lazy stub is taken to until it arrives. */
-const rendersDom = (type: Function): boolean => (type.prototype as { render?: unknown } | undefined)?.render !== baseRender;
 
 /** @internal A child component binding's state (`dom.component`). */
 export type Child = {
@@ -1579,8 +885,6 @@ export type Child = {
   nav: number | undefined;
   instance: Component | undefined;
   phase: number;
-  /** A class without `render`: its virtual-DOM tree (until the virtual DOM goes). */
-  tree: VNode[] | undefined;
   /** A list row's item (`dom.componentItem`). */
   item: unknown;
 };
@@ -1592,8 +896,8 @@ const FAILED = 3;
 const GONE = 4;
 
 /**
- * A constructed component's lifecycle up to its first build, as `mountComponent`: its DOM, in a fragment. `end` is
- * the comment it ends before (a child binding's anchor); a root (`null`) gets its own comments.
+ * A constructed component's lifecycle up to its first build: its DOM, in a fragment. `end` is the comment it ends
+ * before (a child binding's anchor); a root (`null`) gets its own comments.
  */
 function build(c: Component, app: IApplication | undefined, scope: unknown, end: Comment | null, node?: Failing): DocumentFragment {
   const h = hooks(c);
@@ -1604,9 +908,9 @@ function build(c: Component, app: IApplication | undefined, scope: unknown, end:
   c.$scope = scope;
   c.$pass = pass;
   const frag = document.createDocumentFragment();
-  // ponytail: only roots and `@cached` ones get a start comment (keeping needs their range); hot reload may want it on all.
+  // Only roots and `@cached` ones get a start comment: keeping needs their range.
   if (end === null || (c.constructor as { cached?: boolean }).cached === true) c.$start = frag.appendChild(document.createComment(""));
-  fineHooks.build(c, frag);
+  renderInto(c, frag);
   c.$end = end ?? frag.appendChild(document.createComment(""));
   queueAfterRender(c, true);
   return frag;
@@ -1614,7 +918,6 @@ function build(c: Component, app: IApplication | undefined, scope: unknown, end:
 
 /** @internal A child binding ran: mounts its component the first time, then gives it its props again; `moved`: a routed page's navigation moved on. */
 export function $child(s: Child, props: Record<string, unknown>, moved = false): void {
-  if (s.tree !== undefined) return bridge(s, props);
   const c = s.instance;
   if (c === undefined) {
     if (s.phase === WAITING) s.props = props;
@@ -1644,27 +947,18 @@ export function $child(s: Child, props: Record<string, unknown>, moved = false):
 
 /** @internal A child binding went: disposes its component, or keeps a `@cached` one detached. */
 export function $dropChild(s: Child): void {
-  if (s.tree !== undefined) {
-    disposeIsland(s.tree);
-    s.tree = [];
-    return;
-  }
   const c = s.instance;
   s.instance = undefined;
   s.phase = GONE;
   if (c === undefined) return;
   unsubscribeCascades(c, c.$scope as CascadeRecord | undefined);
   if ((c.constructor as { cached?: boolean }).cached === true) return keepChild(s, c);
-  fineHooks.dispose(c);
+  releaseDom(c);
   c.$end = undefined;
   disposeInstance(c);
 }
 
 function createChild(s: Child, props: Record<string, unknown>): void {
-  if (!rendersDom(s.type)) {
-    s.tree = [];
-    return bridge(s, props);
-  }
   s.props = props;
   if (reviveChild(s)) return;
   const mark = open();
@@ -1731,7 +1025,7 @@ function abandon(s: Child, c: Component, err: unknown): void {
   fail(s, err);
   if (mine) {
     try {
-      fineHooks.dispose(c);
+      releaseDom(c);
     } catch (disposeErr) {
       rethrow(disposeErr);
     }
@@ -1761,13 +1055,6 @@ function arriveChild(s: Child, c: Component): void {
     if (s.phase === WAITING) s.phase = GONE;
     disposeInstance(c);
     return;
-  }
-  if (!rendersDom(c.constructor)) {
-    // The bridge's builder makes its own instance.
-    disposeInstance(c);
-    s.phase = LIVE;
-    s.tree = [];
-    return bridge(s, s.props!);
   }
   const mark = open();
   try {
@@ -1827,17 +1114,6 @@ function reviveChild(s: Child): boolean {
   return true;
 }
 
-// Ruling: a class without `render` (builder-based) mounts through a virtual-DOM island until the virtual DOM goes.
-function bridge(s: Child, props: Record<string, unknown>): void {
-  const owner = s.ctx;
-  const all = s.statics === undefined ? props : { ...staticsOf(s), ...props };
-  s.tree = patchIsland(owner, owner.$app, s.scope, s.end, s.tree!, (b) => b.addComponent(s.type, all as Partial<Component>, slotsOf(s) as Component["slots"], { key: s.key, ref: s.ref }));
-}
-function remove(parent: Node, v: VNode): void {
-  for (const node of nodesOf(v)) $leave(node);
-  dispose(v);
-}
-
 /**
  * @internal Removes `node`. A `data-leave` element gets `data-leaving` first and goes when the finite animations
  * that starts (in it and below) finish; with none, or removed again meanwhile, it goes at once.
@@ -1856,161 +1132,6 @@ export function $leave(node: Node): void {
   void Promise.all(animations.map((a) => a.finished)).then(gone, gone);
 }
 
-function patch(
-  o: VNode,
-  n: VNode,
-  owner: Component,
-  app: IApplication | undefined,
-  scope: CascadeRecord | undefined,
-): void {
-  switch (n.kind) {
-    case "text": {
-      const dom = (n.dom = (o as VText).dom!);
-      if (dom.data !== n.text) dom.data = n.text;
-      return;
-    }
-    case "element": {
-      const old = o as VElement;
-      const el = (n.dom = old.dom!);
-      for (const name of Object.keys(old.attrs)) if (!(name in n.attrs)) removeAttr(el, name);
-      for (const [name, value] of Object.entries(n.attrs)) {
-        const live = name === "value" ? (el as HTMLInputElement).value : undefined;
-        if (old.attrs[name] !== value || (live !== undefined && live !== value)) setAttr(el, name, value);
-      }
-      const record = elementHandlers.get(el)!;
-      record.events = n.events;
-      record.modifiers = n.modifiers;
-      for (const event of eventNames(n)) if (!record.listening.has(event)) listen(el, event);
-      patchList(el, old.children, n.children, null, owner, app, scope);
-      n.ref?.(el);
-      return;
-    }
-    case "region": {
-      const old = o as VRegion;
-      const anchor = (n.anchor = old.anchor!);
-      // The provider record is carried like the anchor, so consumers keep their subscription.
-      const record = old.cascade;
-      let subscribers: Component[] | undefined;
-      let inner = scope;
-      if (record) {
-        record.parent = scope;
-        n.cascade = record;
-        inner = record;
-        // A fixed provider keeps the value of its first render, for consumers mounted later too.
-        if (!record.fixed && !Object.is(record.value, n.value)) {
-          record.value = n.value;
-          if (record.consumers?.size) {
-            subscribers = [...record.consumers];
-            assignCascade(record, subscribers);
-          }
-        }
-      }
-      patchList(anchor.parentNode!, old.children, n.children, anchor, owner, app, inner);
-      // Consumers that this patch mounted or already refreshed skip the notification.
-      if (subscribers) notifyCascade(subscribers);
-      return;
-    }
-    case "component": {
-      const old = o as VComponent;
-      n.mounted = old.mounted;
-      if (!old.instance) {
-        // Still waiting for its instance: carry the newest props to arrival.
-        if (n.mounted!.latest) n.mounted!.latest = n;
-        return;
-      }
-      const instance = (n.instance = old.instance);
-      // A page whose navigation moved on takes its params again even when they compare equal.
-      const changed = n.nav !== old.nav || propsChanged(old, n);
-      if (n.nav !== undefined) n.mounted!.nav = n.nav;
-      applyProps(instance, n);
-      n.ref?.(instance);
-      if (changed) {
-        n.mounted!.pass = pass;
-        parametersSet(instance);
-        update(instance);
-      }
-      return;
-    }
-    case "fine": {
-      // Built once: a re-render (`stateHasChanged`) re-runs the bindings, for changes nothing tracks.
-      fineHooks.refresh((n.root = (o as VFine).root!));
-      return;
-    }
-  }
-}
-
-const keyOf = (v: VNode | undefined) => (v && (v.kind === "element" || v.kind === "component") ? v.key : undefined);
-
-function patchList(
-  parent: Node,
-  old: VNode[],
-  next: VNode[],
-  end: Node | null,
-  owner: Component,
-  app: IApplication | undefined,
-  scope: CascadeRecord | undefined,
-): void {
-  if (old.some((v) => keyOf(v) != null) || next.some((v) => keyOf(v) != null)) {
-    patchKeyed(parent, old, next, end, owner, app, scope);
-    return;
-  }
-  // Positional diff; regions keep variable-length blocks from misaligning their siblings.
-  for (let i = 0; i < next.length; i++) {
-    const n = next[i]!;
-    const o = old[i];
-    if (o && same(o, n)) {
-      patch(o, n, owner, app, scope);
-      continue;
-    }
-    const ref = o ? nodesOf(o)[0]! : end;
-    for (const node of create(n, owner, app, scope, inSvg(parent))) parent.insertBefore(node, ref);
-    if (o) remove(parent, o);
-  }
-  for (const o of old.slice(next.length)) remove(parent, o);
-}
-
-/** `@key` diff: keyed nodes are matched by key and moved; unkeyed ones by position. */
-function patchKeyed(
-  parent: Node,
-  old: VNode[],
-  next: VNode[],
-  end: Node | null,
-  owner: Component,
-  app: IApplication | undefined,
-  scope: CascadeRecord | undefined,
-): void {
-  const byKey = new Map<unknown, VNode>();
-  for (const o of old) if (keyOf(o) != null) byKey.set(keyOf(o), o);
-  const used = new Set<VNode>();
-  const matches = next.map((n, i) => {
-    const key = keyOf(n);
-    const o = key != null ? byKey.get(key) : keyOf(old[i]) == null ? old[i] : undefined;
-    if (o && !used.has(o) && same(o, n)) {
-      used.add(o);
-      return o;
-    }
-    return undefined;
-  });
-  for (const o of old) if (!used.has(o)) remove(parent, o);
-  let ref = end;
-  for (let i = next.length - 1; i >= 0; i--) {
-    const n = next[i]!;
-    const o = matches[i];
-    let nodes: Node[];
-    if (o) {
-      patch(o, n, owner, app, scope);
-      nodes = nodesOf(n);
-    } else {
-      nodes = create(n, owner, app, scope, inSvg(parent));
-    }
-    for (let j = nodes.length - 1; j >= 0; j--) {
-      const node = nodes[j]!;
-      if (node.parentNode !== parent || node.nextSibling !== ref) parent.insertBefore(node, ref);
-      ref = node;
-    }
-  }
-}
-
 function resolveTarget(target: string | Element): Element {
   if (typeof target !== "string") return target;
   const found = SELECTOR.test(target) ? document.querySelector(target) : document.getElementById(target);
@@ -2023,14 +1144,12 @@ export function mount<C extends Component>(type: Ctor<C>, target: string | Eleme
   const host = resolveTarget(target);
   const root = construct(type, app);
   if (root instanceof Promise) throw new Error(`xzor: root component ${type.name} cannot be asynchronous`);
-  if (rendersDom(type)) {
-    const mark = open();
-    try {
-      host.replaceChildren(build(root, app, undefined, null));
-    } finally {
-      close(mark);
-    }
-  } else batch(() => host.replaceChildren(...mountComponent(root, app, undefined).nodes));
+  const mark = open();
+  try {
+    host.replaceChildren(build(root, app, undefined, null));
+  } finally {
+    close(mark);
+  }
   surface(app?.onStarted?.());
   return root as C;
 }

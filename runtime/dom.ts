@@ -2,15 +2,13 @@
 // tracked fields it reads while it runs, and re-runs through the change queue (once per microtask) when one of
 // them changes. A binding is its own dep for the first source it reads.
 
-import { $cascade, $release, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $isFragment, $leave as leave, $recascade, $resolve, $router, Component, disposeIsland, FINE, patchIsland, SVG, type CascadeRecord, type Child, type DomRouteSection, type EventCallback, type FineRoot, type IApplication, type RenderTreeBuilder, type Route, type RouteEntry, type RenderFragment, type Router, type RouteTable, type VNode } from "./index";
+import { $cascade, $release, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $leave as leave, $recascade, $resolve, $router, Component, SVG, type CascadeRecord, type Child, type EventCallback, type Route, type RouteEntry, type RouteSection, type RenderFragment, type Router, type RouteTable } from "./index";
 import { bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
 const ATTR = 1;
 const REGION = 2;
 const LIST = 3;
-/** A virtual-DOM subtree (child components, slots, `@cascade`, routes, markup values), patched on change. */
-const ISLAND = 4;
 /** A loop run in place whose passes keep their rows by key (`Keyed`). */
 const KEYED = 5;
 /** Runs `read` for what it does (`@await`'s request): never re-run after handlers, so never loose. */
@@ -61,7 +59,6 @@ type Show = { ctx: Ctx; scope: unknown; start: Comment; index: number; build: (p
 type Reads = readonly ((item: any, x?: any) => any)[];
 /** `set`: a build that closes over its item gives it the new one (`dom.rowItem`). */
 type Row = { $bindings: Binding | undefined; $ctx: Ctx; $scope: unknown; head: Node; tail: Node; item: unknown; reads: Reads | undefined; set: ((item: any) => void) | undefined };
-type Island = { ctx: Ctx; tree: VNode[]; build: (b: RenderTreeBuilder) => void };
 type Build = (parent: Node) => void;
 /** `value`: what it shows; `owner`: the context of what has none (text, a slot's fallback, markup made outside a build). `branch` is a slot's fallback. */
 type Content = Region & { value: unknown; owner: Ctx };
@@ -71,7 +68,7 @@ type Page = Holder & { start: Comment; end: Comment; key: unknown; child: Child;
  * A `@Routes` block: its region shows `section` (rebuilt when the section, the failure or whether there is a page
  * changes), `markup` places the page. Its scope is the `route` cascade.
  */
-type Routes = Region & { router: Router; table: RouteTable; sections: readonly DomRouteSection[]; route: Route; section: number; failed: boolean; paged: boolean; page: Page | undefined; markup: Markup };
+type Routes = Region & { router: Router; table: RouteTable; sections: readonly RouteSection[]; route: Route; section: number; failed: boolean; paged: boolean; page: Page | undefined; markup: Markup };
 
 const MARKUP = Symbol("xzor.markup");
 /** Markup held as a value: builds its nodes into `parent`; its handlers run in the context it was made in. */
@@ -139,11 +136,11 @@ class Binding {
 
   constructor(
     public flags: number,
-    /** TEXT: its Text; ATTR: its element; REGION, LIST and ISLAND: the comment that ends them. */
+    /** TEXT: its Text; ATTR: its element; REGION and LIST: the comment that ends them. */
     public node: Node,
-    /** TEXT and ATTR: the value; REGION: builds into its argument; LIST: the items; ISLAND: patches it. */
+    /** TEXT and ATTR: the value; REGION: builds into its argument; LIST: the items. */
     public read: (a?: any, b?: any) => unknown,
-    /** TEXT: its holder; ATTR: the attribute (ITEM: its row); REGION: its `Region`; LIST: its `ListState`; ISLAND: its `Island`. */
+    /** TEXT: its holder; ATTR: the attribute (ITEM: its row); REGION: its `Region`; LIST: its `ListState`. */
     public data: any,
   ) {}
 
@@ -257,7 +254,6 @@ class Binding {
       case TEXT: {
         const value = this.#run();
         if (isMarkup(value)) return this.#becomeContent(value);
-        if ($isFragment(value)) return this.#becomeIsland();
         const text = textOf(value);
         const node = this.node as Text;
         if (node.data !== text) node.data = text;
@@ -297,7 +293,6 @@ class Binding {
         keyed.order = this.#run() as Row[];
         return;
       }
-      case ISLAND:
       case EFFECT:
         this.#run();
         return;
@@ -380,24 +375,6 @@ class Binding {
     end.parentNode!.insertBefore(frag, end);
   }
 
-  // `@expr` gave builder markup: from now on it renders through the virtual DOM, whatever it gives.
-  #becomeIsland(): void {
-    const read = this.read;
-    const h = this.data as Holder & { item?: unknown };
-    const value = (this.flags & ITEM) !== 0 ? () => read(h.item) : read;
-    const text = this.node;
-    const end = text.parentNode!.insertBefore(document.createComment(""), text.nextSibling);
-    text.parentNode!.removeChild(text);
-    this.node = end;
-    this.flags = (this.flags & ~(KIND | ITEM)) | ISLAND;
-    island(this, h.$ctx, h.$scope, (b) => {
-      const v = value();
-      if ($isFragment(v)) (v as (b: RenderTreeBuilder) => void)(b);
-      else b.addContent(v);
-    });
-    this.stateHasChanged();
-  }
-
   dispose(): void {
     if ((this.flags & DEAD) !== 0) return;
     const kind = this.flags & KIND;
@@ -410,24 +387,12 @@ class Binding {
     if ((this.flags & SHOW) !== 0) for (const branch of (this.data as Show).branches) branch !== undefined && disposeAll(branch);
     else if (kind === REGION) disposeAll(this.data as Region);
     else if (kind === LIST || kind === KEYED) for (const row of (this.data as ListState | Keyed).order) disposeAll(row);
-    else if (kind === ISLAND) {
-      disposeIsland((this.data as Island).tree);
-      (this.data as Island).tree = [];
-    } else if (kind === COMPONENT) $dropChild(this.data as Child);
+    else if (kind === COMPONENT) $dropChild(this.data as Child);
     else if ((this.flags & OWNED) !== 0) undoAttr(this.node as Element, this.data as Owned);
     this.#reset();
     this.#sweep();
     this.flags = DEAD;
   }
-}
-
-/** Makes `b` patch a virtual-DOM island built by `build`, before its end comment. */
-function island(b: Binding, ctx: Ctx, scope: unknown, build: (b: RenderTreeBuilder) => void): void {
-  const state: Island = { ctx, tree: [], build };
-  b.data = state;
-  b.read = () => {
-    state.tree = patchIsland(ctx, ctx.$app, scope, b.node, state.tree, build);
-  };
 }
 
 /** Re-runs the component's bindings that read nothing tracked; drops the dead ones and those that now track. */
@@ -447,7 +412,7 @@ function refreshLoose(ctx: Ctx): void {
   }
 }
 
-// Like a render after a vdom handler, what the handler changed shows before it returns.
+// What the handler changed shows before it returns.
 function afterHandler(ctx: Ctx, result: unknown): void {
   flush();
   refreshLoose(ctx);
@@ -1264,7 +1229,7 @@ export const dom = {
    */
   component<C extends Component>(end: Comment, type: new (...args: any[]) => C, props: () => Partial<C>, statics?: Partial<C>, slots?: C["slots"], ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
     const h = holder!;
-    const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics: statics as Child["statics"], slots, ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: undefined };
+    const child: Child = { type: type as Child["type"], end, ctx: h.$ctx, scope: h.$scope as Child["scope"], props: undefined, statics: statics as Child["statics"], slots, ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: undefined };
     track(new Binding(COMPONENT, end, props as () => Record<string, unknown>, child));
   },
 
@@ -1275,7 +1240,7 @@ export const dom = {
   componentItem<C extends Component>(end: Comment, type: new (...args: any[]) => C, i: number, statics?: number, slots?: number, ref?: (c: C) => void, key?: unknown, onError?: (err: unknown, nav: number) => void): void {
     const row = holder as Row;
     const reads = row.reads!;
-    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, scope: row.$scope as Child["scope"], props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, tree: undefined, item: row.item };
+    const child: Child = { type: type as Child["type"], end, ctx: row.$ctx, scope: row.$scope as Child["scope"], props: undefined, statics: statics === undefined ? undefined : reads[statics], slots: slots === undefined ? undefined : reads[slots], ref: ref as Child["ref"], key, onError, nav: undefined, instance: undefined, phase: 0, item: row.item };
     track(new Binding(COMPONENT | ITEM, end, reads[i]!, child));
   },
 
@@ -1330,7 +1295,7 @@ export const dom = {
    * `@Routes` before `end` (and the comment before it): the section matching the current navigation, with the page
    * as a child keyed by its route family; `route` is cascaded. A section is kept while it stays the matching one.
    */
-  routesAt(end: Comment, table: RouteTable, sections: readonly DomRouteSection[]): void {
+  routesAt(end: Comment, table: RouteTable, sections: readonly RouteSection[]): void {
     const h = holder!;
     const ctx = h.$ctx;
     const record: CascadeRecord = { name: "route", value: undefined, fixed: false, consumers: undefined, parent: h.$scope as CascadeRecord | undefined, held: false };
@@ -1338,18 +1303,7 @@ export const dom = {
     const b = new Binding(REGION | ROUTES, end, noop, s);
     s.router = $router(sections, () => b.stateHasChanged());
     s.route = $currentRoute(s.router);
-    s.markup = fineHooks.markup((parent) => placePage(s, parent), ctx);
-    track(b);
-  },
-
-  /** Child components, slots, `@cascade`, routes: virtual-DOM builder calls, patched when what they read changes. */
-  island(parent: Node, build: (b: RenderTreeBuilder) => void): void {
-    dom.islandAt(anchor(parent), build);
-  },
-
-  islandAt(end: Comment, build: (b: RenderTreeBuilder) => void): void {
-    const b = new Binding(ISLAND, end, noop, undefined);
-    island(b, holder!.$ctx, holder!.$scope, build);
+    s.markup = markup((parent) => placePage(s, parent), ctx);
     track(b);
   },
 };
@@ -1470,84 +1424,55 @@ function pageAgain(s: Routes, entry: RouteEntry): void {
 // Stamped with the navigation it belongs to, so `@catch` can drop a failure that comes after we left.
 function mountPage(s: Routes, page: Page, entry: RouteEntry): void {
   const r = s.router;
-  const child: Child = { type: entry.component as Child["type"], end: page.end, ctx: s.$ctx, scope: s.$scope as Child["scope"], props: undefined, statics: undefined, slots: undefined, ref: undefined, key: page.key, onError: r.onError, nav: r.id, instance: undefined, phase: 0, tree: undefined, item: undefined };
+  const child: Child = { type: entry.component as Child["type"], end: page.end, ctx: s.$ctx, scope: s.$scope as Child["scope"], props: undefined, statics: undefined, slots: undefined, ref: undefined, key: page.key, onError: r.onError, nav: r.id, instance: undefined, phase: 0, item: undefined };
   page.child = child;
   within(page, () => track(new Binding(COMPONENT, page.end, () => r.params, child)));
 }
 
-/** @internal What `index.ts` calls to mount, refresh and dispose a component's DOM. */
-export const fineHooks = {
-  create(build: Build, owner: Component, app: IApplication | undefined, scope: unknown): FineRoot {
-    const frag = document.createDocumentFragment();
-    const start = frag.appendChild(document.createComment(""));
-    // DOM markup shown by a builder component: built in its creator's context, which it leaves as it is.
-    const made = isMarkup(build) ? build[MARKUP] : null;
-    if (made === null) {
-      owner.$app = app;
-      owner.$scope = scope;
-      (owner as unknown as Record<symbol, Ctx>)[FINE] = owner;
-    }
-    const root: FineRoot & Holder = { $bindings: undefined, $ctx: made ?? owner, $scope: scope, start, end: start };
-    // Reads outside a binding subscribe nothing: a component is never re-rendered by what it reads.
-    const reader = Component.$reader;
-    Component.$reader = undefined;
-    try {
-      within(root, () => build(frag));
-    } finally {
-      Component.$reader = reader;
-    }
-    root.end = frag.appendChild(document.createComment(""));
-    return root;
-  },
-  /** Runs `c.render` into `parent`, untracked, with `c` holding its bindings. */
-  build(c: Component, parent: Node): void {
-    const prev = collecting;
-    const reader = Component.$reader;
-    const outer = holder;
-    collecting = undefined;
-    Component.$reader = undefined;
-    holder = c;
-    try {
-      (c as unknown as { render(parent: Node): void }).render(parent);
-    } finally {
-      collecting = prev;
-      Component.$reader = reader;
-      holder = outer;
-    }
-  },
-  /** A whole-component pass: a fine root's, or a render component's (`h` is the component). */
-  refresh(h: FineRoot | Component): void {
-    const root = h as unknown as Holder;
-    // A whole-component pass recomputes the cached getters too: what changed may be untracked.
-    const memos = root.$ctx.$memos as (Binding | undefined)[] | undefined;
-    if (memos !== undefined) for (const m of memos) if (m !== undefined) m.flags &= ~FRESH;
-    // A binding that now reads nothing tracked joins its component's loose list.
-    const outer = holder;
-    holder = root;
-    try {
-      refreshAll(root);
-    } finally {
-      holder = outer;
-    }
-  },
-  /** `own`: the root is its context's whole DOM (not markup built in another's), so its memos go too. */
-  dispose(h: FineRoot | Component, own = true): void {
-    const root = h as unknown as Holder;
-    const ctx = root.$ctx;
-    const memos = ctx.$memos as (Binding | undefined)[] | undefined;
-    if (own && memos !== undefined) {
-      for (const m of memos) m?.dispose();
-      ctx.$memos = undefined;
-    }
-    disposeAll(root);
-  },
-  isMarkup,
-  /** Brands `build` as markup made in `owner`'s context (else the one building now). */
-  markup(build: (parent: Node) => void, owner: Component | undefined): Markup {
-    (build as unknown as Record<symbol, Ctx | null>)[MARKUP] = owner ?? holder?.$ctx ?? null;
-    return build as Markup;
-  },
-  handled(owner: Component, result: unknown): void {
-    if (owner.$end !== undefined || (owner as unknown as Record<symbol, Ctx | undefined>)[FINE] !== undefined) afterHandler(owner, result);
-  },
-};
+/** @internal Brands `build` as markup made in `owner`'s context (else the one building now). */
+export function markup(build: (parent: Node) => void, owner: Component | undefined): Markup {
+  (build as unknown as Record<symbol, Ctx | null>)[MARKUP] = owner ?? holder?.$ctx ?? null;
+  return build as Markup;
+}
+
+/** @internal Runs `c.render` into `parent`, untracked, with `c` holding its bindings. */
+export function renderInto(c: Component, parent: Node): void {
+  const prev = collecting;
+  const reader = Component.$reader;
+  const outer = holder;
+  collecting = undefined;
+  Component.$reader = undefined;
+  holder = c;
+  try {
+    (c as unknown as { render(parent: Node): void }).render(parent);
+  } finally {
+    collecting = prev;
+    Component.$reader = reader;
+    holder = outer;
+  }
+}
+
+/** @internal A whole-component pass: re-runs every binding of `c`, for changes nothing tracks. */
+export function refreshPass(c: Component): void {
+  // Recomputes the cached getters too: what changed may be untracked.
+  const memos = c.$memos as (Binding | undefined)[] | undefined;
+  if (memos !== undefined) for (const m of memos) if (m !== undefined) m.flags &= ~FRESH;
+  // A binding that now reads nothing tracked joins its component's loose list.
+  const outer = holder;
+  holder = c;
+  try {
+    refreshAll(c);
+  } finally {
+    holder = outer;
+  }
+}
+
+/** @internal Disposes the bindings and cached getters of `c`. */
+export function releaseDom(c: Component): void {
+  const memos = c.$memos as (Binding | undefined)[] | undefined;
+  if (memos !== undefined) {
+    for (const m of memos) m?.dispose();
+    c.$memos = undefined;
+  }
+  disposeAll(c);
+}
