@@ -110,3 +110,4 @@
 
 - 2026-10-26: with a server entry, `xzor dev` runs the generated server in dev mode instead of the static file server, and restarts it on server-side `.ts` changes; `.xzor` edits keep patching in place. See [the @Run, @Routes, PSR and endpoints spec](../superpowers/specs/2026-10-26-run-routes-psr-design.md).
 - 2026-10-28: the launcher gains `xzor serve` (production build, then serve); `xzor dev` is unchanged. See [the serve, cache and transitions spec](../superpowers/specs/2026-10-28-serve-cache-transitions-design.md).
+- 2026-10-30: an update that changes a component's `render` or its template constants rebuilds each live instance's DOM in place (fields kept) instead of re-rendering a vDOM tree; other updates call `stateHasChanged()`, see docs/superpowers/specs/2026-10-30-one-renderer-design.md.

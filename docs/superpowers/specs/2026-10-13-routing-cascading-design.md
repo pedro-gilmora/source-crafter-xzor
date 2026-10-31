@@ -142,3 +142,4 @@ Internal runtime shapes (section descriptors, provider fields), exact generated 
 
 - 2026-10-26: `@ClientRoutes`/`@ServerRoutes` become one `@Routes(route) { ... }` with History API navigation; the full-page-load engine and its regex restriction are removed (reverses ruling 5). Sections, matching and the other rules hold. See [the @Run, @Routes, PSR and endpoints spec](2026-10-26-run-routes-psr-design.md).
 - 2026-10-28: with `viewTransitions(true)`, a navigation's transition waits for the new page's pending async lifecycle hooks (capped at 1500 ms) before the new view is captured. See [the serve, cache and transitions spec](2026-10-28-serve-cache-transitions-design.md).
+- 2026-10-30: the routes block and `@cascade` providers are DOM bindings (`dom.routesAt`, `dom.cascadeAt`) instead of virtual-DOM regions; semantics unchanged (nearest provider, `fixed`, page kept per route family, `@catch`), see docs/superpowers/specs/2026-10-30-one-renderer-design.md.
