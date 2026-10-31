@@ -1,30 +1,28 @@
 import { expect, test } from "bun:test";
-import { Component, type RenderFragment, type RenderTreeBuilder, mount } from "./index";
+import { Component, type El, type RenderFragment, dom, mount } from "./index";
 
 // Written the way xzor emits markup used as a value inside @code.
 class Badge extends Component {
   text = "";
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("b");
-    b.addContent(this.text);
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __t0() as El<"b">;
+    dom.textAt(_e0.firstChild as Text, () => this.text);
+    __p.appendChild(_e0);
   }
 }
 
 class Host extends Component {
   kind: "badge" | "cached" | "none" = "badge";
-  cached: RenderFragment = Component.fragment((__b) => {
-    __b.openElement("i");
-    __b.addText("cached");
-    __b.closeElement();
-  });
+  cached: RenderFragment = Component.$fragment((__p) => {
+    __p.appendChild(__t1());
+  }, this);
 
   view(kind: Host["kind"]): RenderFragment | null {
     switch (kind) {
       case "badge":
-        return Component.fragment((__b) => {
-          __b.addComponent(Badge, { text: "hi" });
-        });
+        return Component.$fragment((__p) => {
+          dom.component(dom.anchor(__p), Badge, (): Partial<Badge> => ({ text: "hi" }));
+        }, this);
       case "cached":
         return this.cached;
       default:
@@ -32,15 +30,17 @@ class Host extends Component {
     }
   }
 
-  protected override buildRenderTree(b: RenderTreeBuilder): void {
-    b.openElement("div");
-    b.addContent(this.view(this.kind));
-    b.openElement("span");
-    b.addText("tail");
-    b.closeElement();
-    b.closeElement();
+  protected override render(__p: Node): void {
+    const _e0 = __t2() as El<"div">;
+    dom.textAt(_e0.firstChild as Text, () => this.view(this.kind));
+    __p.appendChild(_e0);
   }
 }
+
+const __t0 = dom.template([["b", 0, ""]]);
+const __t1 = dom.template([["i", 0, "cached"]]);
+const __t2 = dom.template([["div", 0, "", ["span", 0, "tail"]]]);
+const __t3 = dom.template([["p", 0, ""]]);
 
 test("fragments returned by members render in place and switch cleanly", () => {
   const host = document.createElement("div");
@@ -64,10 +64,10 @@ test("fragments returned by members render in place and switch cleanly", () => {
 
 test("plain functions are not treated as fragments", () => {
   class Plain extends Component {
-    protected override buildRenderTree(b: RenderTreeBuilder): void {
-      b.openElement("p");
-      b.addContent(() => 1);
-      b.closeElement();
+    protected override render(__p: Node): void {
+      const _e0 = __t3() as El<"p">;
+      dom.textAt(_e0.firstChild as Text, () => () => 1);
+      __p.appendChild(_e0);
     }
   }
   const host = document.createElement("div");
