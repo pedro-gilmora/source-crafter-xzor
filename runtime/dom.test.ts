@@ -1849,8 +1849,8 @@ class Leaf extends Component {
   protected override onInitialized(): void { leafMade++; }
   protected override render(__p: Node): void { dom.text(dom.el(__p, "em"), () => this.label); }
 }
-class Other extends Component {
-  label = "";
+// Extends Leaf so one typed slot takes both types; `dom.component` infers its instance type from the class.
+class Other extends Leaf {
   protected override render(__p: Node): void { dom.text(dom.el(__p, "s"), () => this.label); }
 }
 let nestSubs = 0;
