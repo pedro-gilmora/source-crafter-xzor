@@ -194,3 +194,189 @@ test("a child component inside a piece keeps its instance when the block runs ag
   expect(b.textContent).toBe(" y!");
   expect(b.querySelector("input")!.value).toBe("typed");
 }, 120000);
+
+
+test("a loop running @{ } code keeps its common rows (nodes and typed values) across N -> N+1 -> N-1", async () => {
+  const { app: c, host } = await load<{ names: string[]; n: number }>("code-loop", {
+    "App.xzor": `@code {
+  names = ["a", "b", "c", "d"];
+  n = 3;
+}
+
+<ul>@for (let i = 0; i < n; i++) {
+  @{ const c = names[i]; }
+  <li><input/> @c</li>
+}</ul>
+`,
+  });
+  const lis = () => [...host.querySelectorAll("li")];
+  const inputs = () => [...host.querySelectorAll("input")];
+  const same = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+  const first = lis();
+  const firstInputs = inputs();
+  expect(first.map((l) => l.textContent)).toEqual([" a", " b", " c"]);
+  firstInputs.forEach((e, i) => (e.value = "typed" + i));
+
+  c.n = 4;
+  await tick();
+  expect(same(lis().slice(0, 3), first)).toBe(true);
+  expect(same(inputs().slice(0, 3), firstInputs)).toBe(true);
+  expect(inputs().map((e) => e.value)).toEqual(["typed0", "typed1", "typed2", ""]);
+  expect(lis().map((l) => l.textContent)).toEqual([" a", " b", " c", " d"]);
+
+  c.n = 2;
+  await tick();
+  expect(same(lis(), first.slice(0, 2))).toBe(true);
+  expect(inputs().map((e) => e.value)).toEqual(["typed0", "typed1"]);
+  expect(first[2]!.isConnected).toBe(false);
+
+  // What the code reads is read again: the kept rows follow it.
+  c.names = ["A", "B", "C", "D"];
+  await tick();
+  expect(same(lis(), first.slice(0, 2))).toBe(true);
+  expect(lis().map((l) => l.textContent)).toEqual([" A", " B"]);
+  expect(inputs().map((e) => e.value)).toEqual(["typed0", "typed1"]);
+  expect(host.querySelectorAll("ul > li").length).toBe(2);
+}, 120000);
+
+test("a branch running @{ } code keeps its nodes when the same branch runs again, and builds anew for another", async () => {
+  const { app: c, host } = await load<{ mode: number; tag: string }>("code-branch", {
+    "App.xzor": `@code {
+  mode = 0;
+  tag = "x";
+}
+
+<div>@if (mode === 0) {
+  @{ const t = tag; }
+  <p><input/> one @t</p>
+} else {
+  @{ const t = tag; }
+  <section><input/> two @t</section>
+}<i>end</i></div>
+`,
+  });
+  const p = host.querySelector("p")!;
+  const end = host.querySelector("i")!;
+  p.querySelector("input")!.value = "typed";
+
+  c.tag = "y";
+  await tick();
+  expect(host.querySelector("p") === p).toBe(true);
+  expect(p.querySelector("input")!.value).toBe("typed");
+  expect(p.textContent).toBe(" one y");
+  expect(host.querySelector("i") === end).toBe(true);
+
+  c.mode = 1;
+  await tick();
+  expect(host.querySelector("p")).toBeNull();
+  expect(p.isConnected).toBe(false);
+  expect(host.querySelector("section")!.textContent).toBe(" two y");
+  expect(host.querySelector("input")!.value).toBe("");
+  expect(host.querySelector("i") === end).toBe(true);
+}, 120000);
+
+test("a top-level @{ } block and the nodes after it keep their DOM when it runs again", async () => {
+  const { app: c, host } = await load<{ n: number }>("code-top", {
+    "App.xzor": `@code {
+  n = 1;
+}
+
+<div>@{ const total = n * 2; }<b><input/> @total</b><i>@total</i></div>
+`,
+  });
+  const b = host.querySelector("b")!;
+  const i = host.querySelector("i")!;
+  b.querySelector("input")!.value = "typed";
+  c.n = 5;
+  await tick();
+  expect(host.querySelector("b") === b).toBe(true);
+  expect(host.querySelector("i") === i).toBe(true);
+  expect(b.querySelector("input")!.value).toBe("typed");
+  expect(b.textContent).toBe(" 10");
+  expect(i.textContent).toBe("10");
+}, 120000);
+
+test("a child component in a loop running @{ } code keeps its instance and state", async () => {
+  const { app: c, host } = await load<{ n: number; tag: string }>("code-child", {
+    "App.xzor": `@import Child from "./Child.xzor"
+@code {
+  n = 2;
+  tag = "x";
+}
+
+<div>@for (let i = 0; i < n; i++) {
+  @{ const t = tag + i; }
+  <Child label="@t" />
+}</div>
+`,
+    "Child.xzor": `@code {
+  label = "";
+}
+
+<b><input/> @label</b>
+`,
+  });
+  const bs = () => [...host.querySelectorAll("b")];
+  const first = bs();
+  expect(first.map((b) => b.textContent)).toEqual([" x0", " x1"]);
+  first.forEach((b, k) => (b.querySelector("input")!.value = "typed" + k));
+
+  c.tag = "y";
+  c.n = 3;
+  await tick();
+  expect(bs().slice(0, 2).every((b, k) => b === first[k])).toBe(true);
+  expect(bs().map((b) => b.textContent)).toEqual([" y0", " y1", " y2"]);
+  expect(bs().map((b) => b.querySelector("input")!.value)).toEqual(["typed0", "typed1", ""]);
+
+  c.n = 1;
+  await tick();
+  expect(bs().length).toBe(1);
+  expect(bs()[0] === first[0]).toBe(true);
+  expect(bs()[0]!.querySelector("input")!.value).toBe("typed0");
+}, 120000);
+
+
+test("nested control flow and elements holding code inside a loop's pieces region keep their DOM", async () => {
+  const { app: c, host } = await load<{ rows: number[]; on: boolean }>("code-nested", {
+    "App.xzor": `@code {
+  rows = [1, 2];
+  on = true;
+}
+
+<ul>@for (let i = 0; i < rows.length; i++) {
+  @{ const r = rows[i]; }
+  <li><input/> @r</li>
+  @if (on) {
+    @{ const dbl = r * 2; }
+    <li class="dbl"><input/> @dbl</li>
+  }
+  <li class="el">@{ const sq = r * r; }<u>@sq</u></li>
+} else {
+  <li class="none">none</li>
+}</ul>
+`,
+  });
+  const lis = () => [...host.querySelectorAll("li")];
+  const texts = () => lis().map((l) => l.textContent);
+  const first = lis();
+  expect(texts()).toEqual([" 1", " 2", "1", " 2", " 4", "4"]);
+  first.forEach((l, k) => l.querySelector("input") && (l.querySelector("input")!.value = "typed" + k));
+
+  c.rows = [1, 2, 3];
+  await tick();
+  expect(lis().slice(0, 6).every((l, k) => l === first[k])).toBe(true);
+  expect(texts()).toEqual([" 1", " 2", "1", " 2", " 4", "4", " 3", " 6", "9"]);
+  expect(lis()[1]!.querySelector("input")!.value).toBe("typed1");
+
+  // The `@if` inside the pass goes: its pieces leave, the others stay.
+  c.on = false;
+  await tick();
+  expect(texts()).toEqual([" 1", "1", " 2", "4", " 3", "9"]);
+  expect(lis()[0] === first[0] && lis()[1] === first[2] && lis()[2] === first[3]).toBe(true);
+  expect(lis()[0]!.querySelector("input")!.value).toBe("typed0");
+
+  // The loop's else.
+  c.rows = [];
+  await tick();
+  expect(texts()).toEqual(["none"]);
+}, 120000);
