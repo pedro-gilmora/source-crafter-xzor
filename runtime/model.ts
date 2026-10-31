@@ -457,7 +457,7 @@ export abstract class Model extends EventTarget {
     }
   }
 
-  /** @internal Subscribes a rendering component's dep to this model's changes. */
+  /** @internal Subscribes a binding's dep to this model's changes. */
   $watch(dep: Dep): void {
     const subs = (this.#subs ??= []);
     dep.slot = subs.length;

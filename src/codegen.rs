@@ -488,7 +488,7 @@ pub fn generate_in(
         names.push("type RenderFragment");
     }
     if types & ROUTE_FRAGMENT != 0 {
-        names.push("type Markup");
+        names.push("type Markup as __Markup");
     }
     if types & ROUTE_TYPE != 0 {
         names.push("type Route");
@@ -1159,7 +1159,7 @@ impl<'p> Gen<'p> {
         }
         if let Some(bound) = bound.filter(|_| uses_bound) {
             types |= if is_catch { 0 } else { ROUTE_FRAGMENT };
-            params = params.lit_then(", ").add(M::src(bound, bound.at)).lit_then(if is_catch { ": unknown" } else { ": Markup" });
+            params = params.lit_then(", ").add(M::src(bound, bound.at)).lit_then(if is_catch { ": unknown" } else { ": __Markup" });
         }
         if uses_var {
             types |= ROUTE_APP;
@@ -3945,10 +3945,10 @@ mod tests {
     fn routes_block_emits_sections_for_the_runtime() {
         let g = gen_with(ROUTES_BLOCK, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s}\nmissing in\n{}", g.code);
-        has("import { Component as __Component, dom as __dom, type El, type Markup, type Route } from \"@source-crafter/xzor-runtime\";");
+        has("import { Component as __Component, dom as __dom, type El, type Markup as __Markup, type Route } from \"@source-crafter/xzor-runtime\";");
         has("import { routes as __routes, type AppRoute as __AppRoute } from \"./routes\";");
         has("    __dom.routesAt(_e0, __routes, [\n");
-        has("      { kind: \"tag\", tag: \"admin\", render: (_route: Route, page: Markup) => __Component.fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;\n        const _e2 = _e1.firstChild! as Text;\n        __dom.textAt(_e2, () => page);\n        __p.appendChild(_e1);\n      }, this) },\n");
+        has("      { kind: \"tag\", tag: \"admin\", render: (_route: Route, page: __Markup) => __Component.fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;\n        const _e2 = _e1.firstChild! as Text;\n        __dom.textAt(_e2, () => page);\n        __p.appendChild(_e1);\n      }, this) },\n");
         has("      { kind: \"regex\", re: C.__re1, page: true, render: (__route: Route<any, any>) => { const route = __route as __AppRoute & { match: { area: string } }; return __Component.fragment((__p) => {");
         has("__dom.textAt(_e4, () => route.match.area);");
         has("      { kind: \"pattern\", match: C.__m2, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return __Component.fragment((__p) => {");
@@ -3957,7 +3957,7 @@ mod tests {
         has("__dom.template([[\"p\", 0, \"Not found\"]]);");
         has("      { kind: \"catch\", render: (_route: Route, e: unknown) => __Component.fragment((__p) => {");
         has("__dom.textAt(_e9, () => e);");
-        has("      { kind: \"default\", render: (_route: Route, page: Markup) => __Component.fragment((__p) => {");
+        has("      { kind: \"default\", render: (_route: Route, page: __Markup) => __Component.fragment((__p) => {");
         has("    ]);\n");
         has("  static readonly __re1 = /^\\/admin\\/(?<area>\\w+)/i;\n");
         has("  static __m2(s: string[]): Record<string, string> | null {\n    if (s.length !== 2) return null;\n");
@@ -3971,14 +3971,14 @@ mod tests {
         let src = "@Routes(route) { @a(page) { <main>@page</main> } @notFound { <p/> } @catch(e) { <p>@e</p> } @\"/x/:id\" { <p/> } @default(page) { <p/> } }";
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s}\nmissing in\n{}", g.code);
-        has("render: (_route: Route, page: Markup) => __Component.fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;");
+        has("render: (_route: Route, page: __Markup) => __Component.fragment((__p) => {\n        const _e1 = __t0() as El<\"main\">;");
         has("{ kind: \"notFound\", render: () => ");
         has("{ kind: \"catch\", render: (_route: Route, e: unknown) => ");
         has("{ kind: \"default\", render: () => ");
         has("page: false, render: () => ");
         assert!(!g.code.contains("const route") && !g.code.contains("__route:") && !g.code.contains("AppRoute"), "{}", g.code);
         // Imports the bindings no longer use are dropped too.
-        assert!(g.code.contains("import { Component as __Component, dom as __dom, type El, type Markup, type Route } from \"@source-crafter/xzor-runtime\";"), "{}", g.code);
+        assert!(g.code.contains("import { Component as __Component, dom as __dom, type El, type Markup as __Markup, type Route } from \"@source-crafter/xzor-runtime\";"), "{}", g.code);
         assert!(g.code.contains("import { routes as __routes } from \"./routes\";"), "{}", g.code);
         let none = gen_with("@Routes(route) { @notFound { <p/> } }", &[]);
         assert!(none.code.contains("import { Component as __Component, dom as __dom, type El } from \"@source-crafter/xzor-runtime\";"), "{}", none.code);
@@ -4813,7 +4813,7 @@ mod tests {
         let g = gen_with(src, &[]);
         let has = |s: &str| assert!(g.code.contains(s), "{s} missing in\n{}", g.code);
         has("__dom.routesAt(_e0, __routes, [\n");
-        has("{ kind: \"tag\", tag: \"admin\", render: (_route: Route, page: Markup) => __Component.fragment((__p) => {");
+        has("{ kind: \"tag\", tag: \"admin\", render: (_route: Route, page: __Markup) => __Component.fragment((__p) => {");
         has("{ kind: \"pattern\", match: C.__m1, page: false, render: (__route: Route<any, any>) => { const route = __route as __AppRoute<{ doc: string }>; return __Component.fragment((__p) => {");
         has("__dom.textAt(_e4, () => route.params.doc);");
         has("{ kind: \"notFound\", render: () => __Component.fragment((__p) => {");
