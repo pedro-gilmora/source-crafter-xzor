@@ -1786,7 +1786,7 @@ test("claim: a shape mismatch at the same site falls back to a rebuild", async (
   expect(el.querySelector("b")!.textContent).toBe("y0");
 });
 
-test("claim: a markup value holding a list rebuilds (for now)", async () => {
+test("claim: a markup value holding a plain list keeps its nodes", async () => {
   const el = host();
   const c = mount(Claims, el);
   c.view = c.listed(["a", "b"]);
@@ -1795,7 +1795,7 @@ test("claim: a markup value holding a list rebuilds (for now)", async () => {
   expect(el.textContent).toBe("2ab");
   c.view = c.listed(["c"]);
   await tick();
-  expect(el.querySelector("u")).not.toBe(u);
+  expect(el.querySelector("u") === u).toBe(true);
   expect(el.textContent).toBe("1c");
 });
 
@@ -1819,6 +1819,439 @@ test("claim: 100 claims leave the subscribers as after the first build, and none
   await tick();
   // Only the region's read of `view` is left.
   expect(claimSubs).toBe(1);
+});
+
+// Claims re-point what a markup value holds: lists, loops, regions, branches, components, slots, cascades, nested values.
+type Lbl = { id: number; label: string };
+const __sRows = {};
+const __sKeyed = {};
+const __sIf = {};
+const __sBlock = {};
+const __sShow = {};
+const __sKid = {};
+const __sCard = {};
+const __sFill = {};
+const __sTheme = {};
+const __sOuter = {};
+const __sInner = {};
+const __sOnce = {};
+const __sAwait = {};
+const __nul = dom.template([["ul", 0, null]]);
+const __nli = dom.template([["li", 0, ""]]);
+const __ifp = dom.template([["p", 0, ["b", 0, ""], null, null]]);
+const __ia = dom.template([["i", 0, ""]]);
+const __sb = dom.template([["s", 0, ""]]);
+const __nkid = dom.template([["div", 0, ["hr", 0], null]]);
+const __box = dom.template([["div", 0, ""]]);
+let leafMade = 0;
+class Leaf extends Component {
+  label = "";
+  protected override onInitialized(): void { leafMade++; }
+  protected override render(__p: Node): void { dom.text(dom.el(__p, "em"), () => this.label); }
+}
+class Other extends Component {
+  label = "";
+  protected override render(__p: Node): void { dom.text(dom.el(__p, "s"), () => this.label); }
+}
+let nestSubs = 0;
+class Nest extends Component {
+  #view: unknown = null; get view(): unknown { Component.$reader?.(this, 0); return this.#view; } set view(v: unknown) { const p = this.#view; if (Component.same(p, v)) return; this.#view = v; this.$changed(0, p); }
+  #n = 0; get n(): number { Component.$reader?.(this, 1); return this.#n; } set n(v: number) { const p = this.#n; if (Component.same(p, v)) return; this.#n = v; this.$changed(1, p); }
+  static { Component.$define(this, ["view", "n"]); }
+  override $watch(dep: object): void { nestSubs++; super.$watch(dep); }
+  override $unwatch(dep: object): void { nestSubs--; super.$unwatch(dep); }
+  log: string[] = [];
+  loads = 0;
+  kid: Component | undefined;
+  rows(xs: Lbl[], pre = ""): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __nul() as HTMLElement;
+      dom.listAt(_e0.firstChild as Comment, () => xs, [
+        (r: Lbl) => `${pre}${r.label}${this.n || ""}`,
+        (r: Lbl) => () => this.log.push(`${pre}${r.id}`),
+      ], (__p) => {
+        const _e1 = __nli() as HTMLElement;
+        dom.textItem(_e1.firstChild as Text, 0);
+        dom.onItem(_e1, "click", 1);
+        __p.appendChild(_e1);
+      }, undefined, (r: Lbl) => r.id);
+      __p.appendChild(_e0);
+    }, this, __sRows);
+  }
+  keyed(xs: string[], pre: string): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __nul() as HTMLElement;
+      dom.keyedAt(_e0.firstChild as Comment, (__pass) => {
+        for (const x of xs) {
+          const __p = __pass(x, [x]);
+          if (__p !== undefined) {
+            const _e1 = __nli() as HTMLElement;
+            dom.textAt(_e1.firstChild as Text, () => `${pre}${x}`);
+            __p.appendChild(_e1);
+          }
+        }
+      });
+      __p.appendChild(_e0);
+    }, this, __sKeyed);
+  }
+  branch(on: boolean, x: string): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __ifp() as HTMLElement;
+      dom.textAt(_e0.firstChild!.firstChild as Text, () => x);
+      dom.branchAt(_e0.lastChild as Comment, (__p) => {
+        if (on) {
+          if (!__p) return 0;
+          const _e1 = __ia() as HTMLElement;
+          dom.textAt(_e1.firstChild as Text, () => `${x}${this.n}`);
+          __p.appendChild(_e1);
+        } else {
+          if (!__p) return 1;
+          const _e1 = __sb() as HTMLElement;
+          dom.textAt(_e1.firstChild as Text, () => x);
+          __p.appendChild(_e1);
+        }
+        return 2;
+      });
+      __p.appendChild(_e0);
+    }, this, __sIf);
+  }
+  block(x: string, n: number): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __box() as HTMLElement;
+      dom.textAt(_e0.firstChild as Text, () => x);
+      __p.appendChild(_e0);
+      dom.region(__p, (__p) => {
+        for (let i = 0; i < n; i++) {
+          const _e1 = __ia() as HTMLElement;
+          dom.textAt(_e1.firstChild as Text, () => `${x}${i}`);
+          __p.appendChild(_e1);
+        }
+      });
+    }, this, __sBlock);
+  }
+  shown(tab: string, x: string): Markup {
+    return Component.fragment((__p) => {
+      dom.showAt(dom.anchors(__p), (__p) => {
+        if (tab === "a") {
+          if (!__p) return 0;
+          const _e0 = __ia() as HTMLElement;
+          dom.textAt(_e0.firstChild as Text, () => x);
+          __p.appendChild(_e0);
+          dom.pauseAt(dom.anchors(__p), (__p) => {
+            const _e1 = __sb() as HTMLElement;
+            dom.textAt(_e1.firstChild as Text, () => `${x}!`);
+            __p.appendChild(_e1);
+          });
+        } else {
+          if (!__p) return 1;
+          dom.t(__p, `tab ${x}`);
+        }
+        return 2;
+      });
+    }, this, __sShow);
+  }
+  child(type: typeof Leaf, label: string): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __nkid() as HTMLElement;
+      dom.component(_e0.lastChild as Comment, type, () => ({ label }), undefined, undefined, (c) => (this.kid = c));
+      __p.appendChild(_e0);
+    }, this, __sKid);
+  }
+  card(x: string): Markup {
+    return Component.fragment((__p) => {
+      dom.component(dom.anchor(__p), Card, () => ({}), undefined, {
+        default: () => Component.fragment((__p) => {
+          const _e0 = __ia() as HTMLElement;
+          dom.textAt(_e0.firstChild as Text, () => x);
+          dom.on(_e0, "click", () => this.log.push(`fill ${x}`));
+          __p.appendChild(_e0);
+        }, this, __sFill),
+      }, (c) => (this.kid = c));
+    }, this, __sCard);
+  }
+  themed(theme: string): Markup {
+    return Component.fragment((__p) => {
+      dom.cascadeAt(dom.anchors(__p), "theme", () => theme, false, (__p) => {
+        dom.component(dom.anchor(__p), Reader, () => ({ tag: "r" }), undefined, undefined, (c) => (this.kid = c));
+      });
+    }, this, __sTheme);
+  }
+  inner(x: string): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __ia() as HTMLElement;
+      dom.textAt(_e0.firstChild as Text, () => x);
+      __p.appendChild(_e0);
+    }, this, __sInner);
+  }
+  outer(x: string): Markup {
+    return Component.fragment((__p) => {
+      const _e0 = __box() as HTMLElement;
+      dom.textAt(_e0.firstChild as Text, () => this.inner(x));
+      __p.appendChild(_e0);
+    }, this, __sOuter);
+  }
+  once(x: string): Markup {
+    return Component.fragment((__p) => {
+      dom.onceAt(dom.anchors(__p), (__p) => {
+        const _e0 = __ia() as HTMLElement;
+        dom.set(_e0, "title", x);
+        dom.setText(_e0.firstChild as Text, x);
+        __p.appendChild(_e0);
+      });
+    }, this, __sOnce);
+  }
+  load(k: string): Promise<string> {
+    this.loads++;
+    return Promise.resolve(k);
+  }
+  awaited(key: string, x: string): Markup {
+    return Component.fragment((__p) => {
+      dom.awaitCallAt(dom.anchors(__p), () => [key], (k) => this.load(k), undefined, (__p, v) => {
+        const _e0 = __ia() as HTMLElement;
+        dom.textAt(_e0.firstChild as Text, () => `${v}${x}`);
+        __p.appendChild(_e0);
+      }, undefined);
+    }, this, __sAwait);
+  }
+  protected override render(__p: Node): void {
+    dom.text(__p, () => this.view);
+  }
+}
+
+const labels = (n: number): Lbl[] => Array.from({ length: n }, (_, i) => ({ id: i, label: `r${i}` }));
+
+test("claim: a 1000-row list keeps the <ul> and every <li>; a changed label and a new captured value show", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  let xs = labels(1000);
+  c.view = c.rows(xs);
+  await tick();
+  const ul = el.querySelector("ul")!;
+  const lis = [...ul.children];
+  xs = xs.slice();
+  xs[500] = { id: 500, label: "changed" };
+  c.view = c.rows(xs);
+  await tick();
+  expect(el.querySelector("ul") === ul).toBe(true);
+  const now = [...ul.children];
+  expect(now.length).toBe(1000);
+  expect(now.every((li, i) => li === lis[i])).toBe(true);
+  expect(now[500]!.textContent).toBe("changed");
+  expect(now[499]!.textContent).toBe("r499");
+  // The rows' reads and handlers close over the new value.
+  c.view = c.rows(xs, "+");
+  await tick();
+  expect(now[1]!.textContent).toBe("+r1");
+  (now[1] as HTMLElement).click();
+  expect(c.log).toEqual(["+1"]);
+  c.n = 7;
+  await tick();
+  expect(now[2]!.textContent).toBe("+r27");
+});
+
+test("claim: rows added and removed keep the others", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  const xs = labels(5);
+  c.view = c.rows(xs);
+  await tick();
+  const [a, b, , d] = [...el.querySelectorAll("li")];
+  c.view = c.rows([xs[0]!, xs[1]!, xs[3]!, { id: 9, label: "new" }]);
+  await tick();
+  const now = [...el.querySelectorAll("li")];
+  expect(now.map((li) => li.textContent)).toEqual(["r0", "r1", "r3", "new"]);
+  expect(now[0] === a!).toBe(true);
+  expect(now[1] === b!).toBe(true);
+  expect(now[2] === d!).toBe(true);
+});
+
+test("claim: a keyed loop keeps its rows and re-points them", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.keyed(["a", "b"], "");
+  await tick();
+  const [a, b] = [...el.querySelectorAll("li")];
+  c.view = c.keyed(["b", "a", "c"], ">");
+  await tick();
+  const now = [...el.querySelectorAll("li")];
+  expect(now.map((li) => li.textContent)).toEqual([">b", ">a", ">c"]);
+  expect(now[0] === b!).toBe(true);
+  expect(now[1] === a!).toBe(true);
+});
+
+test("claim: an @if that keeps its branch keeps its nodes; one that flips rebuilds only the branch", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.branch(true, "a");
+  await tick();
+  const p = el.querySelector("p")!;
+  const i = el.querySelector("i")!;
+  c.view = c.branch(true, "b");
+  await tick();
+  expect(el.querySelector("p") === p).toBe(true);
+  expect(el.querySelector("i") === i).toBe(true);
+  expect(p.textContent).toBe("bb0");
+  c.n = 3;
+  await tick();
+  expect(i.textContent).toBe("b3");
+  c.view = c.branch(false, "c");
+  await tick();
+  expect(el.querySelector("p") === p).toBe(true);
+  expect(el.querySelector("i") === null).toBe(true);
+  expect(p.textContent).toBe("cc");
+});
+
+test("claim: a code block region keeps its nodes for the same pieces, rebuilds alone for others", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.block("a", 2);
+  await tick();
+  const box = el.querySelector("div")!;
+  const is = [...el.querySelectorAll("i")];
+  c.view = c.block("b", 2);
+  await tick();
+  expect(el.querySelector("div") === box).toBe(true);
+  expect([...el.querySelectorAll("i")].every((n, k) => n === is[k])).toBe(true);
+  expect(el.textContent).toBe("bb0b1");
+  c.view = c.block("c", 3);
+  await tick();
+  expect(el.querySelector("div") === box).toBe(true);
+  expect(el.textContent).toBe("cc0c1c2");
+});
+
+test("claim: @show and @pause keep the shown branch", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.shown("a", "x");
+  await tick();
+  const i = el.querySelector("i")!;
+  const s = el.querySelector("s")!;
+  c.view = c.shown("a", "y");
+  await tick();
+  expect(el.querySelector("i") === i).toBe(true);
+  expect(el.querySelector("s") === s).toBe(true);
+  expect(el.textContent).toBe("yy!");
+  c.view = c.shown("b", "z");
+  await tick();
+  expect(el.textContent).toBe("tab z");
+});
+
+test("claim: a child component keeps its instance and gets the new props; another type replaces it", async () => {
+  leafMade = 0;
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.child(Leaf, "a");
+  await tick();
+  const kid = c.kid;
+  const em = el.querySelector("em")!;
+  c.view = c.child(Leaf, "b");
+  await tick();
+  expect(c.kid === kid!).toBe(true);
+  expect(leafMade).toBe(1);
+  expect(el.querySelector("em") === em).toBe(true);
+  expect(em.textContent).toBe("b");
+  c.view = c.child(Other, "c");
+  await tick();
+  expect(c.kid !== kid!).toBe(true);
+  expect(el.querySelector("em") === null).toBe(true);
+  expect(el.querySelector("s")!.textContent).toBe("c");
+});
+
+test("claim: a slot fill inside keeps the child and the fill's nodes", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.card("a");
+  await tick();
+  const card = c.kid;
+  const i = el.querySelector("i")!;
+  c.view = c.card("b");
+  await tick();
+  expect(c.kid === card!).toBe(true);
+  expect(el.querySelector("i") === i).toBe(true);
+  expect(i.textContent).toBe("b");
+  i.click();
+  expect(c.log).toEqual(["fill b"]);
+});
+
+test("claim: a @cascade inside keeps its consumer and gives it the new value", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.themed("dark");
+  await tick();
+  const reader = c.kid;
+  expect(el.textContent).toBe("r=dark;");
+  c.view = c.themed("light");
+  await tick();
+  expect(c.kid === reader!).toBe(true);
+  expect(el.textContent).toBe("r=light;");
+});
+
+test("claim: a markup value nested inside is claimed by its own site", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.outer("a");
+  await tick();
+  const box = el.querySelector("div")!;
+  const i = el.querySelector("i")!;
+  c.view = c.outer("b");
+  await tick();
+  expect(el.querySelector("div") === box).toBe(true);
+  expect(el.querySelector("i") === i).toBe(true);
+  expect(i.textContent).toBe("b");
+});
+
+test("claim: @once { } inside keeps its nodes and sets the new values", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.once("a");
+  await tick();
+  const i = el.querySelector("i")!;
+  expect(i.getAttribute("title")).toBe("a");
+  c.view = c.once("b");
+  await tick();
+  expect(el.querySelector("i") === i).toBe(true);
+  expect(i.getAttribute("title")).toBe("b");
+  expect(i.textContent).toBe("b");
+});
+
+test("claim: @await inside keeps its arm and asks again only for new arguments", async () => {
+  const el = host();
+  const c = mount(Nest, el);
+  c.view = c.awaited("k", "a");
+  await tick();
+  const i = el.querySelector("i")!;
+  expect(i.textContent).toBe("ka");
+  c.view = c.awaited("k", "b");
+  await tick();
+  expect(el.querySelector("i") === i).toBe(true);
+  expect(i.textContent).toBe("kb");
+  expect(c.loads).toBe(1);
+  c.view = c.awaited("q", "b");
+  await tick();
+  expect(el.textContent).toBe("qb");
+  expect(c.loads).toBe(2);
+});
+
+test("claim: 100 claims of each structure leave no subscribers once the value goes", async () => {
+  nestSubs = 0;
+  const el = host();
+  const c = mount(Nest, el);
+  const xs = labels(20);
+  const makes = [(i: number) => c.rows(xs, `${i}`), (i: number) => c.branch(i % 3 !== 0, `${i}`), (i: number) => c.child(Leaf, `${i}`), (i: number) => c.card(`${i}`), (i: number) => c.themed(`${i}`), (i: number) => c.outer(`${i}`), (i: number) => c.keyed(["a", `${i % 2}`], `${i}`), (i: number) => c.block(`${i}`, i % 2)];
+  for (const make of makes) {
+    c.view = make(0);
+    await tick();
+    const first = el.firstElementChild;
+    for (let i = 1; i <= 100; i++) {
+      c.view = make(i);
+      c.stateHasChanged();
+    }
+    await tick();
+    expect(el.firstElementChild === first).toBe(true);
+  }
+  c.view = "t";
+  await tick();
+  expect(nestSubs).toBe(1);
 });
 
 const __card = dom.template([["div", 0, null, null]]);
