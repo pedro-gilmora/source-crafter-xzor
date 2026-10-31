@@ -1693,17 +1693,19 @@ impl<'p> Gen<'p> {
                 r?;
                 self.line("});");
             }
-            TplPart::Region(node) if branchable(node) => self.emit_region(var, true, |g| {
+            TplPart::Region(node) if branchable(node) => self.emit_region(var, "branch", |g| {
                 g.branching = true;
                 g.emit_flow(node, "__p")
             })?,
-            TplPart::Region(node) => self.emit_region(var, false, |g| g.emit_flow(node, "__p"))?,
+            TplPart::Region(node) => self.emit_region(var, "region", |g| g.emit_flow(node, "__p"))?,
             TplPart::Code(code, rest) => {
                 let scope = self.locals.len();
-                let r = self.emit_region(var, false, |g| {
+                // Markup statements are pieces, which the region keeps and claims when the block runs again.
+                let pieces = code.iter().any(|p| matches!(p, CodePart::Render(_)));
+                let r = self.emit_region(var, if pieces { "pieces" } else { "region" }, |g| {
                     let block = g.emit_code_block(code)?;
                     g.emit_block(block);
-                    g.emit_nodes(rest, "__p")
+                    if pieces { g.emit_pieces(rest) } else { g.emit_nodes(rest, "__p") }
                 });
                 self.locals.truncate(scope);
                 r?;
@@ -1921,9 +1923,9 @@ impl<'p> Gen<'p> {
         Ok(())
     }
 
-    /// A region before comment `end` (after the comment before it), whose `body` is plain control flow; with
-    /// `branch`, an `@if`/`@switch` emitted for `branchAt`/`branchItem`.
-    fn emit_region(&mut self, end: &str, branch: bool, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<(), String> {
+    /// A region before comment `end` (after the comment before it), whose `body` is plain control flow; `call` is
+    /// the binding's name: `region`, `branch` (an `@if`/`@switch`) or `pieces` (a `@{ }` block with markup statements).
+    fn emit_region(&mut self, end: &str, call: &str, body: impl FnOnce(&mut Self) -> Result<(), String>) -> Result<(), String> {
         let row = self.row_level();
         let outer = std::mem::replace(&mut self.in_region, true);
         // A region is its own binding: its conditions are tracked, whatever they read.
@@ -1939,9 +1941,9 @@ impl<'p> Gen<'p> {
         if row {
             let close = format!("{}}}", "  ".repeat(self.depth));
             let i = self.push_read(", __p", M::lit("{\n").add(code).lit_then(&close));
-            self.line(&format!("__dom.{}({end}, {i});", if branch { "branchItem" } else { "regionItem" }));
+            self.line(&format!("__dom.{call}Item({end}, {i});"));
         } else {
-            self.line(&format!("__dom.{}({end}, (__p) => {{", if branch { "branchAt" } else { "regionAt" }));
+            self.line(&format!("__dom.{call}At({end}, (__p) => {{"));
             self.splice(code);
             self.line("});");
         }
@@ -2170,8 +2172,46 @@ impl<'p> Gen<'p> {
         self.out.push_str(&m.text);
     }
 
+    /// A markup statement of a `@{ }` block as a piece: its own site, and nodes built (or claimed) into it; its
+    /// structure binds itself, as a markup value's does.
+    fn emit_piece(&mut self, nodes: &[Node]) -> Result<(), String> {
+        let site = self.sites;
+        self.sites += 1;
+        let id = self.props_ids.get();
+        self.props_ids.set(id + 1);
+        let var = format!("__p{id}");
+        self.line(&format!("const {var} = __dom.piece(__s{site});"));
+        let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, false));
+        let pass = self.pass_locals.take();
+        let scope = self.locals.len();
+        let r = self.emit_run(nodes, &var);
+        self.locals.truncate(scope);
+        self.pass_locals = pass;
+        (self.in_region, self.in_loop) = flags;
+        r
+    }
+
+    /// What follows a `@{ }` block with markup statements, in its region: each run between plain `@{ }` code is a piece.
+    fn emit_pieces(&mut self, nodes: &[Node]) -> Result<(), String> {
+        let mut i = 0;
+        while i < nodes.len() {
+            if let Node::Code(parts) = &nodes[i]
+                && is_plain_code(parts)
+            {
+                let block = self.emit_code_block(parts)?;
+                self.emit_block(block);
+                i += 1;
+                continue;
+            }
+            let end = nodes[i..].iter().position(is_plain_code_node).map_or(nodes.len(), |n| i + n);
+            self.emit_piece(&nodes[i..end])?;
+            i = end;
+        }
+        Ok(())
+    }
+
     /// The statements of a `@{ }` block; its declarations become locals of the enclosing scope. Markup
-    /// statements append to the region's `__p` as a plain loop's body does, markup values are fragments.
+    /// statements are pieces (`emit_piece`), markup values are fragments.
     fn emit_code_block(&mut self, parts: &[CodePart]) -> Result<M, String> {
         let mut block = M::default();
         for part in parts {
@@ -2185,13 +2225,7 @@ impl<'p> Gen<'p> {
                     // Lines indented as the statement's own, the first one continuing the code's line.
                     let indent = block.text.rsplit('\n').next().map_or(0, |l| l.len() - l.trim_start().len());
                     let depth = std::mem::replace(&mut self.depth, indent / 2);
-                    let flags = (std::mem::replace(&mut self.in_region, true), std::mem::replace(&mut self.in_loop, true));
-                    let pass = self.pass_locals.take();
-                    let scope = self.locals.len();
-                    let r = self.capture(|g| g.emit_nodes(nodes, "__p"));
-                    self.locals.truncate(scope);
-                    self.pass_locals = pass;
-                    (self.in_region, self.in_loop) = flags;
+                    let r = self.capture(|g| g.emit_piece(nodes));
                     self.depth = depth;
                     let code = r?;
                     let lead = code.text.len() - code.text.trim_start().len();
@@ -3968,6 +4002,36 @@ mod tests {
         assert!(g.contains("this.input = _e"), "{g}");
         assert!(g.contains("__dom.ref(_e1, (__e) => this.input = __e);"), "{g}");
         assert_eq!(g.matches("__dom.ref(").count(), 1, "{g}");
+    }
+
+    #[test]
+    fn markup_statements_in_a_code_block_are_pieces_with_sites() {
+        let src = "@code { items = [{ name: \"a\" }]; flag = true; }\n<ul>@{\n  for (const x of items) {\n    <li><input/> @x.name</li>\n  }\n  if (flag) {\n    @: yes @flag\n  }\n}<i>@flag</i></ul>";
+        let g = gen_with(src, &[]).code;
+        let has = |s: &str| assert!(g.contains(s), "missing {s:?} in\n{g}");
+        has("const __s0 = {};\nconst __s1 = {};\nconst __s2 = {};\n");
+        has("__dom.piecesAt(_e1, (__p) => {\n      for (const x of this.items) {\n        const __p0 = __dom.piece(__s0);\n        const _e2 = __t1() as El<\"li\">;\n        const _e3 = _e2.firstChild!.nextSibling!.nextSibling! as Text;\n        __dom.textAt(_e3, () => x.name);\n        __p0.appendChild(_e2);\n      }");
+        has("if (this.flag) {\n        const __p1 = __dom.piece(__s1);\n");
+        has("__p1.appendChild(_e4);\n      }");
+        // The nodes after the block are a piece of their own.
+        has("const __p2 = __dom.piece(__s2);\n      const _e6 = __t3() as El<\"i\">;");
+        has("__p2.appendChild(_e6);\n    });");
+        assert!(!g.contains("regionAt"), "{g}");
+        // A markup statement's own structure binds itself, as a markup value's does.
+        let g = gen_with("@code { items = [1]; on = true; }\n@{\n  for (const x of items) {\n    <li>@if (on) { <b/> }</li>\n  }\n}", &[]).code;
+        assert!(g.contains("__dom.branchAt("), "{g}");
+        let g = {
+            let (doc, _) = parse(src).unwrap();
+            let g = generate(&doc, "C", "C.xzor").unwrap();
+            assert!(g.mappings.len() > 3);
+            for m in &g.mappings {
+                assert_eq!(&g.code[m.out..m.out + m.len], &src[m.src..m.src + m.len], "{m:?}\n{}", g.code);
+            }
+            g.code
+        };
+        assert!(g.contains("piecesAt"), "{g}");
+        let g = gen_with("@code { rows = [{ n: 1 }]; }\n<ul>@for (const r of rows) {\n<li>@{ const k = r.n; <b>@k</b> }</li>\n}</ul>", &[]).code;
+        assert!(g.contains("__dom.piecesItem(") && g.contains("__dom.piece(__s0)"), "{g}");
     }
 
     fn gen_with(src: &str, components: &[(&str, &str)]) -> Generated {

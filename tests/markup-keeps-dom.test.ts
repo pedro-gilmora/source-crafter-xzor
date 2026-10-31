@@ -3,10 +3,38 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
-const dir = join(root, "target", "tmp-markup-keeps-dom");
 const slash = (p: string) => p.replaceAll("\\", "/");
+const tick = () => new Promise<void>((r) => setTimeout(r));
 
-const app = `@code {
+const main = `import { mount } from "@source-crafter/xzor-runtime";
+import App from "./App.xzor";
+
+(globalThis as any).app = mount(App, document.getElementById("app")!);
+`;
+
+/** Builds an app of `files` (App.xzor, ...) in its own folder, mounts it on the page, and gives its component. */
+async function load<T>(name: string, files: Record<string, string>): Promise<{ app: T; host: HTMLElement }> {
+  const dir = join(root, "target", "tmp-markup-keeps-dom", name);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
+  tsconfig.compilerOptions.paths = {
+    "@source-crafter/xzor-runtime": [slash(join(root, "runtime", "index.ts"))],
+    "@source-crafter/xzor-runtime/model": [slash(join(root, "runtime", "model.ts"))],
+  };
+  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
+  writeFileSync(join(dir, "main.ts"), main);
+  for (const [file, text] of Object.entries(files)) writeFileSync(join(dir, file), text);
+  const built = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
+  expect(built.exitCode, built.stdout.toString() + built.stderr.toString()).toBe(0);
+  document.body.innerHTML = `<div id="app"></div>`;
+  await import(join(dir, "dist", "main.js"));
+  return { app: (globalThis as any).app as T, host: document.getElementById("app")! };
+}
+
+test("a markup value from a method keeps its DOM, focus and typed text when it changes", async () => {
+  const { app: c, host } = await load<{ name: string; log: string[]; field?: HTMLInputElement }>("value", {
+    "App.xzor": `@code {
   name = "a";
   log: string[] = [];
   field?: HTMLInputElement;
@@ -16,34 +44,8 @@ const app = `@code {
 }
 
 @renderItem(name)
-`;
-
-const main = `import { mount } from "@source-crafter/xzor-runtime";
-import App from "./App.xzor";
-
-(globalThis as any).app = mount(App, document.getElementById("app")!);
-`;
-
-const tick = () => new Promise<void>((r) => setTimeout(r));
-
-test("a markup value from a method keeps its DOM, focus and typed text when it changes", async () => {
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  const tsconfig = JSON.parse(readFileSync(join(root, "examples", "counter", "tsconfig.json"), "utf8"));
-  tsconfig.compilerOptions.paths = {
-    "@source-crafter/xzor-runtime": [slash(join(root, "runtime", "index.ts"))],
-    "@source-crafter/xzor-runtime/model": [slash(join(root, "runtime", "model.ts"))],
-  };
-  writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig));
-  writeFileSync(join(dir, "App.xzor"), app);
-  writeFileSync(join(dir, "main.ts"), main);
-  const built = Bun.spawnSync(["cargo", "run", "-q", "--", "build", dir], { cwd: root });
-  expect(built.exitCode, built.stdout.toString() + built.stderr.toString()).toBe(0);
-
-  document.body.innerHTML = `<div id="app"></div>`;
-  await import(join(dir, "dist", "main.js"));
-  const c = (globalThis as any).app as { name: string; log: string[]; field?: HTMLInputElement };
-  const host = document.getElementById("app")!;
+`,
+  });
   const input = host.querySelector("input")!;
   const label = host.querySelector("label")!;
   const button = host.querySelector("button")!;
@@ -66,4 +68,129 @@ test("a markup value from a method keeps its DOM, focus and typed text when it c
   // The handler is the new value's.
   button.click();
   expect(c.log).toEqual(["b"]);
+}, 120000);
+
+test("a @{ } loop of markup statements keeps the pieces it emits again, across N -> N+1 -> N-1", async () => {
+  const { app: c, host } = await load<{ items: { name: string }[] }>("loop", {
+    "App.xzor": `@code {
+  items = [{ name: "a" }, { name: "b" }, { name: "c" }];
+}
+
+<ul>@{
+  for (const x of items) {
+    <li><input/> @x.name</li>
+  }
+}</ul>
+`,
+  });
+  const lis = () => [...host.querySelectorAll("li")];
+  const inputs = () => [...host.querySelectorAll("input")];
+  const first = lis();
+  const firstInputs = inputs();
+  expect(first.map((l) => l.textContent)).toEqual([" a", " b", " c"]);
+  firstInputs.forEach((e, i) => (e.value = "typed" + i));
+
+  c.items = [...c.items, { name: "d" }];
+  await tick();
+  expect(lis().slice(0, 3)).toEqual(first);
+  expect(inputs().slice(0, 3)).toEqual(firstInputs);
+  expect(inputs().map((e) => e.value)).toEqual(["typed0", "typed1", "typed2", ""]);
+  expect(lis().map((l) => l.textContent)).toEqual([" a", " b", " c", " d"]);
+
+  c.items = [{ name: "a2" }, { name: "b" }, { name: "c" }];
+  await tick();
+  expect(lis()).toEqual(first);
+  expect(inputs().map((e) => e.value)).toEqual(["typed0", "typed1", "typed2"]);
+  expect(lis().map((l) => l.textContent)).toEqual([" a2", " b", " c"]);
+  expect(host.querySelectorAll("ul > li").length).toBe(3);
+}, 120000);
+
+test("an if in a @{ } block that switches the site emitted builds and disposes the right pieces", async () => {
+  const { app: c, host } = await load<{ mode: number; tag: string; n: number }>("sites", {
+    "App.xzor": `@code {
+  mode = 0;
+  tag = "x";
+  n = 1;
+}
+
+<div>@{
+  const t = tag;
+  if (mode === 0) {
+    <p><input/> one @t @n</p>
+  } else {
+    <section><input/> two @t @n</section>
+  }
+}<i>end</i></div>
+`,
+  });
+  const p = host.querySelector("p")!;
+  const end = host.querySelector("i")!;
+  expect(p.textContent).toBe(" one x 1");
+  p.querySelector("input")!.value = "typed";
+
+  // Same site again: the piece is claimed, its input and typed text stay.
+  c.tag = "y";
+  await tick();
+  expect(host.querySelector("p")).toBe(p);
+  expect(p.querySelector("input")!.value).toBe("typed");
+  expect(p.textContent).toBe(" one y 1");
+  expect(host.querySelector("i")).toBe(end);
+
+  // Another site: the old piece goes (and stops updating), the new one is built.
+  c.mode = 1;
+  await tick();
+  const section = host.querySelector("section")!;
+  expect(host.querySelector("p")).toBeNull();
+  expect(p.isConnected).toBe(false);
+  expect(section.textContent).toBe(" two y 1");
+  c.n = 2;
+  await tick();
+  expect(section.textContent).toBe(" two y 2");
+  expect(p.textContent).toBe(" one y 1");
+  expect(host.querySelector("i")).toBe(end);
+  expect(host.querySelector("div")!.children.length).toBe(2);
+
+  // Back: a fresh piece, not the disposed one.
+  c.mode = 0;
+  await tick();
+  expect(host.querySelector("section")).toBeNull();
+  const again = host.querySelector("p")!;
+  expect(again).not.toBe(p);
+  expect(again.textContent).toBe(" one y 2");
+  expect(host.querySelector("i")).toBe(end);
+}, 120000);
+
+test("a child component inside a piece keeps its instance when the block runs again with new props", async () => {
+  const { app: c, host } = await load<{ tag: string; child?: { label: string } }>("child", {
+    "App.xzor": `@import Child from "./Child.xzor"
+@code {
+  tag = "x";
+  child?: Child;
+}
+
+<div>@{
+  const t = tag;
+  <Child @ref="child" label="@t!" />
+}</div>
+`,
+    "Child.xzor": `@code {
+  label = "";
+}
+
+<b><input/> @label</b>
+`,
+  });
+  const b = host.querySelector("b")!;
+  const child = c.child;
+  expect(child).toBeDefined();
+  expect(b.textContent).toBe(" x!");
+  b.querySelector("input")!.value = "typed";
+
+  c.tag = "y";
+  await tick();
+  expect(host.querySelector("b")).toBe(b);
+  expect(c.child).toBe(child);
+  expect(child!.label).toBe("y!");
+  expect(b.textContent).toBe(" y!");
+  expect(b.querySelector("input")!.value).toBe("typed");
 }, 120000);
