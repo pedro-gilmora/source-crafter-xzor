@@ -8,11 +8,11 @@
 //     set hours(v: number) { const p = this.#hours; if (Model.same(p, v)) return; this.#hours = v; this.$changed(0, p); }
 //   static { Model.$define(this, ["hours"]); } }
 //
-// Importing this module also makes the components that read a model re-render when it changes.
+// The bindings that read a model are queued when it changes (`$watch`, `track.ts`).
 // `same`/`isLike` and `changes` walk plain object graphs: cyclic ones are not supported.
 
 import { Component } from "./index";
-import { META as meta, MODEL, bitOf, changed, keyName, same } from "./track";
+import { META as meta, MODEL, changed, keyName, same } from "./track";
 
 export { EntitySet } from "./entity-set";
 
@@ -71,6 +71,9 @@ const stateIndex = -1;
 
 /** Key of the model's state: not an own property, so it never shows in `Object.keys` or a spread. */
 export const StateKey = Symbol("xzor.state");
+
+/** What a subscriber keeps for the model: where the model holds it. */
+type Dep = { slot: number };
 
 const empty: Meta = { names: [], tracked: new Set(), persisted: [], ignored: new Set(), validators: [], serialized: [] };
 
@@ -626,111 +629,3 @@ export const minValue = (min: number, inclusive = true): Validator => (value) =>
 
 export const maxValue = (max: number, inclusive = true): Validator => (value) =>
   (inclusive ? value <= max : value < max) ? true : `Field must be less than ${inclusive ? "or equal to " : ""}${max}`;
-
-// Re-rendering: while a component renders, every tracked getter it reads reports itself here. The
-// component keeps one dep per model it read, with a bitmask of the properties (every field from the
-// 30th on shares one bit, and `state` has its own), rebuilt on every render; a change it covers queues one re-render.
-
-/** One (component, model) pair, held by the model in its own subscriber list. */
-type Dep = {
-  model: Model;
-  owner: Reads;
-  mask: number;
-  epoch: number;
-  /** Where the model keeps this dep, so dropping it is a swap. */
-  slot: number;
-};
-
-/** What one component read, kept on the instance under `reads`. */
-type Reads = {
-  component: Component;
-  /** Almost every component reads one model; the rest go in `more`. */
-  first: Dep | undefined;
-  more: Map<Model, Dep> | undefined;
-  epoch: number;
-  renders: number;
-  /** `renders` when the component was queued, or -1 when it is not. */
-  at: number;
-  /** Deps held, and deps touched by the render in progress: equal means nothing to sweep. */
-  size: number;
-  seen: number;
-};
-
-const reads = Symbol("xzor.model.reads");
-
-type Reader = Record<symbol, Reads | undefined>;
-
-const readsOf = (c: Component): Reads | undefined => (c as unknown as Reader)[reads];
-
-const stack: Component[] = [];
-let current: Component | undefined;
-let currentReads: Reads | undefined;
-
-function subscribe(own: Reads, model: Model): Dep {
-  const dep: Dep = { model, owner: own, mask: 0, epoch: own.epoch, slot: 0 };
-  model.$watch(dep);
-  own.size++;
-  own.seen++;
-  return dep;
-}
-
-function read(model: Model, index: number): void {
-  let own = currentReads;
-  if (own === undefined) {
-    own = currentReads = {
-      component: current!,
-      first: undefined,
-      more: undefined,
-      epoch: 1,
-      renders: 1,
-      at: -1,
-      size: 0,
-      seen: 0,
-    };
-    (current as unknown as Reader)[reads] = own;
-  }
-  let dep = own.first;
-  if (dep === undefined) dep = own.first = subscribe(own, model);
-  else if (dep.model !== model) {
-    dep = own.more?.get(model);
-    if (dep === undefined) {
-      dep = subscribe(own, model);
-      (own.more ??= new Map()).set(model, dep);
-    }
-  }
-  if (dep.epoch !== own.epoch) {
-    dep.epoch = own.epoch;
-    dep.mask = 0;
-    own.seen++;
-  }
-  dep.mask |= bitOf(index);
-}
-
-// Drops the deps the render that just ended did not read again.
-function sweep(own: Reads): void {
-  const more = own.more;
-  if (more !== undefined) {
-    for (const dep of more.values())
-      if (dep.epoch !== own.epoch) {
-        dep.model.$unwatch(dep);
-        more.delete(dep.model);
-        own.size--;
-      }
-    if (more.size === 0) own.more = undefined;
-  }
-  const first = own.first;
-  if (first !== undefined && first.epoch !== own.epoch) {
-    first.model.$unwatch(first);
-    own.first = undefined;
-    own.size--;
-    const rest = own.more;
-    if (rest !== undefined) {
-      for (const [model, dep] of rest) {
-        own.first = dep;
-        rest.delete(model);
-        break;
-      }
-      if (rest.size === 0) own.more = undefined;
-    }
-  }
-}

@@ -3,7 +3,7 @@
 // them changes. A binding is its own dep for the first source it reads.
 
 import { $cascade, $release, $child, $childItem, $currentRoute, $dropChild, $inSvg as inSvg, $leave as leave, $recascade, $resolve, $router, Component, SVG, type CascadeRecord, type Child, type EventCallback, type Route, type RouteEntry, type RouteSection, type RenderFragment, type Router, type RouteTable } from "./index";
-import { bitOf, flush, keyName } from "./track";
+import { DEAD, FRESH, KIND, MEMO, QUEUED, bitOf, flush, keyName } from "./track";
 
 const TEXT = 0;
 const ATTR = 1;
@@ -13,24 +13,16 @@ const LIST = 3;
 const KEYED = 5;
 /** Runs `read` for what it does (`@await`'s request): never re-run after handlers, so never loose. */
 const EFFECT = 6;
-/** A cached getter (value in `data`): a change to what it read marks it stale; it recomputes when read. Always QUEUED, so never queued. */
-const MEMO = 7;
 /** A child component before its end comment: `read` gives its props, `data` is its `Child`. */
 const COMPONENT = 8;
-const KIND = 15;
-/** The tracker has it queued; `at` reads 0 then, else -1. */
-const QUEUED = 16;
 /** `model` is a map of deps: the binding read more than one source. */
 const MANY = 32;
-const DEAD = 64;
 /** In its component's `loose` list: its last run read nothing tracked. */
 const LOOSE = 128;
 /** A row's binding: `read` is shared by the list's rows and takes the row's item (`data.item`). */
 const ITEM = 256;
 /** An ATTR binding from `@attr:` on an enclosing element: disposing it takes its value back off (`data` is `Owned`). */
 const OWNED = 512;
-/** A MEMO's value is current. */
-const FRESH = 1024;
 /** A REGION that is `@show:if`/`@show:switch` (`data` is `Show`). */
 const SHOW = 2048;
 /** A REGION that is `@pause { }`: what it holds stops while its show branch is hidden. */
@@ -143,29 +135,6 @@ class Binding {
     /** TEXT: its holder; ATTR: the attribute (ITEM: its row); REGION: its `Region`; LIST: its `ListState`. */
     public data: any,
   ) {}
-
-  // The change queue reads these; prototype accessors cost no field.
-  get owner(): Binding {
-    return this;
-  }
-  get component(): Binding {
-    return this;
-  }
-  get renders(): number {
-    return 0;
-  }
-  get at(): number {
-    return (this.flags & (QUEUED | DEAD)) !== 0 ? 0 : -1;
-  }
-  set at(value: number) {
-    if ((this.flags & DEAD) !== 0) return;
-    // Stale as soon as what it read changes, so no binding re-run in the same flush reads the old value.
-    if ((this.flags & KIND) === MEMO) {
-      if (value >= 0) this.flags &= ~FRESH;
-      return;
-    }
-    this.flags = value < 0 ? this.flags & ~QUEUED : this.flags | QUEUED;
-  }
 
   /** @internal A cached getter's value: computed again when stale, and its reads passed on to the reader. */
   $memo(): unknown {
