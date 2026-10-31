@@ -33,4 +33,14 @@ Goal: an app ships only the `dom` bindings its generated code calls. Today `dom`
 
 ## Results
 
-(filled in after Task 2)
+Minified + gzip (level 9) of all JS in `dist`, `xzor build --minify` (split) and one file, before (99674c6) and after:
+
+| app | one file before → after | Δ | split before → after | Δ |
+|---|---|---|---|---|
+| counter | 26.6 → 25.5 KB | −4.2% | 31.5 → 30.5 KB | −3.2% |
+| sales | 26.6 → 24.5 KB | −8.0% | 30.0 → 27.9 KB | −6.8% |
+| dashboard | 24.0 → 22.2 KB | −7.5% | 26.9 → 25.1 KB | −6.6% |
+| blog | 21.2 → 19.7 KB | −7.1% | 28.7 → 27.3 KB | −5.1% |
+| tailwind (no pages) | 15.6 → 12.0 KB | −22.9% | 15.6 → 12.0 KB | −22.9% |
+
+Tailwind's bundle no longer holds `popstate`/`pushState`/`startViewTransition`: the router is gone. Speed and memory are unchanged (the same functions, called the same way). `tests/bundle-shake.test.ts` guards it.

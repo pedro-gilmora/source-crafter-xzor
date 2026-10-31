@@ -48,5 +48,5 @@ When the user says deploy, deployment, release or publish, the pushed head commi
 - The repo's own TypeScript (`src`, `runtime`, `tests`, ...) is typed by the root `jsconfig.json`: any `tsconfig.json` would be taken for an app root.
 - Project tsconfigs need `"rootDirs": [".", ".xzor"]` and `".xzor/**/*.ts"` in `include`; DI projects also need `"ESNext.Disposable"` in `lib`.
 - A `.xzor` must not import from `./main`: `rootDirs` resolves it to the generated `.xzor/main.ts`.
-- The runtime is `runtime/index.ts` (`Component`, router, `mount`) and `runtime/dom.ts` (the `dom` bindings). Keep the generated code and the `dom` API in sync.
+- The runtime is `runtime/index.ts` (`Component`, router, `mount`) and `runtime/dom.ts` (the `dom` bindings: top-level functions, re-exported as the `dom` namespace by `runtime/bindings.ts`, so unused ones leave the bundle; never collect them back into an object). Keep the generated code and the `dom` API in sync.
 - Generated `.xzor/` folders are gitignored. Never edit them by hand.

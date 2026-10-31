@@ -184,3 +184,4 @@ Gates: the fine cells do not regress on heap, change, keystroke or grow+sHC; the
 ## Later changes
 
 - 2026-10-30: Ruling 10's rebuild of same-site markup is superseded: same-site markup keeps its DOM, see docs/superpowers/specs/2026-10-30-markup-keeps-dom-design.md.
+- 2026-10-31: `dom` is a module namespace of top-level functions (`runtime/bindings.ts`), not an object, so bundles keep only the bindings they call; see docs/plans/2026-10-31-dom-tree-shaking.md.
